@@ -28,8 +28,17 @@ from typing import Any
 import core as C  # pure functions: parse_iso, parse_teu, decide_status, request_id, etc.
 import body_parser as BP  # subject + body parsing (Plan A, Day 1)
 
-STAGE_PATH = Path(__file__).resolve().parent / "stage_emails.jsonl"
-BODIES_PATH = Path(__file__).resolve().parent / "stage_emails_bodies.jsonl"
+# 2026-05-06: stage files renamed to .txt so SharePoint indexes them
+# (M365 MCP cannot search-and-fetch .jsonl extension). Same JSON-Lines
+# content; only the file extension changes. Falls back to legacy .jsonl
+# names if the .txt files don't exist yet.
+def _resolve_stage(name_no_ext: str) -> Path:
+    here = Path(__file__).resolve().parent
+    new = here / f"{name_no_ext}.txt"
+    legacy = here / f"{name_no_ext}.jsonl"
+    return new if new.exists() or not legacy.exists() else legacy
+STAGE_PATH = _resolve_stage("stage_emails")
+BODIES_PATH = _resolve_stage("stage_emails_bodies")
 OUT_PATH_DEFAULT = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
 
 OL_RESPONDER_NAME = "MBD Ocean Export Booking"   # shared mailbox identity

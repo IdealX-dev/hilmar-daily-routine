@@ -271,8 +271,12 @@ def _heal_missing_rate(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> N
 
 
 def _load_bodies_index() -> dict:
-    """Load scripts/stage_emails_bodies.jsonl keyed by imid. Empty dict if missing."""
-    path = Path(__file__).resolve().parent / "stage_emails_bodies.jsonl"
+    """Load scripts/stage_emails_bodies.txt keyed by imid. Empty dict if missing.
+    2026-05-06: prefer .txt for SharePoint indexing; fall back to legacy .jsonl."""
+    here = Path(__file__).resolve().parent
+    path = here / "stage_emails_bodies.txt"
+    if not path.exists():
+        path = here / "stage_emails_bodies.jsonl"
     out = {}
     if not path.exists():
         return out
@@ -554,7 +558,11 @@ def phase_6_rules(log: Log, data: dict):
     # Stage files live next to the script directory. If max(received) is more
     # than 36h old on a weekday morning, refresh_stage probably hasn't run
     # (Task Scheduler missed, MSAL refresh expired, Graph quota, etc.).
-    stage_path = Path(__file__).resolve().parent / "stage_emails.jsonl"
+    # 2026-05-06: prefer .txt; fall back to legacy .jsonl
+    here = Path(__file__).resolve().parent
+    stage_path = here / "stage_emails.txt"
+    if not stage_path.exists():
+        stage_path = here / "stage_emails.jsonl"
     if stage_path.exists():
         max_received = None
         try:

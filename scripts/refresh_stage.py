@@ -67,8 +67,16 @@ import outlook_send as OS  # noqa: E402  reuse auth + token cache
 import fetch_bodies as FB  # noqa: E402  reuse upsert_body / _parse_all
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-STAGE_PATH = SCRIPTS / "stage_emails.jsonl"
-BODIES_PATH = SCRIPTS / "stage_emails_bodies.jsonl"
+# 2026-05-06: renamed from .jsonl to .txt so SharePoint indexes the files
+# (claude.ai routine's M365 MCP can fetch .txt via search; .jsonl is not
+# indexed). Same JSON-Lines content. Fall back to legacy .jsonl if .txt
+# doesn't exist yet.
+def _resolve(name: str) -> Path:
+    new = SCRIPTS / f"{name}.txt"
+    legacy = SCRIPTS / f"{name}.jsonl"
+    return new if new.exists() or not legacy.exists() else legacy
+STAGE_PATH = _resolve("stage_emails")
+BODIES_PATH = _resolve("stage_emails_bodies")
 
 LONNY_EMAIL = "lupfold@hilmaringredients.com"
 MBD_BOOKING_EMAIL = "MBD_OceanExportBookingShared@ol-usa.com"

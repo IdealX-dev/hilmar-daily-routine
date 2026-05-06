@@ -70,8 +70,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import body_parser as BP  # noqa: E402
 import core as C  # noqa: E402  -- for parse_signer (added 2026-04-30)
 
-STAGE_PATH   = ROOT / "scripts" / "stage_emails.jsonl"
-BODIES_PATH  = ROOT / "scripts" / "stage_emails_bodies.jsonl"
+# 2026-05-06: stage files renamed to .txt for SharePoint indexing.
+# Fall back to legacy .jsonl during transition.
+def _resolve_stage(name: str) -> Path:
+    new = ROOT / "scripts" / f"{name}.txt"
+    legacy = ROOT / "scripts" / f"{name}.jsonl"
+    return new if new.exists() or not legacy.exists() else legacy
+STAGE_PATH   = _resolve_stage("stage_emails")
+BODIES_PATH  = _resolve_stage("stage_emails_bodies")
 
 
 # ---------- I/O ----------

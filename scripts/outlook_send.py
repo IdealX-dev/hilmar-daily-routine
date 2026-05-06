@@ -35,7 +35,11 @@ import msal
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
-TOKEN_CACHE_PATH = ROOT / "secrets" / "token-cache.bin"
+# 2026-05-06: renamed from .bin to .json so SharePoint indexes the file
+# (M365 MCP can search-and-fetch JSON files; .bin extension is not indexed).
+# Falls back to legacy .bin if .json doesn't exist yet.
+_LEGACY_BIN = ROOT / "secrets" / "token-cache.bin"
+TOKEN_CACHE_PATH = (ROOT / "secrets" / "token-cache.json") if (ROOT / "secrets" / "token-cache.json").exists() or not _LEGACY_BIN.exists() else _LEGACY_BIN
 CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"  # Microsoft public client
 TENANT = "common"
 SCOPES = ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
