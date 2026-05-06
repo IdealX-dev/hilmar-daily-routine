@@ -1,0 +1,127 @@
+{
+  "version": "6.0-claude-native",
+  "client": {
+    "name": "Hilmar Ingredients",
+    "primary_contact": {
+      "name": "Lonny Upfold",
+      "email": "lupfold@hilmaringredients.com",
+      "timezone": "America/Los_Angeles"
+    }
+  },
+  "provider": {
+    "name": "OL-USA",
+    "timezone": "America/New_York",
+    "business_hours": {
+      "start": "08:30",
+      "end": "17:30",
+      "days": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "responders": [
+      {
+        "name": "MBD Ocean Export Booking",
+        "email": "MBD_OceanExportBookingShared@ol-usa.com",
+        "role": "booking"
+      }
+    ]
+  },
+  "paths": {
+    "root": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR",
+    "data": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/tracking-data-v2.json",
+    "schema": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/schema.json",
+    "backups": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/data-backups",
+    "scripts": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/scripts",
+    "reports": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports",
+    "history": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/history",
+    "dashboard": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/hilmar-dashboard.html",
+    "pdf": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/hilmar-report.pdf",
+    "carrier_scorecards_dir": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/carrier-scorecards",
+    "email_body": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/email-body.html",
+    "qc_result": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/reports/qc-result.json",
+    "escalation_log": "/sessions/gallant-practical-brown/mnt/PROJECT HILMAR/escalation-log.json"
+  },
+  "onedrive": {
+    "account": "IdealX (michael.deitchman@idealx.us)",
+    "folder_name": "Hilmar",
+    "folder_id": "01JZE2M6FTFSWA3VUUKNAKRUE56FNH44ZP",
+    "files_to_upload": [
+      "tracking-data-v2.json",
+      "reports/hilmar-dashboard.html",
+      "reports/hilmar-report.pdf"
+    ]
+  },
+  "distribution": {
+    "full_list": [
+      "michael.deitchman@ol-usa.com",
+      "alan.baer@ol-usa.com",
+      "carrie.murphy@ol-usa.com",
+      "seada.sabic@ol-usa.com",
+      "caren.tobel@ol-usa.com",
+      "Linda.Echevarria@ol-usa.com",
+      "Steve.Petriccione@ol-usa.com",
+      "MBD_Export_Pricing@ol-usa.com",
+      "MBD_OceanExportBookingShared@ol-usa.com"
+    ],
+    "test_list": [
+      "michael.deitchman@ol-usa.com"
+    ],
+    "escalation_to": [
+      "MBD_OceanExportBookingShared@ol-usa.com"
+    ],
+    "escalation_cc": [
+      "michael.deitchman@ol-usa.com"
+    ]
+  },
+  "rules": {
+    "pending_aging_hours": 24,
+    "pending_warn_hours": [
+      16,
+      20,
+      23
+    ],
+    "overdue_no_response_hours": 3,
+    "escalation_cooldown_hours": 24,
+    "rate_trend_threshold_pct": 10,
+    "etd_fit_warn_days": 5,
+    "etd_fit_fail_days": 10,
+    "after_hours_large_teu_threshold": 30,
+    "suspicious_biz_hours": 100,
+    "backup_retention_count": 14
+  },
+  "data_range": {
+    "start": "2026-04-01",
+    "description": "Fresh rebuild from April 1, 2026 forward \u2014 Michael approved 2026-04-19"
+  },
+  "dry_run": {
+    "enabled_default": false,
+    "description": "Live send enabled 2026-05-04 by Michael \u2014 Plan B path"
+  },
+  "mcp_connectors": {
+    "outlook_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_cmwfm46nq9kv3fvfw240 \u2014 verify at execution time.",
+    "onedrive_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_348a80a5d8gkyvvgss3j \u2014 verify at execution time."
+  },
+  "tz": {
+    "eastern": "America/New_York",
+    "pacific": "America/Los_Angeles",
+    "utc": "UTC"
+  },
+  "ingest_scope": {
+    "mailboxes_to_scan": [
+      "michael.deitchman@ol-usa.com"
+    ],
+    "mailboxes_excluded": [
+      "michael.deitchman@idealx.us",
+      "MBD_Export_Pricing@ol-usa.com",
+      "caren.tobel@ol-usa.com"
+    ],
+    "mailbox_folder": "Hilmar Tracker",
+    "rule_filter": "from:lupfold@hilmaringredients.com OR to:lupfold@hilmaringredients.com",
+    "updated": "2026-04-30",
+    "updated_by": "Michael \u2014 'stop searching idealx, ignore MBD_Export_Pricing'"
+  }
+}

@@ -1,0 +1,53 @@
+# Hilmar daily routine — .gitignore
+# State, secrets, and runtime artifacts MUST NOT live in git.
+
+# Runtime data (lives in OneDrive, not git)
+tracking-data-v2.json
+data-backups/
+reports/
+escalation-log.json
+
+# Stage files (live in OneDrive, not git)
+scripts/stage_emails*.jsonl
+scripts/stage_emails*.jsonl.bak*
+scripts/stage_emails*.jsonl.pre-*
+scripts/_*.py
+scripts/_shards/
+scripts/email_bodies/
+scripts/new_bodies/
+scripts/rate_response_raw/
+scripts/ops_flow_v2_raw/
+scripts/tool_results_tracking/
+scripts/_phase2_*
+
+# Secrets — never commit
+secrets/
+*.pem
+*token-cache.bin
+*.env
+.env*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Backups
+*.bak
+*.bak-*
+config.json.bak-*
+
+# Tests scratch
+tests/tmp/
