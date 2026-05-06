@@ -35,6 +35,13 @@ PY = sys.executable  # use same interpreter
 STEPS = [
     ("Backup snapshot",          [PY, str(SCRIPTS / "backup.py")]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
+    # 2026-05-06: drift_check wired in per orchestrator.md step 3.5. Runs
+    # BEFORE QC. 6 phases: imid uniqueness, matcher quality, quote-rate
+    # floor (FAILs if < 80%), NQ schema, WIN schema, lonny_covered honor.
+    # Auto-heals phase 1 (dup imids) + phase 4 (NQ schema). Writes
+    # reports/drift-result.json. Exits non-zero on FAIL — stops the pipeline
+    # before bad data lands in the daily email.
+    ("Drift check (pre-QC)",     [PY, str(SCRIPTS / "drift_check.py"), "--auto-heal"]),
     ("QC self-heal (pre-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")]),
     ("Carrier enrichment patch", [PY, str(SCRIPTS / "patch_carriers.py")]),
     ("QC self-heal (post-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")]),

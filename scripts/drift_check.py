@@ -208,8 +208,23 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     phase5_win_schema(data, log)
     phase6_covered_honor(data, log)
 
-    # Compose verdict
+    # Compose verdict.
+    # FAIL reasons HALT the pipeline (block daily send). Reserve only for
+    # things that would corrupt the daily numbers if shipped:
+    #   - quote_rate floor breach (data quality crash)
+    #   - phase 1 dup imids without auto-heal (would double-count)
+    #   - phase 2 matcher drift (wrong rate-response→request attachment)
+    #   - phase 4 NQ schema without auto-heal (status confusion)
+    #
+    # WARN reasons are surfaced + logged but DON'T halt the pipeline. These
+    # are mostly known structural data gaps (orchestrator.md intent for
+    # phases 5 + 6 was "audit / report"):
+    #   - phase 5 WINs missing carrier_won (qc_selfheal QC-002 also only WARNs;
+    #     edge-case bookings like MDOLX260469 'DRAFT RATED FOR HILMAR' have
+    #     no parseable carrier in subject/body)
+    #   - phase 6 covered-flag honor (audit-only per orchestrator.md)
     fail_reasons = []
+    warn_reasons = []
     if phase3_fail:
         fail_reasons.append(f"quote_rate {log['phase3']['quote_rate']}% < floor {log['phase3']['floor']}%")
     if log["phase1"]["duplicates_found"] > 0 and not auto_heal:
@@ -219,12 +234,13 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     if log["phase4"]["issues"] and not auto_heal:
         fail_reasons.append(f"{len(log['phase4']['issues'])} NQ schema issues")
     if log["phase5"]["wins_missing_carrier"] > 0:
-        fail_reasons.append(f"{log['phase5']['wins_missing_carrier']} WINs missing carrier_won")
+        warn_reasons.append(f"{log['phase5']['wins_missing_carrier']} WINs missing carrier_won (audit-only — see qc_selfheal QC-002)")
     if log["phase6"]["covered_honor_issues"]:
-        fail_reasons.append(f"{len(log['phase6']['covered_honor_issues'])} lonny_covered records not in LOSS/OTHER")
+        warn_reasons.append(f"{len(log['phase6']['covered_honor_issues'])} lonny_covered records not in LOSS/OTHER (audit-only)")
 
     log["fail_reasons"] = fail_reasons
-    log["status"] = "FAIL" if fail_reasons else "PASS"
+    log["warn_reasons"] = warn_reasons
+    log["status"] = "FAIL" if fail_reasons else ("WARN" if warn_reasons else "PASS")
 
     # Write report
     out_path = Path(cfg["paths"].get("reports") or (ROOT / "reports")) / "drift-result.json"
@@ -250,6 +266,12 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     print(f"  Phase 4 (NQ schema):           {len(log['phase4']['issues'])} issues")
     print(f"  Phase 5 (WIN schema):          {log['phase5']['wins_missing_carrier']} WINs missing carrier")
     print(f"  Phase 6 (covered-flag honor):  {len(log['phase6']['covered_honor_issues'])} issues")
+    if log.get("warn_reasons"):
+        print()
+        print("WARN REASONS (logged, pipeline continues):")
+        for wr in log["warn_reasons"]:
+            print(f"  - {wr}")
+
     if fail_reasons:
         print()
         print("FAIL REASONS:")
