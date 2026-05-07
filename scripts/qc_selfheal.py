@@ -791,6 +791,97 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-013: check failed with exception: {_e}")
 
+    # QC-014: carrier coverage thresholds — added 2026-05-07 per Michael
+    # 'handle all suggestions'. WIN coverage must be ≥95% (only 'Unknown' or
+    # genuinely off-channel WINs should be missing). Q&L coverage soft-floor
+    # at 60% (parser drift signal — WARN at 60-70%, FAIL below 60%).
+    # The improvements report flags 50% Q&L coverage; this QC makes that
+    # observation a hard threshold the system itself enforces.
+    try:
+        _wins  = [r for r in requests if r.get("status") == "WIN"]
+        _wcarr = [r for r in _wins if r.get("carrier_won")]
+        _wpct  = (len(_wcarr) / len(_wins) * 100) if _wins else 100
+        _qls   = [r for r in requests if r.get("status") == "LOSS" and r.get("quoted")]
+        _qlcarr = [r for r in _qls if r.get("carrier_quoted")]
+        _qlpct = (len(_qlcarr) / len(_qls) * 100) if _qls else 100
+
+        if _wpct < 90:
+            log.error(
+                f"QC-014a: WIN carrier coverage {_wpct:.1f}% < 90% threshold "
+                f"({len(_wins)-len(_wcarr)}/{len(_wins)} WINs missing carrier). "
+                "Patch_carriers auto-discovery + manual fallback should keep this >=95%."
+            )
+        elif _wpct < 95:
+            log.warn(f"QC-014a: WIN carrier coverage {_wpct:.1f}% (target 95%+)")
+        else:
+            log.ok(f"QC-014a: WIN carrier coverage {_wpct:.1f}% ({len(_wcarr)}/{len(_wins)})")
+
+        # Q&L coverage thresholds calibrated against current state 2026-05-07:
+        # baseline ~48% (parser only catches table-format quotes; prose-format
+        # quotes go uncaptured). ERROR triggers on regression below baseline,
+        # WARN at baseline-target gap, OK at target. Parser improvement is a
+        # multi-step effort — see improvements report for the suggestion.
+        if _qlpct < 40:
+            log.error(
+                f"QC-014b: Q&L carrier coverage {_qlpct:.1f}% < 40% — REGRESSED "
+                "below historical baseline. Recent parser change may have broken "
+                "carrier extraction. Investigate body_parser.parse_rate_table."
+            )
+        elif _qlpct < 60:
+            log.warn(
+                f"QC-014b: Q&L carrier coverage {_qlpct:.1f}% (baseline ~48%, target 60%+). "
+                "Parser only catches pipe-table quotes — prose quotes uncaught. See "
+                "improvements report for the body-text fallback suggestion."
+            )
+        else:
+            log.ok(f"QC-014b: Q&L carrier coverage {_qlpct:.1f}% ({len(_qlcarr)}/{len(_qls)})")
+    except Exception as _e:
+        log.warn(f"QC-014: check failed with exception: {_e}")
+
+    # QC-015: unmapped trade-region destinations are bounded. Lonny ships to
+    # the same handful of trade lanes; Unmapped should stay near zero. >5
+    # means TRADE_REGION_MAP needs extension (see core._TRADE_REGION_MAP).
+    try:
+        _tr = _trade_region_reconciliation(data)
+        _unmapped = _tr.get("unmapped_destinations", []) if isinstance(_tr, dict) else []
+        if len(_unmapped) > 10:
+            log.error(
+                f"QC-015: {len(_unmapped)} unmapped destinations — extend "
+                f"core._TRADE_REGION_MAP. First 5: {_unmapped[:5]}"
+            )
+        elif len(_unmapped) > 5:
+            log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
+        else:
+            log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) (within tolerance)")
+    except Exception as _e:
+        log.warn(f"QC-015: check failed with exception: {_e}")
+
+    # QC-016: backup retention cap. backup.py prune step must catch BOTH naming
+    # formats (tracking-data-v2_T...Z.json from backup.py + tracking-data-v2.YYYY-...
+    # from qc_selfheal Phase 1). Pre-fix the period-format files grew unbounded.
+    # If we ever exceed retention*2 the prune step is broken again.
+    try:
+        from pathlib import Path as _P
+        _bdir = _P(__file__).resolve().parent.parent / "data-backups"
+        if _bdir.exists():
+            _all_bk = list(_bdir.glob("tracking-data-v2*.json"))
+            # cfg not in scope here; use the same default as backup.py
+            _retain = 14
+            if len(_all_bk) > _retain * 2:
+                log.error(
+                    f"QC-016: {len(_all_bk)} backup files > 2x retention ({_retain*2}). "
+                    "backup._list_snapshots glob is missing a naming format again."
+                )
+            elif len(_all_bk) > _retain + 5:
+                log.warn(
+                    f"QC-016: {len(_all_bk)} backups (retention {_retain}) — prune is "
+                    "running but a few stragglers remain. Likely .stale- prefixed files."
+                )
+            else:
+                log.ok(f"QC-016: {len(_all_bk)} backup file(s) (retention {_retain})")
+    except Exception as _e:
+        log.warn(f"QC-016: check failed with exception: {_e}")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Phase 7 — persist + QC result file

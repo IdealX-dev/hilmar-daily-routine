@@ -63,6 +63,9 @@ _TRADE_REGION_MAP = {
     "singapore": "SE Asia", "port klang": "SE Asia", "penang": "SE Asia",
     "laem chabang": "SE Asia", "bangkok": "SE Asia", "jakarta": "SE Asia",
     "surabaya": "SE Asia",
+    # Lat Krabang ICD (Bangkok area inland container depot — appears as
+    # "Lat Krab" / "Lat Krabang" in Lonny's RFQs). Added 2026-05-07.
+    "lat krabang": "SE Asia", "lat krab": "SE Asia", "ladkrabang": "SE Asia",
     # Australia / NZ
     "sydney": "Oceania", "melbourne": "Oceania", "brisbane": "Oceania",
     "fremantle": "Oceania", "auckland": "Oceania",
@@ -79,6 +82,15 @@ _TRADE_REGION_MAP = {
     # South America
     "santos": "South America", "buenos aires": "South America",
     "callao": "South America", "valparaiso": "South America",
+    # Central America (added 2026-05-07 per Michael 'handle all suggestions' —
+    # Acajutla is El Salvador's main port, surfaced in Hilmar dairy export RFQs).
+    "acajutla": "Central America", "puerto barrios": "Central America",
+    "puerto cortes": "Central America", "puerto quetzal": "Central America",
+    "puerto limon": "Central America", "balboa": "Central America",
+    "manzanillo (panama)": "Central America",
+    # North America inland (rare — usually a typo or a US-side movement
+    # tracked in the same data file. Sturgis MI surfaced 2026-05-07).
+    "sturgis mi": "North America", "sturgis": "North America",
 }
 
 

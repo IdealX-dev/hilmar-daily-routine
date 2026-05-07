@@ -31,7 +31,26 @@ def _snapshot_name():
 
 
 def _list_snapshots(backup_dir: Path):
-    return sorted(backup_dir.glob("tracking-data-v2_*.json"))
+    """List ALL backup naming formats — backup.py uses 'tracking-data-v2_T...Z'
+    but qc_selfheal.py Phase 1 creates 'tracking-data-v2.YYYY-MM-DD-HHMM'.
+    Both formats need to participate in retention pruning, otherwise the
+    qc_selfheal-format files accumulate unbounded.
+    Fixed 2026-05-07 per Michael 'handle all suggestions' (was: prune only
+    counted underscore-format files, period-format grew indefinitely).
+    """
+    seen = set()
+    snaps = []
+    # Underscore format: tracking-data-v2_2026-05-07T14-32-52Z.json
+    for p in backup_dir.glob("tracking-data-v2_*.json"):
+        if p.name not in seen:
+            seen.add(p.name); snaps.append(p)
+    # Period format: tracking-data-v2.2026-05-07-1032.json
+    for p in backup_dir.glob("tracking-data-v2.*.json"):
+        if p.name not in seen:
+            seen.add(p.name); snaps.append(p)
+    # Sort by mtime so prune removes oldest by actual creation time
+    snaps.sort(key=lambda p: p.stat().st_mtime)
+    return snaps
 
 
 def create_snapshot(cfg):
