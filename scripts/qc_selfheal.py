@@ -658,6 +658,61 @@ def phase_6_rules(log: Log, data: dict):
     else:
         log.ok("QC-010: No preserved-from-prior WINs (fresh stage covers everything)")
 
+    # QC-011: email subject date == previous business day
+    # Per Michael 2026-05-07 'yesterday kpi run' — the daily email fires at
+    # 10 AM ET, before Lonny's California (PT) office opens. The subject
+    # line and KPIs MUST report on the previous full business day, not
+    # literal today. This QC parses email-subject.txt and confirms the
+    # date in the subject matches the expected report date. Catches
+    # regressions if gen_email.py drifts back to using today's date.
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        import re as _re
+        # Compute expected report date (mirror of _report_date in gen_email.py)
+        _now_et = _dt.now(core.ET).date()
+        _wd = _now_et.weekday()  # Mon=0..Sun=6
+        if _wd == 0:    _delta = 3   # Mon → Fri
+        elif _wd == 5:  _delta = 1   # Sat → Fri
+        elif _wd == 6:  _delta = 2   # Sun → Fri
+        else:           _delta = 1   # Tue–Fri → yesterday
+        _expected = _now_et - _td(days=_delta)
+        # Parse subject like 'Hilmar Ingredients — Daily Shipment Tracker Update (May 6, 2026)'
+        _subj_path = Path(__file__).resolve().parent.parent / "reports" / "email-subject.txt"
+        if not _subj_path.exists():
+            log.warn("QC-011: reports/email-subject.txt not present — skip date check")
+        else:
+            _subj = _subj_path.read_text(encoding="utf-8").strip()
+            _m = _re.search(r"\(([A-Za-z]+)\s+(\d+),\s+(\d{4})\)", _subj)
+            if not _m:
+                log.warn(f"QC-011: could not parse date from subject: {_subj!r}")
+            else:
+                _mo, _day, _yr = _m.group(1), int(_m.group(2)), int(_m.group(3))
+                # Parse month name to number
+                try:
+                    _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%b %d %Y").date()
+                except ValueError:
+                    try:
+                        _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%B %d %Y").date()
+                    except ValueError:
+                        _parsed = None
+                if _parsed is None:
+                    log.warn(f"QC-011: subject month not recognized: {_mo!r}")
+                elif _parsed == _expected:
+                    log.ok(f"QC-011: email subject date {_parsed.isoformat()} == expected previous biz day")
+                elif _parsed == _now_et:
+                    log.error(
+                        f"QC-011: email subject date is TODAY ({_parsed.isoformat()}) but should be "
+                        f"previous biz day ({_expected.isoformat()}). gen_email.py regressed — "
+                        f"Lonny's PT office isn't open at 10 AM ET fire."
+                    )
+                else:
+                    log.warn(
+                        f"QC-011: email subject date {_parsed.isoformat()} != expected "
+                        f"{_expected.isoformat()} (off by {(_parsed - _expected).days} days)"
+                    )
+    except Exception as _e:
+        log.warn(f"QC-011: check failed with exception: {_e}")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Phase 7 — persist + QC result file

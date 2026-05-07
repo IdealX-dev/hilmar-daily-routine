@@ -60,26 +60,69 @@ def _iso_date(s):
 
 
 def _week_bucket(d):
-    """Return ISO-ish week key like 'W15 (Apr 6–12)'."""
+    """Return ISO-ish week key like 'W15 (Apr 6–10)' — Monday through Friday.
+
+    Weekend activity (rare, after-hours) folds into the prior Mon–Fri week
+    via d.weekday() arithmetic: Saturday weekday=5 → monday is 5 days back.
+    Label intentionally shows Mon–Fri only (not Mon–Sun) per Michael
+    2026-05-07: 'the dating on the weekly should be based on weekdays'.
+    """
     if not d:
         return None
     iso = d.isocalendar()
     wk = iso.week
-    # Week starts Monday
+    # Week starts Monday, ends Friday for label purposes
     monday = d - timedelta(days=d.weekday())
-    sunday = monday + timedelta(days=6)
-    label = f"W{wk} ({_fmt_date(monday, '%b %-d')}–{_fmt_date(sunday, '%-d')})"
+    friday = monday + timedelta(days=4)
+    if monday.month != friday.month:
+        label = f"W{wk} ({_fmt_date(monday, '%b %-d')}–{_fmt_date(friday, '%b %-d')})"
+    else:
+        label = f"W{wk} ({_fmt_date(monday, '%b %-d')}–{_fmt_date(friday, '%-d')})"
     return label, monday
 
 
+def _report_date(now_et=None):
+    """Return the date this email REPORTS ON — the most recent COMPLETE
+    business day (Mon–Fri) before `now_et`.
+
+    Why: the pipeline runs at 10 AM ET each weekday morning. At that time
+    today's business day has barely begun and Lonny (in California, PT) is
+    still asleep — Hilmar HQ doesn't open for ~3 more hours. So the email
+    reports on yesterday's activity, not today's empty window.
+    Per Michael 2026-05-07: 'there should be a yesterday kpi run as we
+    send this in the morning, there would be absolutely no new data for
+    today since lonny is in california and doens't open for hours'.
+
+    Logic (today.weekday(): Mon=0..Sun=6):
+      Tue–Fri (1..4): report = today − 1 day  (yesterday)
+      Mon (0):        report = today − 3 days (last Friday)
+      Sat (5):        report = today − 1 day  (Friday)
+      Sun (6):        report = today − 2 days (Friday)
+    """
+    if now_et is None:
+        now_et = datetime.now(timezone.utc).astimezone(core.ET)
+    today = now_et.date()
+    wd = today.weekday()
+    if wd == 0:
+        delta = 3
+    elif wd == 5:
+        delta = 1
+    elif wd == 6:
+        delta = 2
+    else:
+        delta = 1
+    return today - timedelta(days=delta)
+
+
+def _report_label(report_date):
+    """Human-readable label e.g. 'Wednesday May 6, 2026'."""
+    return _fmt_date(datetime.combine(report_date, datetime.min.time()), "%A %B %-d, %Y")
+
+
 def build_subject(data, cfg):
-    s = data.get("summary", {}) or {}
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    total = s.get("total_entries", 0)
-    wins = s.get("wins", 0)
-    pending = s.get("pending_hilmar", 0)
-    wr = s.get("win_rate", 0.0) or 0.0
-    return f"Hilmar Ingredients — Daily Shipment Tracker Update ({_fmt_date(datetime.now(timezone.utc), '%b %-d, %Y')})"
+    report = _report_date()
+    label = _fmt_date(datetime.combine(report, datetime.min.time()), "%b %-d, %Y")
+    return f"Hilmar Ingredients — Daily Shipment Tracker Update ({label})"
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -272,7 +315,12 @@ def _header_html(today_label, range_label, updated_label):
 """
 
 
-def _today_block_html(today_label, new_req, ol_resp, status_ch, pending):
+def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
+    """Render the 'What Happened on <day>' block. The label `report_label` is
+    the previous business day (see _report_date) — not literal 'today' —
+    because at 10 AM ET fire time, today's data window is still empty
+    (Lonny's PT office isn't open yet).
+    """
     def _li(text, margin_color="#000"):
         return f'<p style="margin:2px 0 2px 16px;font-size:13px">{text}</p>'
 
@@ -282,7 +330,7 @@ def _today_block_html(today_label, new_req, ol_resp, status_ch, pending):
         for r in new_req:
             new_html += _li(_lonny_line(r))
     else:
-        new_html = _li("• No new requests today")
+        new_html = _li("• No new requests")
 
     # OL responses
     resp_html = ""
@@ -290,7 +338,7 @@ def _today_block_html(today_label, new_req, ol_resp, status_ch, pending):
         for r in ol_resp:
             resp_html += _li(_response_line(r))
     else:
-        resp_html = _li("• No OL responses today")
+        resp_html = _li("• No OL responses")
 
     # Status changes — include containers + TEU + reason for context
     sc_html = ""
@@ -308,7 +356,7 @@ def _today_block_html(today_label, new_req, ol_resp, status_ch, pending):
             + (f" — {_esc(reason)}" if reason else "")
         )
     if not sc_html:
-        sc_html = _li("• No status changes today")
+        sc_html = _li("• No status changes")
 
     # Pending
     pend_html = ""
@@ -325,14 +373,16 @@ def _today_block_html(today_label, new_req, ol_resp, status_ch, pending):
     else:
         pend_html = _li("• No pending Hilmar responses")
 
+    wins_in_day = sum(1 for (r, h) in status_ch if h.get("to") == "WIN")
     summary_line = (
-        f"📊 {len(new_req)} new requests added, {len(ol_resp)} new quotes received, "
-        f"0 wins today, {len(status_ch)} status changes, {len(pending)} total pending Hilmar response"
+        f"📊 {len(new_req)} new requests, {len(ol_resp)} new quotes received, "
+        f"{wins_in_day} wins, {len(status_ch)} status changes, {len(pending)} total pending Hilmar response"
     )
 
     return f"""
 <div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:20px;margin-bottom:24px">
-  <h2 style="margin:0 0 12px;color:#1e40af;font-size:18px">📋 What Happened Today — {_esc(today_label)}</h2>
+  <h2 style="margin:0 0 12px;color:#1e40af;font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
+  <p style="margin:0 0 12px;font-size:11px;color:#64748b">Previous business day. Daily email runs at 10 AM ET — Lonny's California office (PT) opens ~3 hours later, so 'today' has no data yet at send time.</p>
   <h3 style="margin:12px 0 6px;color:#1e40af;font-size:14px">📥 NEW REQUESTS FROM LONNY:</h3>
   {new_html}
   <h3 style="margin:12px 0 6px;color:#1e40af;font-size:14px">📤 OL-USA RESPONSES:</h3>
@@ -357,30 +407,39 @@ def _kpi_card(value, label, bg):
 """
 
 
-def _today_summary(requests):
-    """Compute wins/losses/etc that happened TODAY in ET (the OL business day)."""
-    today_et = datetime.now(core.ET).date().isoformat()
-    today_reqs = [r for r in requests
-                  if (r.get("request_date") == today_et) or (r.get("date") == today_et)]
+def _today_summary(requests, report_date=None):
+    """Compute wins/losses/etc for the report date (= previous business day).
+    Function name kept as `_today_summary` for backward compatibility, but it
+    no longer reports 'today' — see _report_date for rationale.
+    """
+    if report_date is None:
+        report_date = _report_date()
+    rd_iso = report_date.isoformat()
+    day_reqs = [r for r in requests
+                if (r.get("request_date") == rd_iso) or (r.get("date") == rd_iso)]
     return {
-        "wins":         sum(1 for r in today_reqs if r.get("status") == "WIN"),
+        "wins":         sum(1 for r in day_reqs if r.get("status") == "WIN"),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
-                            for r in today_reqs if r.get("status") == "WIN"),
-        "quoted_lost":  sum(1 for r in today_reqs if r.get("status") == "LOSS" and r.get("quoted")),
-        "not_quoted":   sum(1 for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
-        "pending":      sum(1 for r in today_reqs if r.get("status") == "PENDING"),
-        "total":        len(today_reqs),
-        "as_of_label":  f"Today ({today_et} ET)",
+                            for r in day_reqs if r.get("status") == "WIN"),
+        "quoted_lost":  sum(1 for r in day_reqs if r.get("status") == "LOSS" and r.get("quoted")),
+        "not_quoted":   sum(1 for r in day_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
+        "pending":      sum(1 for r in day_reqs if r.get("status") == "PENDING"),
+        "total":        len(day_reqs),
+        "as_of_label":  f"{rd_iso} (ET)",
+        "report_date":  rd_iso,
     }
 
 
-def _kpi_block_html(summary, requests=None):
+def _kpi_block_html(summary, requests=None, report_date=None):
     """Two KPI rows:
-      Row 1 (TODAY) — what happened in today's ET business day. Often zeros — that's the truth.
+      Row 1 (REPORT DAY) — what happened on the previous business day in ET.
+        Often low or zero on quiet days — that's the truth.
       Row 2 (PERIOD TO DATE) — cumulative over the data range. Used for negotiation depth.
 
     Michael 2026-04-30: "we didn't win that today" — fix is that the daily email's
     headline KPI was cumulative but unlabeled. Now both views are explicit.
+    Michael 2026-05-07: "yesterday kpi run" — Row 1 reports yesterday (or
+    last Friday on Mon), not literal today.
     """
     total = summary.get("total_entries", 0)
     wins = summary.get("wins", 0)
@@ -395,17 +454,20 @@ def _kpi_block_html(summary, requests=None):
     qr = summary.get("quote_rate", 0.0) or 0.0
     biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
 
-    today = _today_summary(requests or [])
+    if report_date is None:
+        report_date = _report_date()
+    day_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%a %b %-d")
+    day = _today_summary(requests or [], report_date=report_date)
 
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — Today (ET)</h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity within today's OL business day. Most days this is zero or low; that's expected.</p>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET)</h2>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day (last full day Lonny's office was open). Most days low; that's expected.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
-    {_kpi_card(today['total'], "Requests Today", "#3b82f6")}
-    {_kpi_card(f"{today['wins']} ({today['teu_won']} TEU)", "Won — Today", "#22c55e")}
-    {_kpi_card(today['quoted_lost'], "Quoted & Lost — Today", "#ef4444")}
-    {_kpi_card(today['not_quoted'], "Not Quoted — Today", "#f59e0b")}
+    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6")}
+    {_kpi_card(f"{day['wins']} ({day['teu_won']} TEU)", f"Won — {day_short}", "#22c55e")}
+    {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444")}
+    {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b")}
   </tr>
 </table>
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — Period to Date</h2>
@@ -751,13 +813,16 @@ FOOTER_HTML = """
 
 
 def build_body(data, cfg):
-    today = datetime.now(timezone.utc).astimezone(core.ET)
-    today_date = today.date()
-    today_label = _fmt_date(today, "%b %-d, %Y")
-    date_range = data.get("date_range") or f"{cfg.get('data_range', {}).get('start', 'start')} – {_fmt_date(today, '%b %-d, %Y')}"
-    updated_label = _fmt_date(today, "%B %-d, %Y at %-I:%M %p ET")
+    now_et = datetime.now(timezone.utc).astimezone(core.ET)
+    # Email REPORTS on the previous business day, not "now". See _report_date
+    # docstring for rationale (10 AM ET fire = before Lonny's PT office opens).
+    report_date = _report_date(now_et)
+    report_label = _report_label(report_date)             # 'Wednesday May 6, 2026'
+    report_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%b %-d, %Y")
+    date_range = data.get("date_range") or f"{cfg.get('data_range', {}).get('start', 'start')} – {report_short}"
+    updated_label = _fmt_date(now_et, "%B %-d, %Y at %-I:%M %p ET")
 
-    new_req, ol_resp, status_ch, pending = _today_events(data, today_date)
+    new_req, ol_resp, status_ch, pending = _today_events(data, report_date)
     week_rows = _week_rows(data)
     carrier_rows = _carrier_rows(data)
     winning_lanes = _winning_lane_rows(data)
@@ -765,9 +830,9 @@ def build_body(data, cfg):
     nq_rows = _not_quoted_rows(data)
     pend_rows = _pending_rows(data)
 
-    html_body = _header_html(today_label, date_range, updated_label)
-    html_body += _today_block_html(today_label, new_req, ol_resp, status_ch, pending)
-    html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [])
+    html_body = _header_html(report_label, date_range, updated_label)
+    html_body += _today_block_html(report_label, new_req, ol_resp, status_ch, pending)
+    html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     html_body += _week_block_html(week_rows)
     html_body += _carrier_block_html(carrier_rows)
     html_body += _trade_region_html(data, data.get("summary", {}) or {})

@@ -162,11 +162,24 @@ def render(cfg: dict, data: dict) -> str:
     now_et = datetime.now(core.ET).strftime("%b %d, %Y %I:%M %p ET")
     after_hours_count = sum(1 for r in requests if r.get("after_hours_request"))
 
-    # ── Today (ET) KPIs — added 2026-04-30 per Michael's feedback that the daily
+    # ── Report-day KPIs — added 2026-04-30 per Michael's feedback that the daily
     # email was showing cumulative wins under a "Won" card, reading as "today".
-    today_et_iso = datetime.now(core.ET).strftime("%Y-%m-%d")
+    # Updated 2026-05-07 per Michael: 'yesterday kpi run' — at 10 AM ET fire
+    # time, today's data window is empty (Lonny's PT office isn't open yet),
+    # so report on the previous business day. Mon → last Friday; Tue–Fri →
+    # yesterday; Sat/Sun → last Friday.
+    _now_et = datetime.now(core.ET).date()
+    _wd = _now_et.weekday()  # Mon=0..Sun=6
+    if _wd == 0:    _delta = 3   # Mon → Fri
+    elif _wd == 5:  _delta = 1   # Sat → Fri
+    elif _wd == 6:  _delta = 2   # Sun → Fri
+    else:           _delta = 1   # Tue–Fri → yesterday
+    from datetime import timedelta as _td
+    report_date = _now_et - _td(days=_delta)
+    report_iso  = report_date.isoformat()
+    report_label = report_date.strftime("%a %b %d (yesterday)" if _delta == 1 else "%a %b %d (last full biz day)")
     today_reqs = [r for r in requests
-                  if (r.get("request_date") == today_et_iso) or (r.get("date") == today_et_iso)]
+                  if (r.get("request_date") == report_iso) or (r.get("date") == report_iso)]
     tdy_total   = len(today_reqs)
     tdy_teu     = sum(int(r.get("teu_requested") or 0) for r in today_reqs)
     tdy_wins    = sum(1 for r in today_reqs if r.get("status") == "WIN")
@@ -328,12 +341,12 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>
 </div>
 
-<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 Today (ET) — actual activity within today's OL business day</h3>
+<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day (Lonny's PT office not yet open at 10 AM ET fire)</h3>
 <div class="kpi-grid">
-  <div class="kpi blue"><div class="value">{tdy_total}</div><div class="label">Requests Today</div><div class="sub">{tdy_teu} TEU</div></div>
-  <div class="kpi green"><div class="value">{tdy_wins}</div><div class="label">Won — Today</div><div class="sub">{tdy_teu_won} TEU</div></div>
-  <div class="kpi red"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — Today</div><div class="sub">{tdy_teu_ql} TEU</div></div>
-  <div class="kpi amber"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — Today</div><div class="sub">{tdy_teu_nq} TEU</div></div>
+  <div class="kpi blue"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div></div>
+  <div class="kpi green"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div></div>
+  <div class="kpi red"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div></div>
+  <div class="kpi amber"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div></div>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date}</h3>
 <div class="kpi-grid">
