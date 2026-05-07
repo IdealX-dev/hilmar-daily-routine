@@ -713,6 +713,84 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-011: check failed with exception: {_e}")
 
+    # QC-012: weekly bucket labels are Mon–Fri (5 weekdays), not Mon–Sun
+    # Per Michael 2026-05-07: 'the dating on the weekly should be based on
+    # weekdays'. Pre-existing labels were 'W19 (May 4–10)' (Mon-Sun); current
+    # spec is 'W19 (May 4–8)' (Mon-Fri) with cross-month clarity for
+    # 'W14 (Mar 30–Apr 3)'. This QC parses week labels in email-body.html
+    # and confirms the start→end span is exactly 4 days (Mon to Fri),
+    # never 6 (Mon to Sun).
+    try:
+        from datetime import datetime as _dt
+        import re as _re
+        _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
+        if not _body_path.exists():
+            log.warn("QC-012: reports/email-body.html not present — skip week label check")
+        else:
+            _body = _body_path.read_text(encoding="utf-8")
+            # Match labels like 'W15 (Apr 6–10)' or 'W14 (Mar 30–Apr 3)'
+            _wk_pat = _re.compile(
+                r"W(\d+)\s*\(([A-Za-z]+)\s+(\d+)[–\-]([A-Za-z]+\s+)?(\d+)\)"
+            )
+            _bad = []
+            _checked = 0
+            _seen = set()
+            for _m in _wk_pat.finditer(_body):
+                _label = _m.group(0)
+                if _label in _seen:
+                    continue
+                _seen.add(_label)
+                _checked += 1
+                _wk_n   = int(_m.group(1))
+                _start_mo = _m.group(2)
+                _start_d  = int(_m.group(3))
+                _end_mo   = (_m.group(4) or _m.group(2)).strip()
+                _end_d    = int(_m.group(5))
+                # Try parsing both ends in 2026 (current data range).
+                try:
+                    _ds = _dt.strptime(f"{_start_mo} {_start_d} 2026", "%b %d %Y").date()
+                    _de = _dt.strptime(f"{_end_mo} {_end_d} 2026", "%b %d %Y").date()
+                    if _de < _ds:
+                        # Cross-year edge — skip rather than misreport
+                        continue
+                    _span = (_de - _ds).days
+                    if _span != 4:
+                        _bad.append(f"{_label} span={_span}d (expected 4d Mon-Fri)")
+                except Exception:
+                    pass
+            if _bad:
+                log.error(
+                    f"QC-012: {len(_bad)} week label(s) not Mon-Fri format: "
+                    + "; ".join(_bad[:3]) + (f" + {len(_bad)-3} more" if len(_bad) > 3 else "")
+                )
+            elif _checked > 0:
+                log.ok(f"QC-012: all {_checked} week labels Mon-Fri (4-day span)")
+            else:
+                log.ok("QC-012: no week labels found to check")
+    except Exception as _e:
+        log.warn(f"QC-012: check failed with exception: {_e}")
+
+    # QC-013: email body header reflects the report-date framing — must NOT
+    # say literal 'What Happened Today' (the regression case where gen_email.py
+    # reverts to using today's date). The fixed framing reads e.g. 'What
+    # Happened — Wednesday May 6, 2026' — present tense day/date.
+    try:
+        _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
+        if _body_path.exists():
+            _body = _body_path.read_text(encoding="utf-8")
+            if "What Happened Today" in _body:
+                log.error(
+                    "QC-013: email body has 'What Happened Today' — gen_email.py "
+                    "regressed to today framing. Should be 'What Happened — <Day Date>' "
+                    "(previous business day, since 10 AM ET fire is before Lonny's PT office)."
+                )
+            elif "What Happened —" in _body:
+                log.ok("QC-013: email body uses report-date framing")
+            else:
+                log.warn("QC-013: 'What Happened' header not found — body may be malformed")
+    except Exception as _e:
+        log.warn(f"QC-013: check failed with exception: {_e}")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Phase 7 — persist + QC result file
