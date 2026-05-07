@@ -39,9 +39,12 @@ PENDING_WINDOW_HOURS = 24
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
-# COVERED = lost to a competitor (Lonny replied "covered")
-# OTHER   = catch-all when nothing else fits — should be near-zero
-LOSS_REASONS = {"NO_RESPONSE", "PRICE", "ETD_MISS", "COVERED", "OTHER"}
+# COVERED    = lost to a competitor (Lonny replied "covered")
+# DRAFT_ONLY = MDOLX has only a DRAFT RATED / Move updated email — no booking
+#              confirmation in stage. Reclassified from WIN since no carrier
+#              was ever attached. Added 2026-05-07 for stand_260469.
+# OTHER      = catch-all when nothing else fits — should be near-zero
+LOSS_REASONS = {"NO_RESPONSE", "PRICE", "ETD_MISS", "COVERED", "DRAFT_ONLY", "OTHER"}
 
 # ─────────────────────────────────────────────────────────────────────
 # Trade-region map — destination → region (used for "Volume by Trade Region")

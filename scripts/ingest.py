@@ -168,6 +168,14 @@ _OPERATIONAL_SUBJECT_HINTS = (
     "NRA AMENDMENT", "CONFIRMATION OF NRA",
     "INVOICE QUERY", "INVOICE DISPUTE",
     "TRANSPORT ORDER",         # ops follow-up tag, not a rate ask
+    # 2026-05-07: DRAFT RATED is a quote draft, not a confirmed booking.
+    # Without an accompanying NEW BOOKING CONFIRMATION email there's no
+    # carrier/lane signal — these inflated WIN count and broke QC-002.
+    # Fired by stand_260469 ('Re: MDOLX260469_DRAFT RATED FOR HILMAR' +
+    # body 'Move updated' = no booking ever confirmed). If a real booking
+    # follows, the second email IS a NEW BOOKING CONFIRMATION and that
+    # one creates the standalone WIN — DRAFT RATED never should.
+    "DRAFT RATED",
 )
 
 

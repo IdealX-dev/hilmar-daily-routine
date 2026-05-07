@@ -161,23 +161,29 @@ def collect_red_flags(data, qc, drift):
         })
 
     # 6. Stage stale > 36h on weekday
+    # Bug fix 2026-05-07: was reading stale .jsonl (legacy) instead of current
+    # .txt (refresh_stage's actual output). Now matches qc_selfheal.py QC-008
+    # path resolution: .txt first, fallback .jsonl.
     try:
-        stage_jsonl = ROOT / "scripts" / "stage_emails.jsonl"
-        if stage_jsonl.exists():
+        scripts_dir = ROOT / "scripts"
+        stage_path = scripts_dir / "stage_emails.txt"
+        if not stage_path.exists():
+            stage_path = scripts_dir / "stage_emails.jsonl"
+        if stage_path.exists():
             now_et = datetime.now(core.ET)
             if now_et.weekday() < 5:  # Mon–Fri
-                lines = stage_jsonl.read_text(encoding="utf-8").splitlines()
                 latest = None
-                for line in lines[-50:]:
-                    try:
-                        d = json.loads(line)
-                        rcv = d.get("received") or d.get("received_at")
-                        if rcv:
-                            dt = core.parse_iso(rcv)
-                            if dt and (latest is None or dt > latest):
-                                latest = dt
-                    except Exception:
-                        pass
+                with open(stage_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        try:
+                            d = json.loads(line)
+                            rcv = d.get("received") or d.get("received_at") or d.get("sent")
+                            if rcv:
+                                dt = core.parse_iso(rcv)
+                                if dt and (latest is None or dt > latest):
+                                    latest = dt
+                        except Exception:
+                            pass
                 if latest:
                     age = (datetime.now(timezone.utc) - latest).total_seconds() / 3600.0
                     if age > 36:

@@ -69,6 +69,85 @@ def _load_stage_subjects_by_mdolx() -> dict[str, list[str]]:
     return out
 
 
+def _load_bodies_by_imid() -> dict[str, str]:
+    """Read stage_emails_bodies.txt and index by message-id (imid).
+
+    Q&L rows carry `source_imids` linking to the OL rate-response messages.
+    When the table parser fails (prose-format quotes), we scan the body
+    text directly for carrier name near a rate amount.
+    """
+    out: dict[str, str] = {}
+    bodies_path = ROOT / "scripts" / "stage_emails_bodies.txt"
+    if not bodies_path.exists():
+        return out
+    for line in bodies_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        imid = (d.get("imid") or "").strip("<>").strip()
+        if not imid:
+            continue
+        # Field name is `text_body` in the current schema (was `body` /
+        # `body_text` in legacy refresh_stage versions). Try all three so
+        # this works across stage_emails_bodies.txt versions.
+        body = d.get("text_body") or d.get("body") or d.get("body_text") or d.get("summary_preview") or ""
+        if body:
+            out[imid] = body
+    return out
+
+
+# Carrier-name patterns in body text. Keyed by canonical name; values are
+# regex patterns that match the carrier in prose. Designed for false-negative
+# avoidance: must be paired with a rate-dollar amount in the same body to
+# claim the row.
+_BODY_CARRIER_PATTERNS = [
+    ("CMA CGM",   re.compile(r"\b(?:CMA\s*CGM|CMA-?CGM|\bCMA\b)\b", re.I)),
+    ("MSC",       re.compile(r"\bMSC\b", re.I)),
+    ("Maersk",    re.compile(r"\bMaersk\b", re.I)),
+    ("ONE",       re.compile(r"\b(?:ONE|Ocean Network Express)\b")),  # case-sensitive ONE
+    ("OOCL",      re.compile(r"\bOOCL\b", re.I)),
+    ("Evergreen", re.compile(r"\b(?:Evergreen|EMC)\b", re.I)),
+    ("HMM",       re.compile(r"\bHMM\b", re.I)),
+    ("Yang Ming", re.compile(r"\b(?:Yang\s*Ming|YML)\b", re.I)),
+    # Match Hapag, Hapag-Lloyd, HAPAG, or HLAG (alpha codes vary in OL prose)
+    ("Hapag-Lloyd", re.compile(r"\b(?:Hapag(?:[\s\-]?Lloyd)?|HLAG)\b", re.I)),
+    ("ZIM",       re.compile(r"\bZIM\b")),
+    ("COSCO",     re.compile(r"\bCOSCO\b", re.I)),
+]
+
+_BODY_RATE_PATTERN = re.compile(r"\$\s*([\d,]{3,}(?:\.\d{2})?)")
+
+
+def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> tuple[str | None, float | None]:
+    """For a Q&L row's source_imids, scan body texts for carrier+rate signal.
+
+    Returns (carrier, rate) — either may be None. Carrier is claimed only when
+    a carrier name AND a $-rate appear in the same body (avoids false positives
+    from carrier names mentioned in prose without a quote).
+    """
+    for imid in imids or []:
+        key = imid.strip("<>").strip()
+        body = bodies_by_imid.get(key)
+        if not body:
+            continue
+        rate_m = _BODY_RATE_PATTERN.search(body)
+        if not rate_m:
+            continue  # No rate = no quote = don't claim a carrier
+        for canonical, pat in _BODY_CARRIER_PATTERNS:
+            if pat.search(body):
+                rate_val = None
+                try:
+                    rate_val = float(rate_m.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+                return canonical, rate_val
+    return None, None
+
+
 def _discover_carrier_from_subjects(subjects: list[str]) -> str | None:
     """Try parse_subject_carrier on each subject — return first non-None hit."""
     for s in subjects:
@@ -102,10 +181,14 @@ def main():
     requests = data.get("requests", [])
     patched_carrier = 0
     patched_lane = 0
+    patched_ql_carrier = 0
+    patched_rate = 0
     auto_hits: list[str] = []
     manual_hits: list[str] = []
+    body_hits: list[str] = []
 
     stage_by_mdolx = _load_stage_subjects_by_mdolx()
+    bodies_by_imid = _load_bodies_by_imid()
     normalized_manual = {mdolx: C.normalize_carrier(c) for mdolx, c in CARRIER_BY_MDOLX.items()}
 
     def _row_mdolx_candidates(row):
@@ -169,13 +252,38 @@ def main():
                     print(f"  PATCH lane    {cand} -> {r['lane']}")
                     break
 
-    if patched_carrier == 0 and patched_lane == 0:
+    # Q&L body-text carrier fallback — added 2026-05-07 per Michael "did
+    # you fix the drifts and all from the 1233pm report". The table-format
+    # parser caught ~48% of Q&L. The body-scan looks at the actual rate-
+    # response message body for carrier + rate co-occurrence.
+    for r in requests:
+        if r.get("status") != "LOSS" or not r.get("quoted"):
+            continue
+        if r.get("carrier_quoted"):
+            continue
+        imids = r.get("source_imids") or []
+        if not imids:
+            continue
+        canon, rate = _discover_carrier_from_bodies(imids, bodies_by_imid)
+        if canon:
+            r["carrier_quoted"] = C.normalize_carrier(canon) or canon
+            patched_ql_carrier += 1
+            body_hits.append(f"{r.get('request_id')}->{canon}")
+            if rate is not None and not r.get("ol_rate"):
+                r["ol_rate"] = rate
+                patched_rate += 1
+            print(f"  PATCH Q&L  {r.get('request_id')[:16]} -> {canon}"
+                  + (f" @ ${rate:.0f}" if rate else ""))
+
+    if patched_carrier == 0 and patched_lane == 0 and patched_ql_carrier == 0:
         print("Nothing to patch - all target rows already have carrier and lane.")
         return
 
-    print(f"\nSummary: {patched_carrier} carrier patches "
+    print(f"\nSummary: {patched_carrier} WIN-carrier patches "
           f"({len(auto_hits)} auto / {len(manual_hits)} manual), "
-          f"{patched_lane} lane patches")
+          f"{patched_lane} lane patches, "
+          f"{patched_ql_carrier} Q&L-carrier patches "
+          f"(via body scan), {patched_rate} rate patches")
 
     meta = data.setdefault("meta", {})
     rev = int(meta.get("revision", 0)) + 1
