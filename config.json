@@ -58,6 +58,7 @@
   "distribution": {
     "full_list": [
       "michael.deitchman@ol-usa.com",
+      "michael.deitchman@idealx.us",
       "alan.baer@ol-usa.com",
       "carrie.murphy@ol-usa.com",
       "seada.sabic@ol-usa.com",
@@ -68,7 +69,8 @@
       "MBD_OceanExportBookingShared@ol-usa.com"
     ],
     "test_list": [
-      "michael.deitchman@ol-usa.com"
+      "michael.deitchman@ol-usa.com",
+      "michael.deitchman@idealx.us"
     ],
     "escalation_to": [
       "MBD_OceanExportBookingShared@ol-usa.com"
