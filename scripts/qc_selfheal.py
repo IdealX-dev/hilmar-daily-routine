@@ -856,6 +856,39 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
+    # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
+    # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
+    # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate
+    # false-positive bug (pre-fix it ran ~55% but now we know that level is
+    # legit; only >75% indicates over-attribution). WARN > 65% triggers
+    # a check-the-data prompt without crying wolf.
+    try:
+        from collections import Counter as _Counter
+        _q = _Counter()
+        for r in requests:
+            c = r.get("carrier_quoted") or r.get("carrier_won")
+            if c and (r.get("status") in ("WIN", "LOSS")) and (r.get("quoted") or r.get("status") == "WIN"):
+                _q[c] += 1
+        _tot = sum(_q.values())
+        if _tot > 20:
+            top_carrier, top_count = _q.most_common(1)[0]
+            top_pct = top_count / _tot * 100
+            if top_pct > 75:
+                log.error(
+                    f"QC-017: {top_carrier} has {top_count}/{_tot} quotes ({top_pct:.0f}%) > 75% — "
+                    "over-attribution. Body scanner may be matching boilerplate / vessel-name "
+                    "text. Investigate patch_carriers + parse_rate_table column accuracy."
+                )
+            elif top_pct > 65:
+                log.warn(
+                    f"QC-017: {top_carrier} holds {top_count}/{_tot} quotes ({top_pct:.0f}%) > 65%. "
+                    "Sample 3 bodies with parse_rate_table to confirm carrier column matches."
+                )
+            else:
+                log.ok(f"QC-017: top carrier {top_carrier} = {top_count}/{_tot} ({top_pct:.0f}%) — healthy spread")
+    except Exception as _e:
+        log.warn(f"QC-017: check failed with exception: {_e}")
+
     # QC-016: backup retention cap. backup.py prune step must catch BOTH naming
     # formats (tracking-data-v2_T...Z.json from backup.py + tracking-data-v2.YYYY-...
     # from qc_selfheal Phase 1). Pre-fix the period-format files grew unbounded.

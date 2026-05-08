@@ -121,30 +121,96 @@ _BODY_CARRIER_PATTERNS = [
 
 _BODY_RATE_PATTERN = re.compile(r"\$\s*([\d,]{3,}(?:\.\d{2})?)")
 
+# Boilerplate markers that signal we've left the rate body and entered the
+# OL signature block + standard disclaimers. Everything after this point
+# routinely mentions multiple carrier names (e.g. 'Maersk, Sealand, MSC,
+# ONE, CMA, and Cosco do not accept Dummy SI') and MUST NOT be scanned for
+# carrier attribution. Bug surfaced 2026-05-08 when 60 Q&L rows were
+# falsely attributed to CMA CGM via the boilerplate.
+_BOILERPLATE_MARKERS = (
+    "Best Regards",
+    "Best regards,",
+    "Thank you & Best Regards",
+    "Thank you and Best Regards",
+    "*Please note that ERD",
+    "*Due to the current",
+    "Due to the current tensions",
+    "*Maersk, Sealand",
+    "*Labor unrest",
+    "Email: Alexandra.Hernandez",  # signer — start of signature
+    "Email: MBD_OceanExportBookingShared",
+    "Email: MBD_",
+    "OL-USA\n265 Post Avenue",
+    "265 Post Avenue, Ste 333",
+    "Phone: 440-202-",
+    "CONFIDENTIAL:",
+)
+
+
+def _strip_boilerplate(body: str) -> str:
+    """Truncate body at the first boilerplate marker so the carrier scan
+    sees only the rate-quote prose, not OL's standard footer + disclaimers."""
+    if not body:
+        return ""
+    earliest = len(body)
+    for marker in _BOILERPLATE_MARKERS:
+        i = body.find(marker)
+        if i > 0 and i < earliest:
+            earliest = i
+    return body[:earliest]
+
 
 def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> tuple[str | None, float | None]:
     """For a Q&L row's source_imids, scan body texts for carrier+rate signal.
 
-    Returns (carrier, rate) — either may be None. Carrier is claimed only when
-    a carrier name AND a $-rate appear in the same body (avoids false positives
-    from carrier names mentioned in prose without a quote).
+    Strategy (rev 2026-05-08 after vessel-name false-positive surfaced):
+      1. PRIMARY: try BP.parse_rate_table(body) which extracts carrier
+         and rate from the structured pipe-table OL responses use.
+         This is correct by construction — column-aware. Catches
+         vessel-named-ONE issue ('ONE ORPHEUS' in vessel column doesn't
+         falsely claim ONE as carrier when 'CMA' is in the carrier column).
+      2. FALLBACK: only if the table parser returns nothing, fall back
+         to truncated-body + earliest-position scan. Used for prose-
+         format quotes ('option below with Hapag... $4193').
     """
     for imid in imids or []:
         key = imid.strip("<>").strip()
         body = bodies_by_imid.get(key)
         if not body:
             continue
-        rate_m = _BODY_RATE_PATTERN.search(body)
+
+        # PRIMARY: structured table parse
+        try:
+            parsed = BP.parse_rate_table(body)
+        except Exception:
+            parsed = {}
+        carrier = parsed.get("carrier_quoted")
+        rate = parsed.get("ol_rate")
+        if carrier:
+            canon = C.normalize_carrier(carrier) or carrier
+            return canon, (float(rate) if rate is not None else None)
+
+        # FALLBACK: prose-format body scan (truncate at boilerplate first)
+        truncated = _strip_boilerplate(body)
+        if not truncated:
+            continue
+        rate_m = _BODY_RATE_PATTERN.search(truncated)
         if not rate_m:
-            continue  # No rate = no quote = don't claim a carrier
+            continue
+        best_pos = None
+        best_canon = None
         for canonical, pat in _BODY_CARRIER_PATTERNS:
-            if pat.search(body):
-                rate_val = None
-                try:
-                    rate_val = float(rate_m.group(1).replace(",", ""))
-                except ValueError:
-                    pass
-                return canonical, rate_val
+            m = pat.search(truncated)
+            if m and (best_pos is None or m.start() < best_pos):
+                best_pos = m.start()
+                best_canon = canonical
+        if best_canon:
+            rate_val = None
+            try:
+                rate_val = float(rate_m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+            return best_canon, rate_val
     return None, None
 
 
