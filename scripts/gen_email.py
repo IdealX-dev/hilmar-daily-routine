@@ -396,9 +396,9 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
 """
 
 
-def _kpi_card(value, label, bg):
+def _kpi_card(value, label, bg, width="25%"):
     return f"""
-<td style="padding:4px;width:25%">
+<td style="padding:4px;width:{width}">
   <div style="background:{bg};color:white;border-radius:8px;padding:12px;text-align:center">
     <div style="font-size:20px;font-weight:bold">{_esc(value)}</div>
     <div style="font-size:11px;opacity:0.9;margin-top:4px">{_esc(label)}</div>
@@ -461,13 +461,14 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET)</h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day (last full day Lonny's office was open). Most days low; that's expected.</p>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
-    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6")}
-    {_kpi_card(f"{day['wins']} ({day['teu_won']} TEU)", f"Won — {day_short}", "#22c55e")}
-    {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444")}
-    {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b")}
+    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%")}
+    {_kpi_card(f"{day['wins']} ({day['teu_won']} TEU)", f"Won — {day_short}", "#22c55e", "20%")}
+    {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%")}
+    {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%")}
+    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%")}
   </tr>
 </table>
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — Period to Date</h2>

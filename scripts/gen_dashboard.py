@@ -191,6 +191,9 @@ def render(cfg: dict, data: dict) -> str:
     tdy_nq      = sum(1 for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted"))
     tdy_teu_nq  = sum(int(r.get("teu_requested") or 0)
                       for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted"))
+    tdy_pend    = sum(1 for r in today_reqs if r.get("status") == "PENDING")
+    tdy_teu_pend = sum(int(r.get("teu_requested") or 0)
+                       for r in today_reqs if r.get("status") == "PENDING")
 
     # lane + carrier summaries
     lanes = data.get("lane_summary", {}) or {}
@@ -341,12 +344,13 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>
 </div>
 
-<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day (Lonny's PT office not yet open at 10 AM ET fire)</h3>
+<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day. Math: Requests = Won + Q&amp;L + NQ + Pending.</h3>
 <div class="kpi-grid">
   <div class="kpi blue"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div></div>
   <div class="kpi green"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div></div>
   <div class="kpi red"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div></div>
   <div class="kpi amber"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div></div>
+  <div class="kpi" style="background:#8b5cf6;color:white"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div></div>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date}</h3>
 <div class="kpi-grid">

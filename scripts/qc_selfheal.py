@@ -856,6 +856,38 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
+    # QC-018: day-row math reconciliation. The KPI day-row in email + dashboard
+    # showed Requests vs W/QL/NQ but hid Pending — Michael 2026-05-08 caught
+    # 2 Requests vs 0W+0QL+1NQ = 1, off-by-one. Now Pending is shown as a 5th
+    # card and Total = W + QL + NQ + Pending. This QC enforces it.
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        # Compute report date (mirror gen_email._report_date)
+        _now_et = _dt.now(core.ET).date()
+        _wd = _now_et.weekday()
+        if _wd == 0: _delta = 3
+        elif _wd == 5: _delta = 1
+        elif _wd == 6: _delta = 2
+        else: _delta = 1
+        _report_iso = (_now_et - _td(days=_delta)).isoformat()
+        _day = [r for r in requests
+                if (r.get("request_date") == _report_iso) or (r.get("date") == _report_iso)]
+        _w  = sum(1 for r in _day if r.get("status") == "WIN")
+        _ql = sum(1 for r in _day if r.get("status") == "LOSS" and r.get("quoted"))
+        _nq = sum(1 for r in _day if r.get("status") == "LOSS" and not r.get("quoted"))
+        _p  = sum(1 for r in _day if r.get("status") == "PENDING")
+        _t  = len(_day)
+        _sum = _w + _ql + _nq + _p
+        if _t != _sum:
+            log.error(
+                f"QC-018: day-row math broken — total={_t} but W+QL+NQ+P={_sum} "
+                f"(W={_w}, QL={_ql}, NQ={_nq}, P={_p}). Some rows have unknown status."
+            )
+        else:
+            log.ok(f"QC-018: day-row math reconciled ({_t} = {_w}W + {_ql}QL + {_nq}NQ + {_p}P)")
+    except Exception as _e:
+        log.warn(f"QC-018: check failed with exception: {_e}")
+
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
     # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate

@@ -171,6 +171,31 @@ def cmd_daily(args) -> int:
     else:
         to, cc = args.to or [], args.cc or []
     attach = [Path(p) for p in (args.attach or [])]
+
+    # IDEMPOTENCY (added 2026-05-08 per Michael "why so many emails"):
+    # Each daily-distribution send writes a flag file `reports/sent-YYYY-MM-DD.flag`.
+    # If the flag already exists, this script REFUSES to send unless --force is
+    # passed. Catches the case where MBD-TRAVEL fires + Cloud PC fires on the
+    # same day, OR a human runs the script manually after a scheduled fire
+    # already shipped. The flag distinguishes the two send shapes:
+    #   sent-YYYY-MM-DD.flag           = full distribution (10 recipients)
+    #   improvements-sent-YYYY-MM-DD.flag = idealx.us audit (1 recipient)
+    from datetime import datetime as _dt
+    is_full_distribution = bool(args.to_from_config) or (
+        len(to) > 1 and any(addr.endswith("@ol-usa.com") for addr in (to or []))
+    )
+    is_audit = (len(to) == 1 and to and to[0].endswith("@idealx.us"))
+    today = _dt.now().strftime("%Y-%m-%d")
+    flag_name = "sent" if is_full_distribution else ("improvements-sent" if is_audit else None)
+    flag_path = ROOT / "reports" / f"{flag_name}-{today}.flag" if flag_name else None
+    if flag_path and flag_path.exists() and not getattr(args, "force", False):
+        print(f"⛔ IDEMPOTENCY: {flag_path.name} already exists.")
+        print(f"   Today's {flag_name} email already shipped:")
+        for line in flag_path.read_text(encoding='utf-8').splitlines()[:6]:
+            print(f"     {line}")
+        print(f"   Pass --force to send anyway (will append a new entry to flag).")
+        return 0
+
     print(f"→ TO ({len(to)}): {to}")
     print(f"→ CC ({len(cc)}): {cc}")
     print(f"→ SUBJECT: {subject}")
@@ -180,6 +205,12 @@ def cmd_daily(args) -> int:
         print("DRY — not sending"); return 0
     req_id = send_mail(to=to, cc=cc, subject=subject, html_body=body, attachments=attach)
     print(f"✅ Sent. request-id={req_id}")
+
+    if flag_path:
+        flag_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = flag_path.read_text(encoding='utf-8') if flag_path.exists() else ""
+        new_line = f"Sent {_dt.now().strftime('%Y-%m-%d %H:%M ET')} req={req_id} to={len(to)} recipient(s)\n"
+        flag_path.write_text(existing + new_line, encoding="utf-8")
     return 0
 
 
@@ -272,6 +303,8 @@ def main() -> int:
     pd.add_argument("--body-from-file", required=True)
     pd.add_argument("--attach", nargs="*")
     pd.add_argument("--dry", action="store_true")
+    pd.add_argument("--force", action="store_true",
+                    help="Override idempotency flag (re-send even if today's flag exists)")
     pd.set_defaults(func=cmd_daily)
 
     pn = sub.add_parser("nudge", help="Send a one-off internal nudge")
