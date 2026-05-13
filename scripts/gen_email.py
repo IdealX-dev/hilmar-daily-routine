@@ -276,13 +276,45 @@ def _winning_lane_rows(data):
     return rows[:10]
 
 
-def _not_quoted_rows(data):
+NQ_DISPLAY_WINDOW_DAYS = 14  # Hide stale NQ rows from the listing (still counted in aggregates)
+
+
+def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
+    """Return ALL Not-Quoted rows, filtered to the recent display window.
+
+    DISPLAY-ONLY filter — older NQ rows STILL count in summary totals,
+    lane TEU tallies, and trade-region aggregates. They just don't show
+    up in the per-row listing in the daily email since Lonny isn't going
+    to reply 2+ weeks later and the noise crowds out actionable rows.
+
+    Per Michael 2026-05-13: 'after 2 weeks with items that have no reply..
+    just remove them from system that says not quoted but keep it on the
+    talley of volumes that hilmar moves for rate negotiation'.
+
+    `cutoff_days=None` returns all rows (used by aggregates / QC).
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff_iso = None
+    if cutoff_days is not None:
+        cutoff_iso = (datetime.now(timezone.utc).date() - timedelta(days=cutoff_days)).isoformat()
     rows = []
     for r in data.get("requests", []):
         if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE":
+            if cutoff_iso is not None:
+                req_date = r.get("request_date") or r.get("date") or ""
+                if req_date < cutoff_iso:
+                    continue
             rows.append(r)
     rows.sort(key=lambda r: (r.get("request_date") or ""))
     return rows
+
+
+def _not_quoted_aggregate(data):
+    """ALL Not-Quoted rows regardless of age — for tally / TEU / lane stats
+    that should reflect total Hilmar volume for rate negotiation depth.
+    """
+    return [r for r in data.get("requests", [])
+            if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE"]
 
 
 def _pending_rows(data):
@@ -630,9 +662,16 @@ def _losing_lanes_html(rows):
 """
 
 
-def _nq_html(rows):
-    """Full-detail NQ table — every column needed to root-cause WHY OL did not quote."""
-    if not rows:
+def _nq_html(rows, total_nq=None, teu_total=None):
+    """Full-detail NQ table — every column needed to root-cause WHY OL did not quote.
+
+    `rows` is the recent display window only (14 days). `total_nq` and
+    `teu_total` cover ALL no-response losses across the data range and are
+    surfaced in the header so the volume tally for rate negotiation depth
+    is still visible — Michael 2026-05-13: 'keep it on the talley of volumes
+    that hilmar moves for rate negotiation'.
+    """
+    if not rows and not total_nq:
         return ""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
@@ -669,9 +708,15 @@ def _nq_html(rows):
   <td style="padding:6px 8px;font-size:10px;color:#64748b;font-family:monospace">{_esc(imid_short)}</td>
 </tr>
 """
+    # Build header with both visible-window count + total tally for rate-negotiation context
+    total_label = f"{total_nq} total" if total_nq is not None and total_nq != len(rows) else f"{len(rows)} total"
+    teu_label = f" • {teu_total} TEU" if teu_total else ""
+    older_count = (total_nq or len(rows)) - len(rows)
+    older_note = (f" • {older_count} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden from listing "
+                  f"but counted in volume tally for rate negotiation") if older_count > 0 else ""
     return f"""
-<h2 style="color:#d97706;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fde68a;padding-bottom:8px">⚠️ Not Quoted — Period to Date ({len(rows)} threads where OL never replied)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Full request audit — every field needed to root-cause why OL did not respond. NO_RESPONSE losses only.</p>
+<h2 style="color:#d97706;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fde68a;padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#d97706;color:white">
     <th style="padding:8px;text-align:left">Date</th>
@@ -828,7 +873,10 @@ def build_body(data, cfg):
     carrier_rows = _carrier_rows(data)
     winning_lanes = _winning_lane_rows(data)
     losing_lanes = _losing_lane_rows(data)
-    nq_rows = _not_quoted_rows(data)
+    nq_rows = _not_quoted_rows(data)  # 14-day display window only
+    nq_all = _not_quoted_aggregate(data)  # full tally for rate-negotiation context
+    nq_total_count = len(nq_all)
+    nq_total_teu = sum(int(r.get("teu_requested") or 0) for r in nq_all)
     pend_rows = _pending_rows(data)
 
     html_body = _header_html(report_label, date_range, updated_label)
@@ -839,7 +887,7 @@ def build_body(data, cfg):
     html_body += _trade_region_html(data, data.get("summary", {}) or {})
     html_body += _winning_lanes_html(winning_lanes)
     html_body += _losing_lanes_html(losing_lanes)
-    html_body += _nq_html(nq_rows)
+    html_body += _nq_html(nq_rows, total_nq=nq_total_count, teu_total=nq_total_teu)
     html_body += _pending_html(pend_rows)
     html_body += FOOTER_HTML
     html_body += "</div></div>"

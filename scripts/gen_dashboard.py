@@ -430,14 +430,26 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     html += '</div>\n'
 
     # Not Quoted — full audit detail (every field needed to root-cause)
-    html += f'<div class="section"><h2>⚠️ Not Quoted — {len(nq)} requests, {teu_nq} TEU</h2>\n'
-    html += '<p style="font-size:11px;color:#64748b;margin:0 0 6px">Full audit view — every field needed to root-cause why OL did not respond.</p>\n'
-    if nq:
+    # 14-day display window per Michael 2026-05-13: 'after 2 weeks with items
+    # that have no reply just remove them from system that says not quoted
+    # but keep it on the talley of volumes that hilmar moves for rate
+    # negotiation'. Aggregates (len(nq), teu_nq) stay unchanged.
+    NQ_DISPLAY_WINDOW_DAYS = 14
+    from datetime import datetime as _dt2, timezone as _tz, timedelta as _td2
+    _nq_cutoff = (_dt2.now(_tz.utc).date() - _td2(days=NQ_DISPLAY_WINDOW_DAYS)).isoformat()
+    nq_recent = [r for r in nq if (r.get("request_date") or r.get("date") or "") >= _nq_cutoff]
+    _older_hidden = len(nq) - len(nq_recent)
+    _hidden_note = (f' • {_older_hidden} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden '
+                    'from listing but counted in volume tally for rate negotiation') if _older_hidden > 0 else ''
+    html += (f'<div class="section"><h2>⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days '
+             f'({len(nq_recent)} listed • {len(nq)} total • {teu_nq} TEU)</h2>\n')
+    html += f'<p style="font-size:11px;color:#64748b;margin:0 0 6px">Full audit view — every field needed to root-cause why OL did not respond.{_hidden_note}</p>\n'
+    if nq_recent:
         html += ('<table><tr>'
                  '<th>Date</th><th>Lonny Sent (PT)</th><th>Origin</th><th>Destination</th>'
                  '<th>Equipment</th><th>TEU</th><th>ETA Asked</th><th>OL Mailbox</th>'
                  '<th>Aging</th><th>Source IMID</th></tr>\n')
-        for r in sorted(nq, key=lambda x: x.get("request_date") or x.get("date","")):
+        for r in sorted(nq_recent, key=lambda x: x.get("request_date") or x.get("date","")):
             hs = _hours_since(r.get("request_timestamp"))
             if hs is not None:
                 aging = f"{hs//24}d" if hs >= 24 else f"{hs}h"
@@ -461,7 +473,11 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
             )
         html += '</table>'
     else:
-        html += '<p class="dod-empty">OL-USA responded to every request. Clean.</p>'
+        if len(nq) > 0:
+            html += (f'<p class="dod-empty">No NO_RESPONSE losses in the last {NQ_DISPLAY_WINDOW_DAYS} days. '
+                     f'{len(nq)} older entries counted in volume tally.</p>')
+        else:
+            html += '<p class="dod-empty">OL-USA responded to every request. Clean.</p>'
     html += '</div>\n'
 
     # Volume by Trade Region — must reconcile to summary totals

@@ -856,6 +856,50 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
+    # QC-020: stale-NQ display cutoff is enforced AND aggregates remain whole.
+    # Per Michael 2026-05-13: 'after 2 weeks with items that have no reply..
+    # just remove them from system that says not quoted but keep it on the
+    # talley of volumes that hilmar moves for rate negotiation'.
+    # Two assertions:
+    #   (a) every NQ row in reports/email-body.html has request_date within
+    #       the last 14 days (the display cutoff)
+    #   (b) summary.not_quoted + summary.teu_not_quoted still count ALL NQ
+    #       rows regardless of age (volume tally preserved for rate-neg)
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        import re as _re
+        NQ_WINDOW = 14
+        _cutoff = (_dt.now(core.ET).date() - _td(days=NQ_WINDOW)).isoformat()
+        # Aggregate check (b)
+        _all_nq = [r for r in requests
+                   if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE"]
+        _summary_nq = (data.get("summary") or {}).get("not_quoted", 0)
+        if _summary_nq != len(_all_nq):
+            log.error(
+                f"QC-020b: summary.not_quoted={_summary_nq} but raw count={len(_all_nq)}. "
+                "Display-window filter leaked into the aggregate — volume tally broken."
+            )
+        else:
+            log.ok(f"QC-020b: NQ aggregate intact ({len(_all_nq)} total — full tally for rate-neg)")
+        # Display check (a)
+        _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
+        if _body_path.exists():
+            _body = _body_path.read_text(encoding="utf-8")
+            # NQ table rows have dates in YYYY-MM-DD format in the first <td>
+            # Extract dates that appear between the NQ section header and its </table>
+            _nq_section = _body.split("Not Quoted")[1] if "Not Quoted" in _body else ""
+            _nq_dates = _re.findall(r"\b(202\d-\d{2}-\d{2})\b", _nq_section[:8000])
+            _stale = [d for d in _nq_dates if d < _cutoff]
+            if _stale:
+                log.warn(
+                    f"QC-020a: NQ section has {len(_stale)} rows older than {NQ_WINDOW}d "
+                    f"({_stale[0]}..{_stale[-1]}). Display cutoff not applied."
+                )
+            else:
+                log.ok(f"QC-020a: NQ section display rows all within last {NQ_WINDOW} days")
+    except Exception as _e:
+        log.warn(f"QC-020: check failed with exception: {_e}")
+
     # QC-019: status-change rows on the report date must have carrier_quoted.
     # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
     # carrier and no rate". When OL responds with a rate quote, the row's
