@@ -856,6 +856,44 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
+    # QC-019: status-change rows on the report date must have carrier_quoted.
+    # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
+    # carrier and no rate". When OL responds with a rate quote, the row's
+    # status transitions PENDING -> QUOTED/WIN/LOSS, and that response body
+    # carries the carrier+rate. If the parser fails to extract them (new
+    # multi-line pipe-table template surfaced this week), the status change
+    # appears in the email body but the carrier/rate columns are empty —
+    # broken UX and broken negotiation depth. This QC catches the failure
+    # at the data level so the email doesn't ship with empty cells.
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        _now_et = _dt.now(core.ET).date()
+        _wd = _now_et.weekday()
+        if _wd == 0: _delta = 3
+        elif _wd == 5: _delta = 1
+        elif _wd == 6: _delta = 2
+        else: _delta = 1
+        _report_iso = (_now_et - _td(days=_delta)).isoformat()
+        _missing = []
+        for r in requests:
+            for h in (r.get("status_history") or []):
+                at = (h.get("at") or "")[:10]
+                if (at == _report_iso and h.get("from") and h.get("to")
+                        and h["from"] != h["to"] and h["to"] in ("QUOTED","WIN","LOSS")):
+                    if not r.get("carrier_quoted") and not r.get("carrier_won"):
+                        _missing.append(f"{(h.get('at') or '')[11:19]} {r.get('lane','?')}")
+                    break
+        if _missing:
+            log.error(
+                f"QC-019: {len(_missing)} status-change(s) on {_report_iso} have no "
+                f"carrier — parser missed extraction. Rows: " + "; ".join(_missing[:5])
+                + (f" + {len(_missing)-5} more" if len(_missing) > 5 else "")
+            )
+        else:
+            log.ok(f"QC-019: all status changes on {_report_iso} have carrier attribution")
+    except Exception as _e:
+        log.warn(f"QC-019: check failed with exception: {_e}")
+
     # QC-018: day-row math reconciliation. The KPI day-row in email + dashboard
     # showed Requests vs W/QL/NQ but hid Pending — Michael 2026-05-08 caught
     # 2 Requests vs 0W+0QL+1NQ = 1, off-by-one. Now Pending is shown as a 5th

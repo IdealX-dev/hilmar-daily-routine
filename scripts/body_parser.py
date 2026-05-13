@@ -416,12 +416,78 @@ _CARRIER_EXCLUDE = {"MSC", "CMA", "ONE", "HMM", "OOCL", "ZIM"}
 _TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate")
 
 
+def _collapse_multiline_pipe_table(text: str) -> str:
+    """Convert multi-line pipe-table format (each cell on its own line with
+    leading '|') into the single-line format _find_table_rows expects.
+
+    NEW OL TEMPLATE (caught 2026-05-13 — Michael "status change of pending to
+    quoted with no carrier and no rate"):
+        POL
+         | POD
+         | Container Size
+         ...
+         | DESTINATION FREE TIME
+         |
+        Oakland
+         | Yokohama
+         | 2x40'RF
+         ...
+         | $3500
+         | CMA
+
+    OLD OL TEMPLATE (still works):
+        POL | POD | Container Size | ... | RATE | CARRIER | ...
+        Oakland | Yokohama | 2x40'RF | ... | $3500 | CMA | ...
+
+    Both templates need to parse. This collapser detects the multi-line
+    shape (a non-pipe-leading word/phrase followed by 5+ pipe-leading lines)
+    and joins them with ' | ' separators. Old template is unchanged.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    out_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        stripped = line.strip()
+        # Multi-line table opener: a non-empty non-pipe line followed by
+        # several pipe-leading lines. Threshold: 4+ continuation lines to
+        # avoid false positives on regular prose.
+        if (stripped and not stripped.startswith("|") and i + 1 < len(lines)
+                and lines[i + 1].strip().startswith("|")):
+            row = [stripped]
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if nxt.startswith("|"):
+                    # Strip leading '|' (and optional ' ') then capture cell
+                    cell = nxt[1:].strip()
+                    row.append(cell)
+                    j += 1
+                else:
+                    break
+            if len(row) >= 5:  # Real multi-line row, not a fluke
+                # Drop trailing blank cells (from trailing "| " lines)
+                while row and not row[-1]:
+                    row.pop()
+                out_lines.append(" | ".join(row))
+                i = j
+                continue
+        out_lines.append(line)
+        i += 1
+    return "\n".join(out_lines)
+
+
 def _find_table_rows(text: str):
     """Extract pipe-delimited rate-table rows from OL response bodies.
     Returns [header_row, data_row] or None.
+    Handles both single-line and multi-line pipe-table formats — multi-line
+    bodies are pre-collapsed before scanning.
     """
     if not text:
         return None
+    text = _collapse_multiline_pipe_table(text)
     rows = []
     header_idx = None
     for line in text.split("\n"):

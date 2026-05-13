@@ -322,8 +322,15 @@ def main():
     # you fix the drifts and all from the 1233pm report". The table-format
     # parser caught ~48% of Q&L. The body-scan looks at the actual rate-
     # response message body for carrier + rate co-occurrence.
+    # 2026-05-13: extended to also patch PENDING rows (per Michael "status
+    # change of pending to quoted with no carrier and no rate"). When OL
+    # responds to a request, it transitions PENDING -> QUOTED but the row
+    # stays in PENDING-final-status until Lonny replies. Those PENDING
+    # rows have a rate-response in source_imids that carries carrier+rate.
+    # The body-scan should fill those just like it fills Q&L.
     for r in requests:
-        if r.get("status") != "LOSS" or not r.get("quoted"):
+        target_status = (r.get("status") == "LOSS" and r.get("quoted")) or (r.get("status") == "PENDING")
+        if not target_status:
             continue
         if r.get("carrier_quoted"):
             continue
@@ -338,7 +345,8 @@ def main():
             if rate is not None and not r.get("ol_rate"):
                 r["ol_rate"] = rate
                 patched_rate += 1
-            print(f"  PATCH Q&L  {r.get('request_id')[:16]} -> {canon}"
+            status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
+            print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
                   + (f" @ ${rate:.0f}" if rate else ""))
 
     if patched_carrier == 0 and patched_lane == 0 and patched_ql_carrier == 0:
