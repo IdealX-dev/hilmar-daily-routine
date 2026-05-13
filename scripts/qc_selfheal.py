@@ -856,6 +856,167 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
+    # ─────────────────────────────────────────────────────────────────────
+    # QC-021 through QC-025 added 2026-05-13 per Michael "all errors must be
+    # fixed in the system not to happen again and added to qc and audit self
+    # healing etc etc etc". One check per class of error this session hit.
+    # ─────────────────────────────────────────────────────────────────────
+
+    # QC-021: today's wrapper actually shipped the email.
+    # Cause: 5/8 + 5/11 wrappers exited 255 between "Pipeline exit code: 0"
+    # and the send step. Pipeline succeeded, no email shipped. This QC
+    # parses the run-log for today's date and asserts that a successful
+    # send line follows the pipeline section.
+    try:
+        from datetime import datetime as _dt
+        _log_path = Path(__file__).resolve().parent.parent / "reports" / "run-log.txt"
+        if _log_path.exists():
+            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-40000:]
+            _today_us = _dt.now().strftime("%m/%d/%Y")  # 05/13/2026
+            _today_iso = _dt.now().strftime("%Y-%m-%d")
+            # Find today's wrapper header
+            if _today_us in _tail or _today_iso in _tail:
+                # Look for "Sent. request-id=" AFTER today's marker
+                _idx = max(_tail.find(_today_us), _tail.find(_today_iso))
+                _after = _tail[_idx:] if _idx >= 0 else _tail
+                if "Sent. request-id=" in _after:
+                    log.ok("QC-021: today's wrapper completed send step")
+                elif "Pipeline exit code: 0" in _after:
+                    log.warn(
+                        "QC-021: today's pipeline completed BUT no 'Sent. request-id='"
+                        " line follows. Wrapper may have exited before sending. Check"
+                        " idempotency flag — if today's flag exists, email already went"
+                        " out (manual fire or earlier scheduled fire). If not, send is"
+                        " missing — investigate run-log."
+                    )
+                else:
+                    log.warn("QC-021: today's wrapper started but pipeline never completed")
+            else:
+                # No fire today yet — only WARN on weekday afternoons
+                _now_et = _dt.now(core.ET)
+                if _now_et.weekday() < 5 and _now_et.hour >= 11:
+                    log.warn(
+                        f"QC-021: no wrapper fire for {_today_iso} in run-log "
+                        f"(past 11 AM ET on a weekday — Cloud PC should have fired by now)"
+                    )
+                else:
+                    log.ok(f"QC-021: no wrapper fire yet for {_today_iso} (off-hours)")
+    except Exception as _e:
+        log.warn(f"QC-021: check failed with exception: {_e}")
+
+    # QC-022: distribution list invariants — must include michael.deitchman@idealx.us,
+    # must be exactly 10 recipients, must NOT include external (non-ol-usa, non-idealx)
+    # domains. Catches accidental edits to config.json that could leak emails.
+    try:
+        _cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+        if _cfg_path.exists():
+            import json as _json
+            _cfg = _json.loads(_cfg_path.read_text(encoding="utf-8"))
+            _full = _cfg.get("distribution", {}).get("full_list", []) or []
+            _missing = []
+            if "michael.deitchman@idealx.us" not in [a.lower() for a in _full]:
+                _missing.append("michael.deitchman@idealx.us")
+            _external = [a for a in _full
+                         if not (a.lower().endswith("@ol-usa.com") or a.lower().endswith("@idealx.us"))]
+            _problems = []
+            if _missing:
+                _problems.append(f"missing: {_missing}")
+            if _external:
+                _problems.append(f"external domain(s): {_external}")
+            if len(_full) < 8 or len(_full) > 12:
+                _problems.append(f"unexpected count: {len(_full)}")
+            if _problems:
+                log.error("QC-022: distribution list invariant violations: " + "; ".join(_problems))
+            else:
+                log.ok(f"QC-022: distribution list OK ({len(_full)} recipients, idealx.us + ol-usa only)")
+    except Exception as _e:
+        log.warn(f"QC-022: check failed with exception: {_e}")
+
+    # QC-023: MSAL token cache freshness. Tokens silently refresh up to ~90d
+    # but the refresh-token TTL eventually expires and silent refresh fails,
+    # causing send to error out. Warn at 60d so we have time to re-auth.
+    try:
+        _cache_paths = [
+            Path(__file__).resolve().parent.parent / "secrets" / "token-cache.json",
+            Path(__file__).resolve().parent.parent / "secrets" / "token-cache.bin",
+        ]
+        _found = next((p for p in _cache_paths if p.exists()), None)
+        if _found:
+            from datetime import datetime as _dt, timezone as _tz
+            _age = (_dt.now(_tz.utc).timestamp() - _found.stat().st_mtime) / 86400.0
+            if _age > 80:
+                log.error(
+                    f"QC-023: MSAL token cache is {_age:.0f}d old (>80d) — silent refresh "
+                    "will fail soon. Re-auth: `python scripts/outlook_send.py auth`."
+                )
+            elif _age > 60:
+                log.warn(
+                    f"QC-023: MSAL token cache {_age:.0f}d old (>60d). Plan a re-auth "
+                    "soon before silent refresh fails."
+                )
+            else:
+                log.ok(f"QC-023: MSAL token cache fresh ({_age:.0f}d, file: {_found.name})")
+        else:
+            log.warn("QC-023: no MSAL token cache found — sends will fail")
+    except Exception as _e:
+        log.warn(f"QC-023: check failed with exception: {_e}")
+
+    # QC-024: stage-path consistency. Multiple scripts read stage_emails — they
+    # must all read the SAME file. Bug surfaced 5/13: gen_improvements_report
+    # was reading legacy .jsonl while qc_selfheal read .txt, causing a phantom
+    # "stage stale 192h" red flag. This QC asserts the two sources agree on
+    # which file is current (compares mtime — the live file must be newer).
+    try:
+        _scripts_dir = Path(__file__).resolve().parent
+        _txt = _scripts_dir / "stage_emails.txt"
+        _jsonl = _scripts_dir / "stage_emails.jsonl"
+        if _txt.exists() and _jsonl.exists():
+            _txt_age = _txt.stat().st_mtime
+            _jsonl_age = _jsonl.stat().st_mtime
+            if _jsonl_age > _txt_age + 3600:  # .jsonl newer by 1+ hour
+                log.warn(
+                    "QC-024: stage_emails.jsonl is NEWER than .txt — refresh_stage may "
+                    "have reverted to legacy format. Investigate."
+                )
+            else:
+                log.ok(f"QC-024: stage path consistent (.txt is current source)")
+        elif _txt.exists():
+            log.ok("QC-024: stage_emails.txt is the sole source (no legacy .jsonl)")
+        elif _jsonl.exists():
+            log.error("QC-024: only legacy .jsonl exists — refresh_stage should write .txt")
+        else:
+            log.warn("QC-024: neither stage_emails.txt nor .jsonl found")
+    except Exception as _e:
+        log.warn(f"QC-024: check failed with exception: {_e}")
+
+    # QC-025: per-day flag integrity. Each daily send writes a line to
+    # reports/sent-YYYY-MM-DD.flag. Multiple lines are normal (manual fire +
+    # scheduled fire same day) BUT >3 lines in one day means something is
+    # looping or auto-retrying — investigate.
+    try:
+        from datetime import datetime as _dt
+        _today = _dt.now().strftime("%Y-%m-%d")
+        _flag = Path(__file__).resolve().parent.parent / "reports" / f"sent-{_today}.flag"
+        if _flag.exists():
+            _lines = [ln for ln in _flag.read_text(encoding="utf-8").splitlines()
+                      if ln.strip().startswith("Sent ")]
+            if len(_lines) > 5:
+                log.error(
+                    f"QC-025: {len(_lines)} 'Sent' entries in today's flag — "
+                    "something is looping. Check scheduled tasks + manual fires."
+                )
+            elif len(_lines) > 3:
+                log.warn(
+                    f"QC-025: {len(_lines)} 'Sent' entries in today's flag — "
+                    "more than expected (manual + scheduled = 2 max usually)."
+                )
+            else:
+                log.ok(f"QC-025: today's flag has {len(_lines)} send entries (healthy)")
+        else:
+            log.ok(f"QC-025: today's flag not present (no send yet — normal pre-10AM)")
+    except Exception as _e:
+        log.warn(f"QC-025: check failed with exception: {_e}")
+
     # QC-020: stale-NQ display cutoff is enforced AND aggregates remain whole.
     # Per Michael 2026-05-13: 'after 2 weeks with items that have no reply..
     # just remove them from system that says not quoted but keep it on the
