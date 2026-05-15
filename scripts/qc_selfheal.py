@@ -989,6 +989,47 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-027: data completeness across key fields. Surfaced 2026-05-13 by
+    # Michael "also data missing throughout the report". Ingest's old runs
+    # lost etd_offered / vessel_voyage / transshipment from many rate-response
+    # bodies. patch_carriers now backfills these in PASS 2. This QC verifies
+    # the backfill is working — alerts if missing-rates for the WIN/Q&L
+    # cohort exceed the agreed thresholds.
+    try:
+        _active = [r for r in requests if r.get("status") in ("WIN", "LOSS", "PENDING")]
+        if _active:
+            _checks = [
+                # (field, threshold_warn_pct, threshold_error_pct, label)
+                ("etd_offered",   60, 80, "ETD"),
+                ("eta_offered",   60, 80, "ETA"),
+                ("vessel_voyage", 60, 80, "Vessel/Voyage"),
+                ("ol_rate",       50, 70, "Rate"),
+            ]
+            _problems = []
+            _ok_count = 0
+            for fld, warn_t, err_t, label in _checks:
+                # Only check rows that should have this field — Q&L + WIN with
+                # rate-response. PENDING with no response_timestamp gets a pass.
+                _candidates = [r for r in _active if r.get("response_timestamp")]
+                if not _candidates:
+                    continue
+                _missing = sum(1 for r in _candidates if not r.get(fld))
+                _pct = _missing * 100 / len(_candidates)
+                if _pct >= err_t:
+                    _problems.append(f"{label}={_pct:.0f}% missing (ERROR)")
+                elif _pct >= warn_t:
+                    _problems.append(f"{label}={_pct:.0f}% missing (WARN)")
+                else:
+                    _ok_count += 1
+            if any("ERROR" in p for p in _problems):
+                log.error(f"QC-027: data completeness — " + "; ".join(_problems))
+            elif _problems:
+                log.warn(f"QC-027: data completeness — " + "; ".join(_problems))
+            else:
+                log.ok(f"QC-027: data completeness OK on {len(_checks)} key fields")
+    except Exception as _e:
+        log.warn(f"QC-027: check failed with exception: {_e}")
+
     # QC-026: script-sync drift between OneDrive (live) and git repo (remote).
     # Per Michael 2026-05-13 "i need this to become a remote app as well so i
     # can use code from my phone and other laptops". The wrapper now git-pulls

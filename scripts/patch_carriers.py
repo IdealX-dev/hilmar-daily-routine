@@ -160,18 +160,55 @@ def _strip_boilerplate(body: str) -> str:
     return body[:earliest]
 
 
-def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> tuple[str | None, float | None]:
-    """For a Q&L row's source_imids, scan body texts for carrier+rate signal.
+def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> dict:
+    """Return the full parsed quote from any source body — carrier, rate, ETD,
+    ETA, vessel/voyage, transshipment, free-time, POL/POD.
 
-    Strategy (rev 2026-05-08 after vessel-name false-positive surfaced):
-      1. PRIMARY: try BP.parse_rate_table(body) which extracts carrier
-         and rate from the structured pipe-table OL responses use.
-         This is correct by construction — column-aware. Catches
-         vessel-named-ONE issue ('ONE ORPHEUS' in vessel column doesn't
-         falsely claim ONE as carrier when 'CMA' is in the carrier column).
-      2. FALLBACK: only if the table parser returns nothing, fall back
-         to truncated-body + earliest-position scan. Used for prose-
-         format quotes ('option below with Hapag... $4193').
+    Returns a dict ready to merge into the request row. Empty dict if nothing
+    parseable. Extended 2026-05-13 per Michael "data missing throughout the
+    report" — ingest's old runs lost these fields; this backfills.
+    """
+    for imid in imids or []:
+        key = imid.strip("<>").strip()
+        body = bodies_by_imid.get(key)
+        if not body:
+            continue
+        try:
+            parsed = BP.parse_rate_table(body)
+        except Exception:
+            parsed = {}
+        if parsed.get("carrier_quoted"):
+            # Canonicalize carrier name
+            canon = C.normalize_carrier(parsed["carrier_quoted"]) or parsed["carrier_quoted"]
+            parsed["carrier_quoted"] = canon
+            return parsed
+        # Fallback prose-scan for carrier+rate (still useful for non-table bodies)
+        truncated = _strip_boilerplate(body)
+        if not truncated:
+            continue
+        rate_m = _BODY_RATE_PATTERN.search(truncated)
+        if not rate_m:
+            continue
+        best_pos = None
+        best_canon = None
+        for canonical, pat in _BODY_CARRIER_PATTERNS:
+            m = pat.search(truncated)
+            if m and (best_pos is None or m.start() < best_pos):
+                best_pos = m.start()
+                best_canon = canonical
+        if best_canon:
+            try:
+                rate_val = float(rate_m.group(1).replace(",", ""))
+            except ValueError:
+                rate_val = None
+            return {"carrier_quoted": best_canon, "ol_rate": rate_val}
+    return {}
+
+
+def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> tuple[str | None, float | None]:
+    """Back-compat wrapper around _discover_full_quote_from_bodies.
+    Returns (carrier, rate) for existing call-sites; new code should use
+    the full-dict variant to backfill etd, eta, vessel, transshipment too.
     """
     for imid in imids or []:
         key = imid.strip("<>").strip()
@@ -328,36 +365,69 @@ def main():
     # stays in PENDING-final-status until Lonny replies. Those PENDING
     # rows have a rate-response in source_imids that carries carrier+rate.
     # The body-scan should fill those just like it fills Q&L.
+    # Two-pass enrichment:
+    # PASS 1 — fill carrier_quoted on Q&L + PENDING rows missing it (primary
+    #          goal of patch_carriers since its inception).
+    # PASS 2 — fill etd_offered, eta_offered, vessel_voyage, transshipment,
+    #          and other table fields on ALL rows where they're missing AND
+    #          source_imids has a parseable rate-response body. Added 2026-05-13
+    #          per Michael "data missing throughout the report" — addresses
+    #          the 70% etd_offered / 69% vessel_voyage missing-rate.
+    patched_fields = 0
+    field_hits: dict[str, int] = {}
+    BACKFILL_KEYS = (
+        "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
+        "container_size", "pol", "pod", "dthc",
+        "origin_cutoff", "doc_cutoff", "port_cutoff",
+    )
+
     for r in requests:
-        target_status = (r.get("status") == "LOSS" and r.get("quoted")) or (r.get("status") == "PENDING")
-        if not target_status:
-            continue
-        if r.get("carrier_quoted"):
-            continue
         imids = r.get("source_imids") or []
         if not imids:
             continue
-        canon, rate = _discover_carrier_from_bodies(imids, bodies_by_imid)
-        if canon:
-            r["carrier_quoted"] = C.normalize_carrier(canon) or canon
+        parsed = _discover_full_quote_from_bodies(imids, bodies_by_imid)
+        if not parsed:
+            continue
+
+        # PASS 1: carrier+rate (only on Q&L + PENDING)
+        target_status = (r.get("status") == "LOSS" and r.get("quoted")) or (r.get("status") == "PENDING")
+        if target_status and not r.get("carrier_quoted") and parsed.get("carrier_quoted"):
+            canon = parsed["carrier_quoted"]
+            r["carrier_quoted"] = canon
             patched_ql_carrier += 1
             body_hits.append(f"{r.get('request_id')}->{canon}")
-            if rate is not None and not r.get("ol_rate"):
-                r["ol_rate"] = rate
+            if parsed.get("ol_rate") is not None and not r.get("ol_rate"):
+                r["ol_rate"] = parsed["ol_rate"]
                 patched_rate += 1
             status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
             print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
-                  + (f" @ ${rate:.0f}" if rate else ""))
+                  + (f" @ ${parsed['ol_rate']:.0f}" if parsed.get('ol_rate') else ""))
 
-    if patched_carrier == 0 and patched_lane == 0 and patched_ql_carrier == 0:
-        print("Nothing to patch - all target rows already have carrier and lane.")
+        # PASS 2: structured-table fields on ALL rows (regardless of status).
+        # Only fill if the row doesn't already have the value and the parse
+        # produced one. Never overwrite existing data.
+        for k in BACKFILL_KEYS:
+            if not r.get(k) and parsed.get(k):
+                r[k] = parsed[k]
+                patched_fields += 1
+                field_hits[k] = field_hits.get(k, 0) + 1
+        # ol_rate on WIN/PENDING rows too (PASS 1 only does it during carrier patch)
+        if not r.get("ol_rate") and parsed.get("ol_rate") is not None:
+            r["ol_rate"] = parsed["ol_rate"]
+            patched_rate += 1
+
+    if (patched_carrier == 0 and patched_lane == 0
+            and patched_ql_carrier == 0 and patched_fields == 0):
+        print("Nothing to patch - all target rows already complete.")
         return
 
     print(f"\nSummary: {patched_carrier} WIN-carrier patches "
           f"({len(auto_hits)} auto / {len(manual_hits)} manual), "
           f"{patched_lane} lane patches, "
-          f"{patched_ql_carrier} Q&L-carrier patches "
-          f"(via body scan), {patched_rate} rate patches")
+          f"{patched_ql_carrier} Q&L-carrier patches (via body scan), "
+          f"{patched_rate} rate patches, "
+          f"{patched_fields} field backfills "
+          f"({', '.join(f'{k}:{v}' for k, v in sorted(field_hits.items()))})")
 
     meta = data.setdefault("meta", {})
     rev = int(meta.get("revision", 0)) + 1
