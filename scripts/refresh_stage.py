@@ -196,6 +196,56 @@ def get_message_body(token: str, message_id: str) -> dict:
     return graph_get(token, url, params=params)
 
 
+def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path) -> list[str]:
+    """Download PDF attachments for a message. Returns list of saved filenames.
+
+    Added 2026-05-13 per Michael "90 percent for all is the bare minimum".
+    Booking-confirmation emails have signature-only bodies; the actual
+    vessel/ETD/rate data is in the attached PDF. pdf_parser.py reads these.
+    Saves to scripts/stage_pdfs/<safe_imid>.pdf. Idempotent — skips if
+    already downloaded.
+    """
+    import base64
+    import requests as _req
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    safe_imid = re.sub(r"[^A-Za-z0-9._-]+", "_", imid.strip("<>"))[:100]
+    target_pdf = dest_dir / f"{safe_imid}.pdf"
+    if target_pdf.exists():
+        return [target_pdf.name]  # already cached
+    # List attachments
+    list_url = f"{GRAPH}/me/messages/{message_id}/attachments?$select=id,name,contentType,size"
+    try:
+        listing = graph_get(token, list_url)
+    except Exception:
+        return saved
+    for att in listing.get("value", []) or []:
+        name = (att.get("name") or "").lower()
+        ctype = (att.get("contentType") or "").lower()
+        if not (name.endswith(".pdf") or "pdf" in ctype):
+            continue
+        att_id = att.get("id")
+        if not att_id:
+            continue
+        # Fetch content
+        content_url = f"{GRAPH}/me/messages/{message_id}/attachments/{att_id}"
+        try:
+            data = graph_get(token, content_url)
+        except Exception:
+            continue
+        bytes_b64 = data.get("contentBytes")
+        if not bytes_b64:
+            continue
+        try:
+            pdf_bytes = base64.b64decode(bytes_b64)
+        except Exception:
+            continue
+        target_pdf.write_bytes(pdf_bytes)
+        saved.append(target_pdf.name)
+        break  # one PDF per message is enough
+    return saved
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Classification
 # ─────────────────────────────────────────────────────────────────────
@@ -311,6 +361,8 @@ def main() -> int:
                     help="Per-message classification trace")
     ap.add_argument("--no-bodies", action="store_true",
                     help="Stage metadata only — skip body fetch (debug)")
+    ap.add_argument("--pdf-backfill", action="store_true",
+                    help="Also fetch PDF attachments for existing mbd_inbound bodies that don't have them on disk yet (one-time catch-up).")
     ap.add_argument("--max-results-per-query", type=int, default=250,
                     help="Cap results per search query (default 250)")
     args = ap.parse_args()
@@ -426,23 +478,39 @@ def main() -> int:
         print("\nDRY RUN — no writes")
         return 0
 
-    if not new_stage:
+    if not new_stage and not args.pdf_backfill:
         print("\nNothing new to stage.")
         return 0
+    if not new_stage and args.pdf_backfill:
+        print("\nNothing new to stage — proceeding to PDF backfill of existing bodies.")
+        # Fall through to backfill block below by skipping the new-body fetch loop
+        body_count = 0
+        body_failures = 0
+        pdf_count = 0
+        pdf_dir = ROOT / "scripts" / "stage_pdfs"
+        # Jump to backfill block via a guard
+        _skip_to_backfill = True
+    else:
+        _skip_to_backfill = False
 
-    # Append stage records (atomic — we hold the file open ourselves)
-    print(f"\nAppending {len(new_stage)} records to {STAGE_PATH.name}...")
-    for it, bucket in new_stage:
-        append_stage_record(build_stage_record(it, bucket))
+    if not _skip_to_backfill:
+        # Append stage records (atomic — we hold the file open ourselves)
+        print(f"\nAppending {len(new_stage)} records to {STAGE_PATH.name}...")
+        for it, bucket in new_stage:
+            append_stage_record(build_stage_record(it, bucket))
 
-    if args.no_bodies:
-        print("--no-bodies set — skipping body fetch.")
-        return 0
+        if args.no_bodies:
+            print("--no-bodies set — skipping body fetch.")
+            return 0
 
     # Fetch bodies for new entries (skipping any whose imid is already in bodies file)
-    body_count = 0
-    body_failures = 0
-    for it, bucket in new_stage:
+    if not _skip_to_backfill:
+        body_count = 0
+        body_failures = 0
+        pdf_count = 0
+        pdf_dir = ROOT / "scripts" / "stage_pdfs"
+    _body_iter = [] if _skip_to_backfill else new_stage
+    for it, bucket in _body_iter:
         imid = it.get("internetMessageId")
         if imid and imid in existing_body_imids:
             continue
@@ -454,8 +522,9 @@ def main() -> int:
             continue
         body = full.get("body") or {}
         sender = ((full.get("from") or {}).get("emailAddress") or {}).get("address")
+        msg_imid = full.get("internetMessageId") or full["id"]
         FB.upsert_body(
-            imid=full.get("internetMessageId") or full["id"],
+            imid=msg_imid,
             bucket=bucket,
             uri=f"mail:///messages/{full['id']}",
             subject=full.get("subject") or "",
@@ -466,10 +535,75 @@ def main() -> int:
             received_ts=full.get("receivedDateTime"),
         )
         body_count += 1
+        # Booking-confirmation bodies are signature-only — pull the PDF
+        # attachment for pdf_parser.py to extract vessel/ETD/rate from.
+        # Only mbd_inbound (booking confirmations) — the other buckets
+        # don't carry useful PDFs.
+        if bucket == "mbd_inbound" and it.get("hasAttachments"):
+            try:
+                saved = fetch_pdf_attachments(token, full["id"], msg_imid, pdf_dir)
+                if saved:
+                    pdf_count += 1
+                    if args.verbose:
+                        print(f"  PDF  {saved[0]}")
+            except Exception as e:
+                if args.verbose:
+                    print(f"  pdf fetch FAIL {imid[:40]}: {e}")
         if args.verbose:
             print(f"  BODY {bucket:<22} {(full.get('subject') or '')[:60]!r}")
 
-    print(f"\nrefresh_stage: fetched {body_count} new bodies, {body_failures} failures")
+    print(f"\nrefresh_stage: fetched {body_count} new bodies, {body_failures} failures, "
+          f"{pdf_count} PDF attachments")
+
+    # Backfill PDF attachments for existing mbd_inbound bodies. The PDF
+    # download was added 2026-05-13 — prior fires never pulled PDFs.
+    # This catches up the historical booking confirmations so pdf_parser
+    # can extract their data. Idempotent: skips imids whose PDF is
+    # already on disk.
+    if args.pdf_backfill:
+        print("\nrefresh_stage: PDF backfill for existing mbd_inbound bodies…")
+        bodies_path = ROOT / "scripts" / "stage_emails_bodies.txt"
+        pdf_backfilled = 0
+        pdf_skipped = 0
+        pdf_fail = 0
+        if bodies_path.exists():
+            import re as _re
+            for line in bodies_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if d.get("bucket") != "mbd_inbound":
+                    continue
+                imid = (d.get("imid") or "").strip("<>")
+                if not imid:
+                    continue
+                safe_imid = _re.sub(r"[^A-Za-z0-9._-]+", "_", imid)[:100]
+                target = pdf_dir / f"{safe_imid}.pdf"
+                if target.exists():
+                    pdf_skipped += 1
+                    continue
+                # Reconstruct the Graph message_id from the URI saved in body record
+                uri = d.get("uri") or ""
+                m = _re.search(r"messages/([^/]+)", uri)
+                if not m:
+                    continue
+                msg_id = m.group(1)
+                try:
+                    saved = fetch_pdf_attachments(token, msg_id, imid, pdf_dir)
+                    if saved:
+                        pdf_backfilled += 1
+                    if args.verbose:
+                        print(f"  backfill {('PDF ' + saved[0]) if saved else 'no-attach'} {imid[:50]}")
+                except Exception as e:
+                    pdf_fail += 1
+                    if args.verbose:
+                        print(f"  backfill FAIL {imid[:50]}: {e}")
+        print(f"refresh_stage: PDF backfill — {pdf_backfilled} new, {pdf_skipped} already-cached, {pdf_fail} failed")
+
     return 0 if body_failures == 0 else 1
 
 

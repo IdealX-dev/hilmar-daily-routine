@@ -25,6 +25,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import core as C  # noqa: E402
 import body_parser as BP  # noqa: E402
+try:
+    import pdf_parser as PDF  # noqa: E402
+    _PDF_OK = True
+except Exception:
+    _PDF_OK = False
 
 # Manual fallback — only for MDOLX refs whose stage subjects truly have
 # no carrier signal. Auto-discovery handles the common case.
@@ -97,6 +102,102 @@ def _load_bodies_by_imid() -> dict[str, str]:
         body = d.get("text_body") or d.get("body") or d.get("body_text") or d.get("summary_preview") or ""
         if body:
             out[imid] = body
+    return out
+
+
+def _load_rate_responses_by_thread() -> dict[tuple, str]:
+    """Index mbd_rate_response bodies by (conversation_id, mdolx_ref, lane).
+
+    Used by patch_carriers PASS 2 to find a sibling rate-response when the
+    current row's source_imid points to a booking-confirmation body that
+    has no inline ETD/vessel/rate (data is in the PDF attachment, but the
+    rate-response email for the SAME MDOLX has the pipe-table inline).
+
+    Returns dict keyed by (conversation_id|mdolx_ref|lane_key) → body text.
+    Each key is a separate index entry pointing to the same body, so a
+    lookup by any of the three signals finds the rate-response.
+    """
+    out: dict[tuple, str] = {}
+    bodies_path = ROOT / "scripts" / "stage_emails_bodies.txt"
+    if not bodies_path.exists():
+        return out
+    import re as _re
+    for line in bodies_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        if d.get("bucket") != "mbd_rate_response":
+            continue
+        body = d.get("text_body") or d.get("body") or ""
+        if not body:
+            continue
+        conv = (d.get("conversation_id") or "").strip()
+        if conv:
+            out[("conv", conv)] = body
+        subject = d.get("subject") or ""
+        m = _re.search(r"MDOLX\s*0*(\d{4,})", subject, _re.IGNORECASE)
+        if m:
+            out[("mdolx", m.group(1))] = body
+        # Lane fallback (Oakland-to-Yokohama-type subjects)
+        m2 = _re.search(r"([A-Z][a-z]+)\s+to\s+([A-Z][a-z]+)", subject)
+        if m2:
+            lane_key = f"{m2.group(1)}->{m2.group(2)}".lower()
+            out.setdefault(("lane", lane_key), body)
+    return out
+
+
+def _find_related_rate_response(row: dict, by_thread: dict[tuple, str]) -> str | None:
+    """Look up a rate-response body for this row by thread signals."""
+    conv = (row.get("conversation_id") or "").strip()
+    if conv:
+        body = by_thread.get(("conv", conv))
+        if body:
+            return body
+    for cand in [row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or []):
+        if cand:
+            body = by_thread.get(("mdolx", str(cand)))
+            if body:
+                return body
+    origin = (row.get("origin") or "").strip().lower()
+    dest = (row.get("destination") or "").strip().lower()
+    if origin and dest:
+        body = by_thread.get(("lane", f"{origin}->{dest}"))
+        if body:
+            return body
+    return None
+
+
+def _index_pdfs_by_mdolx() -> dict[str, Path]:
+    """Scan scripts/stage_pdfs/ once and index PDFs by the MDOLX number
+    they contain. Cheaper than re-parsing for every row.
+
+    Many WIN rows' source_imids don't match the PDF imids on disk (the WIN
+    was created from one message in the thread; the PDF was downloaded
+    from a different message). The booking-PDF text reliably contains
+    "BOOKING CONFIRMATION MDOLX<number>" near the top — use it as the
+    join key.
+    """
+    if not _PDF_OK:
+        return {}
+    out: dict[str, Path] = {}
+    pdf_dir = ROOT / "scripts" / "stage_pdfs"
+    if not pdf_dir.exists():
+        return out
+    for pdf in pdf_dir.glob("*.pdf"):
+        try:
+            text = PDF._extract_pdf_text(pdf)
+        except Exception:
+            continue
+        if not text:
+            continue
+        # OL booking PDFs say "BOOKING CONFIRMATION MDOLX<ref>" near the top
+        m = re.search(r"MDOLX\s*0*(\d{4,})", text, re.IGNORECASE)
+        if m:
+            out.setdefault(m.group(1), pdf)
     return out
 
 
@@ -292,7 +393,11 @@ def main():
 
     stage_by_mdolx = _load_stage_subjects_by_mdolx()
     bodies_by_imid = _load_bodies_by_imid()
+    rate_by_thread = _load_rate_responses_by_thread()
+    pdfs_by_mdolx = _index_pdfs_by_mdolx()
     normalized_manual = {mdolx: C.normalize_carrier(c) for mdolx, c in CARRIER_BY_MDOLX.items()}
+    if pdfs_by_mdolx:
+        print(f"  loaded {len(pdfs_by_mdolx)} PDFs indexed by MDOLX")
 
     def _row_mdolx_candidates(row):
         out = []
@@ -383,9 +488,65 @@ def main():
 
     for r in requests:
         imids = r.get("source_imids") or []
-        if not imids:
-            continue
-        parsed = _discover_full_quote_from_bodies(imids, bodies_by_imid)
+        parsed = _discover_full_quote_from_bodies(imids, bodies_by_imid) if imids else {}
+
+        # Cross-thread fallback: if the source_imid body had no parseable
+        # table (booking-confirmation bodies are signature-only — data is
+        # in the PDF attachment), look up a sibling rate-response for the
+        # same MDOLX / conversation / lane. Added 2026-05-13 per Michael
+        # "no.. 90 percent for all is the bare minimum". Booking-conf
+        # rows now inherit ETD/vessel/rate from their corresponding
+        # rate-response email.
+        needs_fields = not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
+        if needs_fields:
+            sibling = _find_related_rate_response(r, rate_by_thread)
+            if sibling:
+                try:
+                    sib_parsed = BP.parse_rate_table(sibling)
+                except Exception:
+                    sib_parsed = {}
+                # Merge — sibling fills only what current parse missed
+                for k, v in (sib_parsed or {}).items():
+                    if v and not parsed.get(k):
+                        parsed[k] = v
+                if sib_parsed.get("carrier_quoted"):
+                    canon = C.normalize_carrier(sib_parsed["carrier_quoted"]) or sib_parsed["carrier_quoted"]
+                    parsed.setdefault("carrier_quoted", canon)
+
+        # PDF-attachment fallback: for booking-confirmation rows whose
+        # body is signature-only AND have no sibling rate-response in
+        # stage, try the attached PDF. Two lookup paths:
+        #   1. Direct: PDF saved at same imid filename
+        #   2. Cross-reference by MDOLX (PDFs are indexed by the MDOLX
+        #      number found in their text — works even when the row's
+        #      source_imid doesn't match the PDF's imid)
+        if _PDF_OK and not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate")):
+            pdf_path = None
+            # Try direct imid match
+            for imid in imids:
+                safe_imid = re.sub(r"[^A-Za-z0-9._-]+", "_", imid.strip("<>"))[:100]
+                p = ROOT / "scripts" / "stage_pdfs" / f"{safe_imid}.pdf"
+                if p.exists():
+                    pdf_path = p
+                    break
+            # Cross-reference by MDOLX if no direct match
+            if pdf_path is None:
+                for cand in [r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or []):
+                    if cand and cand in pdfs_by_mdolx:
+                        pdf_path = pdfs_by_mdolx[cand]
+                        break
+            if pdf_path:
+                try:
+                    pdf_parsed = PDF.parse_booking_pdf(pdf_path)
+                except Exception:
+                    pdf_parsed = {}
+                for k, v in (pdf_parsed or {}).items():
+                    if v and not parsed.get(k):
+                        parsed[k] = v
+                if pdf_parsed.get("carrier_quoted"):
+                    canon = C.normalize_carrier(pdf_parsed["carrier_quoted"]) or pdf_parsed["carrier_quoted"]
+                    parsed.setdefault("carrier_quoted", canon)
+
         if not parsed:
             continue
 
