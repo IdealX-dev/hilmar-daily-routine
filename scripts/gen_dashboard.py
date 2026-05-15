@@ -334,6 +334,33 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
   .tab-content{{display:block!important;page-break-inside:avoid;page-break-after:always}}
   .section{{box-shadow:none;border:1px solid #e2e8f0}}
 }}
+
+/* Mobile-responsive — added 2026-05-13 per Michael "i need this to become
+   a remote app as well so i can use code from my phone and other laptops".
+   The dashboard is the primary daily-view artifact and now renders cleanly
+   on phones (iOS Mail attachment preview, Outlook mobile, OneDrive mobile). */
+@media (max-width:768px){{
+  body{{padding:8px;font-size:13px}}
+  .header h1{{font-size:17px}}
+  .header .subtitle{{font-size:11px}}
+  .header .tz-note{{font-size:10px}}
+  .kpi-grid{{grid-template-columns:repeat(2,1fr) !important;gap:6px}}
+  .kpi{{padding:8px}}
+  .kpi .value{{font-size:18px}}
+  .kpi .label{{font-size:10px}}
+  .section{{padding:10px;margin:6px 0}}
+  .section h2{{font-size:14px}}
+  table{{font-size:11px}}
+  th,td{{padding:4px 6px}}
+  /* Hide low-signal columns on narrow screens */
+  .source-imid,.imid-col{{display:none}}
+  /* Wrap long cells */
+  td{{word-break:break-word}}
+}}
+@media (max-width:480px){{
+  .kpi-grid{{grid-template-columns:1fr !important}}
+  th,td{{padding:3px 4px;font-size:10px}}
+}}
 </style>
 </head><body>
 

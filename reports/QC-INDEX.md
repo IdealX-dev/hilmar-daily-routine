@@ -4,8 +4,8 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13. Total active checks: **25** (QC-001 through QC-020a/b
-+ QC-021 through QC-025). Last commit: see `git log scripts/qc_selfheal.py`.
+Generated 2026-05-13. Total active checks: **26** (QC-001 through QC-020a/b
++ QC-021 through QC-026). Last commit: see `git log scripts/qc_selfheal.py`.
 
 ## How to read this table
 
@@ -44,7 +44,8 @@ Generated 2026-05-13. Total active checks: **25** (QC-001 through QC-020a/b
 | QC-022 | ERROR | Distribution list missing idealx.us OR has external domain OR wrong count | None — gates next send | 2026-05-13 (new) |
 | QC-023 | ERROR/WARN | MSAL token cache > 80d (ERROR) / > 60d (WARN) — silent refresh failing soon | None — manual re-auth | 2026-05-13 (new) |
 | QC-024 | ERROR/WARN | Stage path drift (legacy .jsonl newer than .txt) | None | 2026-05-13 (new) |
-| QC-025 | ERROR/WARN | Today's sent-flag has > 5 entries (ERROR) / > 3 (WARN) — looping | None — investigate | 2026-05-13 (new) |
+| QC-025 | ERROR/WARN | Today's sent-flag has > 5 entries (ERROR) / > 3 (WARN) — looping | None — investigate | 2026-05-13 (`cd5fe6c`) |
+| QC-026 | WARN | Scripts in OneDrive drift from git repo (>3 files differ) — remote-edit sync broken | Auto via wrapper Step 0 git-pull next fire | 2026-05-13 (this commit) |
 
 ## Errors this session that drove the new checks
 

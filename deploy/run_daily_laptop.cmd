@@ -64,6 +64,31 @@ echo   ROOT: %ROOT% >> "%LOG%"
 echo   PY:   %PY% >> "%LOG%"
 echo ================================================================ >> "%LOG%"
 
+REM Step 0 — pull latest scripts from GitHub.
+REM Added 2026-05-13 per Michael "i need this to become a remote app as well
+REM so i can use code from my phone and other laptops". Edits made in
+REM GitHub Codespaces (browser-based VS Code from phone/any device) commit
+REM to the IdealX-dev/hilmar-daily-routine repo. This step pulls the latest
+REM version into the OneDrive folder so tomorrow's pipeline runs the new
+REM code. Pulls are silent — no log spam if there's nothing to update.
+echo --- git_pull --- >> "%LOG%"
+if exist "%ROOT%\hilmar-daily-routine\.git" (
+  pushd "%ROOT%\hilmar-daily-routine"
+  git pull --quiet origin main >> "%LOG%" 2>&1
+  popd
+  REM Copy any updated scripts + wrapper from the repo to the live OneDrive
+  REM locations the pipeline reads. xcopy /Y overwrites without prompting,
+  REM /Q is quiet. /D:m-d-y is omitted so all files copy (safe — git pull
+  REM already filtered to only-changed). EXCLUDES the wrapper itself
+  REM (we're running it right now — replacing in-flight is dangerous).
+  xcopy /Y /Q "%ROOT%\hilmar-daily-routine\scripts\*.py" "%ROOT%\scripts\" >> "%LOG%" 2>&1
+  if exist "%ROOT%\hilmar-daily-routine\config.json" (
+    xcopy /Y /Q "%ROOT%\hilmar-daily-routine\config.json" "%ROOT%\" >> "%LOG%" 2>&1
+  )
+) else (
+  echo git pull SKIPPED: no .git in %ROOT%\hilmar-daily-routine >> "%LOG%"
+)
+
 REM Step 1 — refresh stage from Outlook
 echo --- refresh_stage --- >> "%LOG%"
 "%PY%" scripts\refresh_stage.py --days-back 14 >> "%LOG%" 2>&1

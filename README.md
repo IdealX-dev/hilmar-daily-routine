@@ -1,66 +1,104 @@
-# Hilmar Daily Tracker — claude.ai routine deployment
+# Hilmar Daily Tracker
 
-Standalone Hilmar daily-email pipeline. Cloud-scheduled via claude.ai routines (the `/v1/code/triggers` API). Independent of any user device.
+Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 10:00 AM ET each weekday from a Win365 Cloud PC.
 
-**Not** related to rate-blaster. **Not** related to the deprecated Azure VM. Treat as standalone.
+**Status (2026-05-13):** 26-check QC matrix, 100% Q&L carrier coverage, idempotent sends, multi-line table parser, Codespaces-ready for editing from any device.
+
+---
+
+## Remote access — view, edit, and run from anywhere
+
+### 📱 View today's report from your phone
+- **Outlook mobile app** — the daily email arrives with `hilmar-dashboard.html` attached. Tap to open in browser. The dashboard is mobile-responsive (auto-collapses KPI grid, hides low-signal columns).
+- **OneDrive mobile app** — `IdealX → claude → PROJECT HILMAR → reports → hilmar-dashboard.html`. Always shows the latest pipeline output.
+- **Outlook web** — `outlook.office.com` works from any browser. Search "Daily Shipment Tracker" to find today's email.
+- **Audit inbox** — `michael.deitchman@idealx.us` receives the Daily Systems Audit (red flags / observations / suggestions) alongside the OL distribution copy.
+
+### 💻 Edit code from any device — GitHub Codespaces
+1. Open `https://github.com/IdealX-dev/hilmar-daily-routine` in any browser (phone, iPad, other laptop)
+2. Click the green **"<> Code"** button → **"Codespaces"** tab → **"Create codespace on main"**
+3. Full VS Code opens in your browser with Python 3.12, all dependencies pre-installed (per `.devcontainer/devcontainer.json`), and Claude Code extension
+4. Edit, test (`python scripts/run_tests.py`), commit, push — all from the browser
+5. **Tomorrow's wrapper auto-pulls your changes**: Cloud PC's `run_daily_laptop.cmd` runs `git pull` at startup and `xcopy`s updated scripts into the OneDrive folder before the pipeline fires (Step 0 in the wrapper)
+
+⚠️ Codespaces CANNOT send Outlook emails — the MSAL token cache lives in OneDrive (on the Cloud PC) and Conditional Access blocks sends from Anthropic's IP range anyway. Use Codespaces for code edits + tests only; let the Cloud PC handle the production fires.
+
+### 🖥️ Run the pipeline remotely — Win365 Cloud PC web access
+1. Open `https://windows.cloud.microsoft` in any browser (phone has clunky touch UX but works)
+2. Sign in with `michael.deitchman@idealx.us`
+3. Select `CPC-micha-E552L` to RDP into the Cloud PC from your browser
+4. Open File Explorer → `C:\Users\MichaelDeitchman\OneDrive - IdealX\claude\PROJECT HILMAR`
+5. Double-click `deploy\run_daily_laptop.cmd` to fire the wrapper manually. Idempotency flag (`reports/sent-YYYY-MM-DD.flag`) prevents duplicate sends if the 10 AM scheduled fire already ran.
+
+### 🤖 Drive via Claude (any device with claude.ai)
+- Open `claude.ai` in any browser. Tell Claude what you want changed/checked. Claude can edit code via Codespaces / GitHub, schedule routines, or surface findings to your IdealX audit inbox.
+- The hilmar-daily-routine repo is the single source of truth; the Cloud PC pulls from it each fire.
+
+---
 
 ## What this repo holds
 
 ```
-scripts/         # The pipeline — refresh_stage → ingest → QC → render → send
-config.json      # Distribution list, paths, rules. Paths auto-heal on session.
-schema.json      # JSON Schema for tracking-data-v2.json
-requirements.txt # reportlab, msal, requests, tzdata
+scripts/         Python pipeline modules (ingest → drift → QC → patch → render)
+deploy/          Wrapper batch (run_daily_laptop.cmd) + qc_alert + Cloud PC setup
+config.json      Distribution list, paths, rules
+schema.json      JSON Schema for tracking-data-v2.json
+requirements.txt reportlab, msal, requests, tzdata
+reports/         QC-INDEX.md (the 26-check matrix index)
+.devcontainer/   Codespaces config — auto-installs Python deps + extensions
 ```
 
-## What lives in OneDrive (NOT in git)
+## What lives only in OneDrive (NOT in git)
 
-```
-tracking-data-v2.json   # Live request state — written by ingest each run
-scripts/stage_emails*.jsonl   # Outlook fetch cache — refresh_stage appends
-data-backups/           # 14-snapshot rotation kept by qc_selfheal
-reports/                # Daily artifacts (HTML, PDF, scorecards)
-secrets/                # MSAL token cache (chmod 600)
-```
+Live data + secrets that must never hit GitHub:
+- `tracking-data-v2.json` — current request state (rebuilt each fire by ingest)
+- `scripts/stage_emails.txt` + `stage_emails_bodies.txt` — Outlook fetch cache
+- `data-backups/` — rotating snapshots (14 retained, dual-format prune)
+- `secrets/token-cache.json` — MSAL refresh token (chmod 600)
+- `reports/` daily artifacts (HTML dashboard, PDF, scorecards, run-log, sent flags)
 
-The routine reads/writes those via the M365 MCP each fire — never via git.
+`.gitignore` enforces this separation.
 
-## How the routine works each fire
+## Daily flow
 
-1. Clones this repo into the sandbox.
-2. Reads `tracking-data-v2.json` + stage files from OneDrive (M365 MCP).
-3. Refreshes stage from Outlook via Microsoft Graph (using the cached MSAL token from secrets/, which lives in OneDrive too).
-4. Runs `python scripts/run_pipeline.py` — full pipeline (ingest → QC → carrier patch → QC → dashboard → PDF → scorecards → email body).
-5. Sends the daily email via Outlook to the 9-recipient distribution.
-6. Uploads the updated tracking-data + reports back to OneDrive.
-7. Archives yesterday's artifacts into `reports/history/<YYYY-MM-DD>/`.
+Cloud PC `CPC-micha-E552L` Task Scheduler fires `deploy\run_daily_laptop.cmd` at 10:00 AM ET weekdays:
 
-## Deployment steps (next session, one-time)
+| Step | Script | What |
+|---|---|---|
+| 0 | `git pull` + `xcopy` | Pull latest scripts from GitHub repo into OneDrive |
+| 1 | `refresh_stage.py` | Pull new Lonny↔OL emails + HILMAR booking confirmations via Microsoft Graph |
+| 2 | `run_pipeline.py` | backup → ingest → drift_check → QC → patch_carriers → QC → dashboard → PDF → scorecards → email body |
+| 3 | `outlook_send.py daily` | Send to full distribution (10 recipients incl. idealx.us). Idempotent via `reports/sent-YYYY-MM-DD.flag` |
+| 4 | `qc_alert_if_needed.py` | Email Michael if QC drifts from CLEAN |
+| 5 | `gen_improvements_report.py` + `outlook_send.py daily` | Daily Systems Audit to `michael.deitchman@idealx.us` only |
 
-1. **Create the GitHub repo** at `github.com/IdealX-dev/hilmar-daily-routine` (private). Set its `main` branch as the default.
-2. **Push this directory** to it:
-   ```
-   cd "C:\Users\MichaelDeitchman\OneDrive - IdealX\claude\PROJECT HILMAR\hilmar-daily-routine"
-   git remote add origin https://github.com/IdealX-dev/hilmar-daily-routine.git
-   git branch -M main
-   git push -u origin main
-   ```
-3. **Fire the RemoteTrigger create** from a Claude Code session — full body in `DEPLOY-ROUTINE-2026-05-05.md`.
-4. **Manual test fire** the new routine (one-shot, not on cron yet) — confirm a clean dry-run.
-5. **Enable the cron** `30 11 * * 1-5` (UTC = 7:30 AM ET weekdays).
-6. **Disable Cowork's `hilmar-rate-desk-daily`** to avoid duplicate sends.
+## QC + self-heal matrix
 
-## Hard scope rules (encoded in the routine prompt)
+See [`reports/QC-INDEX.md`](reports/QC-INDEX.md) for the full 26-check index: severity, what each catches, what self-healing fires automatically, which commit added it.
 
-- Touch only this repo. No rate-blaster, no Azure, no other clients' bookings.
-- Refuse any out-of-scope prompts; ask the user to use a separate session.
-- Never device-code-prompt from a cron context. If MSAL token expired, email Michael and stop.
-- Never overwrite filled fields with None (additive merge guards this in ingest).
+Standing rule: every new code pattern ships with its QC counterpart in the same commit.
 
-## Standing rules (per Michael)
+## Distribution list
 
-- **data is life** — every change goes through QC and self-heal; never silently mutate.
-- Any new code pattern ships its QC + self-heal counterpart in the same commit.
-- Times reported to Michael in chat are ET (DST-aware via zoneinfo).
+Defined in `config.json` `distribution.full_list`. Currently 10 recipients:
+- `michael.deitchman@ol-usa.com`
+- `michael.deitchman@idealx.us`
+- 8 additional OL operators (alan.baer, carrie.murphy, seada.sabic, caren.tobel, linda.echevarria, steve.petriccione, MBD_Export_Pricing, MBD_OceanExportBookingShared)
 
-— prepared 2026-05-05 EOD by laptop Code session, ready to push.
+QC-022 ERROR-gates accidental edits to this list (catches missing idealx.us, external domains, wrong count).
+
+## Authentication
+
+MSAL public client (`outlook_send.py`) device-code flow → token cache at `secrets/token-cache.json`. Silent refresh works as long as token is < 80 days old (QC-023 warns at 60 days). Re-auth: `python scripts/outlook_send.py auth`.
+
+## Commit hash history
+
+See `git log --oneline`. Major milestones since 2026-05-07 cutover:
+- `697e219` Yesterday-KPI semantics + Mon-Fri week labels + QC-011
+- `c24255d` Patch_carriers auto-discovery + trade-region map + QC-014/015/016
+- `c13d831` parse_rate_table primary + QC-017
+- `f6aae29` Day-row math reconciliation (Pending card) + QC-018 + outlook_send idempotency
+- `505f644` Multi-line pipe-table parser + QC-019
+- `a6bc3d2` NQ 14-day display cutoff + QC-020a/b
+- `cd5fe6c` QC-021/022/023/024/025 + QC-INDEX.md
+- (this commit) Codespaces config + wrapper git-pull + QC-026 + mobile-responsive dashboard

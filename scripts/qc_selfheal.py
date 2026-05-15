@@ -989,6 +989,43 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-026: script-sync drift between OneDrive (live) and git repo (remote).
+    # Per Michael 2026-05-13 "i need this to become a remote app as well so i
+    # can use code from my phone and other laptops". The wrapper now git-pulls
+    # latest scripts into OneDrive each fire. This QC verifies the two are
+    # in sync — drift means either the pull failed, or a manual edit landed
+    # in OneDrive that isn't in git yet (will be overwritten next pull).
+    try:
+        _live_scripts = Path(__file__).resolve().parent
+        _repo_scripts = _live_scripts.parent / "hilmar-daily-routine" / "scripts"
+        if _repo_scripts.exists():
+            _diffs = []
+            for live in _live_scripts.glob("*.py"):
+                repo = _repo_scripts / live.name
+                if not repo.exists():
+                    _diffs.append(f"{live.name} (not in repo)")
+                    continue
+                if live.read_bytes() != repo.read_bytes():
+                    _diffs.append(live.name)
+            if len(_diffs) > 3:
+                log.warn(
+                    f"QC-026: {len(_diffs)} scripts drift between OneDrive and repo: "
+                    + ", ".join(_diffs[:5])
+                    + (f" + {len(_diffs)-5} more" if len(_diffs) > 5 else "")
+                    + " — next wrapper git-pull will overwrite local edits"
+                )
+            elif _diffs:
+                log.ok(
+                    f"QC-026: {len(_diffs)} script(s) differ — minor drift, "
+                    f"will sync on next fire: {', '.join(_diffs)}"
+                )
+            else:
+                log.ok("QC-026: scripts in OneDrive match git repo (no drift)")
+        else:
+            log.warn("QC-026: hilmar-daily-routine/scripts not found — git remote sync disabled")
+    except Exception as _e:
+        log.warn(f"QC-026: check failed with exception: {_e}")
+
     # QC-025: per-day flag integrity. Each daily send writes a line to
     # reports/sent-YYYY-MM-DD.flag. Multiple lines are normal (manual fire +
     # scheduled fire same day) BUT >3 lines in one day means something is
