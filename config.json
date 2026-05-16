@@ -112,6 +112,27 @@
     "pacific": "America/Los_Angeles",
     "utc": "UTC"
   },
+  "auto_chase": {
+    "enabled": true,
+    "max_per_day": 3,
+    "earliest_send_hour_et": 16,
+    "min_age_hours": 24,
+    "recipient": "lupfold@hilmaringredients.com",
+    "cc": "michael.deitchman@idealx.us",
+    "_note": "Enabled 2026-05-14 per Michael 'sure'. Soft nudges to Lonny on PENDING quotes ≥24h old, ≤3/day, ≥4 PM ET only, deduped per request_id/day."
+  },
+  "alerts": {
+    "teams_webhook_url": "",
+    "events": ["win", "pending_overdue", "qc_error", "big_day"],
+    "min_teu_for_big_day": 30,
+    "_note": "Empty teams_webhook_url = alerts queue to reports/alerts-queue.json. To go live: Teams channel → ⋯ → Connectors → Incoming Webhook → copy URL here. Michael 2026-05-14: thought permissions came from rate-tracker — none configured anywhere in user's projects."
+  },
+  "backup": {
+    "secondary_onedrive_dir": "%USERPROFILE%/OneDrive - IdealX/HILMAR_BACKUPS",
+    "local_offline_dir": "%USERPROFILE%/hilmar-local-backups",
+    "retention_days": 30,
+    "_note": "Daily backup to a separate OneDrive folder (cloud) + local-offline folder (not OneDrive-synced) per Michael 2026-05-14 'onedrive backup is fine.. or offline backup somewhere'."
+  },
   "ingest_scope": {
     "mailboxes_to_scan": [
       "michael.deitchman@ol-usa.com"

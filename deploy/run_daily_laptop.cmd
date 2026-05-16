@@ -139,6 +139,12 @@ REM == true AND it's past earliest_send_hour_et). No-op by default.
 echo --- auto_chase --- >> "%LOG%"
 "%PY%" scripts\auto_chase_pending.py >> "%LOG%" 2>&1
 
+REM Step 4.9 — dual-target offline backup (separate OneDrive folder + local
+REM offline folder). Defense in depth against OneDrive corruption / accidental
+REM delete to PROJECT HILMAR/. Idempotent; rotates older than retention_days.
+echo --- backup_offline --- >> "%LOG%"
+"%PY%" scripts\backup_offline.py >> "%LOG%" 2>&1
+
 REM Step 5 — daily systems-audit report (idempotent at script level, idealx.us only)
 echo --- improvements_report (Michael only) --- >> "%LOG%"
 "%PY%" scripts\gen_improvements_report.py >> "%LOG%" 2>&1

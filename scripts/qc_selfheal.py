@@ -989,6 +989,53 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-032: offline backup freshness. Daily backup runs at wrapper Step 4.9
+    # to two targets (secondary OneDrive folder + local offline folder). If
+    # the most recent backup in EITHER target is >36h old, defense-in-depth
+    # is broken. WARN at >36h, ERROR at >72h.
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        import os as _os
+        import json as _j
+        _cfg_path = Path(__file__).resolve().parent.parent / "config.json"
+        _cfg_data = _j.loads(_cfg_path.read_text(encoding="utf-8")) if _cfg_path.exists() else {}
+        _cfg = _cfg_data.get("backup", {}) or {}
+        home = Path(_os.environ.get("USERPROFILE", _os.path.expanduser("~")))
+        # Use raw config strings (may have %USERPROFILE% — expand)
+        def _expand_p(p):
+            return Path(_os.path.expandvars(p))
+        targets = []
+        sec = _cfg.get("secondary_onedrive_dir", "%USERPROFILE%/OneDrive - IdealX/HILMAR_BACKUPS")
+        loc = _cfg.get("local_offline_dir", "%USERPROFILE%/hilmar-local-backups")
+        for label, p in [("secondary", _expand_p(sec)), ("offline", _expand_p(loc))]:
+            if p.exists():
+                latest = max(
+                    (f.stat().st_mtime for f in p.glob("hilmar-*.tar.gz")),
+                    default=None,
+                )
+                if latest:
+                    age_h = (_dt.now().timestamp() - latest) / 3600.0
+                    targets.append((label, age_h, p))
+                else:
+                    targets.append((label, None, p))
+            else:
+                targets.append((label, "missing", p))
+
+        ok_count = sum(1 for _, age, _p in targets if isinstance(age, (int, float)) and age <= 36)
+        if ok_count == 2:
+            log.ok(f"QC-032: backup fresh at both targets ({targets[0][1]:.1f}h secondary, "
+                   f"{targets[1][1]:.1f}h offline)")
+        elif ok_count == 1:
+            log.warn(f"QC-032: backup fresh at only 1 of 2 targets — "
+                     + "; ".join(f"{l}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
+                                  for l, a, _p in targets))
+        else:
+            log.error(f"QC-032: NO backup target is fresh — defense-in-depth broken: "
+                      + "; ".join(f"{l}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
+                                   for l, a, _p in targets))
+    except Exception as _e:
+        log.warn(f"QC-032: check failed with exception: {_e}")
+
     # QC-030: transit-time data coverage. ETD + ETA together yield transit
     # days — Hilmar's carrier-comparison metric. We need both fields populated
     # on ≥80% of WIN/Q&L rows to produce a useful Carrier Rate + Transit
