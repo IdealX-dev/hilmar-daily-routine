@@ -112,6 +112,8 @@ def analyze_lane_cheat_sheet(data: dict, top_n: int = 15) -> list[dict]:
             "rate_won_max": s.get("rate_won_max"),
             "rate_lost_median": s.get("rate_lost_median"),
             "price_gap_median": s.get("price_gap_median"),
+            "transit_median_days": s.get("transit_median_days"),
+            "transit_min_days": s.get("transit_min_days"),
             "last_request_date": s.get("last_request_date"),
         })
     rows.sort(key=lambda r: (-r["quotes"], -r["teu_won"]))
@@ -193,7 +195,7 @@ def analyze_lane_regression(data: dict) -> list[dict]:
 
 
 def analyze_winning_rate_trends(data: dict) -> dict:
-    """Per-carrier rate trends — what we're winning at vs. losing at."""
+    """Per-carrier rate + transit trends — what we're winning at, how fast."""
     carriers = data.get("carrier_summary", {}) or {}
     trends = {}
     for c, s in carriers.items():
@@ -203,6 +205,8 @@ def analyze_winning_rate_trends(data: dict) -> dict:
             "rate_min": s.get("rate_min"),
             "rate_median": s.get("rate_median"),
             "rate_max": s.get("rate_max"),
+            "transit_median_days": s.get("transit_median_days"),
+            "transit_min_days": s.get("transit_min_days"),
             "lanes": s.get("lane_count"),
             "quotes": s["quotes"],
             "wins": s["wins"],
@@ -249,11 +253,14 @@ def render_section_html(analysis: dict) -> str:
   <th style="padding:6px;text-align:center">Won median</th>
   <th style="padding:6px;text-align:center">Lost median</th>
   <th style="padding:6px;text-align:center">Gap</th>
+  <th style="padding:6px;text-align:center">Transit (days)</th>
 </tr>""")
     for i, r in enumerate(cheat):
         bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
         gap = r.get("price_gap_median")
         gap_color = "#dc2626" if gap and gap > 200 else "#0f172a"
+        transit = r.get("transit_median_days")
+        transit_str = f"{transit}d" if transit else "—"
         parts.append(f"""
 <tr style="background:{bg}">
   <td style="padding:5px 8px;font-weight:600">{_esc(r['lane'])}</td>
@@ -264,6 +271,7 @@ def render_section_html(analysis: dict) -> str:
   <td style="padding:5px;text-align:center;color:#16a34a;font-weight:600">{_money(r.get('rate_won_median'))}</td>
   <td style="padding:5px;text-align:center;color:#dc2626">{_money(r.get('rate_lost_median'))}</td>
   <td style="padding:5px;text-align:center;color:{gap_color};font-weight:600">{_money(gap)}</td>
+  <td style="padding:5px;text-align:center">{_esc(transit_str)}</td>
 </tr>""")
     parts.append("</table>")
 
@@ -326,7 +334,7 @@ def render_section_html(analysis: dict) -> str:
 
     # 4. Carrier Rate Trends — compact view
     parts.append("""
-<h3 style="margin:18px 0 6px;font-size:14px;color:#0f172a">📊 Carrier Rate Ranges (current)</h3>
+<h3 style="margin:18px 0 6px;font-size:14px;color:#0f172a">📊 Carrier Rate + Transit Ranges (current)</h3>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
 <tr style="background:#1e3a5f;color:white">
   <th style="padding:6px;text-align:left">Carrier</th>
@@ -336,8 +344,11 @@ def render_section_html(analysis: dict) -> str:
   <th style="padding:6px;text-align:center">Rate min</th>
   <th style="padding:6px;text-align:center">Rate median</th>
   <th style="padding:6px;text-align:center">Rate max</th>
+  <th style="padding:6px;text-align:center">Transit median</th>
 </tr>""")
     for c, t in sorted(trends.items(), key=lambda x: -x[1]["quotes"]):
+        transit_med = t.get("transit_median_days")
+        transit_str = f"{transit_med}d" if transit_med else "—"
         parts.append(f"""
 <tr style="background:#ffffff">
   <td style="padding:5px 8px;font-weight:600">{_esc(c)}</td>
@@ -347,6 +358,7 @@ def render_section_html(analysis: dict) -> str:
   <td style="padding:5px;text-align:center">{_money(t.get('rate_min'))}</td>
   <td style="padding:5px;text-align:center;font-weight:600">{_money(t.get('rate_median'))}</td>
   <td style="padding:5px;text-align:center">{_money(t.get('rate_max'))}</td>
+  <td style="padding:5px;text-align:center;color:#0369a1;font-weight:600">{_esc(transit_str)}</td>
 </tr>""")
     parts.append("</table>")
 

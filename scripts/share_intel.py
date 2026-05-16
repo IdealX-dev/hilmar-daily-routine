@@ -226,6 +226,42 @@ def export_from_hilmar() -> dict:
     }
 
 
+def _parse_loose_date(s: str | None):
+    """Parse 'DD-MMM-YY' or 'YYYY-MM-DD' or 'M/D/YYYY' into a date.
+    Returns None on failure. Used by transit-time math."""
+    if not s:
+        return None
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%d-%b-%Y", "%m/%d/%Y", "%-m/%-d/%Y"):
+        try:
+            return _dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    # Try without leading zeros (cross-platform fallback)
+    import re as _re
+    m = _re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", s)
+    if m:
+        try:
+            yr = int(m.group(3))
+            if yr < 100:
+                yr += 2000
+            return _dt(yr, int(m.group(1)), int(m.group(2))).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _transit_days(row: dict) -> int | None:
+    """ETA - ETD in days. Returns None if either date missing or unparseable."""
+    etd = _parse_loose_date(row.get("etd_offered"))
+    eta = _parse_loose_date(row.get("eta_offered"))
+    if etd and eta:
+        d = (eta - etd).days
+        if 1 <= d <= 90:  # sanity bounds — anything outside is suspect
+            return d
+    return None
+
+
 def _build_carrier_summary(rows: list[dict]) -> dict:
     """Per-carrier rollup. Used by rate-negotiation cheat sheet."""
     by_carrier: dict[str, dict] = defaultdict(lambda: {
@@ -235,6 +271,7 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
         "teu_won": 0,
         "teu_lost": 0,
         "rates": [],
+        "transit_days": [],   # NEW 2026-05-14: ETA - ETD per quote
         "lanes": set(),
         "last_quote_date": None,
         "last_win_date": None,
@@ -248,6 +285,9 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
         b["lanes"].add(r.get("lane"))
         if r.get("ol_rate"):
             b["rates"].append(float(r["ol_rate"]))
+        td = _transit_days(r)
+        if td is not None:
+            b["transit_days"].append(td)
         if r["status"] == "WIN":
             b["wins"] += 1
             b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
@@ -265,6 +305,7 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
     for c, b in by_carrier.items():
         win_rate = (b["wins"] / b["quotes"] * 100) if b["quotes"] else 0
         rates = sorted(b["rates"])
+        td_sorted = sorted(b["transit_days"])
         out[c] = {
             "quotes": b["quotes"],
             "wins": b["wins"],
@@ -276,6 +317,10 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
             "rate_min": rates[0] if rates else None,
             "rate_median": rates[len(rates) // 2] if rates else None,
             "rate_max": rates[-1] if rates else None,
+            "transit_count": len(td_sorted),
+            "transit_min_days": td_sorted[0] if td_sorted else None,
+            "transit_median_days": td_sorted[len(td_sorted) // 2] if td_sorted else None,
+            "transit_max_days": td_sorted[-1] if td_sorted else None,
             "lane_count": len(b["lanes"]),
             "last_quote_date": b["last_quote_date"],
             "last_win_date": b["last_win_date"],
@@ -295,6 +340,7 @@ def _build_lane_summary(rows: list[dict]) -> dict:
         "all_carriers": set(),
         "rates_won": [],
         "rates_lost": [],
+        "transit_days": [],   # NEW 2026-05-14: ETA - ETD across all quotes on this lane
         "last_request_date": None,
     })
     for r in rows:
@@ -307,6 +353,9 @@ def _build_lane_summary(rows: list[dict]) -> dict:
         c = r.get("carrier_quoted") or r.get("carrier_won")
         if c:
             b["all_carriers"].add(c)
+        td = _transit_days(r)
+        if td is not None:
+            b["transit_days"].append(td)
         if r["status"] == "WIN":
             b["wins"] += 1
             b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
@@ -327,6 +376,7 @@ def _build_lane_summary(rows: list[dict]) -> dict:
         win_rate = (b["wins"] / b["quotes"] * 100) if b["quotes"] else 0
         rw = sorted(b["rates_won"])
         rl = sorted(b["rates_lost"])
+        td = sorted(b["transit_days"])
         out[lane] = {
             "quotes": b["quotes"],
             "wins": b["wins"],
@@ -344,6 +394,9 @@ def _build_lane_summary(rows: list[dict]) -> dict:
             "rate_lost_max": rl[-1] if rl else None,
             "price_gap_median": (rl[len(rl) // 2] - rw[len(rw) // 2])
                 if (rw and rl) else None,
+            "transit_median_days": td[len(td) // 2] if td else None,
+            "transit_min_days": td[0] if td else None,
+            "transit_max_days": td[-1] if td else None,
             "last_request_date": b["last_request_date"],
         }
     return out

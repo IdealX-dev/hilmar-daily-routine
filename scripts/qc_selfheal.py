@@ -989,6 +989,49 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-030: transit-time data coverage. ETD + ETA together yield transit
+    # days — Hilmar's carrier-comparison metric. We need both fields populated
+    # on ≥80% of WIN/Q&L rows to produce a useful Carrier Rate + Transit
+    # Ranges table in the daily rate intelligence section.
+    try:
+        _eligible = [r for r in requests
+                     if r.get("status") in ("WIN", "LOSS")
+                     and r.get("response_timestamp")]
+        if _eligible:
+            _with_both = sum(1 for r in _eligible
+                             if r.get("etd_offered") and r.get("eta_offered"))
+            _pct = _with_both * 100 / len(_eligible)
+            if _pct < 70:
+                log.error(
+                    f"QC-030: transit-time pair (ETD+ETA) on only {_pct:.0f}% of "
+                    f"rows — carrier transit-time analytics will be sparse"
+                )
+            elif _pct < 85:
+                log.warn(f"QC-030: transit-time pair on {_pct:.0f}% (target 85%+)")
+            else:
+                log.ok(f"QC-030: transit-time pair on {_pct:.0f}% of {len(_eligible)} active rows")
+    except Exception as _e:
+        log.warn(f"QC-030: check failed with exception: {_e}")
+
+    # QC-031: cross-project schema doc presence. Ensures
+    # SHARED/client_intelligence/SCHEMA.md exists — rate-tracker integrators
+    # need this to know the contract. Missing doc means future Claude
+    # sessions / engineers won't know the schema and will diverge.
+    try:
+        import os as _os
+        home = Path(_os.environ.get("USERPROFILE", _os.path.expanduser("~")))
+        for c in [home / "OneDrive - IdealX" / "SHARED" / "client_intelligence",
+                  home / "OneDrive" / "SHARED" / "client_intelligence"]:
+            schema = c / "SCHEMA.md"
+            if schema.exists():
+                log.ok(f"QC-031: shared store SCHEMA.md present ({schema.stat().st_size:,} bytes)")
+                break
+        else:
+            log.warn("QC-031: SHARED/client_intelligence/SCHEMA.md not found — "
+                     "cross-project integrators will need to reverse-engineer the schema")
+    except Exception as _e:
+        log.warn(f"QC-031: check failed with exception: {_e}")
+
     # QC-028: rate-intelligence artifact freshness. The cross-project rate-
     # negotiation cheat sheet (gen_rate_intelligence.py) runs each fire and
     # writes reports/rate-intelligence.json. If this file is missing or
