@@ -477,10 +477,26 @@ def render_html(red, yellow, suggestions, report_date, qc):
     reports/run-log.txt. To suppress a recurring suggestion, edit the collector function.
     To request a new check, ask Claude.
   </div>
+{_rate_intel_section_inline()}
 </div>
 </body></html>
 """
     return body
+
+
+def _rate_intel_section_inline():
+    """Inline the rate-intelligence section if it exists. The section is
+    produced by gen_rate_intelligence.py which runs before this script
+    in the pipeline. Added 2026-05-13 per Michael 'i love all of this and
+    want it now' — rate-negotiation cheat sheet + cooling/regression
+    alerts surface in the daily idealx.us audit."""
+    section_path = REPORTS / "rate-intelligence-section.html"
+    if section_path.exists():
+        try:
+            return section_path.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+    return ""
 
 
 def build_subject(report_date, red, yellow, suggestions):

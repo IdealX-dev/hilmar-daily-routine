@@ -49,6 +49,13 @@ STEPS = [
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),
     ("Email body HTML",          [PY, str(SCRIPTS / "gen_email.py")]),
+    # 2026-05-13: Cross-project intelligence export + rate-negotiation
+    # analytics. share_intel pushes Hilmar's data to the SHARED cross-
+    # project store (consumed by rate-tracker for cross-client insights).
+    # gen_rate_intelligence reads from there to produce the negotiation
+    # cheat sheet + cooling/regression alerts in the daily idealx.us audit.
+    ("Share to client_intelligence", [PY, str(SCRIPTS / "share_intel.py"), "export"]),
+    ("Rate intelligence",        [PY, str(SCRIPTS / "gen_rate_intelligence.py"), "--quiet"]),
 ]
 
 SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}

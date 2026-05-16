@@ -989,6 +989,65 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-028: rate-intelligence artifact freshness. The cross-project rate-
+    # negotiation cheat sheet (gen_rate_intelligence.py) runs each fire and
+    # writes reports/rate-intelligence.json. If this file is missing or
+    # stale, the daily audit lost its negotiation section.
+    try:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        _ri_path = Path(__file__).resolve().parent.parent / "reports" / "rate-intelligence.json"
+        if not _ri_path.exists():
+            log.warn("QC-028: reports/rate-intelligence.json missing — gen_rate_intelligence didn't run this fire")
+        else:
+            _age_h = (_dt.now().timestamp() - _ri_path.stat().st_mtime) / 3600.0
+            if _age_h > 26:  # daily fire + 2h slack
+                log.warn(f"QC-028: rate-intelligence.json is {_age_h:.0f}h stale")
+            else:
+                import json as _j
+                _ri = _j.loads(_ri_path.read_text(encoding="utf-8"))
+                log.ok(f"QC-028: rate intel fresh — {len(_ri.get('lane_cheat_sheet', []))} lanes, "
+                       f"{len(_ri.get('carrier_cooling', []))} cooling, "
+                       f"{len(_ri.get('lane_regression', []))} regressing")
+    except Exception as _e:
+        log.warn(f"QC-028: check failed with exception: {_e}")
+
+    # QC-029: shared cross-project client_intelligence store integrity.
+    # Hilmar pipeline exports to SHARED/client_intelligence/hilmar/ each fire.
+    # If the export failed silently or the row count drops vs. tracker count,
+    # the rate-tracker for cross-client insights is reading stale/incomplete
+    # data. Surface the freshness + count delta here.
+    try:
+        import os as _os
+        from datetime import datetime as _dt
+        home = Path(_os.environ.get("USERPROFILE", _os.path.expanduser("~")))
+        shared_candidates = [
+            home / "OneDrive - IdealX" / "SHARED" / "client_intelligence" / "hilmar",
+            home / "OneDrive" / "SHARED" / "client_intelligence" / "hilmar",
+        ]
+        shared = next((c for c in shared_candidates if c.exists()), None)
+        if not shared:
+            log.warn("QC-029: shared client_intelligence/hilmar/ folder not found — export likely never ran")
+        else:
+            _meta_path = shared / "_client_meta.json"
+            if not _meta_path.exists():
+                log.warn("QC-029: shared store missing _client_meta.json — schema broken")
+            else:
+                import json as _j
+                _meta = _j.loads(_meta_path.read_text(encoding="utf-8"))
+                _age_h = (_dt.now().timestamp() - _meta_path.stat().st_mtime) / 3600.0
+                _shared_rows = _meta.get("row_count", 0)
+                _local_rows = sum(1 for r in requests
+                                  if r.get("status") in ("WIN", "LOSS", "PENDING"))
+                _diff = _local_rows - _shared_rows
+                if _age_h > 26:
+                    log.warn(f"QC-029: shared store {_age_h:.0f}h stale — export didn't run today")
+                elif abs(_diff) > 5:
+                    log.warn(f"QC-029: shared store row count {_shared_rows} differs from local {_local_rows} (delta {_diff})")
+                else:
+                    log.ok(f"QC-029: shared store fresh ({_age_h:.1f}h, {_shared_rows} rows, {_meta.get('carrier_count')} carriers, {_meta.get('lane_count')} lanes)")
+    except Exception as _e:
+        log.warn(f"QC-029: check failed with exception: {_e}")
+
     # QC-027: data completeness across key fields. Per Michael 2026-05-13
     # "90 percent for all is the bare minimum". Measures REACHABLE rows
     # only — i.e. rows whose rate-response body is in current stage. WIN
