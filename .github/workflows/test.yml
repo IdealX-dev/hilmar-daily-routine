@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install reportlab msal requests tzdata pdfplumber
+
+      - name: Lint syntax (compile every module)
+        run: |
+          python -m compileall -q scripts/ deploy/
+
+      - name: Unit tests
+        run: |
+          if [ -f scripts/run_tests.py ]; then
+            python scripts/run_tests.py
+          else
+            echo "No run_tests.py — skipping unit tests"
+          fi
+
+      - name: QC self-heal smoke test (dry — no data file needed)
+        run: |
+          python -c "import sys; sys.path.insert(0, 'scripts'); import qc_selfheal; print('qc_selfheal imports OK')"
+
+      - name: Module import check
+        run: |
+          for mod in body_parser core ingest patch_carriers gen_email gen_dashboard gen_pdf gen_carrier_scorecard_pdf gen_email_new gen_improvements_report gen_rate_intelligence gen_weekly_summary share_intel teams_alert pdf_parser auto_chase_pending refresh_stage; do
+            if [ -f scripts/$mod.py ]; then
+              python -c "import sys; sys.path.insert(0, 'scripts'); import $mod" || exit 1
+            fi
+          done
+          echo "All modules import cleanly"

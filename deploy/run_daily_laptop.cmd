@@ -125,6 +125,20 @@ echo Send exit code: %ERRORLEVEL% >> "%LOG%"
 REM Step 4 — alert Michael if QC drifted from CLEAN (always run)
 "%PY%" deploy\qc_alert_if_needed.py >> "%LOG%" 2>&1
 
+REM Step 4.5 — real-time Teams/Slack alerts (WIN, pending overdue, QC error,
+REM big-day). No-op if webhook not configured in config.json.
+echo --- teams_alerts --- >> "%LOG%"
+"%PY%" scripts\teams_alert.py scan >> "%LOG%" 2>&1
+
+REM Step 4.7 — weekly executive summary (Friday only — script self-gates)
+echo --- weekly_summary --- >> "%LOG%"
+"%PY%" scripts\gen_weekly_summary.py >> "%LOG%" 2>&1
+
+REM Step 4.8 — pending auto-chase (only fires if config.auto_chase.enabled
+REM == true AND it's past earliest_send_hour_et). No-op by default.
+echo --- auto_chase --- >> "%LOG%"
+"%PY%" scripts\auto_chase_pending.py >> "%LOG%" 2>&1
+
 REM Step 5 — daily systems-audit report (idempotent at script level, idealx.us only)
 echo --- improvements_report (Michael only) --- >> "%LOG%"
 "%PY%" scripts\gen_improvements_report.py >> "%LOG%" 2>&1
