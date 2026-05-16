@@ -43,6 +43,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import share_intel as SI  # noqa: E402
+import viz as V  # noqa: E402
 
 HILMAR_ROOT = Path(__file__).resolve().parent.parent
 REPORTS = HILMAR_ROOT / "reports"
@@ -255,23 +256,32 @@ def render_section_html(analysis: dict) -> str:
   <th style="padding:6px;text-align:center">Gap</th>
   <th style="padding:6px;text-align:center">Transit (days)</th>
 </tr>""")
+    # Compute max TEU for bar scaling
+    max_teu = max((r["teu_won"] for r in cheat), default=1) or 1
     for i, r in enumerate(cheat):
         bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
         gap = r.get("price_gap_median")
-        gap_color = "#dc2626" if gap and gap > 200 else "#0f172a"
         transit = r.get("transit_median_days")
+        # Win-rate heatmap
+        wr_bg = V.heatmap_color(r['win_rate_pct'], vmin=0, vmax=100, mode="good_high")
+        # Transit speed heatmap (lower = better)
+        transit_bg = V.heatmap_color(transit, vmin=10, vmax=45, mode="good_low") if transit else "transparent"
+        # Gap heatmap (negative gap = winning at lower rate = good)
+        gap_bg = V.heatmap_color(gap if gap is not None else 0, vmin=-500, vmax=500, mode="good_low") if gap is not None else "transparent"
+        # TEU bar
+        teu_bar = V.bar_cell(r['teu_won'], max_teu, color="#16a34a", label=str(r['teu_won']), width_px=60)
         transit_str = f"{transit}d" if transit else "—"
         parts.append(f"""
 <tr style="background:{bg}">
   <td style="padding:5px 8px;font-weight:600">{_esc(r['lane'])}</td>
   <td style="padding:5px;text-align:center">{r['quotes']}</td>
-  <td style="padding:5px;text-align:center">{_pct(r['win_rate_pct'])}</td>
-  <td style="padding:5px;text-align:center">{r['teu_won']}</td>
+  <td style="padding:5px;text-align:center;background:{wr_bg};font-weight:600">{_pct(r['win_rate_pct'])}</td>
+  <td style="padding:5px 8px;text-align:left">{teu_bar}</td>
   <td style="padding:5px 8px;font-size:11px">{_esc(", ".join(r['winning_carriers']) or "—")}</td>
   <td style="padding:5px;text-align:center;color:#16a34a;font-weight:600">{_money(r.get('rate_won_median'))}</td>
   <td style="padding:5px;text-align:center;color:#dc2626">{_money(r.get('rate_lost_median'))}</td>
-  <td style="padding:5px;text-align:center;color:{gap_color};font-weight:600">{_money(gap)}</td>
-  <td style="padding:5px;text-align:center">{_esc(transit_str)}</td>
+  <td style="padding:5px;text-align:center;background:{gap_bg};font-weight:600">{_money(gap)}</td>
+  <td style="padding:5px;text-align:center;background:{transit_bg};font-weight:600">{_esc(transit_str)}</td>
 </tr>""")
     parts.append("</table>")
 
@@ -346,19 +356,23 @@ def render_section_html(analysis: dict) -> str:
   <th style="padding:6px;text-align:center">Rate max</th>
   <th style="padding:6px;text-align:center">Transit median</th>
 </tr>""")
+    max_q = max((t["quotes"] for t in trends.values()), default=1)
     for c, t in sorted(trends.items(), key=lambda x: -x[1]["quotes"]):
         transit_med = t.get("transit_median_days")
         transit_str = f"{transit_med}d" if transit_med else "—"
+        wr_bg = V.heatmap_color(t['win_rate_pct'], vmin=0, vmax=100, mode="good_high")
+        transit_bg = V.heatmap_color(transit_med, vmin=10, vmax=45, mode="good_low") if transit_med else "transparent"
+        q_bar = V.bar_cell(t['quotes'], max_q, color="#3b82f6", label=str(t['quotes']), width_px=55)
         parts.append(f"""
 <tr style="background:#ffffff">
   <td style="padding:5px 8px;font-weight:600">{_esc(c)}</td>
-  <td style="padding:5px;text-align:center">{t['quotes']}</td>
-  <td style="padding:5px;text-align:center">{_pct(t['win_rate_pct'])}</td>
+  <td style="padding:5px 8px;text-align:left">{q_bar}</td>
+  <td style="padding:5px;text-align:center;background:{wr_bg};font-weight:600">{_pct(t['win_rate_pct'])}</td>
   <td style="padding:5px;text-align:center">{t['lanes']}</td>
   <td style="padding:5px;text-align:center">{_money(t.get('rate_min'))}</td>
   <td style="padding:5px;text-align:center;font-weight:600">{_money(t.get('rate_median'))}</td>
   <td style="padding:5px;text-align:center">{_money(t.get('rate_max'))}</td>
-  <td style="padding:5px;text-align:center;color:#0369a1;font-weight:600">{_esc(transit_str)}</td>
+  <td style="padding:5px;text-align:center;background:{transit_bg};font-weight:600">{_esc(transit_str)}</td>
 </tr>""")
     parts.append("</table>")
 

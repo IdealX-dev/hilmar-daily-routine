@@ -19,6 +19,7 @@ from collections import defaultdict
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import core  # noqa: E402
+import viz as V  # noqa: E402  shared visual helpers (sparklines, pills, bars, heatmaps)
 
 
 def _esc(v):
@@ -601,29 +602,33 @@ def _carrier_block_html(rows):
 def _winning_lanes_html(rows):
     if not rows:
         return ""
+    max_teu = max((b['teu_won'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
     for lane, b in rows:
         bg = "#ffffff" if alt else "#ecfdf5"
         alt = not alt
         carriers = ", ".join(sorted(b.get("carriers") or []))
+        teu_bar = V.bar_cell(b['teu_won'], max_teu, color="#16a34a", label=str(b['teu_won']), width_px=80)
+        win_rate = (b['won'] / b['total'] * 100) if b['total'] else 0
+        wr_bg = V.heatmap_color(win_rate, vmin=0, vmax=100, mode="good_high")
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px">{_esc(lane)}</td>
+  <td style="padding:6px 8px;font-weight:600">{_esc(lane)}</td>
   <td style="padding:6px 8px;text-align:center">{b['won']}</td>
-  <td style="padding:6px 8px;text-align:center;font-weight:bold;color:#059669">{b['teu_won']}</td>
-  <td style="padding:6px 8px;text-align:center">{b['total']}</td>
-  <td style="padding:6px 8px">{_esc(carriers)}</td>
+  <td style="padding:6px 8px;text-align:left">{teu_bar}</td>
+  <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600">{b['total']}</td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(carriers)}</td>
 </tr>
 """
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — Period to Date (sliced by lane, sorted by TEU won)</h2>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#059669;color:white">
+  <tr style="background:linear-gradient(135deg,#059669 0%,#10b981 100%);color:white">
     <th style="padding:8px;text-align:left">Lane</th>
     <th style="padding:8px;text-align:center">Times Won</th>
-    <th style="padding:8px;text-align:center">TEU Won</th>
-    <th style="padding:8px;text-align:center">Total Requests</th>
+    <th style="padding:8px;text-align:left">TEU Won</th>
+    <th style="padding:8px;text-align:center">Total Reqs</th>
     <th style="padding:8px;text-align:left">Winning Carriers</th>
   </tr>
   {body}
@@ -634,28 +639,32 @@ def _winning_lanes_html(rows):
 def _losing_lanes_html(rows):
     if not rows:
         return ""
+    max_teu = max((b['teu_lost'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
     for lane, b in rows:
         bg = "#ffffff" if alt else "#fef2f2"
         alt = not alt
+        teu_bar = V.bar_cell(b['teu_lost'], max_teu, color="#dc2626", label=str(b['teu_lost']), width_px=80)
+        loss_pct = (b['lost'] / b['total'] * 100) if b['total'] else 0
+        loss_bg = V.heatmap_color(loss_pct, vmin=0, vmax=100, mode="good_low")
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px">{_esc(lane)}</td>
+  <td style="padding:6px 8px;font-weight:600">{_esc(lane)}</td>
   <td style="padding:6px 8px;text-align:center">{b['lost']}</td>
-  <td style="padding:6px 8px;text-align:center;font-weight:bold;color:#dc2626">{b['teu_lost']}</td>
-  <td style="padding:6px 8px;text-align:center">{b['total']}</td>
+  <td style="padding:6px 8px;text-align:left">{teu_bar}</td>
+  <td style="padding:6px 8px;text-align:center;background:{loss_bg};font-weight:600">{b['total']}</td>
 </tr>
 """
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — Period to Date (sliced by lane, sorted by TEU lost)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Excludes NO_RESPONSE losses (those are in the "Not Quoted" section below).</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#dc2626;color:white">
+  <tr style="background:linear-gradient(135deg,#dc2626 0%,#ef4444 100%);color:white">
     <th style="padding:8px;text-align:left">Lane</th>
     <th style="padding:8px;text-align:center">Times Lost</th>
-    <th style="padding:8px;text-align:center">TEU Lost</th>
-    <th style="padding:8px;text-align:center">Total Requests</th>
+    <th style="padding:8px;text-align:left">TEU Lost</th>
+    <th style="padding:8px;text-align:center">Total Reqs</th>
   </tr>
   {body}
 </table>

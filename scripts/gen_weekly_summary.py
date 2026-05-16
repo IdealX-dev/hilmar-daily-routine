@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import core  # noqa: E402
+import viz as V  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
@@ -183,15 +184,39 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend):
         for r in top_loss
     ) or '<tr><td colspan="4" style="padding:8px;color:#94a3b8;font-style:italic">No quoted losses this week</td></tr>'
 
-    trend_rows = "".join(
-        f'<tr style="background:{"#ffffff" if i % 2 == 0 else "#f8fafc"}">'
-        f'<td style="padding:5px 8px;font-size:12px">{t["week_start"]} → {t["week_end"]}</td>'
-        f'<td style="padding:5px;text-align:center">{t["total"]}</td>'
-        f'<td style="padding:5px;text-align:center">{t["wins"]}</td>'
-        f'<td style="padding:5px;text-align:center">{t["teu_won"]}</td>'
-        f'<td style="padding:5px;text-align:center">{t["win_rate"]}%</td>'
-        f'<td style="padding:5px;text-align:center">{t["quote_rate"]}%</td></tr>'
-        for i, t in enumerate(trend)
+    # Build sparklines spanning the 4-week trend
+    spark_total = V.sparkline_svg([t["total"] for t in trend], width=70, height=18, color="#3b82f6")
+    spark_wins = V.sparkline_svg([t["wins"] for t in trend], width=70, height=18, color="#16a34a")
+    spark_teu = V.sparkline_svg([t["teu_won"] for t in trend], width=70, height=18, color="#16a34a")
+    spark_wr = V.sparkline_svg([t["win_rate"] for t in trend], width=70, height=18, color="#8b5cf6")
+    spark_qr = V.sparkline_svg([t["quote_rate"] for t in trend], width=70, height=18, color="#0ea5e9")
+
+    trend_rows = ""
+    for i, t in enumerate(trend):
+        wr_bg = V.heatmap_color(t["win_rate"], vmin=0, vmax=100, mode="good_high")
+        is_current = (i == len(trend) - 1)
+        bg = "#eff6ff" if is_current else ("#ffffff" if i % 2 == 0 else "#f8fafc")
+        emphasis = "font-weight:600" if is_current else ""
+        trend_rows += (
+            f'<tr style="background:{bg};{emphasis}">'
+            f'<td style="padding:5px 8px;font-size:12px">{t["week_start"]} → {t["week_end"]}</td>'
+            f'<td style="padding:5px;text-align:center">{t["total"]}</td>'
+            f'<td style="padding:5px;text-align:center">{t["wins"]}</td>'
+            f'<td style="padding:5px;text-align:center">{t["teu_won"]}</td>'
+            f'<td style="padding:5px;text-align:center;background:{wr_bg};font-weight:600">{t["win_rate"]}%</td>'
+            f'<td style="padding:5px;text-align:center">{t["quote_rate"]}%</td>'
+            f'</tr>'
+        )
+    # Add a sparkline summary row
+    trend_rows += (
+        f'<tr style="background:#1e293b;color:white">'
+        f'<td style="padding:6px 8px;font-size:11px;font-weight:600">4-week trend →</td>'
+        f'<td style="padding:6px;text-align:center">{spark_total}</td>'
+        f'<td style="padding:6px;text-align:center">{spark_wins}</td>'
+        f'<td style="padding:6px;text-align:center">{spark_teu}</td>'
+        f'<td style="padding:6px;text-align:center">{spark_wr}</td>'
+        f'<td style="padding:6px;text-align:center">{spark_qr}</td>'
+        f'</tr>'
     )
 
     cow_html = ""
