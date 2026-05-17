@@ -297,6 +297,67 @@ def save_data(data: dict, path: Path | str) -> None:
         json.dump(data, f, indent=2, default=str)
 
 
+def validate_data_shape(data: dict, strict: bool = False) -> tuple[bool, list[str]]:
+    """Lightweight schema validation of tracking-data-v2.json shape.
+
+    Added 2026-05-14 per best-practices batch — catches structural drift
+    before bad data writes to disk. NOT a full JSON Schema (we already have
+    schema.json for full validation if needed); this is a fast invariant
+    check that runs in every save_data path.
+
+    Returns (is_valid, list_of_issues).
+    is_valid=False with strict=True raises ValueError.
+    """
+    issues = []
+    # Top-level keys
+    for key in ("requests", "summary", "version"):
+        if key not in data:
+            issues.append(f"missing top-level key: {key}")
+
+    # requests must be a list of dicts
+    reqs = data.get("requests")
+    if reqs is not None and not isinstance(reqs, list):
+        issues.append(f"requests must be list, got {type(reqs).__name__}")
+    elif isinstance(reqs, list):
+        for i, r in enumerate(reqs):
+            if not isinstance(r, dict):
+                issues.append(f"requests[{i}] not a dict: {type(r).__name__}")
+                continue
+            # Each request must have at minimum request_id, status, lane
+            for req_key in ("request_id", "status"):
+                if req_key not in r:
+                    issues.append(f"requests[{i}] missing {req_key}")
+            # status must be in VALID_STATUSES
+            if r.get("status") and r["status"] not in VALID_STATUSES:
+                issues.append(f"requests[{i}] invalid status: {r['status']}")
+            # loss_reason must be in LOSS_REASONS if set
+            lr = r.get("loss_reason")
+            if lr and lr not in LOSS_REASONS:
+                issues.append(f"requests[{i}] invalid loss_reason: {lr}")
+
+    # summary must be a dict
+    summary = data.get("summary")
+    if summary is not None and not isinstance(summary, dict):
+        issues.append(f"summary must be dict, got {type(summary).__name__}")
+
+    ok = len(issues) == 0
+    if strict and not ok:
+        raise ValueError("Schema validation failed: " + "; ".join(issues[:5]))
+    return ok, issues
+
+
+def save_data_validated(data: dict, path: Path | str, strict: bool = True) -> None:
+    """save_data + schema validation gate. Use everywhere we write
+    tracking-data-v2.json so structural drift gets caught early.
+    """
+    ok, issues = validate_data_shape(data, strict=False)
+    if not ok and strict:
+        raise ValueError(
+            f"Refusing to save invalid data to {path}: " + "; ".join(issues[:5])
+        )
+    save_data(data, path)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Timezone helpers (DST-safe — this is critical)
 # ─────────────────────────────────────────────────────────────────────

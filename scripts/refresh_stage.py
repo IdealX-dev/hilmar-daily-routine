@@ -163,6 +163,80 @@ GRAPH_SELECT = (
 )
 
 
+def _rotate_stage(days_to_keep: int, dry: bool = False) -> dict:
+    """Prune stage_emails.txt + stage_emails_bodies.txt of records older than
+    `days_to_keep` days. Writes audit log to scripts/_stage_rotation.log.
+
+    Added 2026-05-14 per best-practices batch — keeps stage bounded so it
+    doesn't grow unbounded over time. Default retain = 90d (Outlook search
+    catches anything we need re-pulled).
+    """
+    import json as _j
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    scripts_dir = ROOT / "scripts"
+    cutoff = (_dt.now(_tz.utc) - _td(days=days_to_keep)).isoformat()
+
+    out = {"stage_pruned": 0, "bodies_pruned": 0, "cutoff": cutoff}
+    stage_path = scripts_dir / "stage_emails.txt"
+    bodies_path = scripts_dir / "stage_emails_bodies.txt"
+
+    # Stage prune — keep records with received/sent ≥ cutoff
+    if stage_path.exists():
+        kept_lines = []
+        pruned_imids = set()
+        for line in stage_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = _j.loads(line)
+            except Exception:
+                kept_lines.append(line)
+                continue
+            ts = (d.get("received") or d.get("sent") or d.get("sent_ts") or "")
+            if ts and ts < cutoff:
+                pruned_imids.add((d.get("imid") or "").strip("<>"))
+                out["stage_pruned"] += 1
+            else:
+                kept_lines.append(line)
+        if not dry and out["stage_pruned"] > 0:
+            # Write atomic — temp file then rename
+            tmp = stage_path.with_suffix(".tmp")
+            tmp.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
+            tmp.replace(stage_path)
+
+    # Bodies prune — drop bodies for imids that got rotated out
+    if bodies_path.exists() and out["stage_pruned"] > 0:
+        kept_bodies = []
+        for line in bodies_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = _j.loads(line)
+            except Exception:
+                kept_bodies.append(line)
+                continue
+            imid = (d.get("imid") or "").strip("<>")
+            if imid and imid in pruned_imids:
+                out["bodies_pruned"] += 1
+            else:
+                kept_bodies.append(line)
+        if not dry and out["bodies_pruned"] > 0:
+            tmp = bodies_path.with_suffix(".tmp")
+            tmp.write_text("\n".join(kept_bodies) + "\n", encoding="utf-8")
+            tmp.replace(bodies_path)
+
+    # Audit log
+    if not dry:
+        log_path = scripts_dir / "_stage_rotation.log"
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"{_dt.now(_tz.utc).isoformat()} cutoff={cutoff} "
+                    f"stage_pruned={out['stage_pruned']} "
+                    f"bodies_pruned={out['bodies_pruned']}\n")
+    return out
+
+
 def search_messages(token: str, kql: str, max_results: int = 250) -> list[dict]:
     """Run a $search query against /me/messages, paginate through nextLink."""
     url: str | None = f"{GRAPH}/me/messages"
@@ -361,6 +435,10 @@ def main() -> int:
                     help="Per-message classification trace")
     ap.add_argument("--no-bodies", action="store_true",
                     help="Stage metadata only — skip body fetch (debug)")
+    ap.add_argument("--rotate-stage-older-than", type=int, default=None,
+                    help="Prune stage_emails.txt + bodies of records older than N days. "
+                         "Keeps live data fast and bounded. Per Michael 2026-05-14 "
+                         "best-practices batch. Recommended: 90.")
     ap.add_argument("--pdf-backfill", action="store_true",
                     help="Also fetch PDF attachments for existing mbd_inbound bodies that don't have them on disk yet (one-time catch-up).")
     ap.add_argument("--max-results-per-query", type=int, default=250,
@@ -403,6 +481,14 @@ def main() -> int:
     # archive subfolders all carry distinct Graph `id`s for the same email).
     # internetMessageId (imid) is the RFC822 Message-ID header — stable across
     # folders. We keep the first copy we see; if the email lacks an imid (rare,
+    # Stage rotation — prune old records before fetch so we don't carry stale
+    # state through the pipeline. Audit log written to scripts/_stage_rotation.log.
+    if args.rotate_stage_older_than:
+        rotated = _rotate_stage(args.rotate_stage_older_than, dry=args.dry)
+        print(f"refresh_stage: rotation pruned {rotated['stage_pruned']} stage records "
+              f"+ {rotated['bodies_pruned']} bodies older than {args.rotate_stage_older_than}d "
+              f"({'DRY' if args.dry else 'live'})")
+
     # mostly drafts) we fall back to Graph id to avoid silently dropping it.
     all_items: dict[str, dict] = {}  # imid (or id) -> Graph item
     for label, kql in queries:

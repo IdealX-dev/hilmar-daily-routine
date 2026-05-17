@@ -989,6 +989,57 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-034: tracking-data-v2.json schema validity gate. Added 2026-05-14
+    # per best-practices batch. Calls core.validate_data_shape() and reports
+    # structural issues (missing keys, wrong types, invalid status/loss_reason
+    # enums). ERROR if invalid — pipeline shouldn't ship a malformed file.
+    try:
+        ok, issues = core.validate_data_shape(data, strict=False)
+        if not ok:
+            log.error(f"QC-034: data shape invalid: " + "; ".join(issues[:3])
+                       + (f" + {len(issues)-3} more" if len(issues) > 3 else ""))
+        else:
+            log.ok("QC-034: tracking-data-v2.json shape valid (top-level keys + req fields)")
+    except Exception as _e:
+        log.warn(f"QC-034: check failed with exception: {_e}")
+
+    # QC-035: stage file size cap. Without rotation, stage_emails.txt grows
+    # unbounded. Warn at 5MB, ERROR at 20MB — those thresholds mean
+    # `--rotate-stage-older-than 90` should be called.
+    try:
+        stage_path = Path(__file__).resolve().parent / "stage_emails.txt"
+        if stage_path.exists():
+            size_mb = stage_path.stat().st_size / 1_000_000
+            if size_mb > 20:
+                log.error(f"QC-035: stage_emails.txt is {size_mb:.1f}MB > 20MB — "
+                          "run `refresh_stage.py --rotate-stage-older-than 90`")
+            elif size_mb > 5:
+                log.warn(f"QC-035: stage_emails.txt at {size_mb:.1f}MB — consider rotation soon")
+            else:
+                log.ok(f"QC-035: stage_emails.txt {size_mb:.2f}MB (well under cap)")
+    except Exception as _e:
+        log.warn(f"QC-035: check failed with exception: {_e}")
+
+    # QC-036: unit test suite presence. The `tests/` folder should contain
+    # at least one test_*.py file. Empty test folder means a regression net
+    # got removed and won't catch future breakage.
+    try:
+        tests_dir = Path(__file__).resolve().parent.parent / "tests"
+        if tests_dir.exists():
+            test_files = list(tests_dir.glob("test_*.py"))
+            if not test_files:
+                log.error("QC-036: tests/ folder exists but no test_*.py files — "
+                          "regression net is gone")
+            elif len(test_files) < 3:
+                log.warn(f"QC-036: only {len(test_files)} test files — "
+                         "coverage thin (target ≥3 modules tested)")
+            else:
+                log.ok(f"QC-036: {len(test_files)} test files in tests/")
+        else:
+            log.warn("QC-036: no tests/ folder — regression net absent")
+    except Exception as _e:
+        log.warn(f"QC-036: check failed with exception: {_e}")
+
     # QC-033: brand logo presence + sanity. Per Michael 2026-05-14
     # "can you save this in your schema/data base and also add it to the
     # system fo rhilmar?" — wired branding.py module across all artifacts.
