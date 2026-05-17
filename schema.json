@@ -2,568 +2,179 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Hilmar Tracking Data v2",
   "type": "object",
-  "required": [
-    "version",
-    "client",
-    "requests",
-    "summary",
-    "last_updated"
-  ],
+  "required": ["version", "requests"],
   "properties": {
-    "version": {
-      "type": "string"
-    },
-    "client": {
-      "type": "string"
-    },
-    "contact": {
-      "type": "string"
-    },
-    "provider": {
-      "type": "string"
-    },
-    "date_range": {
-      "type": "string"
-    },
-    "last_updated": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "summary": {
-      "$ref": "#/definitions/summary"
-    },
-    "requests": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/request"
-      }
-    },
-    "lane_summary": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/definitions/lane"
-      }
-    },
-    "carrier_summary": {
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/definitions/carrier"
-      }
-    },
-    "mdolx_bookings": {
-      "type": "array"
-    },
-    "qc": {
-      "type": "object"
-    },
-    "escalations_sent": {
-      "type": "object"
-    },
-    "metadata": {
-      "type": "object"
-    }
+    "version": {"type": "string"},
+    "client": {"type": "string"},
+    "contact": {"type": "string"},
+    "provider": {"type": "string"},
+    "date_range": {"oneOf": [{"type": "string"}, {"type": "object"}]},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "last_updated": {"type": "string", "format": "date-time"},
+    "summary": {"$ref": "#/definitions/summary"},
+    "requests": {"type": "array", "items": {"$ref": "#/definitions/request"}},
+    "lanes": {"type": "array", "items": {"$ref": "#/definitions/lane"}},
+    "carriers": {"type": "array", "items": {"$ref": "#/definitions/carrier"}},
+    "notes": {"type": "object"},
+    "selfheal_actions": {"type": "array"},
+    "baselines": {"type": "object"}
   },
   "definitions": {
     "request": {
       "type": "object",
-      "required": [
-        "request_id",
-        "request_date",
-        "lane",
-        "origin",
-        "destination",
-        "containers",
-        "teu_requested",
-        "status",
-        "quoted"
-      ],
+      "required": ["request_id", "request_date", "lane", "origin", "destination", "containers", "teu_requested", "status", "quoted"],
       "properties": {
-        "request_id": {
-          "type": "string",
-          "description": "Stable dedup key: hash of conversationId + request_timestamp + destination"
-        },
-        "request_date": {
-          "type": "string",
-          "format": "date"
-        },
-        "date": {
-          "type": "string",
-          "format": "date",
-          "description": "Legacy alias for request_date"
-        },
-        "request_timestamp": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "datetime": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "conversationId": {
-          "type": "string"
-        },
-        "subject": {
-          "type": "string"
-        },
-        "origin": {
-          "type": "string"
-        },
-        "destination": {
-          "type": "string"
-        },
-        "lane": {
-          "type": "string"
-        },
-        "containers": {
-          "type": "string"
-        },
-        "container_count": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "teu_requested": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "product": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "temperature": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "requested_dates": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "eta_requested": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "cutoff_requested": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "free_time": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "lonny_notes": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "response_timestamp": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "ol_responder": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "quoted": {
-          "type": "boolean"
-        },
-        "carrier_quoted": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "vessel_offered": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ol_rate": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "etd_offered": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "eta_offered": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "transshipment": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "erd": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "doc_cutoff": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "port_cutoff": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "origin_free_time": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "dest_free_time": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "turnaround_hours": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "turnaround_biz_hours": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "after_hours_request": {
-          "type": "boolean"
-        },
-        "lonny_time_pt": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "olusa_time_et": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
+        "request_id": {"type": "string", "description": "Stable dedup key: hash of conversation_id + request_timestamp + destination"},
+        "request_date": {"type": "string", "format": "date"},
+        "date": {"type": "string", "format": "date", "description": "Legacy alias for request_date"},
+        "request_timestamp": {"type": ["string", "null"], "format": "date-time"},
+        "datetime": {"type": "string", "format": "date-time"},
+        "conversation_id": {"type": ["string", "null"], "description": "Outlook conversationId (snake_case in our data; corrected from camelCase 2026-04-29)"},
+        "subject": {"type": "string"},
+
+        "origin": {"type": "string"},
+        "destination": {"type": "string"},
+        "lane": {"type": "string"},
+        "containers": {"type": ["string", "null"]},
+        "container_count": {"type": "integer", "minimum": 0},
+        "teu_requested": {"type": "integer", "minimum": 0},
+        "product": {"type": ["string", "null"]},
+        "temperature": {"type": ["string", "null"]},
+        "requested_dates": {"type": ["string", "null"]},
+        "eta_requested": {"type": ["string", "null"]},
+        "etd_requested": {"type": ["string", "null"], "description": "Lonny's requested ETD (departure-side counterpart to eta_requested)."},
+        "cutoff_requested": {"type": ["string", "null"]},
+        "free_time": {"type": ["string", "null"]},
+        "demurrage_free": {"type": ["integer", "null"], "description": "Destination-side free time (days, integer). Parsed from booking body via int(...)."},
+        "detention_free": {"type": ["integer", "null"], "description": "Origin-side free time (days, integer). Parsed from booking body via int(...)."},
+        "lonny_notes": {"type": ["string", "null"]},
+
+        "response_timestamp": {"type": ["string", "null"], "format": "date-time"},
+        "ol_responder": {"type": ["string", "null"]},
+        "ol_responder_email": {"type": ["string", "null"], "description": "Email address that sent the rate response (typically the MBD shared mailbox)."},
+        "ol_responder_signer": {"type": ["string", "null"], "description": "Human signer extracted from the rate-response body — distinct from the shared mailbox."},
+        "quoted": {"type": "boolean"},
+        "carrier_quoted": {"type": ["string", "null"]},
+        "vessel_voyage": {"type": ["string", "null"]},
+        "ol_rate": {"type": ["number", "null"], "description": "Per-container rate when quoted; null on non-quoted (NQ) rows. The \"Not Quoted\" display label is computed at render time, not stored."},
+        "rate_expiry": {"type": ["string", "null"], "description": "Validity-window string parsed from the rate response body."},
+        "etd_offered": {"type": ["string", "null"]},
+        "eta_offered": {"type": ["string", "null"]},
+        "transshipment": {"type": ["string", "null"]},
+        "erd": {"type": ["string", "null"]},
+        "doc_cutoff": {"type": ["string", "null"]},
+        "port_cutoff": {"type": ["string", "null"]},
+        "origin_free_time": {"type": ["string", "null"]},
+        "dest_free_time": {"type": ["string", "null"]},
+
+        "turnaround_hours": {"type": ["number", "null"]},
+        "turnaround_biz_hours": {"type": ["number", "null"]},
+        "after_hours_request": {"type": "boolean"},
+        "lonny_time_pt": {"type": ["string", "null"]},
+        "olusa_time_et": {"type": ["string", "null"]},
+
         "status": {
-          "enum": [
-            "WIN",
-            "LOSS",
-            "PENDING"
-          ]
+          "enum": ["WIN", "LOSS", "PENDING"],
+          "description": "Underlying 3-state classifier as stored. The 4-state DISPLAY (WIN / Q&L / NQ / PENDING) is derived at render time: LOSS + quoted=true → Q&L (Quoted-and-Lost), LOSS + quoted=false → NQ (Not-Quoted). Storage stays 3-state per core.VALID_STATUSES for compatibility with the original pipeline."
         },
-        "has_send": {
-          "type": "boolean"
-        },
-        "carrier_won": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "vessel": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "teu_won": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "mdolx_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "mdolx_date": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
+        "has_send": {"type": "boolean"},
+        "carrier_won": {"type": ["string", "null"]},
+        "teu_won": {"type": ["integer", "null"], "minimum": 0},
+        "mdolx_ref": {"type": ["string", "null"]},
+        "mdolx_refs_all": {"type": "array", "items": {"type": "string"}, "description": "All MDOLX refs seen across the conversation; mdolx_ref is the canonical/first."},
+        "mdolx_date": {"type": ["string", "null"]},
+
         "loss_reason": {
-          "enum": [
-            "NO_RESPONSE",
-            "PRICE",
-            "ETD_MISS",
-            "OTHER",
-            null
-          ]
+          "enum": ["NO_RESPONSE", "PRICE", "ETD_MISS", "COVERED", "DRAFT_ONLY", "OTHER", null],
+          "description": "Uppercase canonical values per scripts/core.py LOSS_REASONS. Always null on WIN. Required on LOSS rows when known. Production values seen: PRICE (~75/93), NO_RESPONSE (~15/93), ETD_MISS (~3/93)."
         },
-        "etd_fit_days": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "Days between Lonny's requested date and OL offered ETD/ETA. Negative = earlier than asked."
-        },
-        "status_history": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "from": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "to": {
-                "type": "string"
-              },
-              "reason": {
-                "type": "string"
-              }
-            }
+        "reason_detail": {"type": ["string", "null"], "description": "Human-readable reason narrative — e.g. 'Lonny replied Send 2026-04-24 | MBD MDOLX260420 2026-04-25'."},
+        "etd_fit_days": {"type": ["integer", "null"], "description": "Days between Lonny's requested date and OL offered ETD/ETA. Negative = earlier than asked."},
+
+        "status_history": {"type": "array", "items": {
+          "type": "object",
+          "properties": {
+            "at": {"type": "string", "format": "date-time"},
+            "from": {"type": ["string", "null"]},
+            "to": {"type": "string"},
+            "reason": {"type": "string"}
           }
-        },
-        "special_notes": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "ol_responder_email": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Email address of the OL-USA responder (mailbox or individual)."
-        },
-        "ol_responder_signer": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Human name on the From-line of the OL email when the responder is a shared mailbox. E.g. 'Caren Tobel', 'Linda Echevarria'. NEW: added 2026-04-30 for negotiation accountability."
-        },
-        "competitor_carrier_won": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Carrier that won the booking when OL lost. Often null \u2014 Lonny doesn't always tell us. Captured if visible in his reply or a follow-up booking confirmation. NEW: added 2026-04-30."
-        },
-        "ol_quote_count": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "How many distinct OL quotes were offered on this thread (count of carrier_quoted entries across replies). Helps spot multi-option threads."
-        },
-        "win_carrier_signer": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Person at OL who confirmed the booking (signed the MDOLX confirmation). May differ from ol_responder_signer."
-        }
+        }},
+
+        "booking_events": {"type": ["array", "null"], "description": "Audit trail of MDOLX booking confirmations matched to this row. Null when no booking has matched yet."},
+        "booking_timestamp": {"type": ["string", "null"], "format": "date-time", "description": "Earliest booking-confirmation timestamp from booking_events."},
+        "send_signal_events": {"type": ["array", "null"], "description": "Audit trail of Lonny send-signal detections in this conversation."},
+
+        "source_ids": {"type": "array", "items": {"type": "string"}, "description": "Outlook message IDs of source emails for this row."},
+        "source_imids": {"type": "array", "items": {"type": ["string", "null"]}, "description": "Internet Message-IDs of source emails (cross-account stable handle)."},
+
+        "equipment_size": {"type": ["string", "null"], "description": "Canonical equipment slug derived from containers (e.g. '40HC', '20+40RF'). Computed in qc.phase_4_5_derived_fields."},
+        "rate_per_feu": {"type": ["number", "null"], "description": "ol_rate normalized to per-FEU (40' equivalent) for cross-lane comparison. Computed via core.parse_rate_per_feu."},
+        "trade_region": {"type": ["string", "null"], "description": "Trade-region bucket derived from destination (China / Japan / Mediterranean / etc.). 'Other' when no keyword matches. Computed via core.trade_region."},
+        "awarded_carrier": {"type": ["string", "null"], "description": "Carrier that received the booking. Alias of carrier_won — exposed under both names so analytics can read either."},
+        "validity_window": {"type": ["string", "null"], "description": "Quoted rate's validity window (e.g. '5/15-5/31'). Sourced from ingest's rate_expiry, or extracted from body via core.parse_validity_window."},
+
+        "special_notes": {"type": ["string", "null"]}
       }
     },
     "summary": {
       "type": "object",
-      "required": [
-        "total_entries",
-        "wins",
-        "quoted_lost",
-        "not_quoted",
-        "pending_hilmar",
-        "win_rate",
-        "quote_rate",
-        "teu_won",
-        "teu_requested"
-      ],
+      "required": ["total_entries", "wins", "quoted_lost", "not_quoted", "pending_hilmar", "win_rate", "quote_rate", "teu_won", "teu_requested"],
       "properties": {
-        "total_entries": {
-          "type": "integer"
-        },
-        "wins": {
-          "type": "integer"
-        },
-        "quoted_lost": {
-          "type": "integer"
-        },
-        "not_quoted": {
-          "type": "integer"
-        },
-        "pending_hilmar": {
-          "type": "integer"
-        },
-        "win_rate": {
-          "type": "number",
-          "description": "Percent. wins / (wins + quoted_lost + not_quoted). Pending excluded."
-        },
-        "quote_rate": {
-          "type": "number",
-          "description": "Percent. (wins + quoted_lost + pending) / total. Pending counts as quoted."
-        },
-        "teu_won": {
-          "type": "integer"
-        },
-        "teu_requested": {
-          "type": "integer"
-        },
-        "teu_quoted_lost": {
-          "type": "integer"
-        },
-        "teu_not_quoted": {
-          "type": "integer"
-        },
-        "teu_pending": {
-          "type": "integer"
-        },
-        "turnaround_entries": {
-          "type": "integer"
-        },
-        "turnaround_avg_biz_hours": {
-          "type": "number"
-        },
-        "turnaround_avg_clock_hours": {
-          "type": "number"
-        },
-        "dod": {
-          "type": "object"
-        }
+        "total_entries": {"type": "integer"},
+        "wins": {"type": "integer"},
+        "quoted_lost": {"type": "integer"},
+        "not_quoted": {"type": "integer"},
+        "pending_hilmar": {"type": "integer"},
+        "win_rate": {"type": "number", "description": "Percent. wins / (wins + quoted_lost + not_quoted). Pending excluded."},
+        "quote_rate": {"type": "number", "description": "Percent. (wins + quoted_lost + pending) / total. Pending counts as quoted."},
+        "teu_won": {"type": "integer"},
+        "teu_requested": {"type": "integer"},
+        "teu_quoted_lost": {"type": "integer"},
+        "teu_not_quoted": {"type": "integer"},
+        "teu_pending": {"type": "integer"},
+        "turnaround_entries": {"type": "integer"},
+        "turnaround_avg_biz_hours": {"type": "number"},
+        "turnaround_avg_clock_hours": {"type": "number"},
+        "dod": {"type": "object"}
       }
     },
     "lane": {
       "type": "object",
-      "required": [
-        "lane",
-        "requests",
-        "wins",
-        "quoted_lost",
-        "not_quoted",
-        "pending"
-      ],
+      "required": ["lane", "requests", "wins", "quoted_lost", "not_quoted", "pending"],
       "properties": {
-        "lane": {
-          "type": "string"
-        },
-        "requests": {
-          "type": "integer"
-        },
-        "wins": {
-          "type": "integer"
-        },
-        "quoted_lost": {
-          "type": "integer"
-        },
-        "not_quoted": {
-          "type": "integer"
-        },
-        "pending": {
-          "type": "integer"
-        },
-        "teu_requested": {
-          "type": "integer"
-        },
-        "teu_won": {
-          "type": "integer"
-        },
-        "teu_quoted_lost": {
-          "type": "integer"
-        },
-        "teu_not_quoted": {
-          "type": "integer"
-        },
-        "teu_pending": {
-          "type": "integer"
-        },
-        "winning_carriers": {
-          "type": "string"
-        },
-        "equipment": {
-          "type": "string"
-        }
+        "lane": {"type": "string"},
+        "requests": {"type": "integer"},
+        "wins": {"type": "integer"},
+        "quoted_lost": {"type": "integer"},
+        "not_quoted": {"type": "integer"},
+        "pending": {"type": "integer"},
+        "teu_requested": {"type": "integer"},
+        "teu_won": {"type": "integer"},
+        "teu_quoted_lost": {"type": "integer"},
+        "teu_not_quoted": {"type": "integer"},
+        "teu_pending": {"type": "integer"},
+        "winning_carriers": {"type": "string"},
+        "equipment": {"type": "string"}
       }
     },
     "carrier": {
       "type": "object",
-      "required": [
-        "carrier",
-        "quotes",
-        "wins",
-        "losses"
-      ],
+      "required": ["carrier", "quotes", "wins", "losses"],
       "properties": {
-        "carrier": {
-          "type": "string"
-        },
-        "quotes": {
-          "type": "integer"
-        },
-        "wins": {
-          "type": "integer"
-        },
-        "losses": {
-          "type": "integer",
-          "description": "Quoted & Lost only (NQ separate)"
-        },
-        "pending": {
-          "type": "integer"
-        },
-        "win_rate": {
-          "type": "number"
-        },
-        "teu_won": {
-          "type": "integer"
-        },
-        "teu_lost": {
-          "type": "integer"
-        },
-        "lanes_quoted": {
-          "type": "integer"
-        },
-        "avg_turnaround_biz_hours": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "avg_etd_fit_days": {
-          "type": [
-            "number",
-            "null"
-          ]
-        }
+        "carrier": {"type": "string"},
+        "quotes": {"type": "integer"},
+        "wins": {"type": "integer"},
+        "losses": {"type": "integer", "description": "Quoted & Lost only (NQ separate)"},
+        "pending": {"type": "integer"},
+        "win_rate": {"type": "number"},
+        "teu_won": {"type": "integer"},
+        "teu_lost": {"type": "integer"},
+        "lanes_quoted": {"type": "integer"},
+        "avg_turnaround_biz_hours": {"type": ["number", "null"]},
+        "avg_etd_fit_days": {"type": ["number", "null"]},
+        "loss_reasons": {"type": "object", "description": "Per-reason loss count for this carrier. Map of loss_reason -> count. Computed in core.aggregate_carriers."},
+        "loss_reason_summary": {"type": "string", "description": "Human-readable rollup of loss_reasons sorted by frequency (e.g. '4 PRICE, 2 ETD_MISS')."}
       }
     }
   }

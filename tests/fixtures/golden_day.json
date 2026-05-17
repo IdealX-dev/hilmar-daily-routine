@@ -175,7 +175,11 @@
   "lane_summary": {},
   "carrier_summary": {},
   "mdolx_bookings": [],
-  "qc": {"status": "pass", "issues": [], "healed": []},
+  "qc": {
+    "status": "pass",
+    "issues": [],
+    "healed": []
+  },
   "escalations_sent": {},
   "metadata": {}
 }

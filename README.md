@@ -1,8 +1,13 @@
 # Hilmar Daily Tracker
 
+> 🟢 **CANONICAL REPO — single source of truth** for Hilmar's daily tracker.
+> The earlier `IdealX-dev/hilmar-tracker` repo (Linux VM Plan A, dormant since
+> 2026-05-16) was **archived 2026-05-17** after value-extraction (schema.json,
+> invariant tests, schema tests ported here). One repo, one application.
+
 Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 10:00 AM ET each weekday from a Win365 Cloud PC.
 
-**Status (2026-05-13):** 26-check QC matrix, 100% Q&L carrier coverage, idempotent sends, multi-line table parser, Codespaces-ready for editing from any device.
+**Status (2026-05-17):** 40-check QC matrix, 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + invariant tests (ported from dormant hilmar-tracker), Codespaces-ready for editing from any device.
 
 ---
 
