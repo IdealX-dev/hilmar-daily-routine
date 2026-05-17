@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import core  # noqa: E402
 import viz as V  # noqa: E402
+import branding as B  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
@@ -244,7 +245,8 @@ table{{width:100%;border-collapse:collapse;margin:8px 0 16px}}
 th{{background:#1e3a5f;color:white;padding:6px 8px;text-align:left;font-size:12px}}
 td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 </style></head><body><div class="container">
-<h1>🗓 Hilmar Weekly Summary</h1>
+{f'<div style="margin-bottom:12px">{B.logo_html(height=42)}</div>' if B.has_logo() else ''}
+<h1>{'' if B.has_logo() else '🗓 '}Hilmar Weekly Summary</h1>
 <p style="margin:0 0 16px;color:#64748b">Week of <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
 
 <h2>Week at a glance</h2>

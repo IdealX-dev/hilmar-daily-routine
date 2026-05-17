@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import core
 import viz as V  # noqa  shared visual helpers
+import branding as B  # noqa  Hilmar logo + brand colors
 
 # ─────────────────────────────────────────────────────────────────────
 # HTML helpers
@@ -366,7 +367,8 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 </head><body>
 
 <div class="header">
-<h1>🚢 Hilmar Ingredients — Shipment Tracker</h1>
+{f'<div style="background:white;padding:10px 16px;border-radius:6px;display:inline-block;margin-bottom:12px">{B.logo_html(height=48)}</div>' if B.has_logo() else ''}
+<h1>{'' if B.has_logo() else '🚢 '}Hilmar Ingredients — Shipment Tracker</h1>
 <div class="subtitle">{_fmt_date(first_date)} – {_fmt_date(last_date)} • {total} Requests • {teu_requested} TEU Requested</div>
 <div class="stamp">Last updated: {now_et}</div>
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>

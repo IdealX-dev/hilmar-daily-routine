@@ -40,6 +40,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
+import branding as B  # noqa: E402  Hilmar logo
 
 # Register Inter — falls back to Helvetica if assets missing
 _FONTS_DIR = ROOT / "assets" / "fonts"
@@ -146,6 +147,11 @@ def build_cover(story, styles, data, cfg):
     last_updated = data.get("last_updated", "—")
     date_range = data.get("date_range", cfg.get("data_range", {}).get("start", "—") + " → today")
 
+    # Logo cover banner (top of page 1) — no-op if logo file missing
+    logo_img = B.logo_reportlab_image(width=170)
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 12))
     story.append(Paragraph(f"{client} × {provider}", styles["H1"]))
     story.append(Paragraph("Rate Desk Performance Report", styles["H2"]))
     story.append(Paragraph(f"Period: {date_range}  •  Last updated: {last_updated}", styles["BodyMuted"]))

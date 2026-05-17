@@ -989,6 +989,35 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-033: brand logo presence + sanity. Per Michael 2026-05-14
+    # "can you save this in your schema/data base and also add it to the
+    # system fo rhilmar?" — wired branding.py module across all artifacts.
+    # If logo file is missing or zero-bytes, the headers gracefully fall
+    # back to emoji + text but Michael loses the brand identity. WARN.
+    # Prefer SVG (vector) > PNG (raster). Either is acceptable.
+    try:
+        _brand_dir = Path(__file__).resolve().parent.parent / "assets" / "branding"
+        _png = _brand_dir / "hilmar-logo.png"
+        _svg = _brand_dir / "hilmar-logo.svg"
+        if _svg.exists() and _svg.stat().st_size > 100:
+            log.ok(f"QC-033: brand logo (SVG vector) present "
+                   f"({_svg.stat().st_size:,} bytes)")
+        elif _png.exists() and _png.stat().st_size > 100:
+            # Verify it's actually a PNG by checking magic bytes
+            with open(_png, "rb") as _f:
+                _magic = _f.read(8)
+            if _magic[:4] == b"\x89PNG":
+                log.ok(f"QC-033: brand logo (PNG raster) present "
+                       f"({_png.stat().st_size:,} bytes)")
+            else:
+                log.error(f"QC-033: assets/branding/hilmar-logo.png exists but "
+                          f"isn't a valid PNG (magic bytes wrong)")
+        else:
+            log.warn("QC-033: no logo file at assets/branding/hilmar-logo.{svg,png} "
+                     "— artifacts will fall back to emoji + text header")
+    except Exception as _e:
+        log.warn(f"QC-033: check failed with exception: {_e}")
+
     # QC-032: offline backup freshness. Daily backup runs at wrapper Step 4.9
     # to two targets (secondary OneDrive folder + local offline folder). If
     # the most recent backup in EITHER target is >36h old, defense-in-depth

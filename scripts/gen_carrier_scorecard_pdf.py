@@ -32,6 +32,7 @@ import sys as _sys2
 from pathlib import Path as _Path2
 _sys2.path.insert(0, str(_Path2(__file__).resolve().parent))
 import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
+import branding as B  # noqa: E402  Hilmar logo
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 )
@@ -156,6 +157,11 @@ def build_scorecard(carrier, data, cfg):
                     if r.get("carrier_quoted") == carrier or r.get("carrier_won") == carrier]
 
     story = []
+    # Logo at top of each carrier scorecard (no-op if file missing)
+    logo_img = B.logo_reportlab_image(width=120)
+    if logo_img:
+        story.append(logo_img)
+        story.append(Spacer(1, 8))
     story.append(Paragraph(f"{carrier} — Steamship Line Scorecard", styles["H1"]))
     story.append(Paragraph(
         f"For line-level negotiations with {carrier}.  "
