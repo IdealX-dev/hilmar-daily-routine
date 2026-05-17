@@ -230,7 +230,7 @@ def render_section_html(analysis: dict) -> str:
     trends = analysis["winning_rate_trends"]
 
     parts = [f"""
-<h2 style="margin:24px 0 8px;color:#1e40af;font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px">
+<h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;border-bottom:2px solid #76b82a;padding-bottom:6px">
   💰 Rate Negotiation Intelligence
 </h2>
 <p style="margin:0 0 12px;font-size:12px;color:#64748b">
@@ -245,7 +245,7 @@ def render_section_html(analysis: dict) -> str:
     parts.append("""
 <h3 style="margin:16px 0 6px;font-size:14px;color:#0f172a">📋 Lane Cheat Sheet (top 15 by volume)</h3>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:18px">
-<tr style="background:#1e3a5f;color:white">
+<tr style="background:#0a2350;color:white">
   <th style="padding:6px;text-align:left">Lane</th>
   <th style="padding:6px;text-align:center">Quotes</th>
   <th style="padding:6px;text-align:center">Win %</th>
@@ -291,7 +291,7 @@ def render_section_html(analysis: dict) -> str:
     if cooling:
         parts.append('<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px">')
         parts.append("""
-<tr style="background:#1e3a5f;color:white">
+<tr style="background:#0a2350;color:white">
   <th style="padding:6px;text-align:left">Carrier</th>
   <th style="padding:6px;text-align:center">Total Quotes</th>
   <th style="padding:6px;text-align:center">Total Wins</th>
@@ -346,7 +346,7 @@ def render_section_html(analysis: dict) -> str:
     parts.append("""
 <h3 style="margin:18px 0 6px;font-size:14px;color:#0f172a">📊 Carrier Rate + Transit Ranges (current)</h3>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
-<tr style="background:#1e3a5f;color:white">
+<tr style="background:#0a2350;color:white">
   <th style="padding:6px;text-align:left">Carrier</th>
   <th style="padding:6px;text-align:center">Quotes</th>
   <th style="padding:6px;text-align:center">Win %</th>

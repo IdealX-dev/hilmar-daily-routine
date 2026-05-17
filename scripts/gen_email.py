@@ -329,7 +329,7 @@ def _pending_rows(data):
 # HTML builders
 # ─────────────────────────────────────────────────────────────────────
 
-HEADER_GRADIENT = "linear-gradient(135deg,#1e3a5f 0%,#3b82f6 100%)"
+HEADER_GRADIENT = f"linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%)"
 
 
 EMAIL_FONT_STACK = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif"

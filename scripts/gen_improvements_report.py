@@ -457,7 +457,7 @@ def render_html(red, yellow, suggestions, report_date, qc):
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:{EMAIL_FONT}">
 <div style="max-width:800px;margin:0 auto;background:white;padding:32px">
-  <div style="background:linear-gradient(135deg,#1e3a5f 0%,#3b82f6 100%);color:white;padding:20px 24px;border-radius:6px 6px 0 0;margin:-32px -32px 0">
+  <div style="background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:20px 24px;border-radius:6px 6px 0 0;margin:-32px -32px 0">
     {f'<div style="background:white;padding:6px 10px;border-radius:5px;display:inline-block;margin-bottom:8px">{B.logo_html(height=32)}</div>' if B.has_logo() else ''}
     <h1 style="margin:0;font-size:20px">{'' if B.has_logo() else '🔍 '}Hilmar Tracker — Daily Systems Audit</h1>
     <div style="margin-top:6px;font-size:13px;opacity:0.9">Reporting on {_esc(rd_label)} • Generated {_esc(stamp)}</div>

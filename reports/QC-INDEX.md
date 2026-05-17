@@ -4,8 +4,9 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13. Total active checks: **26** (QC-001 through QC-020a/b
-+ QC-021 through QC-026). Last commit: see `git log scripts/qc_selfheal.py`.
+Generated 2026-05-13, updated 2026-05-14. Total active checks: **35**
+(QC-001 through QC-020a/b + QC-021 through QC-033, including QC-014a/b
+and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 
 ## How to read this table
 
@@ -45,7 +46,26 @@ Generated 2026-05-13. Total active checks: **26** (QC-001 through QC-020a/b
 | QC-023 | ERROR/WARN | MSAL token cache > 80d (ERROR) / > 60d (WARN) — silent refresh failing soon | None — manual re-auth | 2026-05-13 (new) |
 | QC-024 | ERROR/WARN | Stage path drift (legacy .jsonl newer than .txt) | None | 2026-05-13 (new) |
 | QC-025 | ERROR/WARN | Today's sent-flag has > 5 entries (ERROR) / > 3 (WARN) — looping | None — investigate | 2026-05-13 (`cd5fe6c`) |
-| QC-026 | WARN | Scripts in OneDrive drift from git repo (>3 files differ) — remote-edit sync broken | Auto via wrapper Step 0 git-pull next fire | 2026-05-13 (this commit) |
+| QC-026 | WARN | Scripts in OneDrive drift from git repo (>3 files differ) — remote-edit sync broken | Auto via wrapper Step 0 git-pull next fire | 2026-05-13 (`30f6cd9`) |
+| QC-027 | ERROR/WARN | Data completeness <90% on key fields (etd/eta/vessel/rate/carrier/pol/pod) | Auto via patch_carriers PASS 2 + PDF fallback | 2026-05-13 (`6efb1ad` → `df95e1b`) |
+| QC-028 | WARN | Rate intelligence artifact missing or stale (>26h) | None — surface only | 2026-05-13 (`8c81341`) |
+| QC-029 | WARN | Shared cross-project store stale or row-count drift between local + shared | None — investigate | 2026-05-13 (`8c81341`) |
+| QC-030 | ERROR/WARN | Transit-time pair (ETD+ETA) coverage <85% on active rows | Auto via parse_rate_table extracting both dates | 2026-05-13 (`1c4f38f`) |
+| QC-031 | WARN | SHARED/client_intelligence/SCHEMA.md missing (cross-project integrators lack contract) | None — surface only | 2026-05-13 (`1c4f38f`) |
+| QC-032 | ERROR/WARN | Offline backup stale at one or both dual targets (>36h) | None — wrapper Step 4.9 reruns each fire | 2026-05-14 (`e2ed228`) |
+| QC-033 | ERROR/WARN | Hilmar brand logo missing or corrupted (assets/branding/hilmar-logo.{svg,png}) | None — graceful fallback to emoji+text in headers | 2026-05-14 (`862e2ec`/`072e569`) |
+
+## Newest checks (QC-027 through QC-033) — what each was added for
+
+| # | Trigger | Date | Commit |
+|---|---|---|---|
+| QC-027 | Data audit revealed 70% etd_offered / 69% vessel_voyage / 44% ol_rate missing — drove the multi-pass patch_carriers backfill + PDF parser work that pulled completeness to 93%+ | 2026-05-13 | `6efb1ad` → `df95e1b` |
+| QC-028 | New rate-intelligence module needed a freshness gate so the daily audit's negotiation section couldn't silently go stale | 2026-05-13 | `8c81341` |
+| QC-029 | New cross-project shared store at `SHARED/client_intelligence/hilmar/` needs an integrity check vs the local source — drift means the rate tracker reads stale data | 2026-05-13 | `8c81341` |
+| QC-030 | Transit-time analytics (carrier+lane ETA-ETD median) shipped — needs ETD+ETA pair coverage gate so analytics don't degrade silently | 2026-05-13 | `1c4f38f` |
+| QC-031 | Shared schema documentation (`SHARED/client_intelligence/SCHEMA.md`) was added so rate-tracker integrators have a contract — QC ensures it stays present | 2026-05-13 | `1c4f38f` |
+| QC-032 | Dual-target offline backup shipped (`backup_offline.py`) — needs freshness check on BOTH targets to confirm defense-in-depth is working | 2026-05-14 | `e2ed228` |
+| QC-033 | Hilmar logo + brand asset integration shipped — checks logo file presence + magic-byte sanity so artifacts don't ship with broken `<img>` tags | 2026-05-14 | `862e2ec` → `072e569` |
 
 ## Errors this session that drove the new checks
 

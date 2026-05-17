@@ -243,7 +243,7 @@ def render(cfg: dict, data: dict) -> str:
 body{{font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;background:#f5f7fa;color:#0f172a;padding:24px;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;font-variant-numeric:tabular-nums}}
 table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
 .kpi .value,td,th{{font-variant-numeric:tabular-nums}}
-.header{{background:linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%);color:white;padding:24px 28px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}}
+.header{{background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:24px 28px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}}
 .header h1{{font-size:26px;margin-bottom:6px;font-weight:700;letter-spacing:-0.3px}}
 .header .subtitle{{opacity:0.92;font-size:15px;font-weight:500}}
 .header .tz-note{{opacity:0.7;font-size:12px;margin-top:10px}}
