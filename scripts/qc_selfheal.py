@@ -1268,6 +1268,49 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-040: check failed with exception: {_e}")
 
+    # QC-042: EMAIL-BODY DATA-URI GUARD — per Michael 2026-05-17 ("hilmar
+    # logo not showing up"). Outlook blocks `<img src="data:image/...">`
+    # references in HTML email bodies as a security measure, so any logo
+    # or inline image embedded via data: URI renders as the broken-image
+    # icon in the recipient's inbox. The fix is CID attachment (see
+    # branding.logo_html_cid + outlook_send.py auto-attach with
+    # contentId=hilmar-logo + isInline=true).
+    #
+    # This QC scans both email-bound HTML files (the tracker email body
+    # AND the daily audit email body) for `data:image` substrings. ANY
+    # occurrence = ERROR — it means someone reintroduced a data URI
+    # somewhere and Outlook will block it next fire.
+    #
+    # Browser-opened artifacts (hilmar-dashboard.html, weekly-summary.html)
+    # are EXEMPT — those are opened directly in browsers where data: URIs
+    # render fine. Only files that go through outlook_send.py as the
+    # message body are gated.
+    try:
+        _email_bodies = [
+            Path(__file__).resolve().parent.parent / "reports" / "email-body.html",
+            Path(__file__).resolve().parent.parent / "reports" / "improvements-report.html",
+        ]
+        _offenders = []
+        for _path in _email_bodies:
+            if not _path.exists():
+                continue
+            _text = _path.read_text(encoding="utf-8", errors="ignore")
+            if "data:image" in _text:
+                # Count occurrences for the error message
+                _n = _text.count("data:image")
+                _offenders.append(f"{_path.name} ({_n} data:image URI{'s' if _n > 1 else ''})")
+        if _offenders:
+            log.error(
+                f"QC-042: {len(_offenders)} email-body file(s) contain data:image URIs "
+                "(Outlook will block them — switch to cid:hilmar-logo via "
+                "branding.logo_html_cid + outlook_send auto-attach): " +
+                ", ".join(_offenders)
+            )
+        else:
+            log.ok("QC-042: email bodies use CID logo references (no data:image URIs)")
+    except Exception as _e:
+        log.warn(f"QC-042: check failed with exception: {_e}")
+
     # QC-041: CLASSIFIER FORM CONSISTENCY — tracking-data-v2.json must use
     # ONE classifier form across all rows. Mixed strict (Q&L/NQ) and legacy
     # (LOSS) is a parser bug — at least one ingest pass mis-classified.
