@@ -1,0 +1,10 @@
+# Runtime — keep in sync with pyproject.toml [project.dependencies]
+msal>=1.28
+azure-identity>=1.16
+azure-keyvault-secrets>=4.8
+requests>=2.32
+weasyprint>=62
+jinja2>=3.1
+python-dateutil>=2.9
+tzdata>=2024.1
+jsonschema>=4.22

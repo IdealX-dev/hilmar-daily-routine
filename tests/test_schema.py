@@ -69,10 +69,18 @@ def test_every_request_has_required_fields():
 
 
 def test_status_values_are_from_enum():
-    """Storage uses 3-state classifier (WIN/LOSS/PENDING) per scripts/core.py
-    VALID_STATUSES. The 4-state display (WIN / Q&L / NQ / PENDING) is
-    DERIVED at render time from LOSS + quoted boolean — not stored."""
-    valid = {"WIN", "LOSS", "PENDING"}
+    """Schema declares 4-state classifier (WIN/Q&L/NQ/PENDING) — the
+    inherited hilmar-tracker storage convention. Every request's status
+    must be one of the declared enum values.
+
+    Note: production data in tracking-data-v2.json on the Cloud PC still
+    uses the legacy 3-state form (WIN/LOSS/PENDING + quoted boolean).
+    That's a separate reconciliation tracked in HANDOFF.md — schema is
+    aspirational, current core.py is legacy. The two will converge in a
+    follow-on migration commit.
+    """
+    schema = _load_schema()
+    valid = set(schema["definitions"]["request"]["properties"]["status"]["enum"])
     golden = _load_golden()
     for i, r in enumerate(golden.get("requests", [])):
         s = r.get("status")
@@ -80,9 +88,10 @@ def test_status_values_are_from_enum():
 
 
 def test_loss_reason_enum_if_present():
-    """When loss_reason is set, it must be one of core.LOSS_REASONS
-    (uppercase canonical values). Always null on WIN."""
-    valid_loss_reasons = {"NO_RESPONSE", "PRICE", "ETD_MISS", "COVERED", "DRAFT_ONLY", "OTHER", None}
+    """When loss_reason is set, it must be one of the schema's declared
+    enum values. Always null on WIN."""
+    schema = _load_schema()
+    valid_loss_reasons = set(schema["definitions"]["request"]["properties"]["loss_reason"]["enum"])
     golden = _load_golden()
     for i, r in enumerate(golden.get("requests", [])):
         lr = r.get("loss_reason")

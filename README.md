@@ -1,13 +1,23 @@
 # Hilmar Daily Tracker
 
 > 🟢 **CANONICAL REPO — single source of truth** for Hilmar's daily tracker.
-> The earlier `IdealX-dev/hilmar-tracker` repo (Linux VM Plan A, dormant since
-> 2026-05-16) was **archived 2026-05-17** after value-extraction (schema.json,
-> invariant tests, schema tests ported here). One repo, one application.
+> The earlier `IdealX-dev/hilmar-tracker` repo (Linux VM Plan A) was
+> **fully merged 2026-05-17**: 17 source modules into `src/hilmar/`,
+> 17 test files into `tests/` (now **519 passing tests**), HANDOFF.md +
+> INSIGHTS-DESIGN.md into `docs/`, pyproject.toml at repo root. The
+> dormant repo is now archived for historical reference only.
+> ONE repo, ONE application — per Michael 2026-05-17.
 
 Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 10:00 AM ET each weekday from a Win365 Cloud PC.
 
-**Status (2026-05-17):** 40-check QC matrix, 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + invariant tests (ported from dormant hilmar-tracker), Codespaces-ready for editing from any device.
+**Status (2026-05-17):** 40-check QC matrix, 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + 519-test regression suite (full hilmar-tracker port), Codespaces-ready for editing from any device.
+
+## Two code paths — both authoritative, by phase
+
+- **`scripts/`** — the ACTIVE production pipeline. `run_pipeline.py` orchestrates the daily 10 AM ET fire on the Cloud PC. Runs `ingest.py` → `qc_selfheal.py` → `gen_email.py` → `outlook_send.py`. This is what Lonny + the OL distribution list see daily.
+- **`src/hilmar/`** — the inherited mature module library from the consolidated hilmar-tracker. Contains `baselines.py` (rolling P50/P90 stats), `insights.py` (LLM-driven daily narratives), `feedback_ingest.py` (👍/👎 self-learning), `model_router.py` (LLM task routing), `parser_fallback.py`, plus the full pytest-compatible test suite. Available for the next migration phase when `scripts/` evolves toward this richer architecture.
+
+The two folders coexist intentionally during the migration period. Tests run against `src/hilmar/`; production runs against `scripts/`. Daily pipeline is unaffected by `src/hilmar/` additions.
 
 ---
 

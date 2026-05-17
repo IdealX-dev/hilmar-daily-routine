@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hilmar-tracker"
+version = "0.1.0"
+description = "OL-USA daily Hilmar Ingredients rate-desk tracker — ingest, classify, render, send"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary — IdealX / OL-USA internal" }
+authors = [
+  { name = "Michael Deitchman", email = "michael.deitchman@idealx.us" },
+]
+dependencies = [
+  "msal>=1.28",                # Microsoft auth (confidential client)
+  "azure-identity>=1.16",      # DefaultAzureCredential — Key Vault future-proofing
+  "azure-keyvault-secrets>=4.8",
+  "requests>=2.32",            # Graph REST calls
+  "weasyprint>=62",            # PDF rendering (deploy-time / future)
+  "reportlab>=4.0",            # PDF rendering (no GTK; used by render.py)
+  "anthropic>=0.40",           # LLM narrative for daily insights (M3.11.b)
+  "jinja2>=3.1",               # HTML templating
+  "python-dateutil>=2.9",
+  "tzdata>=2024.1",
+  "jsonschema>=4.22",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0",
+  "responses>=0.25",           # mock Graph HTTP calls
+  "ruff>=0.4",                 # lint + format
+  "mypy>=1.10",
+]
+
+[project.scripts]
+hilmar-run        = "hilmar.orchestrator:main"
+hilmar-ingest     = "hilmar.ingest:main"
+hilmar-qc         = "hilmar.qc:main"
+hilmar-render     = "hilmar.render:main"
+hilmar-send       = "hilmar.send:main"
+hilmar-auth-login = "hilmar.graph_client:cli_main"
+hilmar-feedback   = "hilmar.feedback_ingest:main"
+hilmar-backfill   = "hilmar.backfill:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hilmar = ["templates/*.j2", "templates/*.html", "prompts/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# pythonpath = ["."] is belt-and-suspenders alongside the direct-conftest
+# imports introduced in commit a983e33. The repo root on sys.path means
+# `from tests.conftest import ...` ALSO resolves (in addition to the
+# bare `from conftest import ...` pattern that pytest natively supports
+# via its rootdir mechanism). On Windows the rootdir mechanism happens
+# to add the project root to sys.path so both forms worked locally; on
+# Linux CI it didn't, which is what broke the runs before a983e33.
+# Keeping both fixes in place avoids regression on either OS in future.
+pythonpath = ["."]
+addopts = "-ra --strict-markers --cov=hilmar --cov-report=term-missing --cov-fail-under=85"
+# NOTE: coverage gate restored to the 85 target after M3.8's interim
+# 77 floor. Bump rather than lower — it's a regression ratchet. Largest
+# remaining gap is qc.py (~72%, mostly Phase 6 cross-check error paths
+# and the CLI main()).
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_return_any = true
+warn_unused_configs = true

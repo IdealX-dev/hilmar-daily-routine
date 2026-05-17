@@ -1,0 +1,16 @@
+[Unit]
+Description=Run Hilmar Rate Desk Tracker weekdays at 07:00 ET
+Documentation=file:///opt/hilmar-tracker/README.md
+
+[Timer]
+# Mon–Fri 07:00 in America/New_York. systemd OnCalendar is local time;
+# set the VM's tz to America/New_York or use the explicit form below.
+# Verify after install: `systemctl list-timers hilmar-tracker.timer`
+OnCalendar=Mon..Fri *-*-* 07:00:00
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=120
+Unit=hilmar-tracker.service
+
+[Install]
+WantedBy=timers.target

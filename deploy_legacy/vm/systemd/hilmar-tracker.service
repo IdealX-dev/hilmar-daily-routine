@@ -1,0 +1,32 @@
+[Unit]
+Description=Hilmar Rate Desk Tracker — daily run
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hilmar
+Group=hilmar
+WorkingDirectory=/opt/hilmar-tracker
+EnvironmentFile=/etc/hilmar-tracker/.env
+ExecStart=/opt/hilmar-tracker/.venv/bin/hilmar-run
+StandardOutput=append:/var/log/hilmar-tracker/run.log
+StandardError=append:/var/log/hilmar-tracker/run.log
+
+# Sandboxing — least privilege on the VM
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/hilmar-tracker /var/log/hilmar-tracker
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

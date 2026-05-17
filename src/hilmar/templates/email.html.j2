@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hilmar daily — {{ today_label }}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+             color: #334155; margin: 0; padding: 0; background: #f8fafc;">
+<div style="max-width: 720px; margin: 0 auto; padding: 24px;">
+
+  <div style="background: #0b3d91; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+    <h1 style="margin: 0; font-size: 20px;">Hilmar Rate-Desk — {{ today_label }}</h1>
+    <p style="margin: 4px 0 0 0; opacity: 0.85; font-size: 13px;">{{ range_label }} &nbsp;·&nbsp; updated {{ updated_label }}</p>
+  </div>
+
+  <div style="background: white; padding: 20px; border-radius: 0 0 8px 8px;
+              box-shadow: 0 1px 3px rgba(0,0,0,.08);">
+
+    {# Alert-severity anomalies render as a single-row full-width banner
+       above the KPI grid. Per the LLM-narrative critique: the trust
+       caveat (e.g. "today's ingest is 0") needs to be the first thing
+       read, not buried in the collapsible insights block at the bottom.
+       Outlook supports border-left on <td>; the `<table>` wrapper keeps
+       it rendering correctly across mail clients. #}
+    {% if alert_anomalies %}
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
+    {% for a in alert_anomalies %}
+      <tr><td style="padding: 12px 16px; background: #fef2f2; border-left: 4px solid #d9534f; border-radius: 4px;">
+        <div style="font-size: 13px; font-weight: 600; color: #991b1b;">⚠ {{ a.label }}</div>
+        {% if a.detail %}
+        <div style="font-size: 12px; opacity: 0.75; margin-top: 4px;">{{ a.detail.note or "" }}</div>
+        {% endif %}
+      </td></tr>
+    {% endfor %}
+    </table>
+    {% endif %}
+
+    <h2 style="margin: 0 0 12px 0; font-size: 16px; color: #0b3d91;">KPIs</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #14b8a6; width: 25%;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.wins }}</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Wins ({{ summary.teu_won }} TEU)</div>
+        </td>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #14b8a6; width: 25%;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ total_value_won | usd if total_value_won else "—" }}</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Value won today</div>
+        </td>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #e11d48; width: 25%;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.quoted_lost }}</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Q&amp;L</div>
+        </td>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #0b3d91; width: 25%;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.win_rate }}%</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Win rate</div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #f59e0b;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.pending_hilmar }}</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Pending Hilmar</div>
+        </td>
+        <td style="padding: 12px; background: #f1f5f9; border-left: 4px solid #6366f1;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.not_quoted }}</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Not quoted</div>
+        </td>
+        <td colspan="2" style="padding: 12px; background: #f1f5f9; border-left: 4px solid #0b3d91;">
+          <div style="font-size: 22px; font-weight: 700; color: #0b3d91;">{{ summary.turnaround_avg_biz_hours }}h</div>
+          <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Avg TAT (biz hours)</div>
+        </td>
+      </tr>
+    </table>
+
+    {# Volume by trade region — answers "where is the business going?"
+       at a glance. Driven by core.trade_region (PR #28). Skipped when
+       all rows fall into "Other" (no signal). #}
+    {% if trade_region_segments and trade_region_segments|length > 1 %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Volume by trade region</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Region</th>
+        <th style="text-align: center; padding: 8px;">Total</th>
+        <th style="text-align: center; padding: 8px;">Wins</th>
+        <th style="text-align: center; padding: 8px;">Q&amp;L</th>
+        <th style="text-align: center; padding: 8px;">Win rate</th>
+        <th style="text-align: center; padding: 8px;">TEU</th>
+        <th style="text-align: right; padding: 8px;">Value won</th>
+      </tr>
+      {% for s in trade_region_segments %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ s.region }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ s.total }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #14b8a6; font-weight: 600;">{{ s.wins }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #e11d48;">{{ s.q_and_l }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ s.win_rate }}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ s.teu }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">
+          {%- if s.value_won -%}
+            {{ s.value_won | usd }}{% if s.wins_no_rate %}<span style="color: #92400e;" title="{{ s.wins_no_rate }} win(s) without parsed rate">†</span>{% endif %}
+          {%- elif s.wins -%}
+            <span style="color: #92400e;" title="rate not captured">n/a</span>
+          {%- else -%}
+            —
+          {%- endif -%}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {%- set _any_no_rate = trade_region_segments | selectattr('wins_no_rate') | list -%}
+    {% if _any_no_rate %}
+    <p style="font-size: 11px; opacity: 0.65; margin: 4px 0 0 0;">
+      <span style="color: #92400e;">†</span>/<span style="color: #92400e;">n/a</span> = booking won via MDOLX without a parseable rate quote in email — value not included in total.
+    </p>
+    {% endif %}
+    {% endif %}
+
+    {% if dod %}
+    <h2 style="margin: 24px 0 8px 0; font-size: 16px; color: #0b3d91;">What happened since last run</h2>
+    <p style="font-size: 13px; opacity: 0.7; margin: 0 0 12px 0;">{{ dod.summary_text }}</p>
+
+    {# Per Michael 2026-04-28: every section in the email must be a
+       proper table — bulleted lists with " · " separators were too
+       hard to scan. Each block below mirrors the "Pending Lonny ack"
+       column shape so the eye lines up across sections. #}
+
+    {% if dod.new_wins %}
+    <p style="font-size: 13px; margin: 8px 0 4px 0;"><b style="color: #065f46;">New wins ({{ dod.new_wins|length }})</b></p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Lane</th>
+        <th style="text-align: left; padding: 8px;">Carrier</th>
+        <th style="text-align: left; padding: 8px;">MDOLX</th>
+        <th style="text-align: center; padding: 8px;">TEU</th>
+      </tr>
+      {% for w in dod.new_wins %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ w.lane }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><b>{{ w.carrier or '—' }}</b></td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ w.mdolx or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ w.teu or 0 }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {# Active conversations — single consolidated view of in-flight work
+       (request asked / quote received / awaiting Lonny send). Replaces
+       the prior three tables (New quotes / Newly pending / New rate asks)
+       which double-counted the same row when it traversed multiple
+       states in one day. Each request appears once at its current state;
+       AWAITING SEND rises to the top because that's the action signal. #}
+    {% if dod.active_conversations %}
+    <p style="font-size: 13px; margin: 16px 0 4px 0;"><b style="color: #0b3d91;">Active conversations ({{ dod.active_conversations|length }})</b></p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Lane</th>
+        <th style="text-align: left; padding: 8px;">Equip / TEU</th>
+        <th style="text-align: left; padding: 8px;">Carrier</th>
+        <th style="text-align: right; padding: 8px;">Rate</th>
+        <th style="text-align: center; padding: 8px;">Requested (PT)</th>
+        <th style="text-align: center; padding: 8px;">Quoted (ET)</th>
+        <th style="text-align: left; padding: 8px;">Quoted by</th>
+        <th style="text-align: left; padding: 8px;">State</th>
+      </tr>
+      {% for c in dod.active_conversations %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ c.lane }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ c.equipment or '—' }}{% if c.teu %} / {{ c.teu }}{% endif %}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ c.carrier or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{% if c.rate %}{{ c.rate | usd }}{% else %}—{% endif %}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ c.requested_at_pt or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ c.quoted_at_et or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ c.quoted_by or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">
+          {% if c.state == 'AWAITING SEND' %}<b style="color: #92400e;">AWAITING SEND</b>{% if c.hours_since_quote %} <span style="opacity: 0.6;">({{ c.hours_since_quote }}h)</span>{% endif %}
+          {% else %}<span style="color: #6b7280;">AWAITING QUOTE</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if dod.newly_lost %}
+    <p style="font-size: 13px; margin: 16px 0 4px 0;"><b style="color: #991b1b;">Newly lost ({{ dod.newly_lost|length }})</b></p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Lane</th>
+        <th style="text-align: left; padding: 8px;">Carrier</th>
+        <th style="text-align: right; padding: 8px;">Rate</th>
+        <th style="text-align: center; padding: 8px;">TEU</th>
+      </tr>
+      {% for l in dod.newly_lost %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ l.lane }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ l.carrier or '—' }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ l.rate | usd }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ l.teu or 0 }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+    {% elif today_events %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Today</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Lane / Status</th>
+        <th style="text-align: left; padding: 8px;">Detail</th>
+      </tr>
+      {% for ev in today_events %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ ev.label }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; opacity: 0.75;">{{ ev.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if winning_lanes %}
+    {# core.aggregate_lanes returns `requests` (count) + `wins`. It does NOT
+       compute `win_rate` — render must derive it inline. Pre-fix the template
+       read `lane.win_rate` (None) and `lane.total` (None), so the email
+       showed bare "%" with no number on every row.
+       The "Trend" column shows a 14-day request-volume sparkline keyed off
+       lane_sparklines (computed by core.compute_lane_activity_sparklines). #}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #14b8a6;">Winning lanes</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;"><th style="text-align: left; padding: 8px;">Lane</th><th style="padding: 8px;">Wins</th><th style="padding: 8px;">Total</th><th style="padding: 8px;">Rate</th><th style="padding: 8px; text-align: left;">Trend (14d)</th></tr>
+    {% for lane in winning_lanes %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}><td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ lane.lane }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ lane.wins }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ lane.requests }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{% if lane.requests %}{{ ((lane.wins or 0) * 100.0 / lane.requests) | round(1) }}%{% else %}—{% endif %}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 14px; letter-spacing: -1px;">{% if lane_sparklines and lane_sparklines.get(lane.lane) %}{{ lane_sparklines[lane.lane].sparkline_total }}{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if losing_lanes %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #e11d48;">Losing lanes</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;"><th style="text-align: left; padding: 8px;">Lane</th><th style="padding: 8px;">Total</th><th style="padding: 8px;">Wins</th><th style="padding: 8px;">Rate</th><th style="padding: 8px; text-align: left;">Trend (14d)</th></tr>
+    {% for lane in losing_lanes %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}><td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ lane.lane }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ lane.requests }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ lane.wins }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{% if lane.requests %}{{ ((lane.wins or 0) * 100.0 / lane.requests) | round(1) }}%{% else %}—{% endif %}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 14px; letter-spacing: -1px;">{% if lane_sparklines and lane_sparklines.get(lane.lane) %}{{ lane_sparklines[lane.lane].sparkline_total }}{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if carrier_rows %}
+    {# core.aggregate_carriers writes `losses` (Q&L count), `wins`, `win_rate`.
+       Pre-fix the template read `row.quoted_lost` which doesn't exist —
+       Q&L cell rendered blank between Wins and Rate. #}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Carrier scoreboard</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Carrier</th>
+        <th style="text-align: center; padding: 8px;">Wins</th>
+        <th style="text-align: center; padding: 8px;">Q&amp;L</th>
+        <th style="text-align: center; padding: 8px;">Rate</th>
+        <th style="text-align: center; padding: 8px;">TEU won</th>
+        <th style="text-align: left; padding: 8px;">Loss reasons</th>
+      </tr>
+    {% for row in carrier_rows %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}><td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ row.carrier }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #14b8a6; font-weight: 600;">{{ row.wins }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #e11d48;">{{ row.losses }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ row.win_rate }}%</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ row.teu_won or 0 }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; opacity: 0.85;">{{ row.loss_reason_summary or "—" }}</td></tr>
+    {% endfor %}
+    </table>
+    {% endif %}
+
+    {# Why are we losing? Aggregate loss-reason breakdown across all
+       Q&L rows. The carrier scoreboard above shows per-carrier; this
+       gives the bird's-eye view at a glance. #}
+    {% if loss_reasons %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #991b1b;">Why are we losing?</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Reason</th>
+        <th style="text-align: center; padding: 8px;">Count</th>
+        <th style="text-align: center; padding: 8px;">Share</th>
+        <th style="text-align: center; padding: 8px;">TEU lost</th>
+      </tr>
+      {% for r in loss_reasons %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;"><b>{{ r.reason }}</b></td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.count }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.share_pct }}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.teu }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if pending_rows %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #f59e0b;">Pending Lonny ack</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Lane</th>
+        <th style="text-align: center; padding: 8px;">Equip</th>
+        <th style="text-align: center; padding: 8px;">TEU</th>
+        <th style="text-align: left; padding: 8px;">Carrier</th>
+        <th style="text-align: right; padding: 8px;">Rate (per FEU)</th>
+        <th style="text-align: center; padding: 8px;">Quoted at (ET)</th>
+      </tr>
+    {% for r in pending_rows %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}><td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.lane }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.containers or "—" }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.teu_requested or "—" }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.carrier_quoted or "—" }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.rate_per_feu | usd }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.olusa_time_et or "—" }}</td></tr>
+    {% endfor %}
+    </table>
+    {% endif %}
+
+    {# Today's request log — inline equivalent of dashboard.html.
+       Per Michael 2026-04-28: dashboard was attached as .html, which
+       Outlook forces users to download. Inlining the per-row table
+       here makes the full request log "one click to open" — already
+       on screen when the email opens. The HTML attachment is dropped
+       in step_send. #}
+    {% if request_log_rows %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Today's request log ({{ request_log_rows|length }})</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 6px;">Date</th>
+        <th style="text-align: left; padding: 6px;">Lane</th>
+        <th style="text-align: center; padding: 6px;">Equip</th>
+        <th style="text-align: center; padding: 6px;">Status</th>
+        <th style="text-align: left; padding: 6px;">Carrier</th>
+        <th style="text-align: right; padding: 6px;">Rate (per FEU)</th>
+        <th style="text-align: left; padding: 6px;">Quoted by</th>
+        <th style="text-align: center; padding: 6px;">TAT</th>
+        <th style="text-align: left; padding: 6px;">MDOLX</th>
+      </tr>
+      {% for r in request_log_rows %}
+      <tr{% if loop.index0 % 2 %} style="background: #f8fafc;"{% endif %}>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0;">{{ r.request_date or "—" }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0;">{{ r.lane or "—" }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ r.containers or "—" }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: center;">
+          {% if r.status == "WIN" %}<span style="color: #14b8a6; font-weight: 600;">WIN</span>
+          {% elif r.status == "Q&L" %}<span style="color: #e11d48; font-weight: 600;">Q&amp;L</span>
+          {% elif r.status == "PENDING" %}<span style="color: #f59e0b; font-weight: 600;">PEND</span>
+          {% elif r.status == "NQ" %}<span style="color: #94a3b8; font-weight: 600;">NQ</span>
+          {% else %}{{ r.status or "—" }}{% endif %}
+        </td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0;">{{ r.carrier_won or r.carrier_quoted or "—" }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.rate_per_feu | usd }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0;">{{ r.ol_responder_signer or "—" }}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0; text-align: center;">{% if r.turnaround_biz_hours is not none %}{{ "%.1f"|format(r.turnaround_biz_hours) }}h{% else %}—{% endif %}</td>
+        <td style="padding: 6px; border-bottom: 1px solid #e2e8f0;">{{ r.mdolx_ref or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {# Period trends — WoW / MoM / YTD. The 'sufficient' flag drives
+       whether we show real numbers vs '(collecting — N/M days)'. Until
+       enough daily snapshots accumulate this section honestly says
+       what's still warming up. #}
+    {% if period_trends %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Trends</h2>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;">
+        <th style="text-align: left; padding: 8px;">Period</th>
+        <th style="padding: 8px; text-align: center;">Wins</th>
+        <th style="padding: 8px; text-align: center;">Q&amp;L</th>
+        <th style="padding: 8px; text-align: center;">Win rate</th>
+        <th style="padding: 8px; text-align: center;">TEU won</th>
+        <th style="padding: 8px; text-align: left;">Notes</th>
+      </tr>
+      {% for key in ["wow", "mom", "ytd"] %}
+      {% set p = period_trends.get(key) %}
+      {% if p %}
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-weight: 600;">{{ p.label }}</td>
+        {% if p.sufficient %}
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ p.current.wins | int }}{% if p.delta and p.delta.wins is not none %}{% if p.delta.wins == "new" %} <span style="font-size: 11px; color: #065f46;">(new)</span>{% else %} <span style="font-size: 11px; color: {% if p.delta.wins >= 0 %}#065f46{% else %}#991b1b{% endif %};">({% if p.delta.wins >= 0 %}+{% endif %}{{ p.delta.wins }}%)</span>{% endif %}{% endif %}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ p.current.quoted_lost | int }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ p.current.win_rate or 0 }}%{% if p.delta and p.delta.win_rate is not none %} <span style="font-size: 11px; color: {% if p.delta.win_rate >= 0 %}#065f46{% else %}#991b1b{% endif %};">({% if p.delta.win_rate >= 0 %}+{% endif %}{{ p.delta.win_rate }}pp)</span>{% endif %}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center;">{{ p.current.teu_won | int }}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; opacity: 0.7;">{{ p.n_days_have }} days</td>
+        {% else %}
+          <td colspan="4" style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; font-style: italic; opacity: 0.5;">collecting — {{ p.n_days_have }}/{{ p.n_days_need or "—" }} days</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; font-size: 11px; opacity: 0.7;">{% if p.since %}since {{ p.since }}{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {# Pricing levels — actionable RIGHT NOW from current 14d window.
+       Surfaces lanes where our quote is significantly above (expensive)
+       or below (cheap) the lane median. Each row is a rate-desk
+       conversation: "why are we high/low here?" #}
+    {% if pricing_levels and (pricing_levels.expensive or pricing_levels.cheap) %}
+    <h2 style="margin: 24px 0 12px 0; font-size: 16px; color: #0b3d91;">Pricing levels — where we quoted vs lane median</h2>
+
+    {% if pricing_levels.expensive %}
+    <p style="font-size: 13px; margin: 8px 0 4px 0;"><b style="color: #991b1b;">Expensive (latest quote &gt; lane median by ≥10%) — investigate why:</b></p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;"><th style="text-align: left; padding: 8px;">Carrier</th><th style="padding: 8px;">Lane</th><th style="padding: 8px;">Latest</th><th style="padding: 8px;">Median</th><th style="padding: 8px;">vs median</th><th style="padding: 8px;">N</th></tr>
+      {% for r in pricing_levels.expensive %}
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.carrier }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.destination }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.latest | usd }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.median | usd }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #991b1b; font-weight: 600;">+{{ r.latest_pct_vs_median }}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; opacity: 0.6;">{{ r.n_quotes }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if pricing_levels.cheap %}
+    <p style="font-size: 13px; margin: 16px 0 4px 0;"><b style="color: #065f46;">Cheap (latest quote &lt; lane median by ≥10%) — verify these don&#39;t bleed margin:</b></p>
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <tr style="background: #f1f5f9;"><th style="text-align: left; padding: 8px;">Carrier</th><th style="padding: 8px;">Lane</th><th style="padding: 8px;">Latest</th><th style="padding: 8px;">Median</th><th style="padding: 8px;">vs median</th><th style="padding: 8px;">N</th></tr>
+      {% for r in pricing_levels.cheap %}
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.carrier }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0;">{{ r.destination }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.latest | usd }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums;">{{ r.median | usd }}</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #065f46; font-weight: 600;">{{ r.latest_pct_vs_median }}%</td>
+        <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; text-align: center; opacity: 0.6;">{{ r.n_quotes }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+    {% endif %}
+
+    {% if insights_html %}
+    <details style="margin-top: 28px; padding: 12px; background: #f8fafc; border-radius: 6px;">
+      <summary style="cursor: pointer; font-weight: 600; color: #0b3d91;">📊 Insights &amp; Suggestions ({{ today_label }})</summary>
+      <div style="margin-top: 12px;">{{ insights_html | safe }}</div>
+    </details>
+    {% endif %}
+
+  </div>
+
+  <p style="text-align: center; font-size: 11px; opacity: 0.6; margin-top: 16px;">
+    Hilmar Rate-Desk Tracker · OL-USA internal · Generated {{ updated_label }}
+  </p>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hilmar Rate-Desk Dashboard — {{ generated_label }}</title>
+<style>
+:root {
+  --navy: #0b3d91;
+  --teal: #14b8a6;
+  --rose: #e11d48;
+  --slate: #334155;
+  --pale: #f1f5f9;
+  --line: #cbd5e1;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  background: #f8fafc;
+  color: var(--slate);
+  font-size: 14px;
+}
+header {
+  background: var(--navy);
+  color: white;
+  padding: 24px 32px;
+}
+header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+header p { margin: 4px 0 0 0; opacity: 0.9; }
+main { padding: 24px 32px; max-width: 1280px; margin: 0 auto; }
+.section { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px;
+           box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.section h2 { margin: 0 0 16px 0; font-size: 18px; color: var(--navy);
+              border-bottom: 2px solid var(--pale); padding-bottom: 8px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px; }
+.kpi { background: var(--pale); padding: 16px; border-radius: 6px;
+       border-left: 4px solid var(--navy); }
+.kpi.win { border-left-color: var(--teal); }
+.kpi.loss { border-left-color: var(--rose); }
+.kpi .value { font-size: 26px; font-weight: 700; color: var(--navy); }
+.kpi .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+.kpi .sub { font-size: 11px; opacity: 0.6; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; padding: 10px 8px; background: var(--pale); color: var(--navy);
+     border-bottom: 2px solid var(--line); font-weight: 600; }
+td { padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+tr:hover { background: #fafbfc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px;
+         font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge-win { background: #d1fae5; color: #065f46; }
+.badge-loss { background: #fee2e2; color: #991b1b; }      /* Q&L — quoted-and-lost */
+.badge-nq { background: #e2e8f0; color: #475569; }        /* NQ — not quoted */
+.badge-pending { background: #fef3c7; color: #92400e; }
+footer { padding: 16px 32px; text-align: center; font-size: 12px; opacity: 0.6; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Hilmar Rate-Desk Tracker</h1>
+  <p>{{ generated_label }} &nbsp;·&nbsp; window {{ window_start }} → {{ window_end }}</p>
+</header>
+
+<main>
+
+<section class="section">
+  <h2>KPIs ({{ summary.total_entries }} requests)</h2>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="value">{{ summary.total_entries }}</div><div class="label">Total entries</div></div>
+    <div class="kpi win"><div class="value">{{ summary.wins }}</div><div class="label">Wins</div><div class="sub">{{ summary.teu_won }} TEU</div></div>
+    <div class="kpi loss"><div class="value">{{ summary.quoted_lost }}</div><div class="label">Quoted &amp; lost</div><div class="sub">{{ summary.teu_quoted_lost }} TEU</div></div>
+    <div class="kpi loss"><div class="value">{{ summary.not_quoted }}</div><div class="label">Not quoted</div><div class="sub">{{ summary.teu_not_quoted }} TEU</div></div>
+    <div class="kpi"><div class="value">{{ summary.pending_hilmar }}</div><div class="label">Pending</div><div class="sub">{{ summary.teu_pending }} TEU</div></div>
+    <div class="kpi"><div class="value">{{ summary.win_rate }}%</div><div class="label">Win rate</div></div>
+    <div class="kpi"><div class="value">{{ summary.quote_rate }}%</div><div class="label">Quote rate</div></div>
+    <div class="kpi"><div class="value">{{ summary.turnaround_avg_biz_hours }}h</div><div class="label">Avg biz-hour TAT</div><div class="sub">{{ summary.turnaround_avg_clock_hours }}h clock</div></div>
+  </div>
+</section>
+
+<section class="section">
+  <h2>Requests</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Lane</th>
+        <th>Containers</th>
+        <th>Status</th>
+        <th>Carrier</th>
+        <th>OL rate</th>
+        <th>Quoted by</th>
+        <th>TAT</th>
+        <th>MDOLX</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in requests %}
+      <tr>
+        <td>{{ r.request_date or "—" }}</td>
+        <td>{{ r.lane or "—" }}</td>
+        <td>{{ r.containers or "—" }}</td>
+        <td>
+          {% if r.status == "WIN" %}<span class="badge badge-win">WIN</span>
+          {% elif r.status == "Q&L" %}<span class="badge badge-loss">Q&amp;L</span>
+          {% elif r.status == "NQ" %}<span class="badge badge-nq">NQ</span>
+          {% elif r.status == "PENDING" %}<span class="badge badge-pending">PENDING</span>
+          {% else %}{{ r.status or "—" }}{% endif %}
+          {% if r.status_history and r.status_history|length > 0 %}
+            <span title="{% for h in r.status_history %}{{ h['from'] or '·' }} → {{ h.to }}{% if not loop.last %} · {% endif %}{% endfor %}"
+                  style="margin-left: 4px; font-size: 10px; opacity: 0.5; cursor: help;">
+              ({{ r.status_history|length }})
+            </span>
+          {% endif %}
+        </td>
+        <td>{{ r.carrier_won or r.carrier_quoted or "—" }}</td>
+        <td>{% if r.ol_rate %}{{ r.ol_rate }}{% elif r.status == "NQ" %}Not Quoted{% else %}—{% endif %}</td>
+        <td>{{ r.ol_responder_signer or "—" }}</td>
+        <td>{% if r.turnaround_biz_hours is not none %}{{ "%.1f"|format(r.turnaround_biz_hours) }}h{% else %}—{% endif %}</td>
+        <td>{{ r.mdolx_ref or "—" }}</td>
+        <td style="font-size: 11px; max-width: 320px;">{{ r.reason_detail or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if lanes %}
+<section class="section">
+  <h2>Lanes ({{ lanes|length }})</h2>
+  <table>
+    <thead><tr><th>Lane</th><th>Total</th><th>Wins</th><th>Win rate</th><th>TEU won</th></tr></thead>
+    <tbody>
+    {% for ln in lanes %}
+      <tr>
+        <td>{{ ln.lane }}</td>
+        <td>{{ ln.requests }}</td>
+        <td>{{ ln.wins }}</td>
+        <td>{% if ln.requests %}{{ ((ln.wins or 0) * 100.0 / ln.requests) | round(1) }}%{% else %}—{% endif %}</td>
+        <td>{{ ln.teu_won }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if carriers %}
+<section class="section">
+  <h2>Carriers ({{ carriers|length }})</h2>
+  <table>
+    <thead><tr><th>Carrier</th><th>Wins</th><th>Lost</th><th>Win rate</th><th>TEU won</th><th>Loss-reason breakdown</th></tr></thead>
+    <tbody>
+    {% for c in carriers %}
+      <tr>
+        <td>{{ c.carrier }}</td>
+        <td>{{ c.wins }}</td>
+        <td>{{ c.losses }}</td>
+        <td>{{ c.win_rate }}%</td>
+        <td>{{ c.teu_won }}</td>
+        <td style="font-size: 12px; opacity: 0.85;">{{ c.loss_reason_summary or "—" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if rate_trends %}
+<section class="section">
+  <h2>Rate movers ({{ rate_trends|length }})</h2>
+  <p style="font-size: 12px; opacity: 0.7;">Biggest pct-change carrier×lane pairs vs their prior in-window average. Excludes flat (&lt; 0.1%) movers.</p>
+  <table>
+    <thead><tr><th>Carrier</th><th>Lane</th><th>Latest</th><th>Prior avg</th><th>Δ%</th></tr></thead>
+    <tbody>
+    {% for t in rate_trends %}
+      <tr>
+        <td>{{ t.carrier }}</td>
+        <td>{{ t.destination }}</td>
+        <td>${{ "%.0f"|format(t.latest) }}</td>
+        <td>${{ "%.0f"|format(t.prior_avg) }}</td>
+        <td style="color: {% if t.pct_change > 0 %}#991b1b{% else %}#065f46{% endif %}; font-weight: 600;">
+          {% if t.pct_change > 0 %}+{% endif %}{{ t.pct_change }}%
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+</main>
+
+<footer>
+  Hilmar Rate-Desk Tracker · OL-USA · Generated {{ generated_label }}
+</footer>
+
+</body>
+</html>
