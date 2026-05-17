@@ -100,14 +100,18 @@ Sentry free tier: 10K events/month. Hilmar produces:
 Comfortably inside free tier with 5-10× margin. Paid Team plan ($26/mo)
 gives 100K events + custom alerts + Slack integration if/when needed.
 
-## Alert routing (defer until first noisy week)
+## Alert routing — LIVE since 2026-05-17
 
-Currently no alerts are configured — Sentry just collects events into the
-issues view. Next step (defer until we see how the signal-to-noise plays
-out over the first week of operation):
+Configured rules (Sentry → hilmar-daily-tracker → Alerts):
 
-1. Sentry → Alerts → Create Alert
-2. Set up:
-   - **High signal alert**: notify `michael.deitchman@idealx.us` on every NEW issue with severity=error (so a never-seen-before error pages you immediately)
-   - **Frequency alert**: notify on >5 events of same issue in 1h (catches loops)
-3. Optional: configure Sentry → Integrations → Microsoft Teams to route to the same Teams channel the daily audit uses
+| Rule | Trigger | Channel | Verified |
+|---|---|---|---|
+| **New issue notification** | First-ever occurrence of any issue | Email to `michael.deitchman@idealx.us` | ✅ Test event `8c27d26c69c34498a79de4834a4db44c` delivered 2026-05-17 6:35 PM ET |
+| **Frequency storm** | Same issue ≥5 times in 1h | Email to `michael.deitchman@idealx.us` | ✅ Configured (untested — fires only on real outage) |
+
+Sender: `noreply@sentry.io`. Already on Michael's Outlook safe-senders list (rich content renders inline).
+
+To add Microsoft Teams routing later (optional, when free-tier email volume becomes inconvenient):
+1. Sentry → Settings → Integrations → Microsoft Teams → Install
+2. Connect to the IdealX tenant Teams workspace
+3. Sentry → Alerts → edit each rule → add Teams channel as additional notification target
