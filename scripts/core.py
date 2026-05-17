@@ -92,6 +92,10 @@ _TRADE_REGION_MAP = {
     # Lat Krabang ICD (Bangkok area inland container depot — appears as
     # "Lat Krab" / "Lat Krabang" in Lonny's RFQs). Added 2026-05-07.
     "lat krabang": "SE Asia", "lat krab": "SE Asia", "ladkrabang": "SE Asia",
+    # Pasir Gudang — Malaysia's main industrial port near Johor. Added
+    # 2026-05-17 after QC-015 flagged it as Unmapped in production data
+    # (Michael "trade region.. nothing is every unmapped").
+    "pasir gudang": "SE Asia",
     # Australia / NZ
     "sydney": "Oceania", "melbourne": "Oceania", "brisbane": "Oceania",
     "fremantle": "Oceania", "auckland": "Oceania",

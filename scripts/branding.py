@@ -86,7 +86,17 @@ def logo_data_uri(prefer_svg: bool = True) -> str:
 
 
 def logo_html(height: int = 36, alt: str = "Hilmar Ingredients") -> str:
-    """Drop-in HTML tag for the logo. Returns empty string if no logo file."""
+    """Drop-in HTML tag for the logo using a data: URI.
+
+    NOTE: data: URIs are BLOCKED by Outlook for HTML email bodies (security
+    feature — prevents drive-by image content). For email use, prefer
+    `logo_html_cid()` which uses a CID reference and pairs with the
+    `cid:LOGO_CID` attachment added by outlook_send.
+
+    This data-URI form is fine for:
+      - HTML files opened directly in a browser (dashboard, audit)
+      - PDFs (reportlab uses its own path via logo_reportlab_image)
+    """
     uri = logo_data_uri()
     if not uri:
         return ""
@@ -94,6 +104,42 @@ def logo_html(height: int = 36, alt: str = "Hilmar Ingredients") -> str:
         f'<img src="{uri}" alt="{alt}" '
         f'style="height:{height}px;width:auto;vertical-align:middle;display:inline-block" />'
     )
+
+
+#: CID (Content-ID) for the logo when embedded as an email attachment.
+#: outlook_send attaches the logo PNG with this CID and the HTML body
+#: references it as <img src="cid:LOGO_CID"> — Outlook renders inline
+#: regardless of external-image blocking.
+LOGO_CID = "hilmar-logo"
+
+
+def logo_html_cid(height: int = 36, alt: str = "Hilmar Ingredients") -> str:
+    """Drop-in HTML tag for the logo using a CID reference.
+
+    Pairs with outlook_send.py attaching the logo PNG with
+    `contentId=LOGO_CID, isInline=true`. This is the format that survives
+    Outlook's safe-senders / external-image / data-URI blocking — the
+    image renders inline always because the bytes are part of the message.
+
+    Returns empty string if no logo file exists (graceful fallback to
+    text header).
+    """
+    if not has_logo():
+        return ""
+    return (
+        f'<img src="cid:{LOGO_CID}" alt="{alt}" '
+        f'style="height:{height}px;width:auto;vertical-align:middle;display:inline-block" />'
+    )
+
+
+def logo_png_path() -> Optional[Path]:
+    """Return the absolute path to the PNG logo file, or None.
+
+    outlook_send uses this to attach the logo with content-disposition=inline
+    + content-id=LOGO_CID for the cid: reference in logo_html_cid()."""
+    if LOGO_PNG.exists():
+        return LOGO_PNG
+    return None
 
 
 def logo_reportlab_image(width: float = 140):

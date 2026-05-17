@@ -336,7 +336,12 @@ EMAIL_FONT_STACK = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetic
 EMAIL_TNUM = "font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1"
 
 def _header_html(today_label, range_label, updated_label):
-    logo_html = B.logo_html(height=42, alt="Hilmar Ingredients")
+    # Use the CID variant — Outlook blocks data: URIs in HTML email bodies
+    # but renders inline CID attachments reliably. outlook_send.py attaches
+    # the logo PNG with contentId=hilmar-logo + isInline=true so this
+    # <img src="cid:hilmar-logo"> reference resolves at delivery time.
+    # Per Michael 2026-05-17 ("hilmar logo not showing up").
+    logo_html = B.logo_html_cid(height=42, alt="Hilmar Ingredients")
     logo_block = (
         f'<div style="background:white;padding:8px 12px;border-radius:6px;display:inline-block;margin-bottom:10px">{logo_html}</div>'
         if logo_html else ""

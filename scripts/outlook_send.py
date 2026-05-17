@@ -130,6 +130,33 @@ def send_mail(*, to: list[str], subject: str, html_body: str,
             "contentType": _content_type_for(p),
             "contentBytes": base64.b64encode(data).decode("ascii"),
         })
+
+    # Inline-CID logo embedding — auto-attach the Hilmar logo PNG with
+    # contentId so the email body's <img src="cid:hilmar-logo"> resolves
+    # at delivery time. Outlook ALWAYS renders inline-CID images regardless
+    # of external-image / data-URI blocking — which is why gen_email.py
+    # switched from data: URIs (blocked) to CID (renders).
+    # Per Michael 2026-05-17 ("hilmar logo not showing up").
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import branding
+        logo_path = branding.logo_png_path()
+        if logo_path and ("cid:" + branding.LOGO_CID) in (html_body or ""):
+            logo_data = logo_path.read_bytes()
+            total += len(logo_data)
+            attach_payload.append({
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": logo_path.name,
+                "contentType": "image/png",
+                "contentBytes": base64.b64encode(logo_data).decode("ascii"),
+                "contentId": branding.LOGO_CID,
+                "isInline": True,
+            })
+    except Exception as _e:
+        # Never let logo-attach failure break the send. Worst case: email
+        # arrives without inline logo image (header still has fallback text).
+        print(f"⚠️  logo CID attach skipped: {type(_e).__name__}: {_e}")
+
     if total > INLINE_ATTACH_LIMIT:
         raise RuntimeError(
             f"Attachments {total:,} bytes exceed inline cap {INLINE_ATTACH_LIMIT:,}. "
