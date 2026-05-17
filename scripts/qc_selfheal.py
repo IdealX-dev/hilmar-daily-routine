@@ -989,6 +989,44 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-024: check failed with exception: {_e}")
 
+    # QC-037: ol-quote-tracker sync freshness + success. After each pipeline
+    # fire, sync_to_quote_tracker.py POSTs entities (Hilmar, Lonny, carriers,
+    # OL operators) to ol-quote-tracker's Turso client_intelligence table.
+    # Audit log written to reports/quote-tracker-sync.log. This QC parses
+    # the most-recent line — WARN if last sync >36h ago or last sync errored.
+    try:
+        from datetime import datetime as _dt
+        _sync_log = Path(__file__).resolve().parent.parent / "reports" / "quote-tracker-sync.log"
+        if not _sync_log.exists():
+            log.warn("QC-037: quote-tracker-sync.log not found — sync_to_quote_tracker may never have run")
+        else:
+            _lines = _sync_log.read_text(encoding="utf-8", errors="ignore").splitlines()
+            _last = next((ln for ln in reversed(_lines) if ln.strip()), None)
+            if not _last:
+                log.warn("QC-037: quote-tracker-sync.log empty")
+            else:
+                # Format: "<iso_ts> | entities=N ok=True upserted=N err=-"
+                _ts_str = _last.split(" | ", 1)[0].strip()
+                try:
+                    _ts = _dt.fromisoformat(_ts_str.replace("Z", "+00:00"))
+                    _age_h = (_dt.now(_ts.tzinfo) - _ts).total_seconds() / 3600.0
+                except Exception:
+                    _age_h = None
+                if "ok=True" in _last:
+                    if _age_h is None:
+                        log.ok(f"QC-037: ol-quote-tracker sync succeeded ({_last[:80]}...)")
+                    elif _age_h > 36:
+                        log.warn(f"QC-037: last sync was {_age_h:.0f}h ago (>36h) — pipeline may not be running")
+                    else:
+                        log.ok(f"QC-037: ol-quote-tracker sync fresh ({_age_h:.1f}h ago)")
+                elif "no APP_PASSWORD configured" in _last:
+                    log.warn("QC-037: APP_PASSWORD not configured — sync skipped each fire. "
+                             "Drop password in secrets/quote-tracker-pwd.txt to enable.")
+                else:
+                    log.warn(f"QC-037: last sync failed: {_last[:120]}")
+    except Exception as _e:
+        log.warn(f"QC-037: check failed with exception: {_e}")
+
     # QC-034: tracking-data-v2.json schema validity gate. Added 2026-05-14
     # per best-practices batch. Calls core.validate_data_shape() and reports
     # structural issues (missing keys, wrong types, invalid status/loss_reason

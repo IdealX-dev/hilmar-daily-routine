@@ -56,6 +56,11 @@ STEPS = [
     # cheat sheet + cooling/regression alerts in the daily idealx.us audit.
     ("Share to client_intelligence", [PY, str(SCRIPTS / "share_intel.py"), "export"]),
     ("Rate intelligence",        [PY, str(SCRIPTS / "gen_rate_intelligence.py"), "--quiet"]),
+    # 2026-05-16: push entities to ol-quote-tracker's Turso-backed
+    # client_intelligence registry via /api/intelligence/sync. Per Michael
+    # "the shared you are using" + "client intelligence is client intelligence
+    # and should be all encompassing". No-op if APP_PASSWORD missing.
+    ("Sync to ol-quote-tracker", [PY, str(SCRIPTS / "sync_to_quote_tracker.py")]),
 ]
 
 SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
