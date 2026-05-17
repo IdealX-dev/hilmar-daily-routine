@@ -39,12 +39,35 @@ PENDING_WINDOW_HOURS = 24
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
-# COVERED    = lost to a competitor (Lonny replied "covered")
-# DRAFT_ONLY = MDOLX has only a DRAFT RATED / Move updated email — no booking
-#              confirmation in stage. Reclassified from WIN since no carrier
-#              was ever attached. Added 2026-05-07 for stand_260469.
-# OTHER      = catch-all when nothing else fits — should be near-zero
-LOSS_REASONS = {"NO_RESPONSE", "PRICE", "ETD_MISS", "COVERED", "DRAFT_ONLY", "OTHER"}
+# LOSS_REASONS — kept ALIGNED with src/hilmar/core.py LOSS_REASONS per QC-040
+# cross-folder drift check. Each new reason here must also exist in the
+# src/hilmar/ version (or vice versa).
+#
+# COVERED            = lost to a competitor (Lonny replied "covered")
+# DRAFT_ONLY         = MDOLX has only a DRAFT RATED / Move updated email — no
+#                       booking confirmation in stage. Added 2026-05-07.
+# OTHER              = catch-all when nothing else fits — near-zero
+# NO_RESPONSE        = OL never responded (display: NQ)
+# RESPONSE_NO_RATE   = MBD acked but did not quote (display: NQ)
+# QUOTED_NOT_BOOKED  = quoted, generic no-ETD signal (display: Q&L)
+# PRICE              = quoted, ETD fit OK, likely rate-driven (display: Q&L)
+# ETD_MISS           = quoted but ETD missed Lonny's ask by ≥5d (display: Q&L)
+# AWAITING_MDOLX     = PENDING sub-state: Send received, MDOLX pending
+# MDOLX_NO_SEND      = PENDING sub-state: MDOLX without send (anomaly)
+# SEND_NO_BOOKING    = AWAITING_MDOLX aged out past 72h (display: Q&L)
+LOSS_REASONS = {
+    "NO_RESPONSE",
+    "RESPONSE_NO_RATE",
+    "QUOTED_NOT_BOOKED",
+    "PRICE",
+    "ETD_MISS",
+    "OTHER",
+    "COVERED",
+    "DRAFT_ONLY",
+    "AWAITING_MDOLX",
+    "MDOLX_NO_SEND",
+    "SEND_NO_BOOKING",
+}
 
 # ─────────────────────────────────────────────────────────────────────
 # Trade-region map — destination → region (used for "Volume by Trade Region")

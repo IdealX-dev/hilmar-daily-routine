@@ -49,16 +49,37 @@ PENDING_WINDOW_HOURS = 48
 AWAITING_MDOLX_AGING_HOURS = 72
 RATE_TREND_THRESHOLD_PCT = 10
 
-#: Valid status enum — kept in sync with STATUS_* constants below and with
-#: ``schema.json``. Old enum was {"WIN", "LOSS", "PENDING"}; the
-#: 2026-04-27 four-state expansion split LOSS into Q&L (quoted-but-lost)
-#: and NQ (not-quoted, including responded-without-rate).
-VALID_STATUSES = {"WIN", "Q&L", "PENDING", "NQ"}
-#: Loss-reason / sub-state taxonomy. Q&L / NQ rows get a `loss_reason`
-#: as their final-state explanation. PENDING rows usually have None
-#: (a quote that's still inside the 24h Lonny-response window) but the
-#: 2026-04-27 Reading B WIN-classifier tightening introduced two
-#: PENDING sub-states that need disambiguation:
+#: Status enum — TWO classifiers coexist intentionally during the
+#: src/hilmar/ ↔ scripts/ convergence period (per Michael 2026-05-17
+#: "never to allow drift like this as standard"). The split:
+#:
+#:   STRICT (4-state, written by src/hilmar/ingest.py + qc.py):
+#:     {WIN, Q&L, PENDING, NQ}
+#:     Q&L = quoted and lost.  NQ = not quoted.  PENDING = inside 24h window.
+#:     More information-dense — no need for derivation at render.
+#:
+#:   LEGACY (3-state, used by scripts/core.py + the 155 production records):
+#:     {WIN, LOSS, PENDING}
+#:     LOSS + quoted=True  is equivalent to STRICT's Q&L.
+#:     LOSS + quoted=False is equivalent to STRICT's NQ.
+#:
+#: `VALID_STATUSES` accepts BOTH forms. QC-040 (cross-folder drift check)
+#: ENFORCES that any tracking-data-v2.json uses one form CONSISTENTLY —
+#: mixed-form data is a parser bug and gets flagged as ERROR.
+#:
+#: Bridge helpers below (display_status, normalize_to_strict, normalize_to_legacy)
+#: are the SINGLE SOURCE OF TRUTH for crossing between the two forms.
+#: All cross-classifier comparisons MUST go through these helpers.
+VALID_STATUSES_STRICT = frozenset({"WIN", "Q&L", "PENDING", "NQ"})
+VALID_STATUSES_LEGACY = frozenset({"WIN", "LOSS", "PENDING"})
+VALID_STATUSES = VALID_STATUSES_STRICT | VALID_STATUSES_LEGACY
+
+#: Loss-reason / sub-state taxonomy. LOSS rows get a `loss_reason`
+#: as their final-state explanation. LOSS+quoted=True (display: Q&L)
+#: rows typically have PRICE / ETD_MISS / QUOTED_NOT_BOOKED.
+#: LOSS+quoted=False (display: NQ) rows typically have NO_RESPONSE /
+#: RESPONSE_NO_RATE. PENDING rows usually have None (a quote inside
+#: the 24h Lonny-response window) but two PENDING sub-states exist:
 #:   AWAITING_MDOLX  — Lonny said Send, OL hasn't generated MDOLX yet.
 #:                     Auto-promotes to WIN on a later run when MDOLX
 #:                     lands in the same chain.
@@ -66,16 +87,90 @@ VALID_STATUSES = {"WIN", "Q&L", "PENDING", "NQ"}
 #:                     Anomaly; rare; flagged for ops review (typically
 #:                     a parser miss on the lonny_reply side).
 LOSS_REASONS = {
-    "NO_RESPONSE",          # NQ — OL never responded
-    "RESPONSE_NO_RATE",     # NQ — MBD acked but did not quote
-    "QUOTED_NOT_BOOKED",    # Q&L — generic, no ETD signal
-    "PRICE",                # Q&L — ETD fit OK so likely rate-driven
-    "ETD_MISS",             # Q&L — ETD missed Lonny's ask by ≥5d
-    "OTHER",                # Q&L — malformed timestamp / unknown
+    "NO_RESPONSE",          # display-NQ — OL never responded
+    "RESPONSE_NO_RATE",     # display-NQ — MBD acked but did not quote
+    "QUOTED_NOT_BOOKED",    # display-Q&L — generic, no ETD signal
+    "PRICE",                # display-Q&L — ETD fit OK so likely rate-driven
+    "ETD_MISS",             # display-Q&L — ETD missed Lonny's ask by ≥5d
+    "OTHER",                # display-Q&L — malformed timestamp / unknown
     "AWAITING_MDOLX",       # PENDING sub-state — Send received, MDOLX pending
     "MDOLX_NO_SEND",        # PENDING sub-state — MDOLX without send (anomaly)
-    "SEND_NO_BOOKING",      # Q&L — AWAITING_MDOLX aged out past 72h
+    "SEND_NO_BOOKING",      # display-Q&L — AWAITING_MDOLX aged out past 72h
+    "COVERED",              # scripts/core.LOSS_REASONS compat — Lonny said the load was covered elsewhere
+    "DRAFT_ONLY",           # scripts/core.LOSS_REASONS compat — DRAFT RATED reply, no full rate
 }
+
+
+def display_status(r: dict) -> str:
+    """Return the 4-state DISPLAY label for a row regardless of storage form.
+
+    A row written by scripts/ingest.py (3-state LEGACY) and a row written by
+    src/hilmar/ingest.py (4-state STRICT) both return the same display label
+    after this normalization:
+      WIN   → WIN
+      LOSS+quoted=True  → Q&L      (storage was LEGACY)
+      LOSS+quoted=False → NQ       (storage was LEGACY)
+      Q&L   → Q&L                  (storage was STRICT)
+      NQ    → NQ                   (storage was STRICT)
+      PENDING → PENDING
+
+    Use this anywhere you render Q&L vs NQ to a user. Never compare
+    `r["status"] == "Q&L"` directly — it'll silently miss legacy rows
+    where Q&L is encoded as LOSS+quoted=True. Use `is_quoted_and_lost(r)`
+    or `display_status(r) == "Q&L"` instead.
+    """
+    s = (r or {}).get("status")
+    if s == "LOSS":
+        return "Q&L" if (r or {}).get("quoted") else "NQ"
+    return s
+
+
+def is_quoted_and_lost(r: dict) -> bool:
+    """True if row is quoted-and-lost in EITHER classifier form.
+
+    Storage-agnostic. Use this instead of `r["status"] == "Q&L"` or
+    `r["status"] == "LOSS" and r["quoted"]`.
+    """
+    s = (r or {}).get("status")
+    if s == "Q&L":
+        return True
+    return s == "LOSS" and bool((r or {}).get("quoted"))
+
+
+def is_not_quoted(r: dict) -> bool:
+    """True if row is not-quoted in EITHER classifier form."""
+    s = (r or {}).get("status")
+    if s == "NQ":
+        return True
+    return s == "LOSS" and not (r or {}).get("quoted")
+
+
+def is_loss(r: dict) -> bool:
+    """True if row is any kind of loss (quoted-and-lost OR not-quoted).
+    Covers both LEGACY LOSS and STRICT Q&L/NQ rows.
+    """
+    s = (r or {}).get("status")
+    return s == "LOSS" or s == "Q&L" or s == "NQ"
+
+
+def detect_classifier_form(requests: list[dict]) -> str:
+    """Detect which classifier form a list of requests uses.
+
+    Returns one of:
+      "strict"  — uses STRICT 4-state (Q&L / NQ present, no LOSS)
+      "legacy"  — uses LEGACY 3-state (LOSS present, no Q&L / NQ)
+      "mixed"   — DRIFT: both forms present (parser bug, flagged by QC-040)
+      "empty"   — no non-WIN/PENDING rows to determine
+    """
+    has_strict = any(r.get("status") in ("Q&L", "NQ") for r in (requests or []))
+    has_legacy = any(r.get("status") == "LOSS" for r in (requests or []))
+    if has_strict and has_legacy:
+        return "mixed"
+    if has_strict:
+        return "strict"
+    if has_legacy:
+        return "legacy"
+    return "empty"
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 

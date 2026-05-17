@@ -4,9 +4,18 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-05-17. Total active checks: **40**
-(QC-001 through QC-020a/b + QC-021 through QC-038, including QC-014a/b
+Generated 2026-05-13, updated 2026-05-17 (post-consolidation). Total active checks: **43**
+(QC-001 through QC-020a/b + QC-021 through QC-041, including QC-014a/b
 and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
+
+**Three drift-prevention + accuracy checks added 2026-05-17 evening:**
+- **QC-039** (ERROR) — Parser accuracy ≥98% on critical fields. Gates ship.
+- **QC-040** (WARN) — Cross-folder enum drift between `scripts/core.py` and `src/hilmar/core.py`.
+- **QC-041** (ERROR) — Classifier form consistency in production data (no mixed LEGACY/STRICT).
+
+Per Michael's standing rules in `~/.claude/CLAUDE.md`:
+- *"this parser and your system have to run at minimum of 98 percent accuracy no matter COST"*
+- *"never to allow drift like this as standard"*
 
 ## How to read this table
 
@@ -58,7 +67,10 @@ and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 | QC-035 | ERROR/WARN | stage_emails.txt >20MB (ERROR) / >5MB (WARN) — unbounded stage growth | None — run `refresh_stage.py --rotate-stage-older-than 90` | 2026-05-14 (best-practices batch) |
 | QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
 | QC-037 | WARN | ol-quote-tracker sync log missing, stale (>36h), or last sync errored | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`) |
-| QC-038 | WARN | ol-quote-tracker reconcile stale (>36h) or win-count drift >2 between Hilmar and ol-quote-tracker | None — drift = one system missed/mis-classified an OL email; manual investigation | 2026-05-17 (`pending`) |
+| QC-038 | WARN | ol-quote-tracker reconcile stale (>36h) or win-count drift >2 between Hilmar and ol-quote-tracker | None — drift = one system missed/mis-classified an OL email; manual investigation | 2026-05-17 (`f64b98e`) |
+| QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
+| QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
+| QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 
 ## Newest checks (QC-027 through QC-038) — what each was added for
 

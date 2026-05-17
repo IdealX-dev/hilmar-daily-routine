@@ -1083,6 +1083,153 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-038: check failed with exception: {_e}")
 
+    # QC-039: PARSER ACCURACY GATE — per Michael 2026-05-17 "this parser and
+    # your system have to run at minimum of 98 percent accuracy no matter
+    # COST." Measures per-field % populated against applicability predicates
+    # in src/hilmar/parser_accuracy.py. Computes:
+    #   - Overall rate (equal-weight mean across fields)
+    #   - Weighted rate (by applicable-row count)
+    # ERROR if overall < 98% OR any CRITICAL field falls below 98%.
+    # WARN if overall ≥ 98% but a non-critical field falls below.
+    # Critical fields: origin, destination, lane, container_count,
+    # teu_requested, carrier_quoted, carrier_won, ol_rate.
+    try:
+        import sys as _sys
+        _src_dir = Path(__file__).resolve().parent.parent / "src"
+        if str(_src_dir) not in _sys.path:
+            _sys.path.insert(0, str(_src_dir))
+        from hilmar.parser_accuracy import compute_accuracy, ACCURACY_THRESHOLD, CRITICAL_FIELDS
+        _acc = compute_accuracy(data.get("requests", []))
+        _pct = f"{_acc['overall_rate']:.1%}"
+        _wpct = f"{_acc['weighted_rate']:.1%}"
+        if _acc["critical_failing"]:
+            log.error(
+                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) with "
+                f"{len(_acc['critical_failing'])} CRITICAL field(s) below "
+                f"{ACCURACY_THRESHOLD:.0%}: " +
+                ", ".join(
+                    f"{f}={_acc['field_stats'][f]['populated']}/"
+                    f"{_acc['field_stats'][f]['applicable']} "
+                    f"({_acc['field_stats'][f]['rate']:.1%})"
+                    for f in _acc["critical_failing"]
+                )
+            )
+        elif _acc["failing_fields"]:
+            log.warn(
+                f"QC-039: parser accuracy {_pct} overall (weighted {_wpct}); "
+                f"{len(_acc['failing_fields'])} non-critical field(s) below "
+                f"{ACCURACY_THRESHOLD:.0%}: " +
+                ", ".join(
+                    f"{f}={_acc['field_stats'][f]['rate']:.1%}"
+                    for f in _acc["failing_fields"]
+                )
+            )
+        elif _acc["overall_rate"] < ACCURACY_THRESHOLD:
+            # All individual fields ≥ threshold but the equal-weight mean
+            # falls below (e.g. one big-applicable field at 95% pulls down
+            # several 100%s). Warn — investigate distribution.
+            log.warn(
+                f"QC-039: parser accuracy {_pct} below threshold "
+                f"{ACCURACY_THRESHOLD:.0%} (weighted {_wpct}) — "
+                "no single field failed but equal-weight mean is low"
+            )
+        else:
+            log.ok(
+                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) "
+                f"≥ {ACCURACY_THRESHOLD:.0%} on all {len([f for f in _acc['field_stats'].values() if not f.get('n_a')])} measured fields"
+            )
+    except Exception as _e:
+        log.warn(f"QC-039: check failed with exception: {_e}")
+
+    # QC-040: CROSS-FOLDER DRIFT — per Michael 2026-05-17 "never to allow
+    # drift like this as standard." Detects when scripts/core.py and
+    # src/hilmar/core.py disagree on enums/constants that should be aligned.
+    # Documented intentional drift (e.g. 4-state Q&L/NQ in src/hilmar/ STRICT
+    # vs 3-state in scripts/) goes through ALLOWED_CROSS_FOLDER_DRIFT below.
+    # NEW drift triggers WARN — operator must either align or document.
+    try:
+        import sys as _sys
+        _src_dir = Path(__file__).resolve().parent.parent / "src"
+        if str(_src_dir) not in _sys.path:
+            _sys.path.insert(0, str(_src_dir))
+        from hilmar import core as _h_core
+
+        # Allowed intentional drift — documented in src/hilmar/core.py
+        # comments. Adding to this list requires a deliberate code review.
+        _ALLOWED = {
+            # The 3-state vs 4-state classifier divide is INTENTIONAL —
+            # src/hilmar/ has VALID_STATUSES_STRICT for the 4-state form
+            # and VALID_STATUSES_LEGACY for the 3-state form. The union
+            # `VALID_STATUSES` accepts both. scripts/core.VALID_STATUSES
+            # is the 3-state legacy form only. They are EQUAL on the
+            # intersection {WIN, PENDING} and differ deliberately on
+            # {LOSS, Q&L, NQ}.
+            "VALID_STATUSES": True,
+        }
+
+        _drift_findings = []
+        # Compare VALID_STATUSES — special-cased because of intentional drift
+        scripts_statuses = set(getattr(core, "VALID_STATUSES", set()))
+        hilmar_legacy = set(getattr(_h_core, "VALID_STATUSES_LEGACY", set()))
+        if scripts_statuses != hilmar_legacy:
+            _drift_findings.append(
+                f"scripts/core.VALID_STATUSES {sorted(scripts_statuses)} != "
+                f"src/hilmar/core.VALID_STATUSES_LEGACY {sorted(hilmar_legacy)} — "
+                "the LEGACY view in src/hilmar/ must mirror scripts/ exactly"
+            )
+
+        # Compare LOSS_REASONS — strict equality required (no allowed drift)
+        scripts_reasons = set(getattr(core, "LOSS_REASONS", set()))
+        hilmar_reasons = set(getattr(_h_core, "LOSS_REASONS", set()))
+        if scripts_reasons and hilmar_reasons:
+            _missing_in_scripts = hilmar_reasons - scripts_reasons
+            _missing_in_hilmar = scripts_reasons - hilmar_reasons
+            if _missing_in_scripts or _missing_in_hilmar:
+                _drift_findings.append(
+                    f"LOSS_REASONS drift: only in src/hilmar/ = {sorted(_missing_in_scripts)}; "
+                    f"only in scripts/ = {sorted(_missing_in_hilmar)}"
+                )
+
+        if _drift_findings:
+            log.warn(
+                f"QC-040: {len(_drift_findings)} undocumented cross-folder drift "
+                f"finding(s) between scripts/core.py and src/hilmar/core.py: " +
+                " | ".join(_drift_findings)
+            )
+        else:
+            log.ok("QC-040: scripts/core ↔ src/hilmar/core enums aligned "
+                   "(VALID_STATUSES via LEGACY view; LOSS_REASONS strict)")
+    except Exception as _e:
+        log.warn(f"QC-040: check failed with exception: {_e}")
+
+    # QC-041: CLASSIFIER FORM CONSISTENCY — tracking-data-v2.json must use
+    # ONE classifier form across all rows. Mixed strict (Q&L/NQ) and legacy
+    # (LOSS) is a parser bug — at least one ingest pass mis-classified.
+    try:
+        import sys as _sys
+        _src_dir = Path(__file__).resolve().parent.parent / "src"
+        if str(_src_dir) not in _sys.path:
+            _sys.path.insert(0, str(_src_dir))
+        from hilmar.core import detect_classifier_form
+        _form = detect_classifier_form(data.get("requests", []))
+        if _form == "mixed":
+            _strict_rows = [r for r in data.get("requests", [])
+                             if r.get("status") in ("Q&L", "NQ")]
+            _legacy_rows = [r for r in data.get("requests", [])
+                             if r.get("status") == "LOSS"]
+            log.error(
+                f"QC-041: CLASSIFIER DRIFT — tracking-data-v2.json has "
+                f"{len(_strict_rows)} STRICT rows (Q&L/NQ) and "
+                f"{len(_legacy_rows)} LEGACY rows (LOSS). Mixed-form data "
+                "is a parser bug. All ingest must write one consistent form."
+            )
+        elif _form == "empty":
+            log.ok("QC-041: no LOSS/Q&L/NQ rows to evaluate classifier form")
+        else:
+            log.ok(f"QC-041: classifier form consistent ({_form.upper()})")
+    except Exception as _e:
+        log.warn(f"QC-041: check failed with exception: {_e}")
+
     # QC-034: tracking-data-v2.json schema validity gate. Added 2026-05-14
     # per best-practices batch. Calls core.validate_data_shape() and reports
     # structural issues (missing keys, wrong types, invalid status/loss_reason
