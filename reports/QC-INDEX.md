@@ -4,8 +4,8 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-05-14. Total active checks: **35**
-(QC-001 through QC-020a/b + QC-021 through QC-033, including QC-014a/b
+Generated 2026-05-13, updated 2026-05-17. Total active checks: **40**
+(QC-001 through QC-020a/b + QC-021 through QC-038, including QC-014a/b
 and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 
 ## How to read this table
@@ -54,8 +54,13 @@ and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 | QC-031 | WARN | SHARED/client_intelligence/SCHEMA.md missing (cross-project integrators lack contract) | None — surface only | 2026-05-13 (`1c4f38f`) |
 | QC-032 | ERROR/WARN | Offline backup stale at one or both dual targets (>36h) | None — wrapper Step 4.9 reruns each fire | 2026-05-14 (`e2ed228`) |
 | QC-033 | ERROR/WARN | Hilmar brand logo missing or corrupted (assets/branding/hilmar-logo.{svg,png}) | None — graceful fallback to emoji+text in headers | 2026-05-14 (`862e2ec`/`072e569`) |
+| QC-034 | ERROR | tracking-data-v2.json shape invalid (missing keys / wrong types / invalid status/loss_reason enums) | None — gates ship; structural drift surfaced loudly | 2026-05-14 (best-practices batch) |
+| QC-035 | ERROR/WARN | stage_emails.txt >20MB (ERROR) / >5MB (WARN) — unbounded stage growth | None — run `refresh_stage.py --rotate-stage-older-than 90` | 2026-05-14 (best-practices batch) |
+| QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
+| QC-037 | WARN | ol-quote-tracker sync log missing, stale (>36h), or last sync errored | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`) |
+| QC-038 | WARN | ol-quote-tracker reconcile stale (>36h) or win-count drift >2 between Hilmar and ol-quote-tracker | None — drift = one system missed/mis-classified an OL email; manual investigation | 2026-05-17 (`pending`) |
 
-## Newest checks (QC-027 through QC-033) — what each was added for
+## Newest checks (QC-027 through QC-038) — what each was added for
 
 | # | Trigger | Date | Commit |
 |---|---|---|---|
@@ -66,6 +71,11 @@ and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 | QC-031 | Shared schema documentation (`SHARED/client_intelligence/SCHEMA.md`) was added so rate-tracker integrators have a contract — QC ensures it stays present | 2026-05-13 | `1c4f38f` |
 | QC-032 | Dual-target offline backup shipped (`backup_offline.py`) — needs freshness check on BOTH targets to confirm defense-in-depth is working | 2026-05-14 | `e2ed228` |
 | QC-033 | Hilmar logo + brand asset integration shipped — checks logo file presence + magic-byte sanity so artifacts don't ship with broken `<img>` tags | 2026-05-14 | `862e2ec` → `072e569` |
+| QC-034 | Best-practices batch: added `core.validate_data_shape()` schema gate to catch structural drift before downstream renderers crash silently on missing keys | 2026-05-14 | best-practices batch |
+| QC-035 | Best-practices batch: stage rotation flag added — without a size gate, `stage_emails.txt` would grow unbounded over months and silently OOM the parser | 2026-05-14 | best-practices batch |
+| QC-036 | Best-practices batch: tests/ folder + 50 unit tests added — needed a check that the regression net stays present and grows with future modules | 2026-05-14 | best-practices batch |
+| QC-037 | Per Michael "client intelligence is on turso for it" — built sync_to_quote_tracker.py to push 13 Hilmar entities to ol-quote-tracker's `/api/intelligence/sync`; QC-037 ensures the audit log stays fresh and surfaces APP_PASSWORD / endpoint errors | 2026-05-16 | `c8c3d14` |
+| QC-038 | Per Michael "you see hilmar data is also on there as a good check point for won bookings" — built reconcile_with_quote_tracker.py to cross-check Hilmar wins vs ol-quote-tracker's records (both systems independently ingest the same OL emails — counts SHOULD match). QC-038 catches stale reconcile or significant drift | 2026-05-17 | pending commit |
 
 ## Errors this session that drove the new checks
 

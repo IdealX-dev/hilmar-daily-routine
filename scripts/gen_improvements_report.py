@@ -480,6 +480,7 @@ def render_html(red, yellow, suggestions, report_date, qc):
     To request a new check, ask Claude.
   </div>
 {_rate_intel_section_inline()}
+{_reconcile_section_inline()}
 </div>
 </body></html>
 """
@@ -493,6 +494,23 @@ def _rate_intel_section_inline():
     want it now' — rate-negotiation cheat sheet + cooling/regression
     alerts surface in the daily idealx.us audit."""
     section_path = REPORTS / "rate-intelligence-section.html"
+    if section_path.exists():
+        try:
+            return section_path.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+    return ""
+
+
+def _reconcile_section_inline():
+    """Inline the ol-quote-tracker reconciliation section if it exists.
+    Produced by reconcile_with_quote_tracker.py (runs at end of pipeline).
+    Added 2026-05-17 per Michael 'you see hilmar data is also on there as a
+    good check point for won bookings'. Surfaces win-count + TEU drift
+    between Hilmar's local tracking and ol-quote-tracker's Turso registry
+    — drift indicates one system missed or mis-classified an OL email.
+    Silent no-op if section absent (APP_PASSWORD not configured)."""
+    section_path = REPORTS / "reconcile-quote-tracker-section.html"
     if section_path.exists():
         try:
             return section_path.read_text(encoding="utf-8")

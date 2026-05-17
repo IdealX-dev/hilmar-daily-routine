@@ -61,6 +61,13 @@ STEPS = [
     # "the shared you are using" + "client intelligence is client intelligence
     # and should be all encompassing". No-op if APP_PASSWORD missing.
     ("Sync to ol-quote-tracker", [PY, str(SCRIPTS / "sync_to_quote_tracker.py")]),
+    # 2026-05-17: cross-check Hilmar wins against ol-quote-tracker. Per Michael
+    # "you see hilmar data is also on there as a good check point for won
+    # bookings". Both systems independently ingest the same OL emails — counts
+    # SHOULD match. Drift surfaces a missed/mis-classified email in one system.
+    # No-op if APP_PASSWORD missing. Output → reports/reconcile-quote-tracker.*
+    # Wrapped in QC-038 freshness + drift check.
+    ("Reconcile with ol-quote-tracker", [PY, str(SCRIPTS / "reconcile_with_quote_tracker.py")]),
 ]
 
 SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}

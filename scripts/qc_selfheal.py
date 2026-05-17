@@ -1027,6 +1027,62 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-037: check failed with exception: {_e}")
 
+    # QC-038: ol-quote-tracker reconciliation freshness + drift detection.
+    # Per Michael 2026-05-16 "you see hilmar data is also on there as a good
+    # check point for won bookings". Both systems independently ingest the
+    # same OL inbox emails — Hilmar wins SHOULD match ol-quote-tracker wins
+    # under clientCompany=Hilmar Ingredients. reconcile_with_quote_tracker.py
+    # writes reports/quote-tracker-reconcile.log on every pipeline fire.
+    # Format: "<iso_ts> | ok=True delta=N qt=M hilmar=K" or "<iso_ts> | error=... ok=False"
+    # WARN if: missing log / stale (>36h) / drift >2 / fetch failed.
+    # OK if: drift ∈ {-2..+2} (small drift OK — same-day intake differences).
+    try:
+        from datetime import datetime as _dt
+        _rec_log = Path(__file__).resolve().parent.parent / "reports" / "quote-tracker-reconcile.log"
+        if not _rec_log.exists():
+            log.warn("QC-038: quote-tracker-reconcile.log not found — "
+                     "reconcile_with_quote_tracker may never have run")
+        else:
+            _lines = _rec_log.read_text(encoding="utf-8", errors="ignore").splitlines()
+            _last = next((ln for ln in reversed(_lines) if ln.strip()), None)
+            if not _last:
+                log.warn("QC-038: quote-tracker-reconcile.log empty")
+            else:
+                _ts_str = _last.split(" | ", 1)[0].strip()
+                try:
+                    _ts = _dt.fromisoformat(_ts_str.replace("Z", "+00:00"))
+                    _age_h = (_dt.now(_ts.tzinfo) - _ts).total_seconds() / 3600.0
+                except Exception:
+                    _age_h = None
+                if "ok=True" in _last:
+                    # Extract drift delta from line if present
+                    _delta = None
+                    for _tok in _last.split():
+                        if _tok.startswith("delta="):
+                            try:
+                                _delta = int(_tok.split("=", 1)[1])
+                            except Exception:
+                                pass
+                            break
+                    if _age_h is not None and _age_h > 36:
+                        log.warn(f"QC-038: reconcile stale ({_age_h:.0f}h ago, >36h) — "
+                                 "ol-quote-tracker checkpoint not updating")
+                    elif _delta is not None and abs(_delta) > 2:
+                        log.warn(f"QC-038: win count drift = {_delta:+d} (>2) — "
+                                 "Hilmar vs ol-quote-tracker out of sync — "
+                                 "see reports/reconcile-quote-tracker.json")
+                    else:
+                        _age_str = f"{_age_h:.1f}h ago" if _age_h is not None else "recent"
+                        _drift_str = f"Δ={_delta:+d}" if _delta is not None else "no drift parsed"
+                        log.ok(f"QC-038: ol-quote-tracker reconcile fresh ({_age_str}, {_drift_str})")
+                elif "ok=False" in _last or "error=" in _last:
+                    log.warn(f"QC-038: last reconcile errored: {_last[:160]}")
+                else:
+                    # No APP_PASSWORD case — reconcile exits 0 silently
+                    log.warn(f"QC-038: reconcile inconclusive (likely no APP_PASSWORD): {_last[:120]}")
+    except Exception as _e:
+        log.warn(f"QC-038: check failed with exception: {_e}")
+
     # QC-034: tracking-data-v2.json schema validity gate. Added 2026-05-14
     # per best-practices batch. Calls core.validate_data_shape() and reports
     # structural issues (missing keys, wrong types, invalid status/loss_reason
