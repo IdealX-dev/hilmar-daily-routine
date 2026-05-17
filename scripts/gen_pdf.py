@@ -38,6 +38,8 @@ from reportlab.platypus import (
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 
 # Register Inter — falls back to Helvetica if assets missing
 _FONTS_DIR = ROOT / "assets" / "fonts"
@@ -323,13 +325,19 @@ def build_carriers(story, styles, data):
         ])
     t = Table(rows, colWidths=[1.5*inch, 0.55*inch, 0.4*inch, 0.4*inch, 0.5*inch,
                                0.6*inch, 0.7*inch, 0.7*inch, 0.55*inch, 0.75*inch])
+    # Heatmap on Win% column (index 5) — green=high win rate, red=low
+    win_pct_cmds = VP.heatmap_style_cmds(
+        rows, col_idx=5,
+        value_extractor=lambda s: float(str(s).rstrip("%")) if s and "%" in str(s) else None,
+        vmin=0, vmax=100, mode="good_high",
+    )
     t.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-    ]))
+    ] + win_pct_cmds))
     story.append(t)
 
 def build_trade_regions(story, styles, data):
@@ -374,6 +382,13 @@ def build_trade_regions(story, styles, data):
     ])
     t = Table(rows, colWidths=[1.4*inch, 0.55*inch, 0.4*inch, 0.45*inch, 0.4*inch,
                                0.5*inch, 0.75*inch, 0.75*inch, 0.6*inch])
+    # Heatmap on Win % column (index 8) — green=high win rate, red=low. Skip
+    # totals row (last) which has "—" in this column.
+    win_pct_cmds = VP.heatmap_style_cmds(
+        rows[:-1], col_idx=8,
+        value_extractor=lambda s: float(str(s).rstrip("%")) if s and "%" in str(s) else None,
+        vmin=0, vmax=100, mode="good_high",
+    )
     t.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),9),
@@ -384,7 +399,7 @@ def build_trade_regions(story, styles, data):
         ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#e2e8f0")),
         ("LINEABOVE",(0,-1),(-1,-1),1.5,NAVY),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-    ]))
+    ] + win_pct_cmds))
     story.append(t)
     story.append(Spacer(1, 6))
     story.append(Paragraph(
@@ -420,15 +435,35 @@ def build_lanes(story, styles, data):
             _fmt_int(lm.get("teu_won", 0)),
             lm.get("winning_carriers", "") or "—",
         ])
+    # Compute win % per row for heatmap and replace TEU Won (col 7) with bars
+    max_teu_won = max((int(str(r[7]).replace(",","")) for r in rows[1:] if str(r[7]).replace(",","").isdigit()), default=1) or 1
+    # Insert a virtual "Win %" column for heatmap calculation
+    # Actually we don't have win% in this table — compute on the fly per row
+    win_pct_cmds = []
+    teu_bar_cmds = VP.bar_style_cmds(rows, col_idx=7,
+                                       value_extractor=lambda s: float(str(s).replace(",","")) if str(s).replace(",","").isdigit() else 0,
+                                       max_value=max_teu_won, color="#059669")
+    for r_idx, row in enumerate(rows):
+        if r_idx == 0: continue
+        try:
+            reqs = int(str(row[1]).replace(",",""))
+            wins = int(str(row[2]).replace(",",""))
+            if reqs > 0:
+                wp = wins / reqs * 100
+                c = VP.heatmap_color(wp, vmin=0, vmax=100, mode="good_high")
+                # Color the wins column (idx 2) by win rate
+                win_pct_cmds.append(("BACKGROUND", (2, r_idx), (2, r_idx), c))
+        except (ValueError, TypeError):
+            pass
     t = Table(rows, colWidths=[1.9*inch, 0.45*inch, 0.4*inch, 0.45*inch, 0.4*inch,
-                               0.5*inch, 0.7*inch, 0.7*inch, 1.1*inch])
+                               0.5*inch, 0.7*inch, 0.85*inch, 1.0*inch])
     t.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(1,0),(-1,-2),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-    ]))
+    ] + win_pct_cmds + teu_bar_cmds))
     story.append(t)
 
 def build_pending_trends_qc(story, styles, data):

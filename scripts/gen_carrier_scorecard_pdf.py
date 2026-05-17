@@ -28,6 +28,10 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
+import sys as _sys2
+from pathlib import Path as _Path2
+_sys2.path.insert(0, str(_Path2(__file__).resolve().parent))
+import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 )
@@ -204,14 +208,19 @@ def build_scorecard(carrier, data, cfg):
                 ", ".join(sorted(e for e in a["equip"] if e)) or "—",
                 ", ".join(a["rates"][:3]) or "—",
             ])
-        t = Table(rows, colWidths=[1.8*inch, 0.55*inch, 0.7*inch, 1.5*inch, 2.1*inch])
+        won_teu_bar_cmds = VP.bar_style_cmds(
+            rows, col_idx=2,
+            value_extractor=lambda s: float(str(s).replace(",","")) if str(s).replace(",","").isdigit() else 0,
+            color="#059669",
+        )
+        t = Table(rows, colWidths=[1.8*inch, 0.55*inch, 0.85*inch, 1.4*inch, 2.05*inch])
         t.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
             ("ALIGN",(1,0),(2,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
             ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
-        ]))
+        ] + won_teu_bar_cmds))
         story.append(t)
     else:
         story.append(Paragraph("No wins yet.", styles["Muted"]))
@@ -228,14 +237,19 @@ def build_scorecard(carrier, data, cfg):
                 ", ".join(sorted(e for e in a["equip"] if e)) or "—",
                 ", ".join(a["rates"][:3]) or "—",
             ])
-        t = Table(rows, colWidths=[1.8*inch, 0.55*inch, 0.7*inch, 1.5*inch, 2.1*inch])
+        lost_teu_bar_cmds = VP.bar_style_cmds(
+            rows, col_idx=2,
+            value_extractor=lambda s: float(str(s).replace(",","")) if str(s).replace(",","").isdigit() else 0,
+            color="#dc2626",
+        )
+        t = Table(rows, colWidths=[1.8*inch, 0.55*inch, 0.85*inch, 1.4*inch, 2.05*inch])
         t.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,0),RED),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
             ("ALIGN",(1,0),(2,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
             ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
-        ]))
+        ] + lost_teu_bar_cmds))
         story.append(t)
     else:
         story.append(Paragraph("No lost lanes.", styles["Muted"]))

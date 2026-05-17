@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import core  # noqa: E402
 import viz as V  # noqa: E402  shared visual helpers (sparklines, pills, bars, heatmaps)
+import branding as B  # noqa: E402  Hilmar logo + brand colors
 
 
 def _esc(v):
@@ -335,13 +336,19 @@ EMAIL_FONT_STACK = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetic
 EMAIL_TNUM = "font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1"
 
 def _header_html(today_label, range_label, updated_label):
+    logo_html = B.logo_html(height=42, alt="Hilmar Ingredients")
+    logo_block = (
+        f'<div style="background:white;padding:8px 12px;border-radius:6px;display:inline-block;margin-bottom:10px">{logo_html}</div>'
+        if logo_html else ""
+    )
     return f"""
 <!--[if !mso]><!-->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!--<![endif]-->
 <div style="max-width:900px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
   <div style="padding:24px 32px;background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
-    <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">🚢 Hilmar Ingredients — Daily Shipment Tracker</h1>
+    {logo_block}
+    <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:6px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
   </div>
   <div style="padding:24px 32px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
@@ -384,8 +391,8 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         # Original request date
         req_date = r.get('request_date') or ''
         sc_html += _li(
-            f"• {_esc(lane)} ({_esc(str(cont_label))} / {teu} TEU, req {_esc(req_date)}) | "
-            f"<b>{_esc(h['from'])} → {_esc(h['to'])}</b>"
+            f"• {_esc(lane)} ({_esc(str(cont_label))} / {teu} TEU, req {_esc(req_date)}) "
+            f"{V.status_pill(h['from'])} → {V.status_pill(h['to'])}"
             + (f" — {_esc(reason)}" if reason else "")
         )
     if not sc_html:
@@ -492,8 +499,21 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     day_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%a %b %-d")
     day = _today_summary(requests or [], report_date=report_date)
 
+    # 7-day trend per metric for sparklines under the day-row cards
+    from datetime import timedelta as _td
+    trend_days = []
+    for i in range(6, -1, -1):
+        d = report_date - _td(days=i)
+        s = _today_summary(requests or [], report_date=d)
+        trend_days.append(s)
+    spark_total = V.sparkline_svg([s['total'] for s in trend_days], width=80, height=18, color="#3b82f6")
+    spark_wins = V.sparkline_svg([s['wins'] for s in trend_days], width=80, height=18, color="#22c55e")
+    spark_ql = V.sparkline_svg([s['quoted_lost'] for s in trend_days], width=80, height=18, color="#ef4444")
+    spark_nq = V.sparkline_svg([s['not_quoted'] for s in trend_days], width=80, height=18, color="#f59e0b")
+    spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color="#8b5cf6")
+
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET)</h2>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
@@ -502,6 +522,13 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%")}
     {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%")}
     {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%")}
+  </tr>
+  <tr>
+    <td style="padding:0 4px;text-align:center">{spark_total}</td>
+    <td style="padding:0 4px;text-align:center">{spark_wins}</td>
+    <td style="padding:0 4px;text-align:center">{spark_ql}</td>
+    <td style="padding:0 4px;text-align:center">{spark_nq}</td>
+    <td style="padding:0 4px;text-align:center">{spark_pend}</td>
   </tr>
 </table>
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — Period to Date</h2>

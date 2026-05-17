@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import core
+import viz as V  # noqa  shared visual helpers
 
 # ─────────────────────────────────────────────────────────────────────
 # HTML helpers
@@ -579,11 +580,21 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     html += '<div class="section"><h2>🟢 Top Winning Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(by lane)</span></h2>\n'
     if lane_wins:
         html += '<table><tr><th>Lane</th><th>Won</th><th>Q&amp;L</th><th>NQ</th><th>TEU Won</th><th>Win %</th><th>Winning Carriers</th></tr>\n'
+        max_teu_won = max((l.get("teu_won", 0) for _, l in lane_wins), default=1) or 1
         for lane, l in lane_wins:
             decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
-            wr = f'{round(l["wins"]/decided*100,1)}%' if decided else '—'
+            wr_pct = (l["wins"] / decided * 100) if decided else 0
+            wr = f'{round(wr_pct, 1)}%' if decided else '—'
+            wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
             teu_won = l.get("teu_won", 0)
-            html += f'<tr class="win-row"><td>{_esc(lane)}</td><td>{l["wins"]}</td><td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td><td>{teu_won}</td><td>{wr}</td><td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+            teu_bar = V.bar_cell(teu_won, max_teu_won, color="#059669", label=str(teu_won), width_px=80)
+            html += (
+                f'<tr class="win-row"><td>{_esc(lane)}</td>'
+                f'<td>{l["wins"]}</td><td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td>'
+                f'<td>{teu_bar}</td>'
+                f'<td style="background:{wr_bg};font-weight:600">{wr}</td>'
+                f'<td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+            )
         html += '</table>'
     else:
         html += '<p class="dod-empty">No winning lanes yet.</p>'
@@ -598,11 +609,22 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     html += '<div class="section"><h2>🔴 Top Losing Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(by lane, excludes NO_RESPONSE)</span></h2>\n'
     if lane_losses:
         html += '<table><tr><th>Lane</th><th>Q&amp;L</th><th>NQ</th><th>Pending</th><th>Won</th><th>TEU Lost</th><th>Win %</th><th>Winning Carriers</th></tr>\n'
+        max_teu_lost = max((l.get("teu_quoted_lost", 0) + l.get("teu_not_quoted", 0) for _, l in lane_losses), default=1) or 1
         for lane, l in lane_losses:
             decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
-            wr = f'{round(l["wins"]/decided*100,1)}%' if decided else '—'
+            wr_pct = (l["wins"] / decided * 100) if decided else 0
+            wr = f'{round(wr_pct, 1)}%' if decided else '—'
+            wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
             teu_lost = l.get("teu_quoted_lost", 0) + l.get("teu_not_quoted", 0)
-            html += f'<tr class="loss-row"><td>{_esc(lane)}</td><td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td><td>{l.get("pending",0)}</td><td>{l["wins"]}</td><td>{teu_lost}</td><td>{wr}</td><td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+            teu_bar = V.bar_cell(teu_lost, max_teu_lost, color="#dc2626", label=str(teu_lost), width_px=80)
+            html += (
+                f'<tr class="loss-row"><td>{_esc(lane)}</td>'
+                f'<td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td><td>{l.get("pending",0)}</td>'
+                f'<td>{l["wins"]}</td>'
+                f'<td>{teu_bar}</td>'
+                f'<td style="background:{wr_bg};font-weight:600">{wr}</td>'
+                f'<td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+            )
         html += '</table>'
     else:
         html += '<p class="dod-empty">No losing lanes.</p>'
