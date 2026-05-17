@@ -270,6 +270,11 @@ def render_section_html(rec: dict) -> str:
 
 
 def main():
+    try:
+        import sentry_setup
+        sentry_setup.init(component="reconcile_with_quote_tracker")
+    except ImportError:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--window", type=int, default=60, help="Window days (default 60)")
     ap.add_argument("--dry", action="store_true", help="Don't write artifacts")

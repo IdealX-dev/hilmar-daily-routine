@@ -286,6 +286,13 @@ def cmd_auth_bg(args) -> int:
 
 
 def main() -> int:
+    # Sentry observability — silent no-op if not configured
+    try:
+        import sentry_setup
+        sentry_setup.init(component="outlook_send")
+    except ImportError:
+        pass
+
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
 

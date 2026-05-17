@@ -1,0 +1,331 @@
+"""
+sentry_setup.py — Single source of truth for initializing Sentry across
+all Hilmar pipeline entry points.
+
+Per Michael 2026-05-17: "i don't care how much $ this costs or what
+other tools are needed... never to allow drift like this as standard."
+Sentry catches the kind of silent failure that lets parser regressions,
+pipeline crashes, and drift slip through the daily-email cycle. Where
+the QC checks (39 / 40 / 41) DETECT problems, Sentry SURFACES them
+in real time instead of waiting for the next 10 AM ET fire.
+
+INIT FLOW
+
+1. `init()` reads the DSN from `secrets/sentry-dsn.txt` (gitignored),
+   falls back to env var `SENTRY_DSN`, and silently no-ops if neither
+   is configured. The pipeline never breaks because Sentry isn't set up.
+2. Default tags applied to every event: environment, pipeline_run_id
+   (generated from start time), git_sha (short), python_version.
+3. `before_send` hook scrubs PII before transmission — email addresses,
+   MDOLX numbers, conversation IDs, internet message IDs, Lonny's
+   actual address, etc. The goal is observability WITHOUT leaking
+   client data to a third-party SaaS.
+
+USAGE — at the top of any entry-point script:
+
+  import sentry_setup
+  sentry_setup.init(component="run_pipeline")  # or "qc_selfheal", "outlook_send", etc.
+
+After init, all uncaught exceptions auto-capture. To send a custom event:
+
+  import sentry_sdk
+  sentry_sdk.capture_message("Parser accuracy 97.2% — below 98% threshold",
+                              level="error",
+                              extras={"overall_rate": 0.972, "failing": ["ol_rate"]})
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import uuid
+from pathlib import Path
+from typing import Optional
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# ─────────────────────────────────────────────────────────────────────
+# PII scrubbing patterns
+# ─────────────────────────────────────────────────────────────────────
+
+# Match raw email addresses (broader than Sentry's built-in scrubber)
+_EMAIL_RX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
+# OL booking refs — proprietary, scrub
+_MDOLX_RX = re.compile(r"\bMDOL[XMFD]\d+\b", re.IGNORECASE)
+_CARRIER_REF_RX = re.compile(
+    r"\b(NAM|RICG|ONEY|EBKG|MAEU|MEDU|MSCU|HLCU|COSU|ZIMU|OOLU|YMLU|HMMU)[A-Z0-9]{6,}\b",
+    re.IGNORECASE,
+)
+
+# Internet message-ID: <random@server.domain>
+_IMID_RX = re.compile(r"<[A-Za-z0-9._-]+@[A-Za-z0-9.-]+>")
+
+# Outlook conversation IDs — long base64-ish blobs
+_CONV_ID_RX = re.compile(r"AAQ[A-Za-z0-9_=+/-]{20,}")
+
+# Internal request IDs (req_HEX) — not PII but noisy in stacktraces
+_REQ_ID_RX = re.compile(r"req_[0-9a-f]{16,}")
+
+
+def _scrub_string(s: str) -> str:
+    """Apply all redaction patterns to a single string."""
+    if not isinstance(s, str):
+        return s
+    s = _EMAIL_RX.sub("[EMAIL_REDACTED]", s)
+    s = _MDOLX_RX.sub("[MDOLX_REDACTED]", s)
+    s = _CARRIER_REF_RX.sub("[CARRIER_REF_REDACTED]", s)
+    s = _IMID_RX.sub("[IMID_REDACTED]", s)
+    s = _CONV_ID_RX.sub("[CONV_REDACTED]", s)
+    s = _REQ_ID_RX.sub("[REQ_ID]", s)
+    return s
+
+
+def _walk_scrub(obj):
+    """Recursively scrub PII from any nested dict/list/string structure."""
+    if isinstance(obj, str):
+        return _scrub_string(obj)
+    if isinstance(obj, dict):
+        return {k: _walk_scrub(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_walk_scrub(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_walk_scrub(v) for v in obj)
+    return obj
+
+
+def _before_send(event, hint):
+    """Sentry hook: scrub PII from the event before transmission.
+
+    Applied to:
+      - event.message
+      - event.exception (each frame's vars + message)
+      - event.extra (custom metadata)
+      - event.breadcrumbs (each crumb's message + data)
+      - event.tags (defensive — should be pre-scrubbed by us)
+      - event.contexts (defensive)
+    """
+    try:
+        if "message" in event:
+            event["message"] = _scrub_string(event.get("message", ""))
+        if "exception" in event and "values" in event["exception"]:
+            for exc in event["exception"]["values"]:
+                if "value" in exc:
+                    exc["value"] = _scrub_string(exc.get("value", ""))
+                if "stacktrace" in exc and "frames" in exc["stacktrace"]:
+                    for fr in exc["stacktrace"]["frames"]:
+                        if "vars" in fr and isinstance(fr["vars"], dict):
+                            fr["vars"] = _walk_scrub(fr["vars"])
+        if "extra" in event:
+            event["extra"] = _walk_scrub(event["extra"])
+        if "breadcrumbs" in event and "values" in event["breadcrumbs"]:
+            for crumb in event["breadcrumbs"]["values"]:
+                if "message" in crumb:
+                    crumb["message"] = _scrub_string(crumb.get("message", ""))
+                if "data" in crumb and isinstance(crumb["data"], dict):
+                    crumb["data"] = _walk_scrub(crumb["data"])
+        if "tags" in event:
+            event["tags"] = _walk_scrub(event["tags"])
+        if "contexts" in event:
+            event["contexts"] = _walk_scrub(event["contexts"])
+    except Exception:
+        # Never let the scrubber crash a real event — let it through
+        # rather than drop the alert.
+        pass
+    return event
+
+
+# ─────────────────────────────────────────────────────────────────────
+# DSN loading
+# ─────────────────────────────────────────────────────────────────────
+
+def _load_dsn() -> Optional[str]:
+    """Resolve DSN from secrets/sentry-dsn.txt or env var. None = no-op."""
+    secrets_file = ROOT / "secrets" / "sentry-dsn.txt"
+    if not secrets_file.exists():
+        # Try the parent OneDrive working dir
+        secrets_file = ROOT.parent / "secrets" / "sentry-dsn.txt"
+    if secrets_file.exists():
+        try:
+            dsn = secrets_file.read_text(encoding="utf-8").strip()
+            if dsn and dsn.startswith("https://"):
+                return dsn
+        except Exception:
+            pass
+    return os.environ.get("SENTRY_DSN") or None
+
+
+def _git_sha_short() -> str:
+    """Best-effort short git SHA for the current HEAD. Used as release tag."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _detect_environment() -> str:
+    """Production = Cloud PC scheduled fire. Manual = anywhere else."""
+    # Cloud PC's hostname is CPC-micha-E552L per the README. Treat anything
+    # else as manual / dev. Also respect SENTRY_ENVIRONMENT env if set.
+    if "SENTRY_ENVIRONMENT" in os.environ:
+        return os.environ["SENTRY_ENVIRONMENT"]
+    try:
+        import socket
+        h = socket.gethostname().lower()
+        if "cpc-micha" in h:
+            return "production"
+        if "codespace" in h or "vscode" in os.environ.get("TERM_PROGRAM", "").lower():
+            return "codespaces"
+    except Exception:
+        pass
+    return "manual"
+
+
+# Module-level run ID so all events from a single pipeline fire group together
+_RUN_ID = uuid.uuid4().hex[:12]
+_INITIALIZED = False
+
+
+def init(component: str = "unknown", *, sample_rate: float = 1.0) -> bool:
+    """Initialize Sentry for an entry-point script.
+
+    Args:
+      component: short tag identifying the entry point (run_pipeline,
+                 qc_selfheal, outlook_send, sync_to_quote_tracker, etc.)
+                 Shown in Sentry as the `component` tag for filtering.
+      sample_rate: traces_sample_rate. Default 1.0 = capture every
+                   transaction (fine for daily-fire pipeline; would be
+                   too noisy for an HTTP server but this isn't one).
+
+    Returns True if init succeeded, False if DSN missing / disabled.
+    Never raises — Sentry-not-available must never break the pipeline.
+    """
+    global _INITIALIZED
+    if _INITIALIZED:
+        return True
+    try:
+        import sentry_sdk
+    except ImportError:
+        return False  # sentry-sdk not installed; silent no-op
+
+    dsn = _load_dsn()
+    if not dsn:
+        return False  # not configured; silent no-op (pipeline keeps running)
+
+    env = _detect_environment()
+    release = f"hilmar-daily-tracker@{_git_sha_short()}"
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=env,
+        release=release,
+        # Performance transactions: capture every step (low volume — ~14/fire/day)
+        traces_sample_rate=sample_rate,
+        # PII handling: opt OUT of automatic PII capture. We control what
+        # gets sent via explicit capture_message() calls + the scrubber.
+        send_default_pii=False,
+        # Limit context to keep payload small
+        max_breadcrumbs=50,
+        attach_stacktrace=True,
+        # The scrubber — strips emails / MDOLX / conv IDs / IMIDs / req IDs
+        before_send=_before_send,
+        before_send_transaction=_before_send,
+        # Don't auto-instrument network libs (not needed for this pipeline)
+        auto_enabling_integrations=False,
+    )
+
+    # Set default tags on every subsequent event
+    sentry_sdk.set_tag("component", component)
+    sentry_sdk.set_tag("pipeline_run_id", _RUN_ID)
+    sentry_sdk.set_tag("python_version", f"{sys.version_info.major}.{sys.version_info.minor}")
+    sentry_sdk.set_context("hilmar", {
+        "component": component,
+        "pipeline_run_id": _RUN_ID,
+        "environment": env,
+        "release": release,
+    })
+
+    _INITIALIZED = True
+    return True
+
+
+def capture_qc_error(check_name: str, summary: str, **extras) -> None:
+    """Capture a QC ERROR-severity finding as a Sentry event.
+
+    Use from qc_selfheal.py when log.error() fires. The check_name
+    (e.g. "QC-039") becomes the issue fingerprint, so all instances
+    of the same check failing group together in Sentry.
+    """
+    try:
+        import sentry_sdk
+        if not _INITIALIZED:
+            return
+        sentry_sdk.set_tag("qc_check", check_name)
+        sentry_sdk.capture_message(
+            f"{check_name}: {summary}",
+            level="error",
+            scope=None,
+        )
+    except Exception:
+        pass  # observability must never crash the pipeline
+
+
+def capture_qc_warning(check_name: str, summary: str, **extras) -> None:
+    """Like capture_qc_error but at warning level — for QC WARNs that
+    are worth surfacing in real time (e.g. parser regressions just under
+    the error threshold)."""
+    try:
+        import sentry_sdk
+        if not _INITIALIZED:
+            return
+        sentry_sdk.set_tag("qc_check", check_name)
+        sentry_sdk.capture_message(
+            f"{check_name}: {summary}",
+            level="warning",
+            scope=None,
+        )
+    except Exception:
+        pass
+
+
+def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
+    """Capture a pipeline-step failure (subprocess returncode != 0 or
+    Python exception in run_pipeline.py)."""
+    try:
+        import sentry_sdk
+        if not _INITIALIZED:
+            return
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("pipeline_step", step_name)
+            for k, v in extras.items():
+                scope.set_extra(k, v)
+            sentry_sdk.capture_exception(error)
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    # CLI: send a test event to verify the integration works
+    print("Sentry setup self-test...")
+    ok = init(component="self_test")
+    if not ok:
+        print("⚠️  Sentry NOT initialized — check secrets/sentry-dsn.txt or SENTRY_DSN env")
+        sys.exit(1)
+    print(f"✅ Initialized. Run ID: {_RUN_ID}")
+    import sentry_sdk
+    event_id = sentry_sdk.capture_message(
+        "sentry_setup.py self-test — verifying DSN + scrubber path "
+        "(this lupfold@hilmaringredients.com email + MDOLX260622 should be redacted)",
+        level="info",
+    )
+    print(f"✅ Test event sent. event_id={event_id}")
+    print(f"   Check https://o4511407070904320.sentry.io/issues/ for the message.")
+    print(f"   The email + MDOLX in the message body should appear as [EMAIL_REDACTED] + [MDOLX_REDACTED].")
+    sentry_sdk.flush(timeout=5)

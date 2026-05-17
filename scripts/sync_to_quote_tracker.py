@@ -256,6 +256,11 @@ def write_audit(result: dict):
 
 
 def main():
+    try:
+        import sentry_setup
+        sentry_setup.init(component="sync_to_quote_tracker")
+    except ImportError:
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry", action="store_true", help="Show what would push, don't send")
     ap.add_argument("--verbose", action="store_true", help="Print full payload")

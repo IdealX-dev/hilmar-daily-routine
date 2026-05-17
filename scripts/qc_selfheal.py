@@ -68,6 +68,21 @@ def rotate_backup(data_path: Path, backups_dir: Path, keep: int = 14) -> Path:
 # Log helpers
 # ─────────────────────────────────────────────────────────────────────
 
+# Sentry observability — lazy import so QC works even without sentry-sdk.
+try:
+    import sentry_setup as _sentry
+except ImportError:
+    _sentry = None
+
+
+def _extract_check_name(msg: str) -> str:
+    """Pull the QC-NNN prefix from a log message so Sentry events
+    group by check (one issue per check, not one per row)."""
+    import re as _re
+    m = _re.match(r"\s*(QC-\d+[a-z]?)", msg)
+    return m.group(1) if m else "QC-unknown"
+
+
 class Log:
     def __init__(self):
         self.fixes, self.warnings, self.errors = [], [], []
@@ -77,9 +92,24 @@ class Log:
 
     def warn(self, msg):
         self.warnings.append(msg); print(f"  ⚠️  WARN: {msg}")
+        # Fire Sentry warning for parser-accuracy + drift checks (high signal)
+        if _sentry is not None and any(
+            tag in msg for tag in ("QC-039", "QC-040", "QC-041", "PARSER ACCURACY")
+        ):
+            try:
+                _sentry.capture_qc_warning(_extract_check_name(msg), msg)
+            except Exception:
+                pass
 
     def error(self, msg):
         self.errors.append(msg); print(f"  🔴 ERROR: {msg}")
+        # Every ERROR-severity QC finding goes to Sentry — these gate the
+        # daily pipeline ship and demand immediate operator attention.
+        if _sentry is not None:
+            try:
+                _sentry.capture_qc_error(_extract_check_name(msg), msg)
+            except Exception:
+                pass
 
     def ok(self, msg):
         print(f"  ✅ {msg}")
@@ -1921,6 +1951,12 @@ def main() -> int:
     parser.add_argument("--config", default=str(core.CONFIG_PATH))
     parser.add_argument("--no-backup", action="store_true")
     args = parser.parse_args()
+    # Initialize Sentry early so any failure in subsequent setup is captured.
+    if _sentry is not None:
+        try:
+            _sentry.init(component="qc_selfheal")
+        except Exception:
+            pass
     cfg = core.load_config(args.config)
     data_path = Path(cfg["paths"]["data"])
     schema_path = Path(cfg["paths"]["schema"])

@@ -73,6 +73,15 @@ STEPS = [
 SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
 
 
+# Sentry observability — initialized lazily so the pipeline runs fine
+# even when sentry-sdk isn't installed or the DSN is missing.
+sys.path.insert(0, str(SCRIPTS))
+try:
+    import sentry_setup as _sentry
+except ImportError:
+    _sentry = None
+
+
 def run_step(name, cmd, dry_run=False):
     print()
     print("═" * 70)
@@ -82,11 +91,39 @@ def run_step(name, cmd, dry_run=False):
     if dry_run:
         print("   (dry-run — skipped)")
         return True
-    result = subprocess.run(cmd, cwd=str(ROOT))
-    if result.returncode != 0:
-        print(f"❌ FAIL — {name} exited {result.returncode}")
-        return False
-    return True
+
+    # Wrap each step in a Sentry transaction so step durations + failures
+    # are visible in Sentry's Performance view. Each step is a child of
+    # the pipeline-level transaction started in main().
+    txn_cm = None
+    if _sentry is not None:
+        try:
+            import sentry_sdk
+            txn_cm = sentry_sdk.start_span(op="pipeline.step", name=name)
+            txn_cm.__enter__()
+        except Exception:
+            txn_cm = None
+
+    try:
+        result = subprocess.run(cmd, cwd=str(ROOT))
+        if result.returncode != 0:
+            print(f"❌ FAIL — {name} exited {result.returncode}")
+            if _sentry is not None:
+                try:
+                    _sentry.capture_qc_error(
+                        "pipeline.step_failure",
+                        f"{name} exited rc={result.returncode}",
+                    )
+                except Exception:
+                    pass
+            return False
+        return True
+    finally:
+        if txn_cm is not None:
+            try:
+                txn_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def main():
@@ -97,10 +134,27 @@ def main():
                     help="Print the steps that would run without executing them")
     args = ap.parse_args()
 
+    # Initialize Sentry FIRST so any subsequent error gets captured.
+    if _sentry is not None:
+        _sentry.init(component="run_pipeline")
+
     started = datetime.now()
     print(f"🚀 Hilmar Tracker pipeline — started {started.isoformat(timespec='seconds')}")
     print(f"   Repo: {ROOT}")
     print(f"   Python: {PY}")
+
+    # Wrap the entire pipeline run in a top-level Sentry transaction.
+    pipeline_txn = None
+    if _sentry is not None:
+        try:
+            import sentry_sdk
+            pipeline_txn = sentry_sdk.start_transaction(
+                op="pipeline.run",
+                name="hilmar.daily_pipeline",
+            )
+            pipeline_txn.__enter__()
+        except Exception:
+            pipeline_txn = None
 
     failures = []
     for name, cmd in STEPS:
@@ -113,6 +167,25 @@ def main():
             # QC is allowed to warn; anything else stops the line
             if "QC self-heal" not in name:
                 break
+
+    if pipeline_txn is not None:
+        try:
+            pipeline_txn.set_tag("pipeline_failures", len(failures))
+            if failures:
+                pipeline_txn.set_tag("pipeline_status", "failed")
+            else:
+                pipeline_txn.set_tag("pipeline_status", "ok")
+            pipeline_txn.__exit__(None, None, None)
+        except Exception:
+            pass
+
+    # Flush Sentry queue before exit so events aren't lost on quick pipeline runs
+    if _sentry is not None:
+        try:
+            import sentry_sdk
+            sentry_sdk.flush(timeout=5)
+        except Exception:
+            pass
 
     elapsed = (datetime.now() - started).total_seconds()
     print()
