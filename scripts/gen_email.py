@@ -341,9 +341,12 @@ def _header_html(today_label, range_label, updated_label):
     # the logo PNG with contentId=hilmar-logo + isInline=true so this
     # <img src="cid:hilmar-logo"> reference resolves at delivery time.
     # Per Michael 2026-05-17 ("hilmar logo not showing up").
-    logo_html = B.logo_html_cid(height=42, alt="Hilmar Ingredients")
+    # Sizing per Michael 2026-05-17 ("make the logo bigger.. it has too
+    # much white space around it.. then also reduce white space"):
+    # logo height 42 → 72, container padding 8/12 → 2/6, margins tightened.
+    logo_html = B.logo_html_cid(height=72, alt="Hilmar Ingredients")
     logo_block = (
-        f'<div style="background:white;padding:8px 12px;border-radius:6px;display:inline-block;margin-bottom:10px">{logo_html}</div>'
+        f'<div style="background:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:4px">{logo_html}</div>'
         if logo_html else ""
     )
     return f"""
@@ -351,12 +354,12 @@ def _header_html(today_label, range_label, updated_label):
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!--<![endif]-->
 <div style="max-width:900px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
-  <div style="padding:24px 32px;background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
+  <div style="padding:14px 28px;background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
-    <p style="margin:6px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
+    <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
   </div>
-  <div style="padding:24px 32px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+  <div style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
 
 

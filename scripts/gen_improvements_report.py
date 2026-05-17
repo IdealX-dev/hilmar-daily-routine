@@ -456,13 +456,13 @@ def render_html(red, yellow, suggestions, report_date, qc):
     body = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:{EMAIL_FONT}">
-<div style="max-width:800px;margin:0 auto;background:white;padding:32px">
-  <div style="background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:20px 24px;border-radius:6px 6px 0 0;margin:-32px -32px 0">
-    {f'<div style="background:white;padding:6px 10px;border-radius:5px;display:inline-block;margin-bottom:8px">{B.logo_html_cid(height=32)}</div>' if B.has_logo() else ''}
+<div style="max-width:800px;margin:0 auto;background:white;padding:24px">
+  <div style="background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:12px 20px;border-radius:6px 6px 0 0;margin:-24px -24px 0">
+    {f'<div style="background:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:4px">{B.logo_html_cid(height=60)}</div>' if B.has_logo() else ''}
     <h1 style="margin:0;font-size:20px">{'' if B.has_logo() else '🔍 '}Hilmar Tracker — Daily Systems Audit</h1>
-    <div style="margin-top:6px;font-size:13px;opacity:0.9">Reporting on {_esc(rd_label)} • Generated {_esc(stamp)}</div>
+    <div style="margin-top:4px;font-size:13px;opacity:0.9">Reporting on {_esc(rd_label)} • Generated {_esc(stamp)}</div>
   </div>
-  <p style="margin:24px 0 0;color:#475569;font-size:13px;line-height:1.5">
+  <p style="margin:18px 0 0;color:#475569;font-size:13px;line-height:1.5">
     This is your private daily audit (idealx.us only — not the full distribution). It surfaces
     data-quality issues, system-health observations, and improvements I think are worth your time.
     Status today: QC {_esc((qc or {}).get('status', '?'))}
