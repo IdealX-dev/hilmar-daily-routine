@@ -288,7 +288,14 @@ def main():
         print("\nPreview of entities that would be pushed:")
         for e in result["preview"]:
             print(f"  {e['role']:10} {e['name']}")
-    return 0 if result.get("ok") or args.dry else 1
+    # 2026-05-17: ALWAYS return 0 even on sync failure. Sync is a NICE-TO-HAVE
+    # checkpoint — ol-quote-tracker being slow/down/misconfigured must NEVER
+    # break the daily pipeline (which produces the critical email artifact).
+    # QC-037 reads the audit log written by write_audit() above and surfaces
+    # the failure in the next QC pass with the specific error excerpt.
+    if not result.get("ok") and not args.dry:
+        print(f"⚠️  sync failed (pipeline continues): {result.get('error')}")
+    return 0
 
 
 if __name__ == "__main__":

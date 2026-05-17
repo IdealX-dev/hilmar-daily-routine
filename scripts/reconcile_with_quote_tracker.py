@@ -284,10 +284,15 @@ def main():
     try:
         qt_rows = fetch_qt_hilmar_wins(args.base_url, password, args.window)
     except Exception as e:
-        print(f"❌ fetch from ol-quote-tracker failed: {e}")
-        # Audit-log the failure
+        # 2026-05-17: Return 0 (NOT 1) on fetch failure so the pipeline keeps
+        # running and the daily email still ships. The reconcile is a NICE-TO-
+        # HAVE checkpoint — ol-quote-tracker being slow/down must NEVER break
+        # the daily output. QC-038 reads the audit log and surfaces the failure
+        # in the next QC pass. See pipeline incident 2026-05-17 11:31 ET where
+        # /api/quotes timeout caused full pipeline FAILED status.
+        print(f"⚠️  fetch from ol-quote-tracker failed (pipeline continues): {e}")
         _append_audit({"error": str(e), "ok": False})
-        return 1
+        return 0
 
     hi_rows = load_hilmar_wins(args.window)
     rec = reconcile(qt_rows, hi_rows, args.window)
