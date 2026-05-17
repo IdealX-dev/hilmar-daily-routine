@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from collections import Counter
@@ -83,15 +84,45 @@ def _extract_check_name(msg: str) -> str:
     return m.group(1) if m else "QC-unknown"
 
 
+def _qc_phase_is_pre_patch() -> bool:
+    """Is this qc_selfheal invocation the PRE-PATCH run in the pipeline?
+
+    The pipeline runs qc_selfheal twice:
+      1. pre-patch  — naturally has gaps (carriers / rates not yet filled)
+      2. patch_carriers — backfills the gaps
+      3. post-patch — represents the actual shipped state
+
+    Pre-patch findings are EXPECTED to be incomplete. Surfacing them to
+    Sentry creates false-positive alert noise (parser accuracy looks 14
+    points lower than it really is, data completeness looks broken, etc).
+    Only the post-patch run represents the actual quality of the shipped
+    daily email — that's what should fire real-time alerts.
+
+    Set HILMAR_QC_PHASE=pre-patch in the pipeline's pre-patch step to
+    suppress Sentry event capture for THAT run. Post-patch + standalone
+    runs default to firing events normally.
+    """
+    return os.environ.get("HILMAR_QC_PHASE", "").lower() == "pre-patch"
+
+
 class Log:
     def __init__(self):
         self.fixes, self.warnings, self.errors = [], [], []
+        # Snapshot the phase once at construction so subsequent env changes
+        # mid-run don't surprise us
+        self._pre_patch = _qc_phase_is_pre_patch()
 
     def fix(self, msg):
         self.fixes.append(msg); print(f"  🔧 FIX: {msg}")
 
     def warn(self, msg):
         self.warnings.append(msg); print(f"  ⚠️  WARN: {msg}")
+        # Pre-patch QC findings are EXPECTED incomplete — patch_carriers
+        # backfills them next. Suppress Sentry alerts on pre-patch run
+        # to avoid false-positive noise. (Findings still log locally +
+        # surface in the daily audit email, which is the audit channel.)
+        if self._pre_patch:
+            return
         # Fire Sentry warning for parser-accuracy + drift checks (high signal)
         if _sentry is not None and any(
             tag in msg for tag in ("QC-039", "QC-040", "QC-041", "PARSER ACCURACY")
@@ -103,6 +134,11 @@ class Log:
 
     def error(self, msg):
         self.errors.append(msg); print(f"  🔴 ERROR: {msg}")
+        # Same pre-patch suppression — patch_carriers will run next and
+        # fix the data gaps that pre-patch QC is flagging. Only post-patch
+        # ERRORs represent the real shipped state.
+        if self._pre_patch:
+            return
         # Every ERROR-severity QC finding goes to Sentry — these gate the
         # daily pipeline ship and demand immediate operator attention.
         if _sentry is not None:

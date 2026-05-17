@@ -32,6 +32,15 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 PY = sys.executable  # use same interpreter
 
+#: Sentry-suppress env injected into the PRE-PATCH qc_selfheal step.
+#: That step naturally measures incomplete state (carriers/rates not yet
+#: backfilled), and surfacing those findings to Sentry creates false-positive
+#: alerts (e.g. parser accuracy looks 14 points lower than the actual
+#: post-patch shipped state). Only the POST-PATCH qc run represents the
+#: real shipped quality — that's what fires Sentry alerts.
+_PRE_PATCH_ENV = {"HILMAR_QC_PHASE": "pre-patch"}
+_POST_PATCH_ENV = {"HILMAR_QC_PHASE": "post-patch"}
+
 STEPS = [
     ("Backup snapshot",          [PY, str(SCRIPTS / "backup.py")]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
@@ -42,9 +51,14 @@ STEPS = [
     # reports/drift-result.json. Exits non-zero on FAIL — stops the pipeline
     # before bad data lands in the daily email.
     ("Drift check (pre-QC)",     [PY, str(SCRIPTS / "drift_check.py"), "--auto-heal"]),
-    ("QC self-heal (pre-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")]),
+    # Pre-patch QC runs BEFORE patch_carriers backfills missing fields.
+    # HILMAR_QC_PHASE=pre-patch tells qc_selfheal not to fire Sentry events
+    # on findings that the patch step will fix moments later.
+    ("QC self-heal (pre-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")], _PRE_PATCH_ENV),
     ("Carrier enrichment patch", [PY, str(SCRIPTS / "patch_carriers.py")]),
-    ("QC self-heal (post-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")]),
+    # Post-patch QC represents the actual shipped state — this is the one
+    # that fires real-time Sentry alerts.
+    ("QC self-heal (post-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")], _POST_PATCH_ENV),
     ("Dashboard HTML",           [PY, str(SCRIPTS / "gen_dashboard.py")]),
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),
@@ -82,11 +96,13 @@ except ImportError:
     _sentry = None
 
 
-def run_step(name, cmd, dry_run=False):
+def run_step(name, cmd, dry_run=False, extra_env=None):
     print()
     print("═" * 70)
     print(f"▶  {name}")
     print(f"   cmd: {' '.join(cmd)}")
+    if extra_env:
+        print(f"   env: {extra_env}")
     print("═" * 70)
     if dry_run:
         print("   (dry-run — skipped)")
@@ -104,8 +120,15 @@ def run_step(name, cmd, dry_run=False):
         except Exception:
             txn_cm = None
 
+    # Inject extra env into the subprocess (e.g. HILMAR_QC_PHASE=pre-patch)
+    # without polluting our own process env.
+    import os as _os
+    sub_env = _os.environ.copy()
+    if extra_env:
+        sub_env.update(extra_env)
+
     try:
-        result = subprocess.run(cmd, cwd=str(ROOT))
+        result = subprocess.run(cmd, cwd=str(ROOT), env=sub_env)
         if result.returncode != 0:
             print(f"❌ FAIL — {name} exited {result.returncode}")
             if _sentry is not None:
@@ -157,12 +180,18 @@ def main():
             pipeline_txn = None
 
     failures = []
-    for name, cmd in STEPS:
+    for step in STEPS:
+        # Each step is either (name, cmd) or (name, cmd, extra_env_dict)
+        if len(step) == 3:
+            name, cmd, extra_env = step
+        else:
+            name, cmd = step
+            extra_env = None
         if args.skip_ingest and SKIPPABLE.get(name) == "--skip-ingest":
             print()
             print(f"⏭️   SKIP — {name} (--skip-ingest)")
             continue
-        if not run_step(name, cmd, dry_run=args.dry_run):
+        if not run_step(name, cmd, dry_run=args.dry_run, extra_env=extra_env):
             failures.append(name)
             # QC is allowed to warn; anything else stops the line
             if "QC self-heal" not in name:
