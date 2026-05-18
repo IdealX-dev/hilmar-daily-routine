@@ -579,9 +579,6 @@ def _sentry_section_inline():
 
 
 def _rate_intel_section_inline():
-
-
-def _rate_intel_section_inline():
     """Inline the rate-intelligence section if it exists. The section is
     produced by gen_rate_intelligence.py which runs before this script
     in the pipeline. Added 2026-05-13 per Michael 'i love all of this and
