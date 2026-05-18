@@ -165,6 +165,14 @@ def collect_red_flags(data, qc, drift):
     # Bug fix 2026-05-07: was reading stale .jsonl (legacy) instead of current
     # .txt (refresh_stage's actual output). Now matches qc_selfheal.py QC-008
     # path resolution: .txt first, fallback .jsonl.
+    #
+    # MONDAY-MORNING / OFF-HOURS SUPPRESSION (added 2026-05-18 per Michael
+    # "TWO TERRIBLE DAILY AUDITS CAME IN"). The scheduled task fires at
+    # 10 AM ET Mon-Fri. Before 10:30 AM ET on any weekday morning, the
+    # stage is naturally stale because refresh_stage hasn't run yet today.
+    # Flagging this as a RED FLAG is a Monday-morning artifact, not a
+    # genuine problem. Only fire if it's PAST the scheduled fire time AND
+    # the stage is still stale.
     try:
         scripts_dir = ROOT / "scripts"
         stage_path = scripts_dir / "stage_emails.txt"
@@ -172,7 +180,14 @@ def collect_red_flags(data, qc, drift):
             stage_path = scripts_dir / "stage_emails.jsonl"
         if stage_path.exists():
             now_et = datetime.now(core.ET)
-            if now_et.weekday() < 5:  # Mon–Fri
+            # Business-hours window: Mon-Fri AND past 10:30 AM ET (after the
+            # 10:00 AM scheduled fire). Weekends + early-morning weekdays
+            # are suppressed.
+            is_business_hours = (
+                now_et.weekday() < 5
+                and (now_et.hour > 10 or (now_et.hour == 10 and now_et.minute >= 30))
+            )
+            if is_business_hours:
                 latest = None
                 with open(stage_path, encoding="utf-8", errors="ignore") as f:
                     for line in f:
@@ -495,6 +510,16 @@ def _sentry_section_inline():
     embedded section in the daily audit so you see real-time errors
     alongside the QC + reconcile findings — single inbox.
 
+    ACTIVE-ISSUES FILTER (per Michael 2026-05-18 "TWO TERRIBLE DAILY
+    AUDITS CAME IN"). Only surface issues that are STILL FIRING — drop
+    issues whose last event is older than the latest commit on main.
+    Reason: during my own fix-cycles I introduced + fixed bugs in the
+    same day. Those events stayed in Sentry as "🆕 new (24h)" even
+    though the bug is already gone from the code. Showing them as
+    alarming red items is misleading. Filter:
+
+      issue.lastSeen < current_HEAD_commit_time → drop from rendering
+
     Silent no-op if auth token missing — observability degradation must
     never break the audit email.
     """
@@ -507,6 +532,52 @@ def _sentry_section_inline():
         s = get_issue_summary(api, period="24h")
     except Exception:
         return ""
+
+    # Compute the latest commit time on main — issues whose last event
+    # is older than this are presumed fixed by a recent commit.
+    head_commit_ts = None
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cI"],
+            cwd=str(Path(__file__).resolve().parent.parent),
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            head_commit_ts = out.stdout.strip()
+    except Exception:
+        head_commit_ts = None
+
+    def _is_zombie(issue):
+        """An issue is a 'zombie' if its last event predates the current
+        HEAD commit — meaning a fix has shipped after the last fire."""
+        if not head_commit_ts:
+            return False
+        last_seen = issue.get("lastSeen", "")
+        if not last_seen:
+            return False
+        try:
+            from datetime import datetime
+            ls = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+            head = datetime.fromisoformat(head_commit_ts.replace("Z", "+00:00"))
+            return ls < head
+        except Exception:
+            return False
+
+    # Filter the lists to active (non-zombie) issues only
+    s["new_in_period"] = [i for i in s.get("new_in_period", []) if not _is_zombie(i)]
+    s["recurring"] = [i for i in s.get("recurring", []) if not _is_zombie(i)]
+    # Resolved-in-period stays — those are good news to show
+
+    # Recompute the summary counts since we filtered
+    active_unresolved = 0
+    try:
+        # Refetch the unresolved list and exclude zombies
+        all_unresolved = api.list_issues(stats_period="14d", query="is:unresolved", limit=100)
+        active_unresolved = sum(1 for i in all_unresolved if not _is_zombie(i))
+        s["unresolved_count"] = active_unresolved
+    except Exception:
+        pass
 
     # No issues at all = compact "all clear" badge
     if s["unresolved_count"] == 0 and len(s["resolved_in_period"]) == 0:
