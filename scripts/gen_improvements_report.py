@@ -481,10 +481,104 @@ def render_html(red, yellow, suggestions, report_date, qc):
   </div>
 {_rate_intel_section_inline()}
 {_reconcile_section_inline()}
+{_sentry_section_inline()}
 </div>
 </body></html>
 """
     return body
+
+
+def _sentry_section_inline():
+    """Pull the Sentry activity section. Per Michael 2026-05-17 ("use sentry
+    for self check and improvements as well"). Queries Sentry's REST API
+    for unresolved + new + recurring issues in the last 24h, renders an
+    embedded section in the daily audit so you see real-time errors
+    alongside the QC + reconcile findings — single inbox.
+
+    Silent no-op if auth token missing — observability degradation must
+    never break the audit email.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from sentry_api import SentryAPI, get_issue_summary
+        api = SentryAPI()
+        if not api.enabled:
+            return ""
+        s = get_issue_summary(api, period="24h")
+    except Exception:
+        return ""
+
+    # No issues at all = compact "all clear" badge
+    if s["unresolved_count"] == 0 and len(s["resolved_in_period"]) == 0:
+        return """
+<h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;border-bottom:2px solid #76b82a;padding-bottom:6px">
+  🛡️ Sentry observability (last 24h)
+</h2>
+<div style="background:#f0fdf4;border-left:4px solid #16a34a;padding:10px 14px;margin:6px 0 12px;border-radius:4px;font-size:13px;color:#166534">
+  ✅ All clear — no unresolved issues, no events captured in the last 24h.
+</div>
+"""
+
+    # Build a richer section
+    def _issue_row(issue, marker="🔴"):
+        short_id = (issue.get("shortId") or "?")[:25]
+        title = (issue.get("title") or "?")[:80]
+        count = issue.get("count", "?")
+        last_seen = (issue.get("lastSeen") or "")[:16].replace("T", " ")
+        permalink = issue.get("permalink") or ""
+        return (
+            f'<tr><td style="padding:4px 8px;font-family:monospace;font-size:11px;color:#0f172a">{marker} {short_id}</td>'
+            f'<td style="padding:4px 8px;font-size:12px"><a href="{permalink}" style="color:#1a3d9c">{title}</a></td>'
+            f'<td style="padding:4px 8px;text-align:center;font-size:12px;color:#475569">{count}x</td>'
+            f'<td style="padding:4px 8px;font-size:11px;color:#64748b">{last_seen}</td></tr>'
+        )
+
+    rows = []
+    if s["new_in_period"]:
+        for issue in s["new_in_period"][:5]:
+            rows.append(_issue_row(issue, "🆕"))
+    if s["recurring"]:
+        for issue in s["recurring"][:5]:
+            if issue["id"] not in {i["id"] for i in s["new_in_period"]}:
+                rows.append(_issue_row(issue, "🔁"))
+    if s["resolved_in_period"]:
+        for issue in s["resolved_in_period"][:3]:
+            rows.append(_issue_row(issue, "✅"))
+
+    rows_html = "\n".join(rows) if rows else (
+        '<tr><td colspan="4" style="padding:8px;text-align:center;color:#475569;font-size:12px">'
+        f'{s["unresolved_count"]} unresolved issue(s) in 14d, none new/recurring in 24h</td></tr>'
+    )
+
+    return f"""
+<h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;border-bottom:2px solid #76b82a;padding-bottom:6px">
+  🛡️ Sentry observability (last 24h)
+</h2>
+<p style="margin:0 0 8px;font-size:12px;color:#64748b">
+  Real-time error + performance monitoring. 🆕 = new today, 🔁 = recurring (≥3 events), ✅ = resolved today.
+</p>
+<div style="background:#f8fafc;border-left:4px solid #1a3d9c;padding:10px 14px;margin:6px 0 12px;border-radius:4px">
+  <div style="font-size:13px;font-weight:600;color:#0f172a">
+    {s["unresolved_count"]} unresolved · {len(s["new_in_period"])} new (24h) · {len(s["recurring"])} recurring · {len(s["resolved_in_period"])} resolved (24h)
+  </div>
+  <div style="font-size:11px;color:#475569;margin-top:2px">
+    Total events 24h: {s["total_events_in_period"]} ·
+    <a href="https://idealx-llc.sentry.io/issues/" style="color:#1a3d9c">View in Sentry →</a>
+  </div>
+</div>
+<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
+  <tr style="background:#0a2350;color:white">
+    <th style="padding:5px;text-align:left">Issue</th>
+    <th style="padding:5px;text-align:left">Title</th>
+    <th style="padding:5px;text-align:center">Count</th>
+    <th style="padding:5px;text-align:left">Last Seen</th>
+  </tr>
+  {rows_html}
+</table>
+"""
+
+
+def _rate_intel_section_inline():
 
 
 def _rate_intel_section_inline():

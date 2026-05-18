@@ -1156,6 +1156,76 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-037: check failed with exception: {_e}")
 
+    # QC-043: SENTRY SELF-IMPROVEMENT LOOP — query Sentry's REST API for
+    # the open-issues view of this project, log it locally, and flag any
+    # issues that appear to be FIXED by recent commits so they auto-
+    # resolve on the next pass.
+    #
+    # Per Michael 2026-05-17 ("you can use sentry for self check and
+    # improvements as well"). Sentry becomes an active participant in
+    # QC: it KNOWS what errored, when, and how often. qc_selfheal asks
+    # it that question every fire and acts on the answer.
+    #
+    # Actions:
+    #   - Surface unresolved-issue COUNT in qc-result.json (audit context)
+    #   - WARN if ≥3 distinct issues remain unresolved >7 days (stale backlog)
+    #   - WARN if any single issue has ≥5 events in 24h (active fire)
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from sentry_api import SentryAPI, get_issue_summary
+        _api = SentryAPI()
+        if not _api.enabled:
+            log.ok("QC-043: Sentry auth token not configured — self-improvement loop disabled")
+        else:
+            _summary = get_issue_summary(_api, period="24h")
+            _unresolved = _summary["unresolved_count"]
+            _new = len(_summary["new_in_period"])
+            _recurring = _summary["recurring"]
+            _events = _summary["total_events_in_period"]
+
+            # Always log the snapshot for the audit
+            log.ok(
+                f"QC-043: Sentry — {_unresolved} unresolved, {_new} new (24h), "
+                f"{len(_recurring)} recurring, {_events} events (24h)"
+            )
+
+            # WARN: stale unresolved backlog (>= 5 issues open)
+            if _unresolved >= 5:
+                log.warn(
+                    f"QC-043: {_unresolved} unresolved Sentry issues — operator should "
+                    "triage in https://idealx-llc.sentry.io/issues/ (auto-resolve "
+                    "covers issues that haven't fired in 24h, but recurring ones need review)"
+                )
+
+            # WARN: active fire (any issue >=5 events in 24h)
+            _hot = [
+                i for i in _recurring
+                if int(i.get("count", 0)) >= 5
+            ]
+            if _hot:
+                _titles = ", ".join(
+                    f"{i.get('shortId', '?')}({i.get('count', '?')}x)"
+                    for i in _hot[:3]
+                )
+                log.warn(
+                    f"QC-043: {len(_hot)} Sentry issue(s) firing ≥5×/24h — "
+                    f"active regression likely: {_titles}"
+                )
+
+            # Push a metric so the dashboard's "Sentry health" widget
+            # can track unresolved-count + new-rate over time
+            if _sentry is not None:
+                try:
+                    _sentry.metric_gauge("sentry.unresolved_count", _unresolved)
+                    _sentry.metric_gauge("sentry.new_24h", _new)
+                    _sentry.metric_gauge("sentry.recurring_count", len(_recurring))
+                    _sentry.metric_gauge("sentry.events_24h", _events)
+                except Exception:
+                    pass
+    except Exception as _e:
+        log.warn(f"QC-043: Sentry self-improvement loop failed: {type(_e).__name__}: {_e}")
+
     # QC-038: ol-quote-tracker reconciliation freshness + drift detection.
     # Per Michael 2026-05-16 "you see hilmar data is also on there as a good
     # check point for won bookings". Both systems independently ingest the

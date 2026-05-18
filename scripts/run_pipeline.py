@@ -198,6 +198,43 @@ def main():
         except Exception:
             cron_id = None
 
+    # Sentry Release marker — create a release for this fire's git SHA.
+    # Per Michael 2026-05-17 ("use sentry for self check and improvements
+    # as well"). Sentry uses releases to:
+    #   - Auto-resolve issues when "Fixes SENTRY-XYZ" appears in commit msg
+    #   - Show "first seen in release X" vs "fixed in release Y" on each issue
+    #   - Track regression rate per release
+    # The release tag was already on every event (release=hilmar-...@<sha>);
+    # now we ALSO register the release explicitly so Sentry knows it exists
+    # and can correlate commits.
+    try:
+        sys.path.insert(0, str(SCRIPTS))
+        from sentry_api import SentryAPI
+        _api = SentryAPI()
+        if _api.enabled:
+            import subprocess as _sp
+            try:
+                sha = _sp.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=str(ROOT), capture_output=True, text=True,
+                              timeout=5).stdout.strip() or "unknown"
+                msg = _sp.run(["git", "log", "-1", "--pretty=%B"],
+                              cwd=str(ROOT), capture_output=True, text=True,
+                              timeout=5).stdout.strip()[:500]
+            except Exception:
+                sha, msg = "unknown", ""
+            version = f"hilmar-daily-tracker@{sha}"
+            _api.create_release(
+                version,
+                commits=[{
+                    "id": sha,
+                    "repository": "IdealX-dev/hilmar-daily-routine",
+                    "message": msg,
+                }] if sha != "unknown" and msg else None,
+            )
+    except Exception:
+        # Never let release tagging crash the pipeline
+        pass
+
     # Wrap the entire pipeline run in a top-level Sentry transaction.
     pipeline_txn = None
     if _sentry is not None:
