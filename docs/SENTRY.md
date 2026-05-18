@@ -89,6 +89,91 @@ py -3 scripts/sentry_setup.py
 | MSAL / Graph auth errors | Token cache expired or Conditional Access changed | Re-run `outlook_send.py auth` interactively to refresh device-code token |
 | `requests.exceptions.ConnectionError` from `sync_to_quote_tracker` / `reconcile` | ol-quote-tracker-prod Azure App Service hiccup | These have graceful-degradation (audit-log + return 0); pipeline continues. If persistent, check Azure portal |
 
+## Cron monitor — silent-failure detection
+
+The `hilmar-daily-pipeline` monitor catches the scenario where the
+SCHEDULER itself breaks (Cloud PC offline, task scheduler crashes,
+wrapper crashes before any Python code runs). Plain error-event capture
+can't catch this because no code is running to report.
+
+**Schedule:** `0 10 * * 1-5` America/New_York (Mon-Fri 10 AM ET)
+**Margin:** 30 min — alert if start check-in doesn't arrive within 30 min of scheduled fire
+**Max runtime:** 60 min — alert if pipeline runs >60 min (typical is 30-60s)
+
+How it works:
+1. `run_pipeline.py main()` calls `sentry_setup.start_cron_checkin()` at the
+   start of every fire → returns a check_in_id.
+2. Pipeline runs.
+3. `run_pipeline.py main()` calls `sentry_setup.finish_cron_checkin(id, ok=True/False)`
+   at the end with success/error status.
+4. If Sentry doesn't see the start check-in within 30 min of 10 AM ET on
+   any weekday → "missed check-in" alert.
+5. If Sentry sees a start but no finish within 60 min → "max runtime exceeded".
+6. If finish status=error → "run failed" alert.
+
+The monitor auto-provisions on first check-in — no Sentry UI setup
+needed. Configuration lives in `sentry_setup.py:_MONITOR_CONFIG`.
+
+To change the schedule, edit that dict and the next check-in updates
+the monitor in Sentry.
+
+## Custom metrics — KPI trends
+
+These metrics emit on every pipeline fire (paid Sentry tier required
+for retention; free tier collects but doesn't trend over time):
+
+### Parser quality (from qc_selfheal.py QC-039)
+- `parser.accuracy_overall` (gauge) — overall accuracy across all fields
+- `parser.accuracy_weighted` (gauge) — weighted by applicable-row count
+- `parser.accuracy_per_field` (gauge, tagged `field=<name>` + `critical=true/false`)
+  one row per field per run
+
+### Pipeline performance (from run_pipeline.py)
+- `pipeline.duration_s` (distribution) — total wall time
+- `pipeline.step_duration_s` (distribution, tagged `step=<name>` + `status=ok/failed`)
+  per-step duration heatmap
+- `pipeline.status` (counter, tagged `status=ok/failed`)
+
+### QC activity (from qc_selfheal.py Log class)
+- `qc.errors` (counter, tagged `check=<QC-NNN>` + `phase=pre-patch/post-patch`)
+- `qc.warnings` (counter, tagged `check=<QC-NNN>` + `phase=...`)
+- `qc.fixes` (counter, tagged `phase=...`) — how often self-heal applies fixes
+
+### Email send health (from outlook_send.py)
+- `send.success` (counter, tagged `recipient_type=full/audit/test` + `attach_count`)
+- `send.failure` (counter, tagged `recipient_type` + `status_code`)
+
+### ol-quote-tracker reconciliation (from reconcile_with_quote_tracker.py)
+- `reconcile.qt_wins` (gauge, tagged `window_days`)
+- `reconcile.hilmar_wins` (gauge)
+- `reconcile.drift_count` (gauge) — Hilmar-QT difference in win count
+- `reconcile.drift_teu` (gauge) — same for TEU
+- `reconcile.lanes_matched` (gauge)
+- `reconcile.lanes_total` (gauge)
+
+### Dashboard widgets (build in Sentry UI: Dashboards → New)
+
+Recommended Hilmar KPI dashboard layout:
+
+| Row | Widget | Query / metric |
+|---|---|---|
+| 1 | Parser Accuracy (90d) | `parser.accuracy_overall` line, phase=post-patch |
+| 1 | Pipeline Duration (90d) | `pipeline.duration_s` p50+p95 line |
+| 2 | QC Errors by Check (30d) | `qc.errors` stacked-bar, group by `check` |
+| 2 | Per-field Accuracy (latest) | `parser.accuracy_per_field` table, sort by rate ascending |
+| 3 | Reconcile Drift (60d) | `reconcile.drift_count` line, `reconcile.drift_teu` line (dual-axis) |
+| 3 | Send Success Rate | `send.success` / (`send.success`+`send.failure`) ratio |
+| 4 | Step Duration Heatmap | `pipeline.step_duration_s` p95 by `step` |
+| 4 | Cron Status | monitor status board for `hilmar-daily-pipeline` |
+
+### Recommended metric alerts (paid tier)
+
+- `parser.accuracy_overall` < 0.98 for 2 consecutive runs → ERROR
+- `pipeline.duration_s` > 2× rolling 7-day median → WARN
+- `send.failure` > 0 → ERROR (any send failure)
+- `reconcile.drift_count` > 5 for 3 consecutive runs → WARN
+- `qc.errors` count > 0 grouped by check_name (any new error) → already covered by issue alerts
+
 ## Cost ceiling
 
 Sentry free tier: 10K events/month. Hilmar produces:

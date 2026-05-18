@@ -111,12 +111,32 @@ class Log:
         # Snapshot the phase once at construction so subsequent env changes
         # mid-run don't surprise us
         self._pre_patch = _qc_phase_is_pre_patch()
+        # Phase tag for metric routing — pre-patch metrics are still
+        # collected but tagged so we can filter them out in the dashboard.
+        self._phase_tag = "pre-patch" if self._pre_patch else "post-patch"
 
     def fix(self, msg):
         self.fixes.append(msg); print(f"  🔧 FIX: {msg}")
+        # Counter metric — track how often self-heal applies fixes.
+        # If this trends upward, the upstream parser is degrading.
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment("qc.fixes", 1, phase=self._phase_tag)
+            except Exception:
+                pass
 
     def warn(self, msg):
         self.warnings.append(msg); print(f"  ⚠️  WARN: {msg}")
+        # Counter metric tagged by check name + phase for dashboard slicing
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment(
+                    "qc.warnings", 1,
+                    check=_extract_check_name(msg),
+                    phase=self._phase_tag,
+                )
+            except Exception:
+                pass
         # Pre-patch QC findings are EXPECTED incomplete — patch_carriers
         # backfills them next. Suppress Sentry alerts on pre-patch run
         # to avoid false-positive noise. (Findings still log locally +
@@ -134,6 +154,16 @@ class Log:
 
     def error(self, msg):
         self.errors.append(msg); print(f"  🔴 ERROR: {msg}")
+        # Counter metric tagged by check name + phase for dashboard slicing
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment(
+                    "qc.errors", 1,
+                    check=_extract_check_name(msg),
+                    phase=self._phase_tag,
+                )
+            except Exception:
+                pass
         # Same pre-patch suppression — patch_carriers will run next and
         # fix the data gaps that pre-patch QC is flagging. Only post-patch
         # ERRORs represent the real shipped state.
@@ -1168,6 +1198,35 @@ def phase_6_rules(log: Log, data: dict):
         _acc = compute_accuracy(data.get("requests", []))
         _pct = f"{_acc['overall_rate']:.1%}"
         _wpct = f"{_acc['weighted_rate']:.1%}"
+        # Push Sentry metrics — these power the dashboard's "Parser
+        # accuracy trend (90 days)" widget. Gauges represent current
+        # snapshot value; one row per accuracy run.
+        if _sentry is not None:
+            try:
+                _sentry.metric_gauge(
+                    "parser.accuracy_overall",
+                    _acc["overall_rate"],
+                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                )
+                _sentry.metric_gauge(
+                    "parser.accuracy_weighted",
+                    _acc["weighted_rate"],
+                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                )
+                # Per-field gauges, one tagged metric per field. Lets the
+                # dashboard show "which field is degrading" at a glance.
+                for _field, _stats in _acc.get("field_stats", {}).items():
+                    if _stats.get("n_a"):
+                        continue
+                    _sentry.metric_gauge(
+                        "parser.accuracy_per_field",
+                        _stats["rate"],
+                        field=_field,
+                        critical=str(_field in CRITICAL_FIELDS).lower(),
+                        phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                    )
+            except Exception:
+                pass
         if _acc["critical_failing"]:
             log.error(
                 f"QC-039: parser accuracy {_pct} (weighted {_wpct}) with "

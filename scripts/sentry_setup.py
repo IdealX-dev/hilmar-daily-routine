@@ -311,6 +311,151 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
         pass
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Sentry Crons — heartbeat the daily 10 AM ET fire
+# ─────────────────────────────────────────────────────────────────────
+#
+# Sentry Crons solves the silent-failure mode where the SCHEDULER itself
+# breaks (Cloud PC offline, task scheduler crashes, wrapper script crashes
+# before any Python code runs). Plain error-event monitoring can't catch
+# this because no code is running to report. Sentry Crons solves it with
+# a heartbeat model: the pipeline checks in with Sentry at start and end;
+# if the start check-in doesn't arrive within `checkin_margin` minutes of
+# the scheduled time, Sentry fires an "missed check-in" alert.
+#
+# Monitor slug: `hilmar-daily-pipeline`
+# Schedule:     Mon-Fri at 10:00 AM ET (per scheduled task on Cloud PC)
+# Margin:       Check-in must arrive within 30 min of scheduled time
+# Max runtime:  60 min before declaring the run hung/missed
+#
+# The monitor is AUTO-PROVISIONED by the first check-in that supplies a
+# monitor_config — no need for Sentry UI setup or auth-token-based API.
+
+MONITOR_SLUG = "hilmar-daily-pipeline"
+
+_MONITOR_CONFIG = {
+    "schedule": {"type": "crontab", "value": "0 10 * * 1-5"},
+    "schedule_type": "crontab",
+    "timezone": "America/New_York",
+    "checkin_margin": 30,    # alert if no in_progress check-in within 30 min of scheduled fire
+    "max_runtime": 60,       # alert if pipeline runs >60 min (typical = 30-60s, lots of headroom)
+    "failure_issue_threshold": 1,   # 1 missed/failed run = create issue immediately
+    "recovery_threshold": 1,        # 1 successful run = resolve the issue
+}
+
+
+def start_cron_checkin() -> str | None:
+    """Mark the start of a pipeline run. Returns the check_in_id for
+    pairing with the finishing call. Returns None if Sentry not initialized
+    or on any error — observability must never block the pipeline."""
+    try:
+        import sentry_sdk
+        if not _INITIALIZED:
+            return None
+        # capture_checkin auto-creates the monitor on first call when
+        # monitor_config is provided. Subsequent calls update the existing
+        # monitor — schedule changes propagate automatically.
+        check_in_id = sentry_sdk.crons.capture_checkin(
+            monitor_slug=MONITOR_SLUG,
+            status="in_progress",
+            monitor_config=_MONITOR_CONFIG,
+        )
+        return check_in_id
+    except Exception as _e:
+        # Don't let cron-checkin failure crash the pipeline
+        try:
+            print(f"⚠️  Sentry cron start failed (pipeline continues): {_e}")
+        except Exception:
+            pass
+        return None
+
+
+def finish_cron_checkin(check_in_id: str | None, success: bool) -> None:
+    """Mark the end of a pipeline run as ok / error. Pass the check_in_id
+    returned by start_cron_checkin() to pair the two events.
+
+    If check_in_id is None (start_cron_checkin failed or Sentry wasn't
+    initialized), this is a silent no-op.
+    """
+    if check_in_id is None:
+        return
+    try:
+        import sentry_sdk
+        if not _INITIALIZED:
+            return
+        sentry_sdk.crons.capture_checkin(
+            monitor_slug=MONITOR_SLUG,
+            check_in_id=check_in_id,
+            status="ok" if success else "error",
+        )
+    except Exception:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Custom metrics — time-series KPIs (parser accuracy, durations, counts)
+# ─────────────────────────────────────────────────────────────────────
+#
+# Sentry Custom Metrics turn QC + pipeline + parser data into trended
+# time-series. The free tier doesn't support metrics; paid (Team+) does.
+# These helpers no-op silently if the SDK doesn't expose metrics — that
+# way the code works on free tier without modification.
+#
+# Naming convention:
+#   parser.accuracy_overall              gauge   0.0-1.0
+#   parser.accuracy_per_field            gauge   tagged field=<name>
+#   pipeline.duration_s                  distribution  seconds
+#   pipeline.step_duration_s             distribution  tagged step=<name>
+#   pipeline.status                      counter  tagged status=ok|failed
+#   qc.errors                            counter  tagged check=<QC-NNN>
+#   qc.warnings                          counter  tagged check=<QC-NNN>
+#   qc.fixes                             counter
+#   send.success                         counter  tagged recipient_type=full|audit|test
+#   send.failure                         counter  tagged error_type=<class>
+#   reconcile.drift_count                gauge   integer delta
+#   reconcile.drift_teu                  gauge   integer delta
+#   ingest.rows_processed                counter
+#   ingest.wins_today                    counter
+#   ingest.qa_today                      counter
+
+
+def metric_gauge(name: str, value: float, **tags) -> None:
+    """Emit a gauge metric — represents a current-value snapshot.
+    Tags become Sentry metric dimensions for filtering/grouping."""
+    if not _INITIALIZED:
+        return
+    try:
+        from sentry_sdk import metrics as _metrics
+        _metrics.gauge(key=name, value=float(value), tags=tags or None)
+    except Exception:
+        pass  # metrics either not supported or other failure — silent no-op
+
+
+def metric_increment(name: str, value: float = 1.0, **tags) -> None:
+    """Emit a counter metric — represents an additive count of events.
+    Use for: number of QC errors fired, number of rows processed, etc."""
+    if not _INITIALIZED:
+        return
+    try:
+        from sentry_sdk import metrics as _metrics
+        _metrics.incr(key=name, value=float(value), tags=tags or None)
+    except Exception:
+        pass
+
+
+def metric_distribution(name: str, value: float, **tags) -> None:
+    """Emit a distribution metric — Sentry computes percentiles
+    (p50/p75/p95/p99) over the values reported. Use for: durations,
+    sizes, rates that vary per call."""
+    if not _INITIALIZED:
+        return
+    try:
+        from sentry_sdk import metrics as _metrics
+        _metrics.distribution(key=name, value=float(value), tags=tags or None)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     # CLI: send a test event to verify the integration works
     print("Sentry setup self-test...")

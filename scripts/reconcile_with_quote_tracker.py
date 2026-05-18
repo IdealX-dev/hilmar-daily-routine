@@ -305,6 +305,23 @@ def main():
                      indent=2, default=str))
     print(f"  Lane drift: {len(rec['lane_drift'])} mismatches (top in JSON)")
 
+    # Sentry metrics — drift trends over time. The dashboard's
+    # "Reconcile drift trend" widget will plot these gauges so we can
+    # see whether parser fixes on either side are closing the gap or
+    # if it's widening.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import sentry_setup as _sentry
+        _sentry.metric_gauge("reconcile.qt_wins", rec["qt_total_wins"], window_days=str(args.window))
+        _sentry.metric_gauge("reconcile.hilmar_wins", rec["hilmar_total_wins"], window_days=str(args.window))
+        _sentry.metric_gauge("reconcile.drift_count", rec["win_count_delta"], window_days=str(args.window))
+        _sentry.metric_gauge("reconcile.drift_teu", rec["teu_delta"], window_days=str(args.window))
+        _sentry.metric_gauge("reconcile.lanes_matched", rec["lanes_matched"], window_days=str(args.window))
+        _sentry.metric_gauge("reconcile.lanes_total", rec["lanes_total"], window_days=str(args.window))
+    except Exception:
+        pass
+
     if not args.dry:
         REPORTS.mkdir(parents=True, exist_ok=True)
         (REPORTS / "reconcile-quote-tracker.json").write_text(

@@ -175,6 +175,31 @@ def send_mail(*, to: list[str], subject: str, html_body: str,
     payload = {"message": message, "saveToSentItems": True}
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     r = requests.post(f"{GRAPH}/me/sendMail", headers=headers, json=payload, timeout=30)
+
+    # Sentry metric: success/failure counter tagged by recipient type
+    # (full distribution / audit / test) so the dashboard shows which
+    # send channel is failing if there are any.
+    _recipient_type = "full" if len(to) >= 5 else (
+        "audit" if (len(to) == 1 and to[0].endswith("@idealx.us")) else "test"
+    )
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import sentry_setup as _sentry
+        if r.status_code in (200, 202):
+            _sentry.metric_increment(
+                "send.success", 1,
+                recipient_type=_recipient_type,
+                attach_count=str(len(attach_payload)),
+            )
+        else:
+            _sentry.metric_increment(
+                "send.failure", 1,
+                recipient_type=_recipient_type,
+                status_code=str(r.status_code),
+            )
+    except Exception:
+        pass  # observability never breaks the send
+
     if r.status_code not in (200, 202):
         raise RuntimeError(f"Graph sendMail failed {r.status_code}: {r.text[:500]}")
     req_id = r.headers.get("request-id") or r.headers.get("client-request-id") or "?"

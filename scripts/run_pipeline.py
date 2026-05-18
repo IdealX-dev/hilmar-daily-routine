@@ -123,12 +123,30 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
     # Inject extra env into the subprocess (e.g. HILMAR_QC_PHASE=pre-patch)
     # without polluting our own process env.
     import os as _os
+    import time as _time
     sub_env = _os.environ.copy()
     if extra_env:
         sub_env.update(extra_env)
 
+    step_started = _time.monotonic()
     try:
         result = subprocess.run(cmd, cwd=str(ROOT), env=sub_env)
+        step_elapsed = _time.monotonic() - step_started
+
+        # Per-step duration metric — powers the Sentry dashboard heatmap
+        # showing which step is slowest. Tagged by step name so we can
+        # group / filter.
+        if _sentry is not None:
+            try:
+                _sentry.metric_distribution(
+                    "pipeline.step_duration_s",
+                    step_elapsed,
+                    step=name,
+                    status="ok" if result.returncode == 0 else "failed",
+                )
+            except Exception:
+                pass
+
         if result.returncode != 0:
             print(f"❌ FAIL — {name} exited {result.returncode}")
             if _sentry is not None:
@@ -166,6 +184,20 @@ def main():
     print(f"   Repo: {ROOT}")
     print(f"   Python: {PY}")
 
+    # Sentry Cron heartbeat — `start` check-in. Sentry auto-creates the
+    # monitor (slug=hilmar-daily-pipeline) on first call. Schedule is
+    # "0 10 * * 1-5" America/New_York (Mon-Fri 10 AM ET). If the
+    # finishing check-in doesn't arrive within max_runtime=60 min,
+    # Sentry fires an alert — catches the silent-failure mode where the
+    # Cloud PC / scheduler / wrapper dies before any error-event code
+    # gets to run.
+    cron_id = None
+    if _sentry is not None:
+        try:
+            cron_id = _sentry.start_cron_checkin()
+        except Exception:
+            cron_id = None
+
     # Wrap the entire pipeline run in a top-level Sentry transaction.
     pipeline_txn = None
     if _sentry is not None:
@@ -197,6 +229,27 @@ def main():
             if "QC self-heal" not in name:
                 break
 
+    # Pipeline-level metrics — duration + final status counter. These
+    # power the Sentry dashboard's "Pipeline duration trend" and
+    # "Failure rate over time" widgets. Use distribution for duration
+    # (gives p50/p75/p95/p99) and a counter tagged by status for the
+    # success/fail breakdown.
+    elapsed_s = (datetime.now() - started).total_seconds()
+    if _sentry is not None:
+        try:
+            _sentry.metric_distribution(
+                "pipeline.duration_s",
+                elapsed_s,
+                skip_ingest=str(args.skip_ingest).lower(),
+            )
+            _sentry.metric_increment(
+                "pipeline.status",
+                1,
+                status="failed" if failures else "ok",
+            )
+        except Exception:
+            pass
+
     if pipeline_txn is not None:
         try:
             pipeline_txn.set_tag("pipeline_failures", len(failures))
@@ -205,6 +258,16 @@ def main():
             else:
                 pipeline_txn.set_tag("pipeline_status", "ok")
             pipeline_txn.__exit__(None, None, None)
+        except Exception:
+            pass
+
+    # Cron heartbeat — finish check-in. status=ok if all steps succeeded
+    # (or only QC-self-heal had warnings); status=error otherwise. This
+    # pairs with the start check-in above so Sentry knows the pipeline
+    # completed (and how long it took).
+    if _sentry is not None and cron_id is not None:
+        try:
+            _sentry.finish_cron_checkin(cron_id, success=not failures)
         except Exception:
             pass
 
