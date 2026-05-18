@@ -396,11 +396,35 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
         subject = row.get("subject", "") or ""
         preview = row.get("summary_preview", "") or ""
 
-        # Only consider Hilmar-tagged rows or rows where MDOLX+NUMIDIA/HILMAR is in subject
+        # Only consider rows where HILMAR appears in subject. The previous
+        # implementation also accepted "NUMIDIA" alone, but NUMIDIA is OL's
+        # internal client tag used across MANY customers, not just Hilmar —
+        # accepting it as a Hilmar signal pulled non-Hilmar bookings into
+        # our data.
+        #
+        # Per Michael 2026-05-17 ("your qc and parsers have to improve"):
+        # 3 NUMIDIA-only standalone WINs (stand_260491 Tulare→Port Klang,
+        # stand_260482 Oakland→Busan, stand_260555 no-lane) were leaking
+        # in as Hilmar. The fix requires HILMAR explicitly somewhere in
+        # the subject — either as the customer tag "// HILMAR" or the
+        # lane origin "Hilmar, CA". A row that says only "// NUMIDIA"
+        # without "HILMAR" anywhere is a different customer's booking.
         is_hilmar = row.get("is_hilmar")
         if is_hilmar is None:
-            is_hilmar = any(s in subject.upper() for s in ("HILMAR", "NUMIDIA", "HILMAR, CA"))
+            is_hilmar = "HILMAR" in subject.upper()
         if not is_hilmar:
+            # Push the rejection to Sentry as a metric so we can track
+            # mis-routed standalone WINs and improve over time.
+            try:
+                import sys as _sys
+                _sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import sentry_setup as _sentry
+                _sentry.metric_increment(
+                    "ingest.non_hilmar_filtered", 1,
+                    bucket=bucket or "unknown",
+                )
+            except Exception:
+                pass
             continue
 
         # Skip ops/admin follow-ups so they don't generate fake standalone wins

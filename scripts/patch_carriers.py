@@ -577,13 +577,179 @@ def main():
             r["ol_rate"] = parsed["ol_rate"]
             patched_rate += 1
 
+    # ─────────────────────────────────────────────────────────────────
+    # PASS 4 — Stage-scan for WINs still missing carrier_won
+    #
+    # Per Michael 2026-05-17 ("your qc and parsers have to improve").
+    # Some Hilmar WINs arrive via a request thread that DOESN'T contain
+    # an MDOLX booking confirmation (the booking confirmation lives in
+    # a separate thread). PASS 1-3 above can't find a carrier because
+    # they only look within the WIN's own source emails. PASS 4 scans
+    # the broader stage looking for HILMAR-tagged MDOLX subjects that
+    # match the WIN's lane + time window, and extracts the carrier from
+    # the subject's booking-ref prefix (NAM=CMA, RICG=ONE, etc.) or
+    # explicit name.
+    #
+    # Strict matching only — no ambiguous fills. If 2+ candidate
+    # bookings match the same WIN, skip (operator review needed).
+    # ─────────────────────────────────────────────────────────────────
+    patched_pass4 = 0
+    pass4_skipped_ambig = 0
+    try:
+        from pathlib import Path as _Path
+        import re as _re
+
+        # Carrier name + booking-ref-prefix map (mirrored from
+        # backfill_mdolx.py — single source of truth would be nicer
+        # later, but inline for now).
+        _CARRIER_PREFIXES: dict[str, tuple[str, ...]] = {
+            "CMA CGM":     ("NAM", "APL", "ANL", "CMA", "CGM"),
+            "Maersk":      ("MAEU", "SEAU", "SUDU", "MSK", "MAERSK"),
+            "MSC":         ("MEDU", "MSCU", "EBKG", "MSC"),
+            "ONE":         ("ONEY", "RICG", "SCNB", "ONE"),
+            "Evergreen":   ("EBKG", "EISU", "EGLV", "EVERGREEN", "EMC"),
+            "Hapag-Lloyd": ("HLCU", "HLBU", "HLAG", "HAPAG"),
+            "OOCL":        ("OOLU", "OOCL"),
+            "Yang Ming":   ("YMLU", "YML", "YANGMING", "YANG"),
+            "HMM":         ("HMMU", "HMM", "HYUNDAI"),
+            "ZIM":         ("ZIMU", "ZIM"),
+            "COSCO":       ("COSU", "COSCO", "COSCON"),
+        }
+
+        def _carrier_from_subject(subj: str) -> str | None:
+            """Return the canonical carrier name detected in subject, or None."""
+            if not subj:
+                return None
+            up = subj.upper()
+            for canonical, prefixes in _CARRIER_PREFIXES.items():
+                if canonical.upper() in up:
+                    return canonical
+                for p in prefixes:
+                    if p in up:
+                        return canonical
+            return None
+
+        # Load stage. Prefer .txt (current), fall back .jsonl.
+        stage_path = _Path(__file__).resolve().parent / "stage_emails.txt"
+        if not stage_path.exists():
+            stage_path = _Path(__file__).resolve().parent / "stage_emails.jsonl"
+        stage_rows = []
+        if stage_path.exists():
+            for line in stage_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    stage_rows.append(json.loads(line))
+                except Exception:
+                    pass
+
+        # Pre-filter stage to HILMAR-tagged MDOLX subjects (way faster)
+        mdolx_re = _re.compile(r"MDOL[XMFD][-\s_]*(\d{4,})", _re.IGNORECASE)
+        hilmar_mdolx_stage = []
+        for s in stage_rows:
+            subj = (s.get("subject") or "")
+            if "HILMAR" not in subj.upper():
+                continue
+            if not mdolx_re.search(subj):
+                continue
+            hilmar_mdolx_stage.append(s)
+
+        from datetime import datetime as _dt
+        def _days_apart(a: str, b: str) -> int:
+            try:
+                da = _dt.strptime(a[:10], "%Y-%m-%d").date()
+                db = _dt.strptime(b[:10], "%Y-%m-%d").date()
+                return (da - db).days
+            except Exception:
+                return 9999
+
+        wins_missing = [r for r in data["requests"]
+                        if r.get("status") == "WIN" and not r.get("carrier_won")]
+        for w in wins_missing:
+            lane = (w.get("lane") or "").strip()
+            if " → " not in lane:
+                continue
+            origin, dest = lane.split(" → ", 1)
+            origin = origin.strip().lower()
+            dest = dest.strip().lower()
+            if not (origin and dest):
+                continue
+            win_date = w.get("request_date") or (w.get("request_timestamp") or "")[:10]
+            if not win_date:
+                continue
+
+            candidates = []  # list of (carrier, mdolx, subject)
+            for s in hilmar_mdolx_stage:
+                subj = s.get("subject") or ""
+                subj_lower = subj.lower()
+                if origin not in subj_lower or dest not in subj_lower:
+                    continue
+                sent = (s.get("sent") or s.get("received") or "")[:10]
+                if not sent or abs(_days_apart(sent, win_date)) > 14:
+                    continue
+                carrier = _carrier_from_subject(subj)
+                if not carrier:
+                    continue
+                m = mdolx_re.search(subj)
+                mdolx_str = f"MDOL{m.group(0)[4]}{m.group(1)}" if m else None
+                candidates.append((carrier, mdolx_str, subj))
+
+            # Distinct carriers — if multiple different carriers match,
+            # we can't disambiguate without more signal. Skip.
+            distinct_carriers = {c[0] for c in candidates}
+            if len(distinct_carriers) == 1:
+                carrier = candidates[0][0]
+                mdolx_str = candidates[0][1]
+                w["carrier_won"] = carrier
+                if mdolx_str and not w.get("mdolx_ref"):
+                    w["mdolx_ref"] = mdolx_str[5:]  # strip "MDOLX" prefix → digits
+                patched_pass4 += 1
+                print(f"  PASS4 {w.get('request_id', '?')[:20]} {lane:35} -> {carrier}"
+                      + (f" (MDOLX {mdolx_str})" if mdolx_str else ""))
+            elif len(distinct_carriers) > 1:
+                pass4_skipped_ambig += 1
+                # Capture context to Sentry — operator visibility into
+                # ambiguous cases that need manual review
+                try:
+                    import sys as _sys
+                    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+                    import sentry_setup as _sentry
+                    _sentry.capture_qc_warning(
+                        "patch_carriers.ambiguous_match",
+                        f"WIN {w.get('request_id', '?')} on lane {lane} matched "
+                        f"{len(candidates)} candidate bookings across {len(distinct_carriers)} "
+                        f"carriers: {sorted(distinct_carriers)} — needs manual review"
+                    )
+                except Exception:
+                    pass
+            else:
+                # Zero matches — capture for trend tracking
+                try:
+                    import sys as _sys
+                    _sys.path.insert(0, str(_Path(__file__).resolve().parent))
+                    import sentry_setup as _sentry
+                    _sentry.metric_increment(
+                        "patch_carriers.pass4_no_match", 1,
+                        lane=lane[:30],
+                    )
+                except Exception:
+                    pass
+
+        if patched_pass4:
+            print(f"\nPASS 4 backfilled {patched_pass4} WIN carrier(s) "
+                  f"via stage-scan (HILMAR + lane + time-window + unique-carrier matching). "
+                  f"Skipped {pass4_skipped_ambig} ambiguous case(s).")
+            patched_carrier += patched_pass4
+    except Exception as _e:
+        print(f"⚠️  PASS 4 failed (continuing): {type(_e).__name__}: {_e}")
+
     if (patched_carrier == 0 and patched_lane == 0
             and patched_ql_carrier == 0 and patched_fields == 0):
         print("Nothing to patch - all target rows already complete.")
         return
 
     print(f"\nSummary: {patched_carrier} WIN-carrier patches "
-          f"({len(auto_hits)} auto / {len(manual_hits)} manual), "
+          f"({len(auto_hits)} auto / {len(manual_hits)} manual / {patched_pass4} PASS-4 stage-scan), "
           f"{patched_lane} lane patches, "
           f"{patched_ql_carrier} Q&L-carrier patches (via body scan), "
           f"{patched_rate} rate patches, "

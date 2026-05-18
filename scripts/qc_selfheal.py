@@ -395,6 +395,39 @@ def _load_bodies_index() -> dict:
 
 def phase_3_entries(log: Log, data: dict):
     log.section("PHASE 3: ENTRY-LEVEL HEALING")
+    # Cleanup pass: drop stand_* WINs that don't have HILMAR in subject.
+    # Pre-existing rows from when ingest accepted NUMIDIA-only (the bug
+    # fixed 2026-05-17). These bleed non-Hilmar customer bookings into
+    # Hilmar's data and drag down parser accuracy.
+    # Per Michael 2026-05-17 ("your qc and parsers have to improve").
+    before = len(data["requests"])
+    cleaned = []
+    removed_misclassified = []
+    for r in data["requests"]:
+        rid = r.get("request_id", "") or ""
+        subj_up = (r.get("subject") or "").upper()
+        if rid.startswith("stand_") and "HILMAR" not in subj_up:
+            removed_misclassified.append(rid)
+            continue
+        cleaned.append(r)
+    if removed_misclassified:
+        data["requests"] = cleaned
+        log.fix(
+            f"PHASE 3 cleanup: removed {len(removed_misclassified)} misclassified "
+            f"stand_* WIN(s) (subject lacks HILMAR): "
+            f"{', '.join(removed_misclassified[:5])}"
+            + (f" +{len(removed_misclassified)-5} more" if len(removed_misclassified) > 5 else "")
+        )
+        # Sentry metric so we can track how often the classifier rescues us
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment(
+                    "qc.misclassified_stand_removed",
+                    len(removed_misclassified),
+                )
+            except Exception:
+                pass
+
     requests = data["requests"]
     # Load source bodies once for healers that need them (containers cleanup,
     # rate backfill). Safe if file is missing — healers gracefully skip.
