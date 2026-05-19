@@ -397,6 +397,23 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
   .kpi-grid{{grid-template-columns:1fr !important}}
   th,td{{padding:3px 4px;font-size:10px}}
 }}
+
+/* 2026-05-19 PM (Michael "clickable doesn't bring up data related to
+   the click"): KPI clicks now actually drill into the relevant filtered
+   view. JS intercepts the click, switches the radio-tab, scrolls to the
+   target section, and applies a row-filter where it makes sense. Active
+   filter is shown in a sticky banner with a Clear button. */
+.kpi-filter-banner{{position:sticky;top:0;z-index:50;background:#fef3c7;border:2px solid #f59e0b;color:#92400e;padding:10px 16px;margin:0 0 14px;border-radius:8px;display:none;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(245,158,11,0.2)}}
+.kpi-filter-banner.active{{display:flex;align-items:center;justify-content:space-between;gap:12px}}
+.kpi-filter-banner .label{{flex:1}}
+.kpi-filter-banner .clear-btn{{background:white;color:#92400e;border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}}
+.kpi-filter-banner .clear-btn:hover{{background:#fef3c7}}
+.kpi-filter-target{{outline:3px solid #f59e0b;outline-offset:4px;border-radius:6px;animation:kpiFlash 1.5s ease-out;scroll-margin-top:60px}}
+@keyframes kpiFlash{{
+  0%{{outline-color:#fbbf24;background:#fef3c7}}
+  100%{{outline-color:#f59e0b;background:transparent}}
+}}
+tbody tr.kpi-row-dim{{opacity:0.25}}
 </style>
 </head><body>
 
@@ -408,24 +425,29 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>
 </div>
 
+<div id="kpi-filter-banner" class="kpi-filter-banner">
+  <span class="label">🔍 Filter active: <strong id="kpi-filter-label">All</strong></span>
+  <button class="clear-btn" type="button" id="kpi-filter-clear">Clear Filter ✕</button>
+</div>
+
 <h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day. Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <a class="kpi blue" href="#tab-summary" title="Click to jump to Confirmed Wins / Not Quoted detail"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click to drill →</div></a>
-  <a class="kpi green" href="#tab-summary" title="Click to jump to the Wins section"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">→ Wins section</div></a>
-  <a class="kpi red" href="#tab-summary" title="Click to jump to the Losing Lanes section"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">→ Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" title="Click to jump to Not Quoted detail"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">→ Not Quoted</div></a>
-  <a class="kpi" style="background:#8b5cf6;color:white;border-top-color:#7c3aed" href="#tab-pending" title="Click to jump to the Pending tab"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">→ Pending tab</div></a>
+  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click → all rows</div></a>
+  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
+  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi" style="background:#8b5cf6;color:white;border-top-color:#7c3aed" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <a class="kpi blue" href="#tab-summary" title="Click to jump to all Confirmed Wins / NQ"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click to drill →</div></a>
-  <a class="kpi green" href="#tab-summary" title="Click to jump to Wins section"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">→ Wins section</div></a>
-  <a class="kpi red" href="#tab-summary" title="Click to jump to Losing Lanes"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">→ Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" title="Click to jump to Not Quoted detail"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">→ Not Quoted</div></a>
-  <a class="kpi purple" href="#tab-pending" title="Click to jump to Pending Hilmar tab"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">→ Pending tab</div></a>
-  <a class="kpi green" href="#tab-carriers" title="Click to jump to per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">→ Carriers tab</div></a>
-  <a class="kpi teal" href="#tab-summary" title="Click to jump to Quote Rate detail (OL responded)"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">→ Summary</div></a>
-  <a class="kpi slate" href="#tab-turnaround" title="Click to jump to Turnaround analysis"><div class="value">{avg_biz}h</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{after_hours_count} after-hrs req</div><div class="kpi-hint">→ Turnaround tab</div></a>
+  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — PTD"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click → all rows</div></a>
+  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — PTD ({len(wins)} bookings)"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
+  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — PTD ({len(ql)} rows)"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — PTD ({len(nq)} rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
+  <a class="kpi green" href="#tab-carriers" data-tab="tb-carriers" data-target="sec-carriers" data-filter="all" data-filter-label="Per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">click → Carriers tab</div></a>
+  <a class="kpi teal" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="quoted" data-filter-label="Quote Rate detail — {quote_rate}% of all RFQs got a quote"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">click → quoted rows</div></a>
+  <a class="kpi slate" href="#tab-turnaround" data-tab="tb-turnaround" data-target="sec-turnaround" data-filter="all" data-filter-label="Turnaround analysis"><div class="value">{avg_biz}h</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{after_hours_count} after-hrs req</div><div class="kpi-hint">click → Turnaround tab</div></a>
 </div>
 
 <input type="radio" name="tabs" id="tb-summary" checked>
@@ -482,27 +504,21 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         html += '</div>\n'
         html += '<p style="font-size:11px;color:#64748b;margin-top:6px">🟢 Wins | 🔴 Q&amp;L | 🟡 NQ | 🟣 Pending</p></div>\n'
 
-    # Wins
-    # 2026-05-19 PM (Michael "in the portal missing mdolx for way too many
-    # files that you mark as won"): the 11 WINs without mdolx_ref are
-    # send-signal promotions where Lonny said "send" but OL hasn't yet
-    # issued the MDOLX booking confirmation. They're genuine wins; the
-    # number is just pending. Render an amber "Awaiting MDOLX" badge so
-    # they're visually distinct from "data missing" / parser failure.
+    # Wins — sec-wins id so KPI click can scroll here
     _awaiting = sum(1 for w in wins if not w.get("mdolx_ref"))
     _awaiting_label = (f' <span style="font-size:13px;color:#92400e;font-weight:500">'
                        f'· {_awaiting} awaiting MDOLX (send-signal wins without booking confirmation yet)</span>'
                        if _awaiting else '')
-    html += f'<div class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
+    html += f'<div id="sec-wins" class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
     if wins:
-        html += '<table><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
+        html += '<table data-filterable="wins"><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
         for i, w in enumerate(sorted(wins, key=lambda x: x.get("request_date") or x.get("date","")), 1):
             _mdolx = w.get("mdolx_ref")
             if _mdolx:
                 mdolx_cell = f'<code>{_safe(_mdolx)}</code>'
             else:
                 mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
-            html += f'<tr class="win-row"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{_safe(w.get("carrier_won"))}</td></tr>\n'
+            html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{_safe(w.get("carrier_won"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">No wins yet in this period.</p>'
@@ -520,7 +536,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     _older_hidden = len(nq) - len(nq_recent)
     _hidden_note = (f' • {_older_hidden} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden '
                     'from listing but counted in volume tally for rate negotiation') if _older_hidden > 0 else ''
-    html += (f'<div class="section"><h2>⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days '
+    html += (f'<div id="sec-nq" class="section"><h2>⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days '
              f'({len(nq_recent)} listed • {len(nq)} total • {teu_nq} TEU)</h2>\n')
     html += f'<p style="font-size:11px;color:#64748b;margin:0 0 6px">Full audit view — every field needed to root-cause why OL did not respond.{_hidden_note}</p>\n'
     if nq_recent:
@@ -648,7 +664,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         key=lambda x: (x[1].get("teu_won", 0), x[1].get("wins", 0)),
         reverse=True,
     )[:10]
-    html += '<div class="section"><h2>🟢 Top Winning Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Won)</span></h2>\n'
+    html += '<div id="sec-winning-lanes" class="section"><h2>🟢 Top Winning Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Won)</span></h2>\n'
     html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
              f'Period: {_period} &nbsp;·&nbsp; '
              f'<span style="color:#64748b;font-weight:normal">"Win Rate" is per-lane (Wins / decided requests), not a parser metric.</span></p>\n')
@@ -687,7 +703,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         key=lambda x: x[1].get("teu_quoted_lost", 0) + x[1].get("teu_not_quoted", 0),
         reverse=True,
     )[:10]
-    html += '<div class="section"><h2>🔴 Top Losing Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Lost, excludes NO_RESPONSE)</span></h2>\n'
+    html += '<div id="sec-losing-lanes" class="section"><h2>🔴 Top Losing Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Lost, excludes NO_RESPONSE)</span></h2>\n'
     html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
              f'Period: {_period} &nbsp;·&nbsp; '
              f'<span style="color:#64748b;font-weight:normal">A lane can appear in BOTH Winning Lanes (by absolute wins) and Losing Lanes (by absolute losses) when high-volume on both sides — e.g. Oakland → Yokohama at 28.6% Win Rate has 6 wins AND 15 losses.</span></p>\n')
@@ -779,7 +795,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     html += '<div class="callout green"><p>🚢 <strong>Carrier negotiation intelligence:</strong> Each carrier is ranked by TEU volume you sent them. Click into rows for lanes lost, avg turnaround, and ETD fit score — use these numbers in your 1:1 line meetings.</p></div>\n'
 
     # Overview table
-    html += '<div class="section"><h2>Carrier Performance Overview — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(per carrier; same losses also shown by lane above)</span></h2>\n'
+    html += '<div id="sec-carriers" class="section"><h2>Carrier Performance Overview — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(per carrier; same losses also shown by lane above)</span></h2>\n'
     html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
              f'Period: {_period} &nbsp;·&nbsp; '
              f'<span style="color:#64748b;font-weight:normal">"Win Rate" is per-carrier (Wins / Quotes). NOT a parser metric.</span></p>\n')
@@ -850,7 +866,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     # TAB: PENDING
     html += '<div id="tab-pending" class="tab-content">\n'
     html += f'<div class="callout purple"><p>Pending Hilmar response: OL quoted, Lonny still within 24h. Past {warn_thresholds[0]}h = yellow, {warn_thresholds[-2]}h = orange, {warn_thresholds[-1]}h+ = red (about to flip to Q&amp;L).</p></div>\n'
-    html += f'<div class="section"><h2>Pending Watchlist - {len(pending)} open</h2>\n'
+    html += f'<div id="sec-pending" class="section"><h2>Pending Watchlist - {len(pending)} open</h2>\n'
     if pending_watch:
         html += '<table><tr><th>Severity</th><th>Hours Since Quote</th><th>Date</th><th>Lane</th><th>Equip</th><th>Carrier</th><th>Rate</th><th>Lonny ETA Ask</th><th>OL ETA</th></tr>\n'
         sev_label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
@@ -912,6 +928,82 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
     html += '</div>\n'
 
     html += '<div class="section" style="margin-top:20px;border-left:4px solid #3b82f6"><p style="font-size:11px;color:#64748b">Auto-generated from the Hilmar Shipment Tracker</p></div>\n'
+    # 2026-05-19 PM (Michael "clickable doesn't bring up data related to
+    # the click"): JS that turns KPI clicks into real drill-downs.
+    # On click: (1) switch tab via the radio button, (2) scroll to the
+    # target <id>, (3) flash the target section to draw the eye,
+    # (4) show a sticky filter banner with a Clear button.
+    # Vanilla JS — no framework, no external deps.
+    html += """
+<script>
+(function() {
+  var banner = document.getElementById('kpi-filter-banner');
+  var bannerLabel = document.getElementById('kpi-filter-label');
+  var clearBtn = document.getElementById('kpi-filter-clear');
+
+  function clearFilter() {
+    banner.classList.remove('active');
+    document.querySelectorAll('.kpi-filter-target').forEach(function(el) {
+      el.classList.remove('kpi-filter-target');
+    });
+    document.querySelectorAll('tr.kpi-row-dim').forEach(function(tr) {
+      tr.classList.remove('kpi-row-dim');
+    });
+  }
+
+  if (clearBtn) clearBtn.addEventListener('click', clearFilter);
+
+  document.querySelectorAll('a.kpi[data-tab]').forEach(function(kpi) {
+    kpi.addEventListener('click', function(e) {
+      e.preventDefault();
+      var tabId = kpi.getAttribute('data-tab');
+      var targetId = kpi.getAttribute('data-target');
+      var filter = kpi.getAttribute('data-filter') || 'all';
+      var label = kpi.getAttribute('data-filter-label') || '';
+
+      // 1. Switch tab — click the corresponding radio input
+      var radio = document.getElementById(tabId);
+      if (radio) { radio.checked = true; }
+
+      // Clear any prior filter visuals
+      document.querySelectorAll('.kpi-filter-target').forEach(function(el) {
+        el.classList.remove('kpi-filter-target');
+      });
+      document.querySelectorAll('tr.kpi-row-dim').forEach(function(tr) {
+        tr.classList.remove('kpi-row-dim');
+      });
+
+      // 2. Show banner with the active filter label
+      if (label) {
+        bannerLabel.innerHTML = label;
+        banner.classList.add('active');
+      } else {
+        banner.classList.remove('active');
+      }
+
+      // 3. Scroll to + flash the target section
+      var target = targetId ? document.getElementById(targetId) : null;
+      if (target) {
+        // Defer to next frame so the tab switch repaints first
+        setTimeout(function() {
+          target.scrollIntoView({behavior: 'smooth', block: 'start'});
+          target.classList.add('kpi-filter-target');
+        }, 50);
+      }
+
+      // 4. Filter rows in any filterable tables that have data-status
+      if (filter !== 'all') {
+        document.querySelectorAll('table[data-filterable] tbody tr').forEach(function(tr) {
+          var status = tr.getAttribute('data-status') || '';
+          if (filter === 'WIN'  && status !== 'WIN')  tr.classList.add('kpi-row-dim');
+          if (filter === 'PENDING' && status !== 'PENDING') tr.classList.add('kpi-row-dim');
+        });
+      }
+    });
+  });
+})();
+</script>
+"""
     html += '</body></html>'
     return html
 
