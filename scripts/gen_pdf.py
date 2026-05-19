@@ -306,7 +306,11 @@ def build_carriers(story, styles, data):
         story.append(Paragraph("No carrier data yet.", styles["Body"]))
         return
 
-    rows = [["Carrier", "Quotes", "W", "L", "Pend", "Win %", "TEU Won", "TEU Lost", "Lanes", "Avg ETD fit"]]
+    # Per Michael 2026-05-18 (audit feedback): columns were too terse —
+    # he misread "W" / "TEU Won" / "Win %" in a similar table as today's
+    # wins / dollars / today's rate. Spell out + units + (#) markers.
+    rows = [["Carrier", "Times\nQuoted (#)", "Wins (#)", "Lost (#)", "Pending (#)",
+             "Win\nRate", "TEU\nWon", "TEU\nLost", "Lanes (#)", "Avg ETD fit"]]
     for c, cm in sorted(carriers.items(), key=lambda x: x[1].get("win_rate", 0), reverse=True):
         ef = cm.get("avg_etd_fit_days")
         if ef is None:
@@ -361,7 +365,7 @@ def build_trade_regions(story, styles, data):
     story.append(Spacer(1, 10))
 
     ordered = sorted(regions.values(), key=lambda m: m.get("teu_requested", 0), reverse=True)
-    rows = [["Region", "Reqs", "W", "Q&L", "NQ", "Pend", "TEU Req", "TEU Won", "Win %"]]
+    rows = [["Region", "Requests\n(#)", "Wins\n(#)", "Q&L\n(#)", "NQ\n(#)", "Pending\n(#)", "TEU\nRequested", "TEU\nWon", "Win\nRate"]]
     for m in ordered:
         rows.append([
             m["region"],
@@ -428,7 +432,7 @@ def build_lanes(story, styles, data):
         story.append(Paragraph("No lane data yet.", styles["Body"]))
         return
 
-    rows = [["Lane", "Reqs", "W", "Q&L", "NQ", "Pend", "TEU Req", "TEU Won", "Winning Carriers"]]
+    rows = [["Lane", "Requests\n(#)", "Wins\n(#)", "Q&L\n(#)", "NQ\n(#)", "Pending\n(#)", "TEU\nRequested", "TEU\nWon", "Winning Carriers"]]
     for lane, lm in sorted(lanes.items(), key=lambda x: x[1].get("teu_requested", 0), reverse=True)[:20]:
         rows.append([
             lane,

@@ -502,6 +502,17 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     qr = summary.get("quote_rate", 0.0) or 0.0
     biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
 
+    # Period string for the KPI section header — per Michael 2026-05-18
+    # ("two terrible audits..."): KPIs labeled "PTD" without a date range
+    # made it ambiguous whether "32 wins / 137 TEU" was today or cumulative.
+    # Render the explicit date range so there's no doubt.
+    reqs_with_dates = [r for r in (requests or []) if r.get("request_date")]
+    if reqs_with_dates:
+        dates = sorted(r["request_date"] for r in reqs_with_dates)
+        period_str_kpi = f"from {dates[0]} through {dates[-1]}"
+    else:
+        period_str_kpi = "(no date range available)"
+
     if report_date is None:
         report_date = _report_date()
     day_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%a %b %-d")
@@ -539,20 +550,20 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     <td style="padding:0 4px;text-align:center">{spark_pend}</td>
   </tr>
 </table>
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — Period to Date</h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Cumulative over the data range — used for win-rate negotiation depth, not "today".</p>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
   <tr>
-    {_kpi_card(total, "Total Requests", "#3b82f6")}
-    {_kpi_card(f"{wins} ({teu_won} TEU)", "Won — PTD", "#22c55e")}
-    {_kpi_card(f"{ql} ({teu_ql} TEU)", "Quoted & Lost — PTD", "#ef4444")}
-    {_kpi_card(f"{nq} ({teu_nq} TEU)", "Not Quoted — PTD", "#f59e0b")}
+    {_kpi_card(total, "Total Requests (all statuses)", "#3b82f6")}
+    {_kpi_card(f"{wins} bookings · {teu_won} TEU", f"Won · this period", "#22c55e")}
+    {_kpi_card(f"{ql} bookings · {teu_ql} TEU", f"Quoted &amp; Lost · this period", "#ef4444")}
+    {_kpi_card(f"{nq} bookings · {teu_nq} TEU", f"Not Quoted · this period", "#f59e0b")}
   </tr>
   <tr>
-    {_kpi_card(f"{pending} ({teu_pending} TEU)", "Pending ⏳", "#8b5cf6")}
-    {_kpi_card(f"{wr:.1f}%", "Win Rate — PTD", "#22c55e")}
-    {_kpi_card(f"{qr:.1f}%", "Quote Rate — PTD", "#3b82f6")}
-    {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1")}
+    {_kpi_card(f"{pending} bookings · {teu_pending} TEU", "Pending Lonny decision", "#8b5cf6")}
+    {_kpi_card(f"{wr:.1f}%", f"Win Rate · Wins / (Wins + Q&amp;L)", "#22c55e")}
+    {_kpi_card(f"{qr:.1f}%", f"Quote Rate · Quoted / Total", "#3b82f6")}
+    {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hours · Lonny RFQ → OL quote", "#6366f1")}
   </tr>
 </table>
 """
@@ -616,18 +627,18 @@ def _carrier_block_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — Period to Date (per carrier × W/L/Pending)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Same losses also appear in Top Losing Lanes (sliced by lane) and Not Quoted (NO_RESPONSE only). This view = per carrier.</p>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — All requests in current dataset</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Period covers EVERY request currently in tracking-data-v2.json (~6 weeks of history). Numbers are counts of distinct request rows; TEU is sum of containers per row. Same losses also appear in Top Losing Lanes (sliced by lane) and Not Quoted (NO_RESPONSE only). This view = per carrier.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left">Carrier</th>
-    <th style="padding:8px;text-align:center">Quoted</th>
-    <th style="padding:8px;text-align:center">Won</th>
-    <th style="padding:8px;text-align:center">Q&amp;L</th>
-    <th style="padding:8px;text-align:center">Pending</th>
-    <th style="padding:8px;text-align:center">Win Rate</th>
-    <th style="padding:8px;text-align:center">TEU Won</th>
-    <th style="padding:8px;text-align:center">TEU Lost</th>
+    <th style="padding:8px;text-align:center" title="Distinct requests where this carrier appeared as carrier_quoted">Times<br>Quoted (#)</th>
+    <th style="padding:8px;text-align:center" title="Distinct requests where this carrier won the booking">Wins (#)</th>
+    <th style="padding:8px;text-align:center" title="Quoted but Lonny went elsewhere">Q&amp;L (#)</th>
+    <th style="padding:8px;text-align:center" title="Awaiting Lonny's decision">Pending (#)</th>
+    <th style="padding:8px;text-align:center" title="Wins / (Wins + Q&amp;L) — pending excluded">Win<br>Rate</th>
+    <th style="padding:8px;text-align:center" title="Sum of TEU on this carrier's WIN rows">TEU<br>Won</th>
+    <th style="padding:8px;text-align:center" title="Sum of TEU on this carrier's Q&amp;L rows">TEU<br>Lost</th>
   </tr>
   {body}
 </table>
@@ -657,13 +668,14 @@ def _winning_lanes_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — Period to Date (sliced by lane, sorted by TEU won)</h2>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — All requests in current dataset</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Times Won" = number of WIN rows on that lane. "Total Reqs" = all requests (W + Q&amp;L + NQ + Pending) on that lane in this period.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:linear-gradient(135deg,#059669 0%,#10b981 100%);color:white">
-    <th style="padding:8px;text-align:left">Lane</th>
-    <th style="padding:8px;text-align:center">Times Won</th>
-    <th style="padding:8px;text-align:left">TEU Won</th>
-    <th style="padding:8px;text-align:center">Total Reqs</th>
+    <th style="padding:8px;text-align:left">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center" title="Number of distinct WIN rows on this lane">Times<br>Won (#)</th>
+    <th style="padding:8px;text-align:left" title="Sum of TEU on those WIN rows">TEU Won</th>
+    <th style="padding:8px;text-align:center" title="All requests on this lane (any status)">Total<br>Reqs (#)</th>
     <th style="padding:8px;text-align:left">Winning Carriers</th>
   </tr>
   {body}
@@ -692,14 +704,14 @@ def _losing_lanes_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — Period to Date (sliced by lane, sorted by TEU lost)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Excludes NO_RESPONSE losses (those are in the "Not Quoted" section below).</p>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — All requests in current dataset</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Times Lost" = Q&amp;L rows on this lane (we quoted, Lonny went elsewhere). "Total Reqs" = all requests on this lane. Excludes NO_RESPONSE losses (those are in the "Not Quoted" section below — different failure mode, no carrier to attribute).</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:linear-gradient(135deg,#dc2626 0%,#ef4444 100%);color:white">
-    <th style="padding:8px;text-align:left">Lane</th>
-    <th style="padding:8px;text-align:center">Times Lost</th>
-    <th style="padding:8px;text-align:left">TEU Lost</th>
-    <th style="padding:8px;text-align:center">Total Reqs</th>
+    <th style="padding:8px;text-align:left">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center" title="Number of Q&amp;L rows on this lane (quoted but lost)">Times<br>Lost (#)</th>
+    <th style="padding:8px;text-align:left" title="Sum of TEU on those Q&amp;L rows">TEU Lost</th>
+    <th style="padding:8px;text-align:center" title="All requests on this lane (any status)">Total<br>Reqs (#)</th>
   </tr>
   {body}
 </table>
@@ -862,21 +874,27 @@ def _trade_region_html(data, summary):
     recon = (f'reconciles to summary: {summary.get("total_entries",0)} reqs / '
              f'{summary.get("wins",0)} W / {summary.get("quoted_lost",0)} Q&L / '
              f'{summary.get("not_quoted",0)} NQ / {summary.get("pending_hilmar",0)} P')
+    # Period scope — pull from the data's first/last request_date.
+    # Per Michael 2026-05-18 "what does total mean? number of bookings? TEUs?"
+    # — every column needs explicit units + period.
+    reqs = data.get("requests", []) or []
+    dates = sorted(r.get("request_date", "") for r in reqs if r.get("request_date"))
+    period_str = f"{dates[0]} – {dates[-1]}" if dates else "all time"
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">🌐 Volume by Trade Region</h2>
-<p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. Totals reconcile to summary KPIs.</p>
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
+<p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">{_esc(recon)}</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left">Region</th>
-    <th style="padding:8px;text-align:center">Reqs</th>
-    <th style="padding:8px;text-align:center">W</th>
-    <th style="padding:8px;text-align:center">Q&amp;L</th>
-    <th style="padding:8px;text-align:center">NQ</th>
-    <th style="padding:8px;text-align:center">Pend</th>
-    <th style="padding:8px;text-align:center">TEU Req</th>
-    <th style="padding:8px;text-align:center">TEU Won</th>
-    <th style="padding:8px;text-align:center">Win %</th>
+    <th style="padding:8px;text-align:center" title="Number of distinct requests from Lonny">Requests<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Wins — booked + confirmed via MDOLX">Wins<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost — OL gave a rate, Lonny went elsewhere">Q&amp;L<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Not Quoted — OL never responded or had no rate">NQ<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Pending — awaiting Lonny's decision">Pending<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Sum of TEU requested by Lonny (all statuses)">TEU<br>Requested</th>
+    <th style="padding:8px;text-align:center" title="Sum of TEU on confirmed WIN rows only">TEU<br>Won</th>
+    <th style="padding:8px;text-align:center" title="Win Rate = Wins / Requests">Win<br>Rate</th>
   </tr>
   {rows_html}
 </table>
