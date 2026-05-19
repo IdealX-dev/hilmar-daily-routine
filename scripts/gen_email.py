@@ -68,6 +68,17 @@ def _week_bucket(d):
     via d.weekday() arithmetic: Saturday weekday=5 → monday is 5 days back.
     Label intentionally shows Mon–Fri only (not Mon–Sun) per Michael
     2026-05-07: 'the dating on the weekly should be based on weekdays'.
+
+    2026-05-19 PM 3rd pass (Michael "how do we fix this formatting of the
+    week" — date column was wrapping at the en-dash in narrow viewports
+    even with white-space:nowrap because the column still couldn't fit
+    "W18 (Apr 27–May 1)" as one line at narrow widths). Label now uses
+    a literal "\n" separator between the week code and the date range,
+    and the renderer (_week_block_html) substitutes "\n" with a
+    "<br><span ...>" so the date range goes on its OWN line in muted
+    grey — same vertical-stack pattern used by the "Requests (# · TEU)"
+    cell on the same row. Eliminates unpredictable wrap on narrow
+    screens and matches the established visual rhythm.
     """
     if not d:
         return None
@@ -77,9 +88,13 @@ def _week_bucket(d):
     monday = d - timedelta(days=d.weekday())
     friday = monday + timedelta(days=4)
     if monday.month != friday.month:
-        label = f"W{wk} ({_fmt_date(monday, '%b %-d')}–{_fmt_date(friday, '%b %-d')})"
+        date_range = f"{_fmt_date(monday, '%b %-d')} – {_fmt_date(friday, '%b %-d')}"
     else:
-        label = f"W{wk} ({_fmt_date(monday, '%b %-d')}–{_fmt_date(friday, '%-d')})"
+        date_range = f"{_fmt_date(monday, '%b %-d')} – {_fmt_date(friday, '%-d')}"
+    # Use literal "\n" separator — _week_block_html splits and re-renders
+    # as a 2-line cell. Stays a single string so existing dict keys + sort
+    # behavior are unchanged.
+    label = f"W{wk}\n{date_range}"
     return label, monday
 
 
@@ -359,7 +374,15 @@ def _pending_rows(data):
 # HTML builders
 # ─────────────────────────────────────────────────────────────────────
 
+# 2026-05-19 PM 4th pass: Outlook strips CSS linear-gradient — leaves text
+# rendered without the background, which collapses the visual hierarchy
+# (and on header rows in tables, makes white text invisible on white
+# background). Keep the gradient string for clients that support it but
+# pair every use with a solid-color background-color fallback. Inline
+# styles ALWAYS list `background-color:` before `background:` so Outlook
+# sees the solid color when it strips the gradient line.
 HEADER_GRADIENT = f"linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%)"
+HEADER_BG_SOLID = B.HILMAR_NAVY  # solid fallback for Outlook
 
 
 EMAIL_FONT_STACK = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif"
@@ -384,7 +407,7 @@ def _header_html(today_label, range_label, updated_label):
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!--<![endif]-->
 <div style="max-width:900px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
-  <div style="padding:14px 28px;background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
+  <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
@@ -496,6 +519,22 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     )
 
     # ── 3. STATUS CHANGES (5 columns) ────────────────────────────────
+    # 2026-05-19 PM 3rd pass (Michael "why is rate not in $ format?"):
+    # the reason strings from ingest.py are stored as "rate=3450.0" —
+    # reformat at render time to "$3,450". Same regex used for any "rate=N"
+    # substring across all status-change reasons.
+    import re as _re_sc
+    def _fmt_rate_in_reason(reason):
+        def _sub(m):
+            try:
+                val = float(m.group(1))
+                return f"${val:,.0f}"
+            except ValueError:
+                return m.group(0)
+        # "carrier=CMA CGM, rate=3450.0" → "carrier=CMA CGM, rate=$3,450"
+        # Also handle "rate=$3450.0" (defensive) and trailing decimals
+        return _re_sc.sub(r"rate=\$?(\d+(?:\.\d+)?)", lambda m: f"rate={_sub(m)}", reason)
+
     sc_rows = ""
     if status_ch:
         for r, h in status_ch:
@@ -503,7 +542,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
             cnt = r.get('container_count') or 0
             teu = r.get('teu_requested') or 0
             cont_label = r.get('containers') or f"{cnt}cnt"
-            reason = h.get('reason') or ''
+            reason = _fmt_rate_in_reason(h.get('reason') or '')
             req_date = r.get('request_date') or '—'
             sc_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
@@ -659,9 +698,25 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     teu_nq = summary.get("teu_not_quoted", 0)
     pending = summary.get("pending_hilmar", 0)
     teu_pending = summary.get("teu_pending", 0)
-    wr = summary.get("win_rate", 0.0) or 0.0
     qr = summary.get("quote_rate", 0.0) or 0.0
     biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
+
+    # 2026-05-19 PM 6th pass (Michael "i don't think your win rate is accurate
+    # how is it including w +q&l + nq.. q&l and nq are losses"):
+    #
+    # Old formula: Win Rate = Wins / (Wins + Q&L + NQ) → 41.0% on current data.
+    # The problem: NQ rows are "OL never responded" — we didn't lose on
+    # price, we never even competed. Lumping them with Q&L (which IS a
+    # head-to-head competitive loss) muddies the win-vs-competitor signal.
+    #
+    # New formula: Win Rate = Wins / (Wins + Q&L) — pure competitive
+    # conversion. NQ now shows as its own KPI ("No-Response Rate") so the
+    # parser-side failure mode (OL silence) is visible but doesn't drag the
+    # competitive win rate down.
+    decided_competitive = wins + ql
+    wr = (wins / decided_competitive * 100.0) if decided_competitive else 0.0
+    decided_all = wins + ql + nq
+    no_resp_rate = (nq / decided_all * 100.0) if decided_all else 0.0
 
     # Period string for the KPI section header — per Michael 2026-05-18
     # ("two terrible audits..."): KPIs labeled "PTD" without a date range
@@ -717,16 +772,28 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   <tr>
     {_kpi_card(total, "Total Requests", "#3b82f6", sublabel="(all statuses)")}
     {_kpi_card(wins, "Won · this period", "#22c55e", sublabel=f"{teu_won} TEU won")}
-    {_kpi_card(ql, "Quoted & Lost", "#ef4444", sublabel=f"{teu_ql} TEU")}
-    {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU")}
+    {_kpi_card(ql, "Quoted & Lost", "#ef4444", sublabel=f"{teu_ql} TEU · lost on price")}
+    {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU · OL silent")}
   </tr>
   <tr>
     {_kpi_card(pending, "Pending Lonny", "#8b5cf6", sublabel=f"{teu_pending} TEU")}
-    {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel="Wins/(W+Q&L+NQ)")}
-    {_kpi_card(f"{qr:.1f}%", "Quote Rate", "#3b82f6", sublabel="Quoted / Total")}
+    {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
+    {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", "#f59e0b", sublabel=f"{nq} NQ ÷ {decided_all} total")}
     {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1", sublabel="Lonny → OL quote")}
   </tr>
 </table>
+
+<!-- 2026-05-19 PM 7th pass (Michael "i'm lost win rate 45.4 percent what
+     is wins / wins + q&l"): plain-English explainer of Win Rate. -->
+<div style="background:#f0fdf4;border-left:4px solid #16a34a;padding:10px 14px;margin:-8px 0 16px;border-radius:4px;font-size:12px;color:#166534;line-height:1.5">
+  <strong>How Win Rate is computed:</strong> Win Rate = wins ÷ decided contests.
+  A "decided contest" is every time OL gave Lonny a rate AND Lonny chose
+  (so it's <strong>Wins + Q&amp;L</strong> — wins are the times Lonny picked us,
+  Q&amp;L are the times Lonny picked a competitor). NQ (OL never gave a rate)
+  is NOT in the denominator — we never actually competed on those, so they
+  show as a separate "No-Response Rate" KPI. Pending (not decided yet) is
+  also excluded. Today: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
+</div>
 """
 
 
@@ -758,9 +825,21 @@ def _week_block_html(rows):
         mdolx = ", ".join(mdolx_clean) if mdolx_clean else "—"
         teu_req = b.get("teu_req") or 0
         teu_won = b.get("teu_won") or 0
+        # 2026-05-19 PM 3rd pass: _week_bucket now returns label with a
+        # literal "\n" between week code + date range. Split and render
+        # the date on its own line in muted grey so narrow viewports
+        # don't wrap mid-date.
+        if "\n" in label:
+            wk_code, date_range = label.split("\n", 1)
+        else:
+            wk_code, date_range = label, ""
+        week_cell = (
+            f'<strong>{_esc(wk_code)}</strong>'
+            + (f'<br><span style="font-size:10px;color:#64748b;font-weight:400">{_esc(date_range)}</span>' if date_range else '')
+        )
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px;white-space:nowrap">{_esc(label)}</td>
+  <td style="padding:6px 8px;white-space:nowrap">{week_cell}</td>
   <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:10px;color:#64748b">{teu_req} TEU</span></td>
   <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}<br><span style="font-size:10px;color:#16a34a;opacity:0.75">{teu_won} TEU</span></td>
   <td style="padding:6px 8px;text-align:center;color:#dc2626">{b['ql']}</td>
@@ -875,50 +954,66 @@ def _carrier_block_html(rows):
 
 
 def _winning_lanes_html(rows):
+    """Top Winning Lanes table.
+
+    2026-05-19 PM 5th pass (Michael "you only have to title each row.. i
+    love the idea but i have no clue what the data is"): every value in
+    every row now carries an INLINE micro-label below it (e.g. "7" with
+    "Wins" beneath in tiny grey). So even if the column header isn't
+    visible (Outlook gradient bug, narrow viewport, screen reader, color-
+    blind), each cell self-describes. Same vertical-stack pattern used in
+    the Week table.
+    """
     if not rows:
         return ""
     max_teu = max((b['teu_won'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
-    # 2026-05-19 PM (Michael "top losing lanes and winning lanes has numbers
-    # but not a clarification of what the numbers are"): added explicit
-    # Win Rate column + per-row breakdown of W / Q&L / NQ counts so the
-    # reader sees ALL the numbers behind the "Total Reqs" rollup.
+    _MICRO = 'style="font-size:9px;color:#94a3b8;font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
         bg = "#ffffff" if alt else "#ecfdf5"
         alt = not alt
-        carriers = ", ".join(sorted(b.get("carriers") or []))
+        carriers = ", ".join(sorted(b.get("carriers") or [])) or "—"
         teu_bar = V.bar_cell(b['teu_won'], max_teu, color="#16a34a", label=str(b['teu_won']), width_px=80)
-        win_rate = (b['won'] / b['total'] * 100) if b['total'] else 0
-        wr_bg = V.heatmap_color(win_rate, vmin=0, vmax=100, mode="good_high")
+        # 2026-05-19 PM 6th pass: per-lane Win Rate now matches global
+        # definition — Wins / (Wins + Q&L). NQ excluded (different failure
+        # mode). Pending excluded (not decided yet).
         ql_count = b.get('ql', 0)
+        _decided_comp = b['won'] + ql_count
+        win_rate = (b['won'] / _decided_comp * 100) if _decided_comp else 0
+        wr_bg = V.heatmap_color(win_rate, vmin=0, vmax=100, mode="good_high")
         nq_count = b.get('nq', 0)
         pend_count = b.get('pending', 0)
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px;font-weight:600">{_esc(lane)}</td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626">{ql_count}</td>
-  <td style="padding:6px 8px;text-align:center;color:#d97706">{nq_count}</td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed">{pend_count}</td>
-  <td style="padding:6px 8px;text-align:left">{teu_bar}</td>
-  <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600">{win_rate:.1f}%</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(carriers)}</td>
+  <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold;vertical-align:top">{b['won']}<div {_MICRO}>Wins</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#dc2626;vertical-align:top">{ql_count}<div {_MICRO}>Q&amp;L</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#7c3aed;vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
+  <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Won</div></td>
+  <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
+  <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(carriers)}<div {_MICRO}>Winning Carriers</div></td>
 </tr>
 """
+    # 2026-05-19 PM 4th pass (Michael "still no column headers for these
+    # sections"): Outlook does not render CSS linear-gradient. The previous
+    # header used background:linear-gradient → Outlook stripped the
+    # background → white text on white = invisible header. Switched to
+    # solid #059669 (winning) / #7f1d1d (losing) which Outlook honors.
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:linear-gradient(135deg,#059669 0%,#10b981 100%);color:white">
-    <th style="padding:8px;text-align:left">Lane (origin → destination)</th>
-    <th style="padding:8px;text-align:center" title="Bookings won on this lane">Wins (#)</th>
-    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost — OL responded but Lonny chose elsewhere">Q&amp;L (#)</th>
-    <th style="padding:8px;text-align:center" title="Not Quoted — OL didn't respond with a rate">NQ (#)</th>
-    <th style="padding:8px;text-align:center" title="Awaiting Lonny's decision">Pending (#)</th>
-    <th style="padding:8px;text-align:left" title="Sum of TEU on this lane's WIN rows">TEU Won</th>
-    <th style="padding:8px;text-align:center" title="Wins / (Wins + Q&amp;L + NQ). Per-lane. NOT a parser metric.">Win Rate</th>
-    <th style="padding:8px;text-align:left">Winning Carriers</th>
+  <tr style="background-color:#059669;color:#ffffff">
+    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Bookings won on this lane">Wins (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Quoted & Lost — OL responded but Lonny chose elsewhere">Q&amp;L (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Not Quoted — OL didn't respond with a rate">NQ (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Awaiting Lonny's decision">Pending (#)</th>
+    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff" title="Sum of TEU on this lane's WIN rows">TEU Won</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Wins / (Wins + Q&L + NQ). Per-lane. NOT a parser metric.">Win Rate</th>
+    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Winning Carriers</th>
   </tr>
   {body}
 </table>
@@ -926,46 +1021,51 @@ def _winning_lanes_html(rows):
 
 
 def _losing_lanes_html(rows):
+    """Top Losing Lanes table — same inline-row-label treatment as Winning."""
     if not rows:
         return ""
     max_teu = max((b['teu_lost'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
+    _MICRO = 'style="font-size:9px;color:#94a3b8;font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
         bg = "#ffffff" if alt else "#fef2f2"
         alt = not alt
         teu_bar = V.bar_cell(b['teu_lost'], max_teu, color="#dc2626", label=str(b['teu_lost']), width_px=80)
-        win_rate = (b.get('won', 0) / b['total'] * 100) if b['total'] else 0
-        wr_bg = V.heatmap_color(win_rate, vmin=0, vmax=100, mode="good_high")
+        # 2026-05-19 PM 6th pass: same Win Rate redefinition as winning side
         won_count = b.get('won', 0)
+        _decided_comp = won_count + b['lost']
+        win_rate = (won_count / _decided_comp * 100) if _decided_comp else 0
+        wr_bg = V.heatmap_color(win_rate, vmin=0, vmax=100, mode="good_high")
         nq_count = b.get('nq', 0)
         pend_count = b.get('pending', 0)
         winning_carriers = ", ".join(sorted(b.get("carriers") or [])) or "—"
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px;font-weight:600">{_esc(lane)}</td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626;font-weight:bold">{b['lost']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#d97706">{nq_count}</td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed">{pend_count}</td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a">{won_count}</td>
-  <td style="padding:6px 8px;text-align:left">{teu_bar}</td>
-  <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600">{win_rate:.1f}%</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(winning_carriers)}</td>
+  <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#dc2626;font-weight:bold;vertical-align:top">{b['lost']}<div {_MICRO}>Q&amp;L</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#7c3aed;vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
+  <td style="padding:6px 8px;text-align:center;color:#16a34a;vertical-align:top">{won_count}<div {_MICRO}>Wins</div></td>
+  <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Lost</div></td>
+  <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
+  <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(winning_carriers)}<div {_MICRO}>Winning Carriers</div></td>
 </tr>
 """
+    # 2026-05-19 PM 4th pass: solid bg for Outlook (was gradient → invisible).
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:linear-gradient(135deg,#dc2626 0%,#ef4444 100%);color:white">
-    <th style="padding:8px;text-align:left">Lane (origin → destination)</th>
-    <th style="padding:8px;text-align:center" title="Q&amp;L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
-    <th style="padding:8px;text-align:center" title="Not Quoted rows on this lane (OL didn't respond)">NQ (#)</th>
-    <th style="padding:8px;text-align:center" title="Awaiting Lonny decision">Pending (#)</th>
-    <th style="padding:8px;text-align:center" title="Bookings WON on this lane (context)">Wins (#)</th>
-    <th style="padding:8px;text-align:left" title="Sum of TEU on Q&amp;L rows">TEU Lost</th>
-    <th style="padding:8px;text-align:center" title="Wins / (Wins + Q&amp;L + NQ). Same number that appears in Winning Lanes for this lane.">Win Rate</th>
-    <th style="padding:8px;text-align:left">Winning Carriers (on the wins)</th>
+  <tr style="background-color:#7f1d1d;color:#ffffff">
+    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Q&L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Not Quoted rows on this lane (OL didn't respond)">NQ (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Awaiting Lonny decision">Pending (#)</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Bookings WON on this lane (context)">Wins (#)</th>
+    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff" title="Sum of TEU on Q&L rows">TEU Lost</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Wins / (Wins + Q&L + NQ). Same number that appears in Winning Lanes for this lane.">Win Rate</th>
+    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Winning Carriers (on the wins)</th>
   </tr>
   {body}
 </table>
@@ -1048,12 +1148,17 @@ def _nq_html(rows, total_nq=None, teu_total=None):
 def _pending_html(rows):
     """Pending Hilmar Response — full per-row detail.
 
-    2026-05-19 PM 2nd pass (Michael "pending hilmar response doesn't show
-    number of teu and the rate should be in the $ format"):
-      - Added Equipment + TEU columns
-      - Rate formatted as $X,XXX (was raw float like "3450.0")
-      - Added OL signer column so we know WHO at MBD is owed a chase
-      - Added age-of-quote column (hours since OL responded)
+    2026-05-19 PM 3rd pass (Michael "pending lonny response should also
+    indicate the number of containers/teus etc etc and time quoted and
+    time quote request came in"):
+      - Added Equipment + TEU columns (2nd pass)
+      - Rate formatted as $X,XXX (2nd pass)
+      - OL signer column (2nd pass)
+      - Hours since OL quote (2nd pass)
+      - 3rd pass: explicit Lonny request timestamp (PT) AND OL response
+        timestamp (ET) — both absolute. The "Hours since OL quote" stays
+        as the chase metric. Now the operator sees the full timeline at
+        a glance: when Lonny asked, when OL answered, how long ago.
     """
     if not rows:
         return ""
@@ -1067,6 +1172,33 @@ def _pending_html(rows):
         except Exception:
             return "—"
 
+    # 2026-05-19 PM 6th pass (Michael "pending hilmar is still missing the
+    # data i said with number of teus also time of receipt of request and
+    # time quote went out"): the timestamps WERE in the data, but the
+    # strftime format strings used Unix-only `%-d` and `%-I` which raise
+    # ValueError on Windows (where the pipeline actually runs on the Cloud
+    # PC). The try/except swallowed the error and returned "—" for every
+    # row. Fix: use portable `%d` / `%I` (zero-padded) then strip the
+    # leading-space + zero pair with .replace(" 0", " ") so "Apr 03 04:50"
+    # renders "Apr 3 4:50".
+    def _fmt_local_full(iso, tz, tz_label):
+        try:
+            dt = core.parse_iso(iso)
+            if not dt:
+                return "—"
+            s = dt.astimezone(tz).strftime("%b %d %I:%M %p")
+            # Strip leading zeros on day and hour (Windows-safe)
+            s = s.replace(" 0", " ", 1)        # day:  "Apr 03" → "Apr 3"
+            s = s.replace(" 0", " ", 1)        # hour: " 04:50" → " 4:50"
+            return s + f" {tz_label}"
+        except Exception as _e:
+            # Defensive — emit traceback only in debug; production silent
+            # but at least show the raw ISO so we know the data exists.
+            return (iso[:16] if iso else "—")
+
+    def _fmt_pt_full(iso): return _fmt_local_full(iso, core.PT, "PT")
+    def _fmt_et_full(iso): return _fmt_local_full(iso, core.ET, "ET")
+
     body = ""
     alt = True
     total_teu = 0
@@ -1078,39 +1210,43 @@ def _pending_html(rows):
         rate = r.get('ol_rate')
         rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
         signer = r.get('ol_responder_signer') or "—"
+        lonny_t = _fmt_pt_full(r.get('request_timestamp'))
+        ol_t = _fmt_et_full(r.get('response_timestamp'))
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px;white-space:nowrap">{_esc(r.get('request_date') or '—')}</td>
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{teu}</td>
   <td style="padding:6px 8px">{_esc(r.get('carrier_quoted') or '—')}</td>
   <td style="padding:6px 8px;text-align:right;font-weight:600">{_esc(rate_s)}</td>
   <td style="padding:6px 8px">{_esc(signer)}</td>
-  <td style="padding:6px 8px;text-align:center">{_esc(_hours_since(r.get('response_timestamp')))}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(lonny_t)}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(ol_t)}</td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600">{_esc(_hours_since(r.get('response_timestamp')))}</td>
 </tr>
 """
     # Totals row for TEU reconciliation
     body += f"""
 <tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #7c3aed">
-  <td style="padding:8px" colspan="3">TOTAL ({len(rows)} pending)</td>
+  <td style="padding:8px" colspan="2">TOTAL ({len(rows)} pending)</td>
   <td style="padding:8px;text-align:center">{total_teu}</td>
-  <td style="padding:8px" colspan="4">&nbsp;</td>
+  <td style="padding:8px" colspan="6">&nbsp;</td>
 </tr>
 """
     return f"""
 <h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Sorted by request date (oldest first). "Hours since OL quote" is the clock since the rate response arrived — chase candidates are >24h.</p>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Each row shows BOTH the Lonny request time (PT) and the OL quote time (ET) so you see the full clock. "Hours since OL quote" is the chase metric — candidates >24h need follow-up.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#7c3aed;color:white">
-    <th style="padding:8px;text-align:left">Request Date</th>
     <th style="padding:8px;text-align:left">Lane</th>
     <th style="padding:8px;text-align:left">Equipment</th>
     <th style="padding:8px;text-align:center">TEU</th>
     <th style="padding:8px;text-align:left">Carrier Quoted</th>
     <th style="padding:8px;text-align:right">Rate ($/container)</th>
     <th style="padding:8px;text-align:left">Who Quoted (OL signer)</th>
-    <th style="padding:8px;text-align:center">Hours since OL quote</th>
+    <th style="padding:8px;text-align:left" title="When Lonny sent the RFQ (Pacific Time, Lonny's office)">Lonny Requested (PT)</th>
+    <th style="padding:8px;text-align:left" title="When OL responded with the rate (Eastern Time, OL's office)">OL Quoted (ET)</th>
+    <th style="padding:8px;text-align:center" title="Time elapsed since OL's quote arrived — chase candidates &gt;24h">Hours since OL quote</th>
   </tr>
   {body}
 </table>

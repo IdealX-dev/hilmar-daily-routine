@@ -1240,6 +1240,133 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-043: Sentry self-improvement loop failed: {type(_e).__name__}: {_e}")
 
+    # ─────────────────────────────────────────────────────────────────
+    # QC-044, -045, -046, -047 — Email format invariants
+    #
+    # Per Michael 2026-05-19 PM ("publish this now and make sure it's in
+    # qc audits self heal sentry/seer with autofix in git and claude").
+    # Every email-formatting bug discovered in the v3-v7 cycle gets a QC
+    # check so it can't silently regress. ERROR-level findings here go to
+    # Sentry via log.error → capture_qc_error, and Seer auto-triggers via
+    # qc_actions_from_sentry.ERROR_LEVEL_DEFAULT.
+    # ─────────────────────────────────────────────────────────────────
+
+    _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
+
+    if _body_path.exists():
+        try:
+            _body = _body_path.read_text(encoding="utf-8")
+        except Exception:
+            _body = ""
+
+        # QC-044: DOUBLE-ESCAPE GUARD — no `&amp;amp;` sequences (caught
+        # 2026-05-19 PM v1 → v2: passing pre-escaped "Quoted &amp; Lost"
+        # into _kpi_card which ran _esc() again produced &amp;amp;. Outlook
+        # renders literally.
+        if "&amp;amp;" in _body or "&amp;quot;" in _body:
+            _ct = _body.count("&amp;amp;") + _body.count("&amp;quot;")
+            log.error(
+                f"QC-044: email-body.html has {_ct} double-escaped HTML entity "
+                "sequences (&amp;amp; or &amp;quot;) — Outlook will render them "
+                "literally. Check call sites passing pre-escaped strings into "
+                "gen_email._kpi_card / _esc-wrapped helpers."
+            )
+        else:
+            log.ok("QC-044: no double-escaped HTML entities in email body")
+
+        # QC-045: TABLE-HEADER VISIBILITY — Outlook strips CSS linear-gradient
+        # but renders solid background-color. Any <tr> with `color:white` or
+        # `color:#ffffff` MUST also have a solid background-color set
+        # somewhere reachable, otherwise the header text is white on white
+        # = invisible. (Caught 2026-05-19 PM v4: Top Winning/Losing Lanes
+        # header rows used only linear-gradient.)
+        import re as _re_qc45
+        _bad_headers = []
+        for _m in _re_qc45.finditer(
+            r"<tr[^>]*style=\"([^\"]*)\"[^>]*>", _body
+        ):
+            _style = _m.group(1)
+            _has_white_text = (
+                "color:white" in _style.lower()
+                or "color:#ffffff" in _style.lower()
+                or "color:#fff" in _style.lower()
+            )
+            _has_solid_bg = "background-color:" in _style.lower()
+            _has_gradient_only = (
+                "linear-gradient" in _style.lower()
+                and "background-color:" not in _style.lower()
+            )
+            if _has_white_text and _has_gradient_only and not _has_solid_bg:
+                _bad_headers.append(_m.group(0)[:80])
+        if _bad_headers:
+            log.error(
+                f"QC-045: {len(_bad_headers)} email table header(s) use "
+                "linear-gradient without a solid background-color fallback — "
+                "Outlook will strip the gradient and render white-on-white "
+                "(invisible). Fix: add `background-color:#NNNNNN;` BEFORE "
+                "the `background:linear-gradient(...)` declaration. Sample: "
+                + _bad_headers[0]
+            )
+        else:
+            log.ok("QC-045: all white-text email headers have solid background-color fallback")
+
+        # QC-046: PENDING TIMESTAMP POPULATION — when reports/email-body.html
+        # contains the "Pending Hilmar Response" section AND the data has
+        # response_timestamp populated, the rendered cells must NOT all be
+        # dashes. (Caught 2026-05-19 PM v5: Windows strftime "%-d" raised
+        # ValueError → except returned "—" for every row.)
+        if "Pending Hilmar Response" in _body and "Lonny Requested (PT)" in _body:
+            # Count the dash cells specifically in the Pending section.
+            _pending_idx = _body.find("Pending Hilmar Response")
+            _next_h2 = _body.find("<h2", _pending_idx + 1)
+            _pending_section = _body[_pending_idx:_next_h2 if _next_h2 > 0 else len(_body)]
+            # Each row contributes 2 timestamp cells; count "—" in those columns
+            _dash_cells = _pending_section.count(">—</td>")
+            # Heuristic: if there are dashes and at least one populated
+            # timestamp would mean it's working. Check for any "PT</td>"
+            # or "ET</td>" tail indicating real timestamp rendered.
+            _real_ts = (" PT</td>" in _pending_section) or (" ET</td>" in _pending_section)
+            if _dash_cells > 4 and not _real_ts:
+                log.error(
+                    f"QC-046: Pending Hilmar Response timestamps all rendering "
+                    f"as dashes ({_dash_cells} dash cells, zero real PT/ET "
+                    "timestamps). Likely Windows-incompatible strftime token "
+                    "(%-d / %-I) in _fmt_pt_full / _fmt_et_full — use %d / %I "
+                    "and strip leading zeros via .replace()."
+                )
+            else:
+                log.ok(f"QC-046: Pending Hilmar timestamps populating "
+                       f"({_dash_cells} dash cells, real timestamps: {_real_ts})")
+
+        # QC-047: WIN RATE FORMULA CONSISTENCY — the global Win Rate KPI tile
+        # and the per-lane Win Rate cells must use the same formula
+        # (Wins / (Wins + Q&L)). The explainer banner below the KPI grid
+        # publishes the numbers it computed; check those numbers match the
+        # KPI tile rendering. Drift here means somebody changed one formula
+        # without the other. (Set up 2026-05-19 PM v6.1 when per-lane was
+        # still using old Wins / total.)
+        import re as _re_qc47
+        _kpi_match = _re_qc47.search(
+            r"(\d+(?:\.\d+)?)\%</div>\s*<div[^>]*>Win Rate</div>", _body
+        )
+        _banner_match = _re_qc47.search(
+            r"<strong>(\d+) wins ÷ (\d+) decided = (\d+(?:\.\d+)?)\%</strong>", _body
+        )
+        if _kpi_match and _banner_match:
+            _kpi_pct = float(_kpi_match.group(1))
+            _banner_pct = float(_banner_match.group(3))
+            if abs(_kpi_pct - _banner_pct) > 0.2:
+                log.error(
+                    f"QC-047: Win Rate KPI tile ({_kpi_pct}%) and explainer "
+                    f"banner ({_banner_pct}%) disagree by >0.2pp — formula "
+                    "drift between _kpi_block_html computation and the "
+                    "banner-text render. They should be identical."
+                )
+            else:
+                log.ok(f"QC-047: Win Rate consistency OK — KPI {_kpi_pct}% matches banner {_banner_pct}%")
+        elif "Win Rate" in _body:
+            log.warn("QC-047: could not extract Win Rate KPI + banner pair for consistency check")
+
     # QC-038: ol-quote-tracker reconciliation freshness + drift detection.
     # Per Michael 2026-05-16 "you see hilmar data is also on there as a good
     # check point for won bookings". Both systems independently ingest the

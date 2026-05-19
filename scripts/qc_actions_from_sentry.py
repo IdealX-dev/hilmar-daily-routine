@@ -110,6 +110,36 @@ ACTIONS: dict[str, dict] = {
         "comment": "Meta-issue — Sentry self-reporting via QC-043. No action; informational.",
         "auto_resolve_safe": True,
     },
+    # 2026-05-19 PM (Michael "publish this... make sure it's in qc audits
+    # self heal sentry/seer with autofix"): email-format invariants from
+    # the v3-v7 iteration. ERROR-level checks; resolve_if_post_fix is
+    # appropriate when the offending render is replaced by a subsequent
+    # fix commit, but for active issues we want Seer to triage so it
+    # diagnoses the root cause (often a Python-side render bug).
+    "QC-044": {
+        "name": "Double-escaped HTML entities in email body",
+        "action": "trigger_seer",
+        "comment": "Email body contains &amp;amp; sequences — Outlook will render them literally. Look for call sites passing pre-escaped strings into gen_email helpers that run _esc() again. Seer: diagnose which helper double-escapes.",
+        "auto_resolve_safe": False,
+    },
+    "QC-045": {
+        "name": "Table header invisible in Outlook (gradient only)",
+        "action": "trigger_seer",
+        "comment": "Email table header row uses background:linear-gradient without a solid background-color fallback. Outlook strips the gradient → white text on white background = invisible header. Seer: pinpoint which helper needs background-color: before background:linear-gradient.",
+        "auto_resolve_safe": False,
+    },
+    "QC-046": {
+        "name": "Pending Hilmar timestamps all rendering as dashes",
+        "action": "trigger_seer",
+        "comment": "Pending section has 5+ dash cells and zero real PT/ET timestamps. Likely Windows-incompatible strftime token (%-d / %-I) — Unix-only, raises ValueError on Win Cloud PC, except returns dash. Seer: confirm gen_email._fmt_local_full uses %d / %I + .replace() strip pattern.",
+        "auto_resolve_safe": False,
+    },
+    "QC-047": {
+        "name": "Win Rate KPI ↔ explainer banner drift",
+        "action": "trigger_seer",
+        "comment": "KPI tile Win Rate % and explainer banner % disagree by >0.2pp. Means somebody changed one formula but not the other. Both should be Wins / (Wins + Q&L). Seer: locate the divergent computation and align.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",
