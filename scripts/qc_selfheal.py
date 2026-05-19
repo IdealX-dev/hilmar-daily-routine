@@ -1338,6 +1338,54 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-046: Pending Hilmar timestamps populating "
                        f"({_dash_cells} dash cells, real timestamps: {_real_ts})")
 
+        # QC-050: BACKUP FRESHNESS + RETENTION — Michael 2026-05-19 PM
+        # "make sure sentry/seer and all backups work". The pipeline runs
+        # scripts/backup.py as Step 1 of every fire; that creates a
+        # tracking-data-v2_<timestamp>.json snapshot in data-backups/.
+        # Health check: confirm at least one backup exists from the last
+        # 26h (covers daily fire + slack). Also count total snapshots so
+        # we see if retention pruning is wedged.
+        try:
+            from datetime import datetime as _dt_bk, timedelta as _td_bk, timezone as _tz_bk
+            _bk_dir = Path(__file__).resolve().parent.parent / "data-backups"
+            if not _bk_dir.exists():
+                log.error(
+                    f"QC-050: data-backups/ directory missing. backup.py should "
+                    "create it on every pipeline fire (Step 1). Check scripts/backup.py "
+                    "is on the pipeline + writable from the Cloud PC."
+                )
+            else:
+                _snaps = sorted(_bk_dir.glob("tracking-data-v2*.json"),
+                                key=lambda p: p.stat().st_mtime, reverse=True)
+                if not _snaps:
+                    log.error(
+                        "QC-050: data-backups/ exists but contains zero snapshots. "
+                        "backup.py is not writing. Check rules.backup_retention_count "
+                        "in config.json and scripts/backup.py."
+                    )
+                else:
+                    _latest = _snaps[0]
+                    _age_h = (_dt_bk.now(_tz_bk.utc).timestamp() - _latest.stat().st_mtime) / 3600.0
+                    if _age_h > 30:
+                        log.error(
+                            f"QC-050: latest backup is {_age_h:.1f}h old (>30h) — "
+                            "pipeline backup step may have stopped firing. Latest: "
+                            f"{_latest.name}"
+                        )
+                    elif _age_h > 25:
+                        log.warn(
+                            f"QC-050: latest backup is {_age_h:.1f}h old. Daily fire "
+                            f"runs at 10 AM ET — newest backup expected <24h. Latest: "
+                            f"{_latest.name}"
+                        )
+                    else:
+                        log.ok(
+                            f"QC-050: backups healthy — {len(_snaps)} snapshots, "
+                            f"latest {_age_h:.1f}h old ({_latest.name})"
+                        )
+        except Exception as _e:
+            log.warn(f"QC-050: check failed with exception: {_e}")
+
         # QC-049: WIN-NO-MDOLX TRACKING — Michael 2026-05-19 PM "in the
         # portal missing mdolx for way too many files that you mark as won".
         # WIN rows without mdolx_ref usually came via send-signal promotion.

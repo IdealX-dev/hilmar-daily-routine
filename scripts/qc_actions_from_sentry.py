@@ -152,6 +152,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "Send-signal promotions creating WIN rows that don't pick up the matching MDOLX booking confirmation. Fix landed: link_bookings_to_requests now matches via In-Reply-To / References headers. If still high after a few daily fires, check refresh_stage.py is fetching internetMessageHeaders and ingest is reading row['in_reply_to']/['references'].",
         "auto_resolve_safe": False,
     },
+    "QC-050": {
+        "name": "Backup freshness / retention",
+        "action": "flag_for_operator",
+        "comment": "Daily backup not written in expected window OR data-backups/ directory missing. Pipeline Step 1 (backup.py) should create a tracking-data-v2_<timestamp>.json snapshot every fire. If wedged: rules.backup_retention_count config, disk write perms, scripts/backup.py logic.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",
@@ -406,7 +412,16 @@ def run(*, dry_run: bool = False, lookback_hours: int = 26,
         return {"issues_scanned": 0, "actions": [], "resolved": 0, "commented": 0,
                 "dry_run": dry_run, "error": "sentry not configured"}
 
-    period_str = f"{lookback_hours}h"
+    # Sentry's stats_period only accepts '', '24h', or '14d' (verified
+    # 2026-05-19 PM health check when '26h' returned HTTP 400 "Invalid
+    # stats_period"). Clamp the configured lookback to the closest
+    # supported window.
+    if lookback_hours <= 0:
+        period_str = ""
+    elif lookback_hours <= 24:
+        period_str = "24h"
+    else:
+        period_str = "14d"
     issues = api.list_issues(stats_period=period_str,
                               query="is:unresolved",
                               limit=limit)
