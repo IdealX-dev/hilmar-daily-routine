@@ -352,7 +352,15 @@ def _do_flag_for_operator(api, issue: dict, spec: dict, *, dry_run: bool) -> dic
 
 
 def _do_trigger_seer(api, issue: dict, spec: dict, *, dry_run: bool) -> dict:
-    """Ask Seer to attempt an autofix."""
+    """Ask Seer to attempt an autofix.
+
+    2026-05-19 PM (Michael "make sure sentry/seer and all backups work
+    no joke"): When Seer's autofix can't start (500 "Autofix failed to
+    start" — happens when the issue lacks event/stack-trace data),
+    automatically chain to Claude (claude_diagnose) so the operator
+    still gets a useful AI diagnosis posted as a Sentry comment. Seer
+    is preferred when available; Claude is the guaranteed fallback.
+    """
     short = issue.get("shortId") or issue.get("id", "")
     try:
         import sys
@@ -360,15 +368,99 @@ def _do_trigger_seer(api, issue: dict, spec: dict, *, dry_run: bool) -> dict:
         from sentry_seer import SentrySeer
         seer = SentrySeer()
         if not seer.enabled:
-            return {"shortId": short, "action": "trigger_seer", "ok": False,
-                    "reason": "Seer not enabled"}
+            # Skip Seer entirely; go straight to Claude
+            return _do_claude_diagnose(api, issue, spec, dry_run=dry_run, _via="seer-disabled")
         if dry_run:
             return {"shortId": short, "action": "trigger_seer", "ok": True,
                     "reason": "dry-run would trigger autofix"}
         trig = seer.trigger_autofix(issue["id"], instruction=spec.get("comment", ""))
-        return {"shortId": short, "action": "trigger_seer", "ok": trig is not None}
+        if trig is not None:
+            # Seer accepted; queued for analysis
+            return {"shortId": short, "action": "trigger_seer", "ok": True, "seer_triggered": True}
+        # Seer rejected (500 / 404) — fall through to Claude
+        return _do_claude_diagnose(api, issue, spec, dry_run=dry_run, _via="seer-rejected")
     except Exception as e:
         return {"shortId": short, "action": "trigger_seer", "ok": False, "error": str(e)}
+
+
+def _do_claude_diagnose(api, issue: dict, spec: dict, *, dry_run: bool, _via: str = "direct") -> dict:
+    """Use Claude (Anthropic API) to diagnose the issue + post the
+    diagnosis as a Sentry comment.
+
+    Independent of Seer — works as long as the Anthropic API key is in
+    secrets/anthropic-api-key.txt (or ANTHROPIC_API_KEY env). Acts as
+    the guaranteed AI-diagnosis layer; Seer is preferred when its
+    autofix succeeds because it can also propose code patches, but
+    Claude's diagnosis is always available.
+    """
+    short = issue.get("shortId") or issue.get("id", "")
+    try:
+        import sys
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from pdf_llm_rescue import _load_api_key
+        api_key = _load_api_key()
+        if not api_key:
+            return {"shortId": short, "action": "claude_diagnose", "ok": False,
+                    "reason": "no ANTHROPIC_API_KEY"}
+        try:
+            import anthropic
+        except ImportError:
+            return {"shortId": short, "action": "claude_diagnose", "ok": False,
+                    "reason": "anthropic SDK not installed"}
+        if dry_run:
+            return {"shortId": short, "action": "claude_diagnose", "ok": True,
+                    "reason": f"dry-run would call Claude (via={_via})"}
+
+        # Build a compact context for Claude: title + culprit + level +
+        # short metadata. Skip the full event payload to keep tokens low.
+        title = issue.get("title") or ""
+        culprit = issue.get("culprit") or ""
+        level = issue.get("level") or ""
+        count = issue.get("count") or "?"
+        platform = issue.get("platform") or ""
+        permalink = issue.get("permalink") or ""
+        prompt = (
+            f"You are diagnosing a Sentry issue from the Hilmar daily shipment "
+            f"tracker pipeline. In 2-3 sentences: state the most likely root "
+            f"cause and the specific code change that would fix it. Be terse.\n\n"
+            f"Issue: {title}\n"
+            f"Culprit: {culprit}\n"
+            f"Level: {level}\n"
+            f"Platform: {platform}\n"
+            f"Occurrence count: {count}\n"
+            f"Project: hilmar-daily-tracker (Python)"
+        )
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        diagnosis = resp.content[0].text.strip() if resp.content else ""
+
+        # Post the diagnosis as a Sentry comment so the operator sees it
+        # alongside the issue. Tagged so it's clear this is AI-generated.
+        comment_text = (
+            f"[qc_actions_from_sentry → claude_diagnose, via={_via}]\n\n"
+            f"🤖 Claude (haiku-4-5) diagnosis:\n{diagnosis}\n\n"
+            f"_Note: this is an AI-generated diagnostic comment, not a "
+            f"verified fix. Confirm before applying._\n"
+            f"Token usage: in={resp.usage.input_tokens}, out={resp.usage.output_tokens}."
+        )
+        ok = True
+        try:
+            api._request("POST", f"/issues/{issue['id']}/comments/",
+                         json={"text": comment_text})
+        except Exception as e:
+            ok = False
+            return {"shortId": short, "action": "claude_diagnose", "ok": False,
+                    "error": f"comment post failed: {e}"}
+        return {"shortId": short, "action": "claude_diagnose", "ok": ok,
+                "diagnosis_chars": len(diagnosis), "via": _via,
+                "tokens_in": resp.usage.input_tokens,
+                "tokens_out": resp.usage.output_tokens}
+    except Exception as e:
+        return {"shortId": short, "action": "claude_diagnose", "ok": False, "error": str(e)}
 
 
 _DISPATCH = {
@@ -378,6 +470,7 @@ _DISPATCH = {
     "rerun_parser_acc":    _do_rerun_parser_acc,
     "flag_for_operator":   _do_flag_for_operator,
     "trigger_seer":        _do_trigger_seer,
+    "claude_diagnose":     _do_claude_diagnose,
 }
 
 

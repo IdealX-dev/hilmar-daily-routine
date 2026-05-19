@@ -56,6 +56,13 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = "https://sentry.io/api/0"
 
+# 2026-05-19 PM endpoint-discovery: Sentry's current Seer endpoints are
+# under /organizations/{org}/issues/{id}/, NOT /issues/{id}/. The plain
+# /issues path returns 404 even with Seer enabled. Confirmed via probe:
+#   GET  /api/0/organizations/idealx-llc/issues/7487896303/autofix/  → 200
+#   GET  /api/0/issues/7487896303/autofix/                           → 404
+DEFAULT_ORG = "idealx-llc"
+
 
 def _load_token() -> Optional[str]:
     f = ROOT / "secrets" / "sentry-auth-token.txt"
@@ -108,32 +115,54 @@ class SentrySeer:
             if r.status_code == 404:
                 # Seer not enabled or no autofix triggered yet — silent
                 return None
+            # 2026-05-19 PM: 500-class errors are real failures we want
+            # to see (e.g. "Autofix failed to start" when Seer can't
+            # analyze the issue). Print to stderr so the daily pipeline
+            # logs them, but still return None so callers don't crash.
+            if r.status_code >= 500:
+                import sys as _sys
+                detail = (r.text or "")[:200].replace("\n", " ")
+                print(f"sentry_seer: {method} {path} → {r.status_code}: {detail}",
+                      file=_sys.stderr)
             return None
         except Exception:
             return None
 
+    # 2026-05-19 PM (Michael "no joke" health check): endpoint path
+    # corrected. Sentry's current Seer API lives under
+    # /organizations/{org}/issues/{id}/ — the plain /issues/{id}/
+    # variants return 404 even when Seer is fully enabled. Verified live
+    # with curl: 200 on the org-prefixed path, 404 on the plain one.
+    @property
+    def _org(self) -> str:
+        return os.environ.get("SENTRY_ORG") or "idealx-llc"
+
     def get_issue_summary(self, issue_id: str) -> Optional[dict]:
         """Get Seer's plain-English summary of an issue. Returns None if
         Seer not enabled OR no summary has been generated."""
-        return self._req("GET", f"/issues/{issue_id}/summarize/")
+        return self._req("GET", f"/organizations/{self._org}/issues/{issue_id}/summarize/")
 
     def trigger_summary(self, issue_id: str) -> Optional[dict]:
         """Ask Seer to generate a summary for this issue (POST). Returns
         the queued/in-progress response."""
-        return self._req("POST", f"/issues/{issue_id}/summarize/")
+        return self._req("POST", f"/organizations/{self._org}/issues/{issue_id}/summarize/")
 
     def get_autofix_state(self, issue_id: str) -> Optional[dict]:
         """Check Seer's autofix state for this issue. Returns:
-          { status: 'NEED_MORE_INFORMATION' | 'PROCESSING' | 'COMPLETED' | 'ERROR',
-            steps: [...], pr_url: '...', confidence: float, ... }
+          { autofix: { status, steps, ... }, ... }
         None if autofix never triggered or Seer not enabled."""
-        return self._req("GET", f"/issues/{issue_id}/autofix/")
+        return self._req("GET", f"/organizations/{self._org}/issues/{issue_id}/autofix/")
 
     def trigger_autofix(self, issue_id: str, instruction: str = "") -> Optional[dict]:
         """Ask Seer to attempt an autofix for this issue. instruction is
-        an optional natural-language hint to focus the AI."""
+        an optional natural-language hint to focus the AI.
+
+        Sentry returns 500 'Autofix failed to start' when the issue lacks
+        enough event data (no stack trace, etc.). Caller should handle
+        gracefully — we log via the generic _req error path.
+        """
         body = {"instruction": instruction} if instruction else {}
-        return self._req("POST", f"/issues/{issue_id}/autofix/", json=body)
+        return self._req("POST", f"/organizations/{self._org}/issues/{issue_id}/autofix/", json=body)
 
 
 def enrich_audit_with_seer(issues: list[dict], *, max_issues: int = 5) -> list[dict]:
