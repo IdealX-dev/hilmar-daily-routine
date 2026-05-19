@@ -188,8 +188,12 @@ def _fmt_et_time(iso_ts):
 # ─────────────────────────────────────────────────────────────────────
 
 def _week_rows(data):
+    # 2026-05-19 PM 2nd pass: accumulate teu_req + teu_won per week so the
+    # "Requests (# · TEU)" + "Won (# · TEU)" cells in _week_block_html can
+    # show both the count AND the volume the count represents.
     buckets = defaultdict(lambda: {
-        "requests": 0, "won": 0, "ql": 0, "nq": 0, "pending": 0, "mdolx": []
+        "requests": 0, "won": 0, "ql": 0, "nq": 0, "pending": 0,
+        "mdolx": [], "teu_req": 0, "teu_won": 0,
     })
     monday_by_label = {}
     for r in data.get("requests", []):
@@ -203,10 +207,12 @@ def _week_rows(data):
         monday_by_label[label] = monday
         b = buckets[label]
         b["requests"] += 1
+        b["teu_req"] += int(r.get("teu_requested") or 0)
         st = r.get("status") or ""
         lr = r.get("loss_reason") or ""
         if st == "WIN":
             b["won"] += 1
+            b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
             mref = r.get("mdolx_ref")
             if mref:
                 b["mdolx"].append(mref)
@@ -581,21 +587,29 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
 
 
 def _kpi_card(value, label, bg, width="25%", sublabel=""):
-    """Render a KPI tile. 2026-05-19 PM (Michael "boxes in color are not
-    aligned"): every card now has a fixed min-height + vertical-align:top
-    on the td, and TEU detail goes in a separate sublabel <div> instead of
-    being crammed into the value. Outlook-safe — no flexbox; min-height
-    via height attribute on inner table approximates same effect."""
+    """Render a KPI tile.
+
+    2026-05-19 PM 2nd pass (Michael "in the boxes.. you can see formatting
+    is bad as bottoms of words get cut off"): height bumped 64px → 88px so
+    3-line content (value + label + sublabel) doesn't get clipped on the
+    bottom. `min-height` + `height` set together so Outlook (which honors
+    height) and rich clients (which honor min-height) both render right.
+
+    IMPORTANT: callers must pass RAW strings (e.g. "Quoted & Lost"), not
+    pre-escaped HTML — the &-escape happens once here via _esc(). Passing
+    "Quoted &amp; Lost" double-escapes to "&amp;amp;" which Outlook renders
+    literally. Caught 2026-05-19 PM screenshot.
+    """
     sub_html = (
-        f'<div style="font-size:10px;opacity:0.85;margin-top:2px;min-height:13px">{_esc(sublabel)}</div>'
+        f'<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">{_esc(sublabel)}</div>'
         if sublabel else
-        '<div style="font-size:10px;opacity:0.85;margin-top:2px;min-height:13px">&nbsp;</div>'
+        '<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">&nbsp;</div>'
     )
     return f"""
 <td style="padding:4px;width:{width};vertical-align:top">
-  <div style="background:{bg};color:white;border-radius:8px;padding:12px 10px;text-align:center;height:64px;box-sizing:border-box">
-    <div style="font-size:20px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
-    <div style="font-size:11px;opacity:0.92;margin-top:4px;line-height:1.2">{_esc(label)}</div>
+  <div style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
+    <div style="font-size:22px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
+    <div style="font-size:11px;opacity:0.94;margin-top:4px;line-height:1.25">{_esc(label)}</div>
     {sub_html}
   </div>
 </td>
@@ -703,12 +717,12 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   <tr>
     {_kpi_card(total, "Total Requests", "#3b82f6", sublabel="(all statuses)")}
     {_kpi_card(wins, "Won · this period", "#22c55e", sublabel=f"{teu_won} TEU won")}
-    {_kpi_card(ql, "Quoted &amp; Lost", "#ef4444", sublabel=f"{teu_ql} TEU")}
+    {_kpi_card(ql, "Quoted & Lost", "#ef4444", sublabel=f"{teu_ql} TEU")}
     {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU")}
   </tr>
   <tr>
     {_kpi_card(pending, "Pending Lonny", "#8b5cf6", sublabel=f"{teu_pending} TEU")}
-    {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel="Wins / (Wins+Q&amp;L+NQ)")}
+    {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel="Wins/(W+Q&L+NQ)")}
     {_kpi_card(f"{qr:.1f}%", "Quote Rate", "#3b82f6", sublabel="Quoted / Total")}
     {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1", sublabel="Lonny → OL quote")}
   </tr>
@@ -717,19 +731,38 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 
 
 def _week_block_html(rows):
+    """Render the 8-week rollup.
+
+    2026-05-19 PM 2nd pass (Michael "in this week vs last week, the
+    formatting is poor for the dates as it rolls to second lines. also
+    formatting on notable wins shows numbers and sometimes has the mdolx
+    in front of the number.. should be uniform"):
+      - Widen Week column (white-space:nowrap) so "W18 (Apr 27–May 1)"
+        stays on one line
+      - Compute TEU totals per week from the row data (was: counts only)
+        and show alongside the request count so it's clear what each
+        number represents
+      - Strip "MDOLX" prefix uniformly from Notable Wins — they're all
+        MDOLX numbers, the prefix is redundant clutter
+    """
     if not rows:
         return ""
+    import re as _re
     body = ""
     alt = True
     for label, b in rows:
         bg = "#ffffff" if alt else "#f0f4f8"
         alt = not alt
-        mdolx = ", ".join(b["mdolx"]) if b["mdolx"] else "—"
+        # Strip MDOLX prefix from every booking-ref so the column is uniform
+        mdolx_clean = [_re.sub(r"^MDOLX", "", m) for m in (b.get("mdolx") or [])]
+        mdolx = ", ".join(mdolx_clean) if mdolx_clean else "—"
+        teu_req = b.get("teu_req") or 0
+        teu_won = b.get("teu_won") or 0
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px">{_esc(label)}</td>
-  <td style="padding:6px 8px;text-align:center">{b['requests']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}</td>
+  <td style="padding:6px 8px;white-space:nowrap">{_esc(label)}</td>
+  <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:10px;color:#64748b">{teu_req} TEU</span></td>
+  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}<br><span style="font-size:10px;color:#16a34a;opacity:0.75">{teu_won} TEU</span></td>
   <td style="padding:6px 8px;text-align:center;color:#dc2626">{b['ql']}</td>
   <td style="padding:6px 8px;text-align:center;color:#d97706">{b['nq']}</td>
   <td style="padding:6px 8px;text-align:center;color:#7c3aed">{b['pending']}</td>
@@ -738,15 +771,16 @@ def _week_block_html(rows):
 """
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📅 This Week vs Last Week</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
 <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
-    <th style="padding:8px;text-align:left">Week</th>
-    <th style="padding:8px;text-align:center">Requests</th>
-    <th style="padding:8px;text-align:center">Won</th>
-    <th style="padding:8px;text-align:center">Q&amp;L</th>
-    <th style="padding:8px;text-align:center">NQ</th>
-    <th style="padding:8px;text-align:center">Pending</th>
-    <th style="padding:8px;text-align:left">Notable Wins</th>
+    <th style="padding:8px;text-align:left" title="ISO week range (Mon-Sun) in ET">Week</th>
+    <th style="padding:8px;text-align:center" title="Number of requests, with TEU asked-for beneath">Requests (# · TEU)</th>
+    <th style="padding:8px;text-align:center" title="Bookings won, with TEU won beneath">Won (# · TEU)</th>
+    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost requests">Q&amp;L (#)</th>
+    <th style="padding:8px;text-align:center" title="Not Quoted requests (OL never responded)">NQ (#)</th>
+    <th style="padding:8px;text-align:center" title="Pending — awaiting Lonny's decision">Pending (#)</th>
+    <th style="padding:8px;text-align:left" title="Booking refs for wins this week (MDOLX prefix stripped — all values are MDOLX numbers)">Notable Wins (MDOLX#)</th>
   </tr>
   {body}
 </table>
@@ -769,13 +803,23 @@ def _carrier_block_html(rows):
     wins_total = 0
     ql_total = 0
     pending_total = 0
+    # 2026-05-19 PM 2nd pass (Michael "cma you show 434 teu offered but 94
+    # won and 290 lost.. those don't add up"): the missing 50 TEU was Pending
+    # TEU — correct math but invisible to the reader. Add an explicit
+    # "TEU Pending" column so Offered = Won + Lost + Pending reconciles on
+    # every row.
+    teu_pending_total = 0
     for name, b, wr in rows:
         bg = "#ffffff" if alt else "#f0f4f8"
         alt = not alt
-        teu_offered = (b.get('teu_won', 0) or 0) + (b.get('teu_lost', 0) or 0) + (b.get('teu_pending', 0) or 0)
+        teu_won = b.get('teu_won', 0) or 0
+        teu_lost = b.get('teu_lost', 0) or 0
+        teu_pend = b.get('teu_pending', 0) or 0
+        teu_offered = teu_won + teu_lost + teu_pend
         teu_offered_total += teu_offered
-        teu_won_total += b.get('teu_won', 0) or 0
-        teu_lost_total += b.get('teu_lost', 0) or 0
+        teu_won_total += teu_won
+        teu_lost_total += teu_lost
+        teu_pending_total += teu_pend
         quoted_total += b.get('quoted', 0) or 0
         wins_total += b.get('won', 0) or 0
         ql_total += b.get('ql', 0) or 0
@@ -788,9 +832,10 @@ def _carrier_block_html(rows):
   <td style="padding:6px 8px;text-align:center;color:#dc2626">{b['ql']}</td>
   <td style="padding:6px 8px;text-align:center;color:#7c3aed">{b['pending']}</td>
   <td style="padding:6px 8px;text-align:center">{wr:.1f}%</td>
-  <td style="padding:6px 8px;text-align:right">{teu_offered}</td>
-  <td style="padding:6px 8px;text-align:right;color:#16a34a;font-weight:bold">{b['teu_won']}</td>
-  <td style="padding:6px 8px;text-align:right;color:#dc2626">{b['teu_lost']}</td>
+  <td style="padding:6px 8px;text-align:right;font-weight:600">{teu_offered}</td>
+  <td style="padding:6px 8px;text-align:right;color:#16a34a;font-weight:bold">{teu_won}</td>
+  <td style="padding:6px 8px;text-align:right;color:#dc2626">{teu_lost}</td>
+  <td style="padding:6px 8px;text-align:right;color:#7c3aed">{teu_pend}</td>
 </tr>
 """
     # Totals footer — reconciles to the data range
@@ -805,22 +850,24 @@ def _carrier_block_html(rows):
   <td style="padding:8px;text-align:right">{teu_offered_total}</td>
   <td style="padding:8px;text-align:right;color:#16a34a">{teu_won_total}</td>
   <td style="padding:8px;text-align:right;color:#dc2626">{teu_lost_total}</td>
+  <td style="padding:8px;text-align:right;color:#7c3aed">{teu_pending_total}</td>
 </tr>
 """
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Period covers EVERY request currently in tracking-data-v2.json (~6 weeks of history). Numbers are counts of distinct request rows; TEU is sum of containers per row. Same losses also appear in Top Losing Lanes (sliced by lane) and Not Quoted (NO_RESPONSE only). This view = per carrier.</p>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left">Carrier</th>
-    <th style="padding:8px;text-align:center" title="Distinct requests where this carrier appeared as carrier_quoted">Times<br>Quoted (#)</th>
-    <th style="padding:8px;text-align:center" title="Distinct requests where this carrier won the booking">Wins (#)</th>
-    <th style="padding:8px;text-align:center" title="Quoted but Lonny went elsewhere">Q&amp;L (#)</th>
+    <th style="padding:8px;text-align:center" title="Distinct requests where this carrier was quoted">Times<br>Quoted (#)</th>
+    <th style="padding:8px;text-align:center" title="Wins booked">Wins (#)</th>
+    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost — gave a rate but lost the booking">Q&L (#)</th>
     <th style="padding:8px;text-align:center" title="Awaiting Lonny's decision">Pending (#)</th>
-    <th style="padding:8px;text-align:center" title="Wins / (Wins + Q&amp;L) — pending excluded">Win<br>Rate</th>
-    <th style="padding:8px;text-align:right" title="Total TEU this carrier was quoted on = Won + Lost + Pending TEU. This is the capacity OL gave us through this carrier.">TEU<br>Offered</th>
-    <th style="padding:8px;text-align:right" title="Sum of TEU on this carrier's WIN rows">TEU<br>Won</th>
-    <th style="padding:8px;text-align:right" title="Sum of TEU on this carrier's Q&amp;L rows">TEU<br>Lost</th>
+    <th style="padding:8px;text-align:center" title="Wins / Quotes. Per-carrier metric. NOT a parser metric.">Win<br>Rate</th>
+    <th style="padding:8px;text-align:right" title="TEU Won + TEU Lost + TEU Pending. Total capacity OL gave us through this carrier.">TEU<br>Offered</th>
+    <th style="padding:8px;text-align:right" title="TEU on this carrier's WIN rows">TEU<br>Won</th>
+    <th style="padding:8px;text-align:right" title="TEU on this carrier's Q&L rows">TEU<br>Lost</th>
+    <th style="padding:8px;text-align:right" title="TEU on this carrier's Pending rows (sums to make Offered reconcile)">TEU<br>Pending</th>
   </tr>
   {body}
 </table>
@@ -999,29 +1046,71 @@ def _nq_html(rows, total_nq=None, teu_total=None):
 
 
 def _pending_html(rows):
+    """Pending Hilmar Response — full per-row detail.
+
+    2026-05-19 PM 2nd pass (Michael "pending hilmar response doesn't show
+    number of teu and the rate should be in the $ format"):
+      - Added Equipment + TEU columns
+      - Rate formatted as $X,XXX (was raw float like "3450.0")
+      - Added OL signer column so we know WHO at MBD is owed a chase
+      - Added age-of-quote column (hours since OL responded)
+    """
     if not rows:
         return ""
+    from datetime import datetime as _dt2, timezone as _tz2
+    now = _dt2.now(_tz2.utc)
+
+    def _hours_since(iso):
+        try:
+            dt = core.parse_iso(iso)
+            return f"{(now - dt).total_seconds()/3600.0:.1f}h" if dt else "—"
+        except Exception:
+            return "—"
+
     body = ""
     alt = True
+    total_teu = 0
     for r in rows:
         bg = "#ffffff" if alt else "#f5f3ff"
         alt = not alt
+        teu = r.get('teu_requested') or 0
+        total_teu += teu
+        rate = r.get('ol_rate')
+        rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
+        signer = r.get('ol_responder_signer') or "—"
         body += f"""
 <tr style="background:{bg}">
-  <td style="padding:6px 8px">{_esc(r.get('request_date') or '—')}</td>
-  <td style="padding:6px 8px">{_esc(r.get('lane') or '—')}</td>
+  <td style="padding:6px 8px;white-space:nowrap">{_esc(r.get('request_date') or '—')}</td>
+  <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
+  <td style="padding:6px 8px;text-align:center">{teu}</td>
   <td style="padding:6px 8px">{_esc(r.get('carrier_quoted') or '—')}</td>
-  <td style="padding:6px 8px">{_esc(r.get('ol_rate') or '—')}</td>
+  <td style="padding:6px 8px;text-align:right;font-weight:600">{_esc(rate_s)}</td>
+  <td style="padding:6px 8px">{_esc(signer)}</td>
+  <td style="padding:6px 8px;text-align:center">{_esc(_hours_since(r.get('response_timestamp')))}</td>
+</tr>
+"""
+    # Totals row for TEU reconciliation
+    body += f"""
+<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #7c3aed">
+  <td style="padding:8px" colspan="3">TOTAL ({len(rows)} pending)</td>
+  <td style="padding:8px;text-align:center">{total_teu}</td>
+  <td style="padding:8px" colspan="4">&nbsp;</td>
 </tr>
 """
     return f"""
-<h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)})</h2>
+<h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Sorted by request date (oldest first). "Hours since OL quote" is the clock since the rate response arrived — chase candidates are >24h.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#7c3aed;color:white">
-    <th style="padding:8px;text-align:left">Date</th>
+    <th style="padding:8px;text-align:left">Request Date</th>
     <th style="padding:8px;text-align:left">Lane</th>
-    <th style="padding:8px;text-align:left">Carrier</th>
-    <th style="padding:8px;text-align:left">Rate</th>
+    <th style="padding:8px;text-align:left">Equipment</th>
+    <th style="padding:8px;text-align:center">TEU</th>
+    <th style="padding:8px;text-align:left">Carrier Quoted</th>
+    <th style="padding:8px;text-align:right">Rate ($/container)</th>
+    <th style="padding:8px;text-align:left">Who Quoted (OL signer)</th>
+    <th style="padding:8px;text-align:center">Hours since OL quote</th>
   </tr>
   {body}
 </table>
