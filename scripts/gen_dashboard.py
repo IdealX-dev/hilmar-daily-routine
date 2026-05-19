@@ -273,10 +273,21 @@ table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
 .header .stamp{{opacity:0.72;font-size:12px;margin-top:4px}}
 
 .kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}}
+/* 2026-05-19 PM (Michael "all boxes should be clickable"): every KPI tile
+   is an <a> anchor link to its detail section. Hover lifts the card and
+   underlines the value for affordance. Cursor:pointer signals click. */
+a.kpi{{text-decoration:none;color:inherit;display:block;background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1;transition:transform 0.12s ease,box-shadow 0.12s ease;cursor:pointer}}
+a.kpi:hover{{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,0.10)}}
+a.kpi:hover .value{{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}}
+a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .kpi{{background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1}}
 .kpi .value{{font-size:28px;font-weight:800;line-height:1.05;letter-spacing:-0.5px}}
 .kpi .label{{font-size:11.5px;color:#475569;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;font-weight:600}}
 .kpi .sub{{font-size:12px;color:#64748b;margin-top:3px;font-weight:500}}
+.kpi-hint{{font-size:9.5px;color:#94a3b8;margin-top:2px;font-weight:500}}
+/* Awaiting-MDOLX badge — for WIN rows where send-signal promoted PENDING
+   to WIN but OL hasn't issued the booking confirmation yet. */
+.awaiting-mdolx{{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:600;letter-spacing:0.3px}}
 .kpi.blue{{border-top-color:#3b82f6}} .kpi.blue .value{{color:#2563eb}}
 .kpi.green{{border-top-color:#10b981}} .kpi.green .value{{color:#059669}}
 .kpi.red{{border-top-color:#ef4444}} .kpi.red .value{{color:#dc2626}}
@@ -397,24 +408,24 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>
 </div>
 
-<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day. Math: Requests = Won + Q&amp;L + NQ + Pending.</h3>
+<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day. Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <div class="kpi blue"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div></div>
-  <div class="kpi green"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div></div>
-  <div class="kpi red"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div></div>
-  <div class="kpi amber"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div></div>
-  <div class="kpi" style="background:#8b5cf6;color:white"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div></div>
+  <a class="kpi blue" href="#tab-summary" title="Click to jump to Confirmed Wins / Not Quoted detail"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click to drill →</div></a>
+  <a class="kpi green" href="#tab-summary" title="Click to jump to the Wins section"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">→ Wins section</div></a>
+  <a class="kpi red" href="#tab-summary" title="Click to jump to the Losing Lanes section"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">→ Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" title="Click to jump to Not Quoted detail"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">→ Not Quoted</div></a>
+  <a class="kpi" style="background:#8b5cf6;color:white;border-top-color:#7c3aed" href="#tab-pending" title="Click to jump to the Pending tab"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">→ Pending tab</div></a>
 </div>
-<h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date}</h3>
+<h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <div class="kpi blue"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div></div>
-  <div class="kpi green"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div></div>
-  <div class="kpi red"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div></div>
-  <div class="kpi amber"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div></div>
-  <div class="kpi purple"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div></div>
-  <div class="kpi green"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div></div>
-  <div class="kpi teal"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div></div>
-  <div class="kpi slate"><div class="value">{avg_biz}h</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{after_hours_count} after-hrs req</div></div>
+  <a class="kpi blue" href="#tab-summary" title="Click to jump to all Confirmed Wins / NQ"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click to drill →</div></a>
+  <a class="kpi green" href="#tab-summary" title="Click to jump to Wins section"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">→ Wins section</div></a>
+  <a class="kpi red" href="#tab-summary" title="Click to jump to Losing Lanes"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">→ Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" title="Click to jump to Not Quoted detail"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">→ Not Quoted</div></a>
+  <a class="kpi purple" href="#tab-pending" title="Click to jump to Pending Hilmar tab"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">→ Pending tab</div></a>
+  <a class="kpi green" href="#tab-carriers" title="Click to jump to per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">→ Carriers tab</div></a>
+  <a class="kpi teal" href="#tab-summary" title="Click to jump to Quote Rate detail (OL responded)"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">→ Summary</div></a>
+  <a class="kpi slate" href="#tab-turnaround" title="Click to jump to Turnaround analysis"><div class="value">{avg_biz}h</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{after_hours_count} after-hrs req</div><div class="kpi-hint">→ Turnaround tab</div></a>
 </div>
 
 <input type="radio" name="tabs" id="tb-summary" checked>
@@ -472,11 +483,26 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         html += '<p style="font-size:11px;color:#64748b;margin-top:6px">🟢 Wins | 🔴 Q&amp;L | 🟡 NQ | 🟣 Pending</p></div>\n'
 
     # Wins
-    html += f'<div class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU</h2>\n'
+    # 2026-05-19 PM (Michael "in the portal missing mdolx for way too many
+    # files that you mark as won"): the 11 WINs without mdolx_ref are
+    # send-signal promotions where Lonny said "send" but OL hasn't yet
+    # issued the MDOLX booking confirmation. They're genuine wins; the
+    # number is just pending. Render an amber "Awaiting MDOLX" badge so
+    # they're visually distinct from "data missing" / parser failure.
+    _awaiting = sum(1 for w in wins if not w.get("mdolx_ref"))
+    _awaiting_label = (f' <span style="font-size:13px;color:#92400e;font-weight:500">'
+                       f'· {_awaiting} awaiting MDOLX (send-signal wins without booking confirmation yet)</span>'
+                       if _awaiting else '')
+    html += f'<div class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
     if wins:
-        html += '<table><tr><th>#</th><th>MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
+        html += '<table><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
         for i, w in enumerate(sorted(wins, key=lambda x: x.get("request_date") or x.get("date","")), 1):
-            html += f'<tr class="win-row"><td>{i}</td><td><code>{_safe(w.get("mdolx_ref"))}</code></td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{_safe(w.get("carrier_won"))}</td></tr>\n'
+            _mdolx = w.get("mdolx_ref")
+            if _mdolx:
+                mdolx_cell = f'<code>{_safe(_mdolx)}</code>'
+            else:
+                mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
+            html += f'<tr class="win-row"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{_safe(w.get("carrier_won"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">No wins yet in this period.</p>'

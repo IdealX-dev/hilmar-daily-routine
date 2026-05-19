@@ -467,6 +467,11 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
                 # erd / origin_free_time / dest_free_time / rate_expiry /
                 # product / temperature from the booking confirmation body.
                 "body_parsed": body_parsed,
+                # 2026-05-19 PM: thread-header metadata for booking-link
+                # matching (per Michael "you have to parse the booking team
+                # emails for matches based on header meta data").
+                "in_reply_to": row.get("in_reply_to"),
+                "references": row.get("references") or [],
             }
 
     return bookings
@@ -525,27 +530,64 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
                 if lane_key != "unknown" and lane_key.upper() in subj:
                     candidates.extend(lane_reqs)
 
-        # Pick the latest request_ts before booking_ts, within 14d (widened
-        # 2026-04-30 — was missing send-replies that came back 11–13d after
-        # the original Lonny ask).
+        # 2026-05-19 PM (Michael "you have to parse the booking team emails
+        # for matches based on header meta data and you'll find them"):
+        # HIGHEST-CONFIDENCE MATCH — the booking's In-Reply-To / References
+        # headers point to the imid of the prior message in the thread. If
+        # any unmatched Lonny RFQ's imid is in that chain, it's THE match.
+        # Falls back to lane+time when the headers aren't populated (older
+        # stage records pre-2026-05-19, or when the booking is a new thread
+        # with no References).
         best = None
-        for r in candidates:
-            if r.get("mdolx_ref"):           # already matched a win
-                continue
-            req_ts = C.parse_iso(r.get("request_timestamp"))
-            if not req_ts or req_ts > bk_ts:
-                continue
-            if (bk_ts - req_ts) > timedelta(days=14):
-                continue
-            if not best or (C.parse_iso(r["request_timestamp"]) >
-                            C.parse_iso(best["request_timestamp"])):
-                best = r
+        best_via = "lane+time"
+
+        bk_in_reply_to = (bk.get("in_reply_to") or "").strip()
+        bk_references = bk.get("references") or []
+        bk_chain: set[str] = set()
+        if bk_in_reply_to:
+            bk_chain.add(bk_in_reply_to.strip("<>"))
+        for ref in bk_references:
+            if ref:
+                bk_chain.add(ref.strip("<>"))
+
+        if bk_chain:
+            # Search ALL unmatched requests (any lane) — header match
+            # trumps lane heuristics. Lonny's RFQ subject might say
+            # "Oakland to HCMC" while OL's booking says "HILMAR -> Cat Lai";
+            # the header chain links them regardless of subject drift.
+            for r in requests:
+                if r.get("mdolx_ref"):
+                    continue
+                for src_imid in (r.get("source_imids") or []):
+                    if not src_imid:
+                        continue
+                    if src_imid.strip("<>") in bk_chain:
+                        best = r
+                        best_via = "in_reply_to/references"
+                        break
+                if best:
+                    break
+
+        # Fallback: latest unmatched RFQ on the same lane, within 14d.
+        if not best:
+            for r in candidates:
+                if r.get("mdolx_ref"):           # already matched a win
+                    continue
+                req_ts = C.parse_iso(r.get("request_timestamp"))
+                if not req_ts or req_ts > bk_ts:
+                    continue
+                if (bk_ts - req_ts) > timedelta(days=14):
+                    continue
+                if not best or (C.parse_iso(r["request_timestamp"]) >
+                                C.parse_iso(best["request_timestamp"])):
+                    best = r
 
         if best:
             best["status"] = "WIN"
             best["has_send"] = True
             best["mdolx_ref"] = mdolx
             best["mdolx_refs_all"] = sorted(set(best.get("mdolx_refs_all", []) + [mdolx]))
+            best["_booking_match_via"] = best_via  # observability — was: 'in_reply_to/references' | 'lane+time'
             # carrier_won prefers carrier_quoted (from rate-response body) → falls
             # back to the booking subject (e.g. "// MSC: EBKG..." trailer or
             # NAM-prefix booking-ref). Last resort: leave None for QC.

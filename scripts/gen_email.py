@@ -448,6 +448,13 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'<em style="color:#64748b">No activity</em></td></tr>'
     )
 
+    # 2026-05-19 PM (Michael "the timing should also be on the cover email.
+    # lots of data missing"): cover-email tables fully bulked. New Requests
+    # gets product/temp/requested ETA; OL Responses gets equipment/TEU +
+    # full timing (Lonny sent PT → OL quoted ET → Time to Quote biz-hrs)
+    # + ETD/ETA offered; Pending gets equipment/TEU/timing trio. Status
+    # Changes gets carrier + rate. Every row tells the whole story now.
+
     def _fmt_teu(r):
         return f"{r.get('teu_requested') or 0}"
 
@@ -458,19 +465,57 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         except Exception:
             return "—"
 
-    # ── 1. NEW REQUESTS FROM LONNY (4 columns) ───────────────────────
+    def _fmt_short_pt(iso):
+        try:
+            dt = core.parse_iso(iso)
+            if not dt:
+                return "—"
+            s = dt.astimezone(core.PT).strftime("%b %d %I:%M %p")
+            s = s.replace(" 0", " ", 1).replace(" 0", " ", 1)
+            return s + " PT"
+        except Exception:
+            return "—"
+
+    def _fmt_short_et(iso):
+        try:
+            dt = core.parse_iso(iso)
+            if not dt:
+                return "—"
+            s = dt.astimezone(core.ET).strftime("%b %d %I:%M %p")
+            s = s.replace(" 0", " ", 1).replace(" 0", " ", 1)
+            return s + " ET"
+        except Exception:
+            return "—"
+
+    def _ttq_cell(r):
+        """Time to Quote — biz hours from Lonny RFQ to OL response. Color
+        coded green ≤4h, amber 4–24h, red >24h."""
+        tb = r.get("turnaround_biz_hours")
+        if isinstance(tb, (int, float)):
+            color = "#16a34a" if tb <= 4 else ("#d97706" if tb <= 24 else "#dc2626")
+            suffix = " (AH)" if r.get("after_hours_request") else ""
+            return f"{tb:.1f}h{suffix}", color
+        return "—", "#64748b"
+
+    # ── 1. NEW REQUESTS FROM LONNY (6 columns) ───────────────────────
     new_rows = ""
     if new_req:
         for r in new_req:
             lane = r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}"
             cont = r.get("containers") or "—"
             teu = _fmt_teu(r)
-            time_pt = r.get("lonny_time_pt") or _fmt_time_et(r.get("request_timestamp"))
+            product = r.get("product") or "—"
+            temp = r.get("temperature") or "—"
+            time_pt = r.get("lonny_time_pt") or _fmt_short_pt(r.get("request_timestamp"))
+            requested_eta = r.get("eta_requested") or r.get("etd_requested") or "—"
             new_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
                 f'<td {_TD_STYLE}>{_esc(cont)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
-                f'<td {_TD_STYLE}>{_esc(time_pt)}</td></tr>'
+                f'<td {_TD_STYLE}>{_esc(product)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(temp)}</td>'
+                f'<td {_TD_STYLE}>{_esc(requested_eta)}</td>'
+                f'<td {_TD_STYLE};white-space:nowrap>{_esc(time_pt)}</td></tr>'
             )
     else:
         new_rows = _EMPTY_ROW
@@ -479,42 +524,58 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'<th {_TH_STYLE}>Lane (Origin → Destination)</th>'
         f'<th {_TH_STYLE}>Equipment</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
-        f'<th {_TH_STYLE}>Lonny sent (PT)</th>'
+        f'<th {_TH_STYLE} title="Commodity from Lonny RFQ body">Product</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Reefer temperature when present (Hilmar dairy)">Temp</th>'
+        f'<th {_TH_STYLE} title="Lonny\'s requested ETA / ETD if stated in RFQ">Lonny Asked For (ETA)</th>'
+        f'<th {_TH_STYLE}>Lonny Sent (PT)</th>'
         f'</tr></thead><tbody>{new_rows}</tbody></table>'
     )
 
-    # ── 2. OL-USA RESPONSES (6 columns, INCLUDING signer name) ───────
+    # ── 2. OL-USA RESPONSES (11 columns, full timing trio + offered dates) ───
     resp_rows = ""
     if ol_resp:
         for r in ol_resp:
             lane = r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}"
+            cont = r.get("containers") or "—"
+            teu = _fmt_teu(r)
             carrier = r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
-            time_et = r.get("olusa_time_et") or _fmt_time_et(r.get("response_timestamp"))
-            tb = r.get("turnaround_biz_hours")
-            tb_s = f"{tb:.1f}h" if isinstance(tb, (int, float)) else "—"
-            if r.get("after_hours_request") and isinstance(tb, (int, float)):
-                tb_s = f"{tb:.1f}h (AH)"
             signer = r.get("ol_responder_signer") or "—"
+            lonny_t = _fmt_short_pt(r.get("request_timestamp"))
+            ol_t = _fmt_short_et(r.get("response_timestamp"))
+            ttq_s, ttq_color = _ttq_cell(r)
+            etd_off = r.get("etd_offered") or "—"
+            eta_off = r.get("eta_offered") or "—"
+            vessel = r.get("vessel_voyage") or "—"
             resp_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")}>{_esc(rate_s)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
                 f'<td {_TD_STYLE}>{_esc(signer)}</td>'
-                f'<td {_TD_STYLE}>{_esc(time_et)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(tb_s)}</td></tr>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(ol_t)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(etd_off)}</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(eta_off)}</td></tr>'
             )
     else:
         resp_rows = _EMPTY_ROW
     resp_table = (
         f'{_TABLE_OPEN}<thead><tr>'
         f'<th {_TH_STYLE}>Lane</th>'
+        f'<th {_TH_STYLE}>Equipment</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
         f'<th {_TH_STYLE}>Carrier Quoted</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate ($/container)</th>'
         f'<th {_TH_STYLE}>Who Responded (OL signer)</th>'
-        f'<th {_TH_STYLE}>Responded at (ET)</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>Biz-Hrs Turnaround</th>'
+        f'<th {_TH_STYLE} title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>'
+        f'<th {_TH_STYLE} title="When OL responded with the rate (Eastern Time)">OL Quoted (ET)</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Biz-hours from Lonny RFQ to OL response. Green ≤4h, amber 4-24h, red >24h.">Time to Quote</th>'
+        f'<th {_TH_STYLE} title="OL\'s offered ETD (sailing date)">ETD Offered</th>'
+        f'<th {_TH_STYLE} title="OL\'s offered ETA (arrival date)">ETA Offered</th>'
         f'</tr></thead><tbody>{resp_rows}</tbody></table>'
     )
 
@@ -544,13 +605,18 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
             cont_label = r.get('containers') or f"{cnt}cnt"
             reason = _fmt_rate_in_reason(h.get('reason') or '')
             req_date = r.get('request_date') or '—'
+            carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"
+            rate = r.get("ol_rate")
+            rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
             sc_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE}>{_esc(str(cont_label))} / {teu} TEU</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(str(cont_label))} / {teu} TEU</td>'
                 f'<td {_TD_STYLE}>{_esc(req_date)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>'
                 f'{V.status_pill(h["from"])} → {V.status_pill(h["to"])}</td>'
-                f'<td {_TD_STYLE}>{_esc(reason)}</td></tr>'
+                f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(reason)}</td></tr>'
             )
     else:
         sc_rows = _EMPTY_ROW
@@ -560,19 +626,28 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'<th {_TH_STYLE}>Equipment / TEU</th>'
         f'<th {_TH_STYLE}>Requested Date</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>Status Change</th>'
+        f'<th {_TH_STYLE}>Carrier</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate</th>'
         f'<th {_TH_STYLE}>Reason</th>'
         f'</tr></thead><tbody>{sc_rows}</tbody></table>'
     )
 
-    # ── 4. PENDING HILMAR RESPONSE (5 columns) ───────────────────────
+    # ── 4. PENDING HILMAR RESPONSE (10 columns — same shape as the big
+    # Pending table further down the email but rendered in the cover
+    # block for at-a-glance read).
     pend_rows = ""
     if pending:
         for r in pending:
             lane = r.get("lane") or "—"
+            cont = r.get("containers") or "—"
+            teu = _fmt_teu(r)
             carrier = r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
             signer = r.get("ol_responder_signer") or "—"
+            lonny_t = _fmt_short_pt(r.get("request_timestamp"))
+            ol_t = _fmt_short_et(r.get("response_timestamp"))
+            ttq_s, ttq_color = _ttq_cell(r)
             resp_dt = core.parse_iso(r.get("response_timestamp"))
             hrs_s = "—"
             if resp_dt:
@@ -580,20 +655,30 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
                 hrs_s = f"{delta_h:.1f}h"
             pend_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")}>{_esc(rate_s)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
                 f'<td {_TD_STYLE}>{_esc(signer)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(hrs_s)}</td></tr>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(ol_t)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600>{_esc(hrs_s)}</td></tr>'
             )
     else:
         pend_rows = _EMPTY_ROW
     pend_table = (
         f'{_TABLE_OPEN}<thead><tr>'
         f'<th {_TH_STYLE}>Lane</th>'
+        f'<th {_TH_STYLE}>Equipment</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
         f'<th {_TH_STYLE}>Carrier Quoted</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate</th>'
         f'<th {_TH_STYLE}>Who Quoted (OL signer)</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>Hours since quote</th>'
+        f'<th {_TH_STYLE} title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>'
+        f'<th {_TH_STYLE} title="When OL responded with the rate (Eastern Time)">OL Quoted (ET)</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Biz-hours OL took to respond on this row. Green ≤4h, amber 4-24h, red >24h.">Time to Quote</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Hours since OL quoted — chase if >24h">Waiting</th>'
         f'</tr></thead><tbody>{pend_rows}</tbody></table>'
     )
 
@@ -1212,6 +1297,22 @@ def _pending_html(rows):
         signer = r.get('ol_responder_signer') or "—"
         lonny_t = _fmt_pt_full(r.get('request_timestamp'))
         ol_t = _fmt_et_full(r.get('response_timestamp'))
+        # 2026-05-19 PM (Michael "add a column after ol quoted time with
+        # how long it took"): Time to Quote = OL response biz-hours from
+        # Lonny's RFQ. Pulled from turnaround_biz_hours (set by
+        # apply_rate_responses when the rate-response email is the source).
+        # Falls back to clock-hours if biz-hours wasn't computed.
+        ttq_biz = r.get('turnaround_biz_hours')
+        ttq_clock = r.get('turnaround_hours')
+        if isinstance(ttq_biz, (int, float)):
+            ttq_s = f"{ttq_biz:.1f}h"
+            ttq_color = "#16a34a" if ttq_biz <= 4 else ("#d97706" if ttq_biz <= 24 else "#dc2626")
+        elif isinstance(ttq_clock, (int, float)):
+            ttq_s = f"{ttq_clock:.1f}h (clock)"
+            ttq_color = "#64748b"
+        else:
+            ttq_s = "—"
+            ttq_color = "#64748b"
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
@@ -1222,6 +1323,7 @@ def _pending_html(rows):
   <td style="padding:6px 8px">{_esc(signer)}</td>
   <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(lonny_t)}</td>
   <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(ol_t)}</td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600;color:{ttq_color}">{_esc(ttq_s)}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:600">{_esc(_hours_since(r.get('response_timestamp')))}</td>
 </tr>
 """
@@ -1230,23 +1332,24 @@ def _pending_html(rows):
 <tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #7c3aed">
   <td style="padding:8px" colspan="2">TOTAL ({len(rows)} pending)</td>
   <td style="padding:8px;text-align:center">{total_teu}</td>
-  <td style="padding:8px" colspan="6">&nbsp;</td>
+  <td style="padding:8px" colspan="7">&nbsp;</td>
 </tr>
 """
     return f"""
 <h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Each row shows BOTH the Lonny request time (PT) and the OL quote time (ET) so you see the full clock. "Hours since OL quote" is the chase metric — candidates >24h need follow-up.</p>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#7c3aed;color:white">
-    <th style="padding:8px;text-align:left">Lane</th>
-    <th style="padding:8px;text-align:left">Equipment</th>
-    <th style="padding:8px;text-align:center">TEU</th>
-    <th style="padding:8px;text-align:left">Carrier Quoted</th>
-    <th style="padding:8px;text-align:right">Rate ($/container)</th>
-    <th style="padding:8px;text-align:left">Who Quoted (OL signer)</th>
-    <th style="padding:8px;text-align:left" title="When Lonny sent the RFQ (Pacific Time, Lonny's office)">Lonny Requested (PT)</th>
-    <th style="padding:8px;text-align:left" title="When OL responded with the rate (Eastern Time, OL's office)">OL Quoted (ET)</th>
-    <th style="padding:8px;text-align:center" title="Time elapsed since OL's quote arrived — chase candidates &gt;24h">Hours since OL quote</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Lane</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Equipment</th>
+    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff">TEU</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Carrier Quoted</th>
+    <th style="padding:8px;text-align:right;background-color:#7c3aed;color:#ffffff">Rate ($/container)</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Who Quoted (OL signer)</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff" title="When Lonny sent the RFQ (Pacific Time, Lonny's office)">Lonny Requested (PT)</th>
+    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff" title="When OL responded with the rate (Eastern Time, OL's office)">OL Quoted (ET)</th>
+    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff" title="Biz-hours from Lonny's RFQ to OL's rate response. Green ≤4h, amber 4–24h, red &gt;24h. Counts only OL business hours (8:30 AM – 5:30 PM ET weekdays).">Time to Quote</th>
+    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff" title="Time elapsed since OL's quote arrived — chase candidates &gt;24h">Hours since OL quote</th>
   </tr>
   {body}
 </table>

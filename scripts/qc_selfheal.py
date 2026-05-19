@@ -1338,6 +1338,38 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-046: Pending Hilmar timestamps populating "
                        f"({_dash_cells} dash cells, real timestamps: {_real_ts})")
 
+        # QC-049: WIN-NO-MDOLX TRACKING — Michael 2026-05-19 PM "in the
+        # portal missing mdolx for way too many files that you mark as won".
+        # WIN rows without mdolx_ref usually came via send-signal promotion.
+        # The booking confirmation EMAIL exists in OL's inbox same day but
+        # our matcher missed it. Fix landed in ingest.link_bookings_to_requests
+        # to use email In-Reply-To / References headers; new stage records
+        # have those fields. WARN (not ERROR) since some of these are
+        # genuine — Lonny said send, OL hasn't booked yet — so an alert is
+        # informational, not gating.
+        try:
+            _data_path = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
+            if _data_path.exists():
+                import json as _json_mdx
+                _d = _json_mdx.loads(_data_path.read_text(encoding="utf-8"))
+                _wins = [r for r in (_d.get("requests") or []) if r.get("status") == "WIN"]
+                _no_mdolx = [r for r in _wins if not r.get("mdolx_ref")]
+                if _wins:
+                    _pct = 100.0 * len(_no_mdolx) / len(_wins)
+                    if _pct > 15:
+                        log.warn(
+                            f"QC-049: {len(_no_mdolx)}/{len(_wins)} WINs lack MDOLX "
+                            f"({_pct:.0f}%). Investigate booking-team mailbox header "
+                            "match — ingest.link_bookings_to_requests should match via "
+                            "In-Reply-To / References for these. Sample: "
+                            + ", ".join(f"{r.get('request_id','')[:25]} {r.get('lane','')}"
+                                        for r in _no_mdolx[:3])
+                        )
+                    else:
+                        log.ok(f"QC-049: WIN-no-MDOLX rate OK ({len(_no_mdolx)}/{len(_wins)} = {_pct:.0f}%)")
+        except Exception as _e:
+            log.warn(f"QC-049: check failed with exception: {_e}")
+
         # QC-048: TURNAROUND SANITY CHECK — flags rows with implausible
         # turnaround_biz_hours. Real OL rate-response turnaround is sub-day
         # biz-hours (usually <4h). Values >40h biz-hours indicate the

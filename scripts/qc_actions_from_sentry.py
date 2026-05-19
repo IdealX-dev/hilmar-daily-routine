@@ -146,6 +146,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "Rows have turnaround_biz_hours > 40h. Real OL response time is sub-day. Likely cause: link_bookings_to_requests leaked booking timestamp into turnaround calc when no prior rate response existed. Seer: confirm scripts/ingest.py link_bookings_to_requests leaves turnaround_biz_hours None when bk.get('sent') is the only response signal.",
         "auto_resolve_safe": False,
     },
+    "QC-049": {
+        "name": "WIN rows missing MDOLX (>15% of wins)",
+        "action": "flag_for_operator",
+        "comment": "Send-signal promotions creating WIN rows that don't pick up the matching MDOLX booking confirmation. Fix landed: link_bookings_to_requests now matches via In-Reply-To / References headers. If still high after a few daily fires, check refresh_stage.py is fetching internetMessageHeaders and ingest is reading row['in_reply_to']/['references'].",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",

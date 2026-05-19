@@ -159,7 +159,13 @@ def graph_get(token: str, url: str, params: dict | None = None) -> dict:
 
 GRAPH_SELECT = (
     "id,conversationId,subject,from,toRecipients,ccRecipients,"
-    "bodyPreview,receivedDateTime,sentDateTime,internetMessageId,isRead,hasAttachments"
+    "bodyPreview,receivedDateTime,sentDateTime,internetMessageId,isRead,hasAttachments,"
+    # 2026-05-19 PM (Michael "you have to parse the booking team emails
+    # for matches based on header meta data"): fetch the full email
+    # header collection so we can read In-Reply-To + References. Those
+    # link MDOLX booking confirmations back to the originating Lonny
+    # RFQ thread even when conversation_id differs.
+    "internetMessageHeaders"
 )
 
 
@@ -409,8 +415,41 @@ def append_stage_record(rec: dict) -> None:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def _extract_thread_headers(item: dict) -> dict:
+    """Extract In-Reply-To + References from Graph's internetMessageHeaders.
+
+    2026-05-19 PM (Michael "parse the booking team emails for matches
+    based on header meta data and you'll find them"): the booking-
+    confirmation email is sent by OL in a NEW conversation_id (different
+    from the original Lonny RFQ thread), but its In-Reply-To / References
+    headers point back to the prior thread's Message-ID. We capture those
+    so ingest.link_bookings_to_requests can match a booking back to its
+    originating RFQ even when conversation_id differs.
+
+    Returns: {"in_reply_to": "<...>" | None, "references": ["<...>", ...]}
+    """
+    headers = item.get("internetMessageHeaders") or []
+    out = {"in_reply_to": None, "references": []}
+    for h in headers:
+        name = (h.get("name") or "").lower()
+        value = (h.get("value") or "").strip()
+        if name == "in-reply-to":
+            out["in_reply_to"] = value
+        elif name == "references":
+            # References is space-or-CRLF separated list of <message-id>'s
+            out["references"] = [m for m in value.replace("\n", " ").replace("\r", " ").split() if m]
+    return out
+
+
 def build_stage_record(item: dict, bucket: str) -> dict:
-    """Same shape Cowork's MCP wrote — id / imid / bucket / received / sent / subject / summary_preview / uri."""
+    """Same shape Cowork's MCP wrote — id / imid / bucket / received / sent / subject / summary_preview / uri.
+
+    2026-05-19 PM: now also includes `in_reply_to` + `references` (parsed
+    from internetMessageHeaders) so the booking-link matcher can use them.
+    Backward-compat: rows without these fields still work (matcher falls
+    back to conv_id + lane+time).
+    """
+    threading = _extract_thread_headers(item)
     return {
         "id": item["id"],
         "imid": item.get("internetMessageId"),
@@ -420,6 +459,10 @@ def build_stage_record(item: dict, bucket: str) -> dict:
         "subject": item.get("subject") or "",
         "summary_preview": (item.get("bodyPreview") or "")[:300],
         "uri": f"mail:///messages/{item['id']}",
+        # Threading metadata for header-based booking matching
+        "in_reply_to": threading["in_reply_to"],
+        "references": threading["references"],
+        "conversation_id": item.get("conversationId"),
     }
 
 
