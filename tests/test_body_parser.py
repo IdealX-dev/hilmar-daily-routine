@@ -413,3 +413,153 @@ John Q. Public
 """
     out = BP.parse_signer(text)
     assert out and "John" in out and "Public" in out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Parser-gap fixes — 2026-05-19 (per Michael "no field should be empty ever")
+# ─────────────────────────────────────────────────────────────────────
+
+def test_parse_product_labeled():
+    """Lonny's standard pattern: 'Product Lactose' / 'product: cheese'."""
+    assert BP.parse_product("Product Lactose") == "Lactose"
+    assert BP.parse_product("product: cheese") == "Cheese"
+    assert BP.parse_product("Product is Skim Milk Powder") == "Skim Milk Powder"
+
+
+def test_parse_product_dictionary_fallback():
+    """Commodity word anywhere in body without explicit 'Product' label."""
+    assert BP.parse_product("Need rate for whey shipment") == "Whey"
+    assert BP.parse_product("WPC 80 to Yokohama") == "WPC 80"
+
+
+def test_parse_product_returns_none_when_no_commodity():
+    assert BP.parse_product("Hi Lonny, please send rates") is None
+    assert BP.parse_product("") is None
+    assert BP.parse_product(None) is None
+
+
+def test_parse_temperature_numeric_celsius():
+    assert BP.parse_temperature("Reefer at -2C, sailing next week") == "-2C"
+    assert BP.parse_temperature("Set at +2C") == "2C"
+
+
+def test_parse_temperature_numeric_fahrenheit():
+    assert BP.parse_temperature("Cargo at 34F") == "34F"
+
+
+def test_parse_temperature_rejects_false_positives():
+    """234 FCL must not be read as 34F; '10-14 days free' must not match."""
+    assert BP.parse_temperature("234 FCL containers") is None
+    assert BP.parse_temperature("10-14 days free demurrage") is None
+    # 'days free' tail-rejection
+    assert BP.parse_temperature("5 days free combined") is None
+
+
+def test_parse_temperature_keywords():
+    assert BP.parse_temperature("Frozen cargo, no genset") == "Frozen"
+    assert BP.parse_temperature("Chilled product") == "Chilled"
+
+
+def test_parse_etd_requested_explicit_date():
+    """Lonny writes 'cutoff week of 4/27' → extract 2026-04-27."""
+    out = BP.parse_etd_requested("Cutoff week of 4/27, please advise")
+    assert out == "2026-04-27", f"got {out!r}"
+
+
+def test_parse_etd_requested_returns_none_when_relative():
+    """'next week' has no concrete date — must return None, not guess."""
+    assert BP.parse_etd_requested("Cutoff next week or the following") is None
+
+
+def test_parse_requested_dates_captures_lonny_phrase():
+    """Returns the raw phrase (anchor + tail), not an ISO date."""
+    out = BP.parse_requested_dates("Cutoff week of 4/27, send both")
+    assert out is not None
+    assert "Cutoff" in out and "4/27" in out
+
+
+def test_parse_requested_dates_returns_none_on_no_anchor():
+    assert BP.parse_requested_dates("Just checking on the rate") is None
+    assert BP.parse_requested_dates("") is None
+
+
+def test_parse_lonny_notes_returns_body_minus_signature():
+    body = """1-20' Oakland to Manila. Cutoff next week. Product Lactose.
+Thanks,
+Lonny Upfold
+Logistics Coordinator
+Hilmar Ingredients"""
+    out = BP.parse_lonny_notes(body)
+    assert out is not None
+    assert "Manila" in out
+    assert "Lonny Upfold" not in out  # signature stripped
+    assert "Logistics Coordinator" not in out
+
+
+def test_parse_lonny_notes_strips_outlook_quote_chain():
+    body = """Need rate for Oakland to HCMC.
+
+From: MBD Ocean Export Booking
+Sent: Monday
+Subject: Old rate"""
+    out = BP.parse_lonny_notes(body)
+    assert out and "HCMC" in out
+    assert "From:" not in out
+
+
+def test_parse_lonny_notes_returns_none_on_empty():
+    assert BP.parse_lonny_notes("") is None
+    assert BP.parse_lonny_notes(None) is None
+
+
+def test_parse_rate_expiry_valid_through():
+    assert BP.parse_rate_expiry("This rate is valid through 5/31") == "5/31"
+    assert BP.parse_rate_expiry("valid until June 15") == "June 15"
+
+
+def test_parse_rate_expiry_expires_pattern():
+    assert BP.parse_rate_expiry("Rate expires 6/15/26") == "6/15/26"
+
+
+def test_parse_rate_expiry_returns_none_when_absent():
+    assert BP.parse_rate_expiry("Hi Lonny, here is the rate.") is None
+
+
+def test_parse_rate_table_surfaces_erd_origin_free_dest_free():
+    """The MBD column parser now exposes erd, origin_free_time, and
+    dest_free_time — previously buried in the cells dict but never returned."""
+    body = """POL
+POD
+Container Size
+Vessel
+Voyage
+ERD
+Doc Cut
+Port Cut
+ETD
+ETA
+RATE
+CARRIER
+TRANSSHIPMENT
+ORIGIN FREE TIME
+DESTINATION FREE TIME
+
+Oakland
+HCMC
+5x40'DV
+WAN HAI A05
+W105
+30-Apr-26
+4-May-26
+5-May-26
+8-May-26
+10-Jun-26
+$420
+ONE
+DIRECT VIA CAI MEP
+14 DETENTION + 6 DEMURRAGE FREE DAYS
+14 DETENTION + 14 DEMURRAGE FREE DAYS"""
+    out = BP.parse_rate_table(body)
+    assert out["erd"] == "2026-04-30", f"erd not surfaced: {out!r}"
+    assert "DETENTION + 6" in (out.get("origin_free_time") or "")
+    assert "DETENTION + 14" in (out.get("dest_free_time") or "")

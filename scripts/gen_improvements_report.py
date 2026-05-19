@@ -621,6 +621,34 @@ def _sentry_section_inline():
         f'{s["unresolved_count"]} unresolved issue(s) in 14d, none new/recurring in 24h</td></tr>'
     )
 
+    # 2026-05-19 Task #11 — also surface any auto-actions taken by
+    # qc_actions_from_sentry on this pipeline fire. The runner writes
+    # its report to reports/qc-actions-from-sentry.json; render a
+    # compact summary line so Michael sees what fired without opening
+    # Sentry. Silent no-op if the file is absent.
+    actions_html = ""
+    try:
+        from pathlib import Path as _P
+        _qa = _P(__file__).resolve().parent.parent / "reports" / "qc-actions-from-sentry.json"
+        if _qa.exists():
+            import json as _json
+            _qa_data = _json.loads(_qa.read_text(encoding="utf-8"))
+            if _qa_data.get("issues_scanned", 0) > 0:
+                _resolved = _qa_data.get("resolved", 0)
+                _commented = _qa_data.get("commented", 0)
+                _dry = " (dry-run)" if _qa_data.get("dry_run") else ""
+                actions_html = (
+                    f'<div style="background:#eff6ff;border-left:4px solid #1a3d9c;'
+                    f'padding:8px 14px;margin:6px 0 10px;border-radius:4px;font-size:12px;color:#0f172a">'
+                    f'<strong>🤖 Sentry-driven actions{_dry}:</strong> '
+                    f'scanned {_qa_data["issues_scanned"]} unresolved · '
+                    f'{_commented} commented · {_resolved} auto-resolved. '
+                    f'<span style="color:#64748b">See reports/qc-actions-from-sentry.json for per-issue detail.</span>'
+                    f'</div>'
+                )
+    except Exception:
+        pass
+
     return f"""
 <h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;border-bottom:2px solid #76b82a;padding-bottom:6px">
   🛡️ Sentry observability (last 24h)
@@ -637,6 +665,7 @@ def _sentry_section_inline():
     <a href="https://idealx-llc.sentry.io/issues/" style="color:#1a3d9c">View in Sentry →</a>
   </div>
 </div>
+{actions_html}
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
   <tr style="background:#0a2350;color:white">
     <th style="padding:5px;text-align:left">Issue</th>

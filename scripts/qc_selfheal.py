@@ -1034,14 +1034,22 @@ def phase_6_rules(log: Log, data: dict):
         log.warn(f"QC-021: check failed with exception: {_e}")
 
     # QC-022: distribution list invariants — must include michael.deitchman@idealx.us,
-    # must be exactly 10 recipients, must NOT include external (non-ol-usa, non-idealx)
-    # domains. Catches accidental edits to config.json that could leak emails.
+    # must be exactly 10 recipients (normal mode) OR 1 recipient (iteration mode),
+    # must NOT include external (non-ol-usa, non-idealx) domains. Catches
+    # accidental edits to config.json that could leak emails.
+    #
+    # 2026-05-19 PM iteration mode: when config has `_iteration_mode_note` at
+    # top level, the full_list is locked to just michael.deitchman@idealx.us
+    # while Michael iterates on email formatting. QC-022 honors the lock and
+    # requires exactly 1 recipient. The original 10-recipient distro is
+    # preserved in `full_list_archived` for easy restore.
     try:
         _cfg_path = Path(__file__).resolve().parent.parent / "config.json"
         if _cfg_path.exists():
             import json as _json
             _cfg = _json.loads(_cfg_path.read_text(encoding="utf-8"))
             _full = _cfg.get("distribution", {}).get("full_list", []) or []
+            _iteration_mode = "_iteration_mode_note" in _cfg
             _missing = []
             if "michael.deitchman@idealx.us" not in [a.lower() for a in _full]:
                 _missing.append("michael.deitchman@idealx.us")
@@ -1052,12 +1060,18 @@ def phase_6_rules(log: Log, data: dict):
                 _problems.append(f"missing: {_missing}")
             if _external:
                 _problems.append(f"external domain(s): {_external}")
-            if len(_full) < 8 or len(_full) > 12:
-                _problems.append(f"unexpected count: {len(_full)}")
+            if _iteration_mode:
+                if len(_full) != 1:
+                    _problems.append(f"iteration-mode count != 1: {len(_full)}")
+                _verb = "iteration mode (locked)"
+            else:
+                if len(_full) < 8 or len(_full) > 12:
+                    _problems.append(f"unexpected count: {len(_full)}")
+                _verb = "normal mode"
             if _problems:
                 log.error("QC-022: distribution list invariant violations: " + "; ".join(_problems))
             else:
-                log.ok(f"QC-022: distribution list OK ({len(_full)} recipients, idealx.us + ol-usa only)")
+                log.ok(f"QC-022: distribution list OK — {_verb}, {len(_full)} recipient(s)")
     except Exception as _e:
         log.warn(f"QC-022: check failed with exception: {_e}")
 
@@ -1288,10 +1302,15 @@ def phase_6_rules(log: Log, data: dict):
     # in src/hilmar/parser_accuracy.py. Computes:
     #   - Overall rate (equal-weight mean across fields)
     #   - Weighted rate (by applicable-row count)
-    # ERROR if overall < 98% OR any CRITICAL field falls below 98%.
-    # WARN if overall ≥ 98% but a non-critical field falls below.
+    # ERROR if overall < ACCURACY_THRESHOLD OR any CRITICAL field falls
+    # below ACCURACY_THRESHOLD. WARN if overall passes but a non-critical
+    # field falls below.
     # Critical fields: origin, destination, lane, container_count,
     # teu_requested, carrier_quoted, carrier_won, ol_rate.
+    # 2026-05-19: threshold lowered from 0.98 to 0.95 per Michael "PARSER
+    # MUST REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS". See
+    # src/hilmar/parser_accuracy.py for the gate definition + per-field
+    # threshold table.
     try:
         import sys as _sys
         _src_dir = Path(__file__).resolve().parent.parent / "src"

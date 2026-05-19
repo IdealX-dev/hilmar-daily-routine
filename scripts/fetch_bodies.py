@@ -123,16 +123,26 @@ def _parse_all(text_body: str, subject: str, bucket: str) -> dict:
     """Run every body_parser parser applicable to this bucket."""
     out = {
         "eta_requested": None,
+        "etd_requested": None,           # 2026-05-19 parser-gap fix
         "etd_offered": None,
         "eta_offered": None,
         "origin_cutoff": None,
+        "erd": None,                     # 2026-05-19 parser-gap fix
         "vessel_voyage": None,
         "transshipment": None,
         "rate_table": None,
+        "rate_expiry": None,             # 2026-05-19 parser-gap fix
+        "origin_free_time": None,        # 2026-05-19 parser-gap fix
+        "dest_free_time": None,          # 2026-05-19 parser-gap fix
         "send_signal": False,
         "origin": None,
         "destination": None,
         "ol_responder_signer": None,
+        # Lonny-side fields (RFQ body) — 2026-05-19 parser-gap fix
+        "product": None,
+        "temperature": None,
+        "requested_dates": None,
+        "lonny_notes": None,
     }
     if not text_body:
         text_body = ""
@@ -144,6 +154,7 @@ def _parse_all(text_body: str, subject: str, bucket: str) -> dict:
 
     # Date parsers — anchor-based (parse_etd_offered etc.) — work on any body.
     out["eta_requested"]  = BP.parse_eta_requested(text_body)
+    out["etd_requested"]  = BP.parse_etd_requested(text_body)  # 2026-05-19 NEW
     out["etd_offered"]    = BP.parse_etd_offered(text_body)
     out["eta_offered"]    = BP.parse_eta_offered(text_body)
     out["origin_cutoff"]  = BP.parse_origin_cutoff(text_body)
@@ -154,16 +165,41 @@ def _parse_all(text_body: str, subject: str, bucket: str) -> dict:
     # references that would AttributeError on every body fetch (caught
     # 2026-05-05 during refresh_stage build).
 
-    # Rate table only makes sense on carrier responses
-    if bucket == "mbd_rate_response":
+    # 2026-05-19 parser-gap fix: temperature + product + requested_dates +
+    # lonny_notes are present on Lonny RFQ bodies (lonny_outbound, sometimes
+    # echoed in lonny_reply). Try every bucket — costs nothing if no match.
+    # Scan subject + body together so "Oakland to Yokohama 34F" (temp in subject)
+    # is caught even when the body is empty.
+    scan_text = (subject or "") + "\n" + text_body
+    out["temperature"]     = BP.parse_temperature(scan_text)
+    out["product"]         = BP.parse_product(scan_text)
+    out["requested_dates"] = BP.parse_requested_dates(text_body)
+    if bucket in ("lonny_outbound", "lonny_reply"):
+        out["lonny_notes"] = BP.parse_lonny_notes(text_body)
+
+    # Rate-expiry on rate responses + booking confirmations
+    if bucket in ("mbd_rate_response", "mbd_inbound"):
+        out["rate_expiry"] = BP.parse_rate_expiry(text_body)
+
+    # Rate table on rate responses + booking confirmations (mbd_inbound has
+    # the same pipe-table format with ERD + free-time columns; 2026-05-19
+    # parser-gap fix expanded coverage from rate_response only).
+    if bucket in ("mbd_rate_response", "mbd_inbound"):
         rt = BP.parse_rate_table(text_body)
         out["rate_table"] = rt if rt else None
         # Bubble up individual fields for convenience
         if rt:
             out["etd_offered"]   = out["etd_offered"] or rt.get("etd_offered") or rt.get("etd")
             out["eta_offered"]   = out["eta_offered"] or rt.get("eta_offered") or rt.get("eta")
-            out["vessel_voyage"] = rt.get("vessel_voyage")
-            out["transshipment"] = rt.get("transshipment")
+            out["vessel_voyage"] = out["vessel_voyage"] or rt.get("vessel_voyage")
+            out["transshipment"] = out["transshipment"] or rt.get("transshipment")
+            # 2026-05-19 parser-gap fix: pull the 4 newly-exposed fields up
+            # to the parsed.* level so ingest.py can read them directly.
+            out["rate_expiry"]      = out["rate_expiry"] or rt.get("rate_expiry")
+            out["origin_free_time"] = rt.get("origin_free_time")
+            out["dest_free_time"]   = rt.get("dest_free_time")
+            out["erd"]              = out["erd"] or rt.get("erd")
+            out["origin_cutoff"]    = out["origin_cutoff"] or rt.get("origin_cutoff")
 
     # Chain-send signal — heuristic: bare "Send"/"SEND" + Lonny in lonny_reply
     # Use core's canonical detector (existing function, used by ingest too).

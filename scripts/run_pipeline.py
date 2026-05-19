@@ -59,6 +59,14 @@ STEPS = [
     # Post-patch QC represents the actual shipped state — this is the one
     # that fires real-time Sentry alerts.
     ("QC self-heal (post-patch)", [PY, str(SCRIPTS / "qc_selfheal.py")], _POST_PATCH_ENV),
+    # 2026-05-19 Task #11 (Michael "go with task 11 and llm"): scan
+    # unresolved Sentry issues from the last 26h + dispatch QC
+    # remediation actions per the ACTIONS table in qc_actions_from_sentry.py.
+    # Polling equivalent to Sentry webhooks (Cloud PC has no public IP
+    # for webhook receive). Auto-resolves issues with a documented post-fix
+    # commit; flags others for operator. --apply needed to actually post
+    # comments + resolve (dry-run is default for safety).
+    ("Sentry-driven QC actions",  [PY, str(SCRIPTS / "qc_actions_from_sentry.py"), "--apply"]),
     ("Dashboard HTML",           [PY, str(SCRIPTS / "gen_dashboard.py")]),
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),

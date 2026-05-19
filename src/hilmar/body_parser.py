@@ -359,6 +359,218 @@ def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_AN
 def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Parser-gap fixes (Michael 2026-05-19 — "no field should be empty ever")
+# Mirror of scripts/body_parser.py additions; tests run against this file.
+# ─────────────────────────────────────────────────────────────────────
+
+_ETD_REQ_ANCHORS = re.compile(
+    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave)"
+    r"|target\s+etd|requested\s+etd|require(?:d)?\s+(?:etd|to\s+depart)"
+    r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|departure\s+by"
+    r"|prefer(?:red)?\s+etd|preferred\s+departure"
+    r"|etd\s+by|departure\s+date|sail\s+by"
+    r"|cut[-\s]?off"
+    r"|week\s+of"
+    r"|by\s+EOD)",
+    re.IGNORECASE,
+)
+
+def parse_etd_requested(text):
+    """Lonny's departure-date ask. See scripts/body_parser.py for full docstring."""
+    return _find_date_near(text or "", _ETD_REQ_ANCHORS)
+
+
+_TEMP_NUMERIC_RX = re.compile(
+    r"(?:^|\s|\b)(?P<sign>[+\-])?\s*(?P<val>\d{1,2})\s*°?\s*(?P<unit>[CF])\b",
+)
+_TEMP_KEYWORD_RX = re.compile(
+    r"\b(frozen|chilled|ambient|dry\s+container|reefer|temp(?:erature)?\s*[:\-]?\s*\w+)\b",
+    re.IGNORECASE,
+)
+
+def parse_temperature(text):
+    """Reefer temperature from text. See scripts/body_parser.py for full docs."""
+    if not text:
+        return None
+    for m in _TEMP_NUMERIC_RX.finditer(text):
+        try:
+            sign = m.group("sign") or ""
+            val = int(m.group("val"))
+            unit = m.group("unit").upper()
+        except (ValueError, TypeError):
+            continue
+        signed = -val if sign == "-" else val
+        if unit == "C" and not (-40 <= signed <= 30):
+            continue
+        if unit == "F" and not (-40 <= signed <= 120):
+            continue
+        lead = text[max(0, m.start()-1):m.start()]
+        if lead and lead[-1].isdigit():
+            continue
+        tail = text[m.end():m.end()+10]
+        if re.match(r"\s*(free|combined|fcl|fcls|consolidated)\b", tail, re.IGNORECASE):
+            continue
+        return f"{sign if sign == '-' else ''}{val}{unit}"
+    m = _TEMP_KEYWORD_RX.search(text)
+    if m:
+        kw = m.group(1).strip().lower()
+        if kw in ("frozen", "chilled", "ambient"):
+            return kw.capitalize()
+        if kw.startswith("dry"):
+            return "Dry"
+    return None
+
+
+_PRODUCT_LABELED_RX = re.compile(
+    r"\bproduct\s*(?:is\s+|:\s*|\s+-\s*|-\s*|\s+)([A-Za-z][A-Za-z0-9 &\-/]{2,40})",
+    re.IGNORECASE,
+)
+_PRODUCT_COMMODITY_DICT = (
+    ("skim milk powder", "Skim Milk Powder"),
+    ("whole milk powder", "Whole Milk Powder"),
+    ("milk powder", "Milk Powder"),
+    ("anhydrous milk fat", "Anhydrous Milk Fat"),
+    ("milk protein isolate", "Milk Protein Isolate"),
+    ("milk protein concentrate", "Milk Protein Concentrate"),
+    ("whey protein concentrate", "Whey Protein Concentrate"),
+    ("whey protein isolate", "Whey Protein Isolate"),
+    ("lactose", "Lactose"),
+    ("cheese", "Cheese"),
+    ("whey", "Whey"),
+    ("casein", "Casein"),
+    ("butter", "Butter"),
+    ("amf", "AMF"),
+    ("wpc 80", "WPC 80"),
+    ("wpc", "WPC"),
+    ("wpi", "WPI"),
+    ("mpc", "MPC"),
+    ("mpi", "MPI"),
+    ("protein", "Protein"),
+)
+_TRAILING_TRIM_RX = re.compile(r"[,.\n;:!?]")
+
+def parse_product(text):
+    """Commodity from text. See scripts/body_parser.py for full docs."""
+    if not text:
+        return None
+    m = _PRODUCT_LABELED_RX.search(text)
+    if m:
+        raw = m.group(1).strip()
+        cut = _TRAILING_TRIM_RX.search(raw)
+        if cut:
+            raw = raw[:cut.start()]
+        raw = raw.strip()
+        low = raw.lower()
+        for needle, canonical in _PRODUCT_COMMODITY_DICT:
+            if needle in low:
+                return canonical
+        if 2 <= len(raw) <= 30 and not raw.isdigit():
+            return raw.title()
+    low = text.lower()
+    for needle, canonical in _PRODUCT_COMMODITY_DICT:
+        if re.search(rf"\b{re.escape(needle)}\b", low):
+            return canonical
+    return None
+
+
+_REQ_DATES_ANCHORS = (
+    "cutoff", "cut-off", "cut off",
+    "need ", "needs ", "needed ",
+    "require", "required ", "requires ",
+    "sailing", "sail by", "ship by", "load by", "loading by",
+    "target etd", "requested etd", "preferred etd", "prefer etd",
+    "week of", "departure", "by eod", "by end of",
+    "asap",
+)
+_REQ_DATES_RX = re.compile(
+    r"(?P<anchor>" + "|".join(re.escape(a) for a in _REQ_DATES_ANCHORS) + r")"
+    r"\s*(?P<tail>[A-Za-z0-9][^.\n;!?]{2,60})",
+    re.IGNORECASE,
+)
+_REQ_DATES_REJECT_TAIL = re.compile(
+    r"^\s*(?:date|cargo|day|hour|time)\s+(?:is|are)\s+",
+    re.IGNORECASE,
+)
+
+def parse_requested_dates(text):
+    """Lonny's free-text date ask. See scripts/body_parser.py for full docs."""
+    if not text:
+        return None
+    m = _REQ_DATES_RX.search(text)
+    if not m:
+        return None
+    anchor = m.group("anchor")
+    tail = m.group("tail").strip()
+    if _REQ_DATES_REJECT_TAIL.match(tail):
+        return None
+    phrase = f"{anchor} {tail}".strip()
+    phrase = re.sub(r"\s+", " ", phrase)
+    return phrase[:80] if 3 <= len(phrase) <= 200 else None
+
+
+_SIGNATURE_TRIM_RX = re.compile(
+    r"(?im)^\s*(?:thanks?|regards|best(?:\s+regards)?|cheers|sincerely)[,.\s]*$",
+)
+_OUTLOOK_QUOTE_RX = re.compile(
+    r"(?im)^(?:from:|sent:|on .+ wrote:).*$",
+)
+_LONNY_NAME_RX = re.compile(
+    r"(?im)^(?:lonny\s+upfold|logistics\s+coordinator|hilmar\s+ingredients).*$",
+)
+
+def parse_lonny_notes(text):
+    """Free-form Lonny-side notes. See scripts/body_parser.py for full docs."""
+    if not text:
+        return None
+    t = text
+    sig_match = _SIGNATURE_TRIM_RX.search(t)
+    if sig_match:
+        t = t[:sig_match.start()]
+    quote_match = _OUTLOOK_QUOTE_RX.search(t)
+    if quote_match:
+        t = t[:quote_match.start()]
+    t = _LONNY_NAME_RX.sub("", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if len(t) < 8:
+        return None
+    return t[:300]
+
+
+_RATE_EXPIRY_RXES = [
+    re.compile(
+        r"(?:rate\s+)?valid\s+(?:thru|through|until|to)\s+"
+        r"([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:rate\s+)?expir(?:ation|ing|es|y|e)\s*(?:on|at|:|-)?\s*"
+        r"([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"good\s+(?:thru|through|until)\s+([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"validity\s*[:\-]?\s*([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+]
+
+def parse_rate_expiry(text):
+    """Rate-validity phrase from text. See scripts/body_parser.py for full docs."""
+    if not text:
+        return None
+    for rx in _RATE_EXPIRY_RXES:
+        m = rx.search(text)
+        if m:
+            raw = m.group(1).strip(' ,.;:-')
+            if 3 <= len(raw) <= 40:
+                return raw
+    return None
+
+
 # ---------- Vessel / transshipment ----------
 
 _VESSEL_RX = re.compile(
@@ -556,6 +768,18 @@ def parse_mbd_rate_columns(text):
         out["vessel_voyage"] = raw["vessel"]
     if "transshipment" in raw:
         out["transshipment"] = raw["transshipment"]
+    # 2026-05-19 parser-gap fix: surface ERD + free-time labels that were
+    # mapped in _TABLE_LABELS but never bubbled to the output dict.
+    if "erd" in raw:
+        # Pass through both the canonical `erd` schema key AND the legacy
+        # `origin_cutoff` alias used by the scripts/ rate-table parser.
+        erd_d = _parse_table_date(raw["erd"])
+        out["erd"] = erd_d or raw["erd"]
+        out["origin_cutoff"] = out["erd"]
+    if "origin_free_time" in raw:
+        out["origin_free_time"] = raw["origin_free_time"]
+    if "destination_free_time" in raw:
+        out["dest_free_time"] = raw["destination_free_time"]
     return out or None
 
 

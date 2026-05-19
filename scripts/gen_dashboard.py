@@ -164,6 +164,29 @@ def render(cfg: dict, data: dict) -> str:
     now_et = datetime.now(core.ET).strftime("%b %d, %Y %I:%M %p ET")
     after_hours_count = sum(1 for r in requests if r.get("after_hours_request"))
 
+    # 2026-05-19 Task #4 — "What happened since last run" needs the actual
+    # previous-run timestamp visible. Use `last_updated` from the tracking
+    # data file (set by ingest.py when the prior run wrote the file).
+    # Convert to ET for display. Falls back to "—" if missing.
+    _prev_run_label = "—"
+    _prev_run_delta = ""
+    try:
+        _lu = data.get("last_updated") or data.get("generated_at")
+        if _lu:
+            _prev_dt = core.parse_iso(_lu)
+            if _prev_dt:
+                _prev_et = _prev_dt.astimezone(core.ET)
+                _prev_run_label = _prev_et.strftime("%b %d %I:%M %p ET")
+                _delta_h = (datetime.now(core.ET) - _prev_et).total_seconds() / 3600.0
+                if _delta_h < 1:
+                    _prev_run_delta = f"{int(_delta_h * 60)} min ago"
+                elif _delta_h < 24:
+                    _prev_run_delta = f"{_delta_h:.1f}h ago"
+                else:
+                    _prev_run_delta = f"{int(_delta_h / 24)}d ago"
+    except Exception:
+        pass
+
     # ── Report-day KPIs — added 2026-04-30 per Michael's feedback that the daily
     # email was showing cumulative wins under a "Won" card, reading as "today".
     # Updated 2026-05-07 per Michael: 'yesterday kpi run' — at 10 AM ET fire
@@ -370,7 +393,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 {f'<div style="background:white;padding:10px 16px;border-radius:6px;display:inline-block;margin-bottom:12px">{B.logo_html(height=48)}</div>' if B.has_logo() else ''}
 <h1>{'' if B.has_logo() else '🚢 '}Hilmar Ingredients — Shipment Tracker</h1>
 <div class="subtitle">{_fmt_date(first_date)} – {_fmt_date(last_date)} • {total} Requests • {teu_requested} TEU Requested</div>
-<div class="stamp">Last updated: {now_et}</div>
+<div class="stamp">Generated: {now_et} &nbsp;·&nbsp; Previous pipeline run: {_prev_run_label}{f' ({_prev_run_delta})' if _prev_run_delta else ''}</div>
 <div class="tz-note">⏰ Lonny (Hilmar) = Pacific Time | OL-USA = Eastern Time | Turnaround = OL biz hours (8:30 AM – 5:30 PM ET, DST-safe)</div>
 </div>
 
@@ -527,14 +550,34 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         sum_teu = sum(m["teu_requested"] for m in ordered)
         unmapped = next((m for m in ordered if m["region"] == "Unmapped"), None)
 
+        # 2026-05-19 dashboard column-clarity overhaul (Task #12 — root of
+        # the "28.6%" misread Michael flagged). Every header now reads as
+        # a full label with a tooltip; period range stated on the table itself.
+        reqs_with_dates = [r for r in (data.get("requests") or []) if r.get("request_date")]
+        if reqs_with_dates:
+            _dates = sorted(r["request_date"] for r in reqs_with_dates)
+            _period = f"{_dates[0]} through {_dates[-1]}"
+        else:
+            _period = "(period unavailable)"
         html += '<div class="section"><h2>🌐 Volume by Trade Region</h2>\n'
+        html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
+                 f'Period: {_period} &nbsp;·&nbsp; '
+                 f'<span style="color:#64748b;font-weight:normal">All counts are number of REQUESTS unless suffixed "TEU".</span></p>\n')
         html += ('<p style="font-size:11px;color:#64748b;margin:0 0 6px">'
                  'Destinations grouped by trade region. Totals reconcile to summary KPIs. '
                  '"Unmapped" = destination not in region map; extend <code>core._TRADE_REGION_MAP</code>.'
                  '</p>\n')
         html += ('<table><tr>'
-                 '<th>Region</th><th>Reqs</th><th>Won</th><th>Q&amp;L</th><th>NQ</th>'
-                 '<th>Pend</th><th>TEU Req</th><th>TEU Won</th><th>Win %</th><th>Destinations</th></tr>\n')
+                 '<th title="Trade region (geographic bucket)">Region</th>'
+                 '<th title="Number of RFQ requests in this region">Requests (#)</th>'
+                 '<th title="Bookings won">Wins (#)</th>'
+                 '<th title="Quoted & Lost — OL responded with a rate but Lonny did not book">Q&amp;L (#)</th>'
+                 '<th title="Not Quoted — OL did not respond with a rate">NQ (#)</th>'
+                 '<th title="Awaiting OL response or Lonny send-signal">Pending (#)</th>'
+                 '<th title="TEU asked for across all requests in this region">TEU Requested</th>'
+                 '<th title="TEU actually won (booked)">TEU Won</th>'
+                 '<th title="Win Rate = Wins / (Wins + Q&amp;L + NQ). Excludes Pending.">Win Rate</th>'
+                 '<th title="Destinations in this region">Destinations</th></tr>\n')
         for m in ordered:
             dests = ", ".join(m["destinations"][:8]) + ("…" if len(m["destinations"]) > 8 else "")
             row_class = ' style="background:#fef2f2"' if m["region"] == "Unmapped" else ''
@@ -579,9 +622,19 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         key=lambda x: (x[1].get("teu_won", 0), x[1].get("wins", 0)),
         reverse=True,
     )[:10]
-    html += '<div class="section"><h2>🟢 Top Winning Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(by lane)</span></h2>\n'
+    html += '<div class="section"><h2>🟢 Top Winning Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Won)</span></h2>\n'
+    html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
+             f'Period: {_period} &nbsp;·&nbsp; '
+             f'<span style="color:#64748b;font-weight:normal">"Win Rate" is per-lane (Wins / decided requests), not a parser metric.</span></p>\n')
     if lane_wins:
-        html += '<table><tr><th>Lane</th><th>Won</th><th>Q&amp;L</th><th>NQ</th><th>TEU Won</th><th>Win %</th><th>Winning Carriers</th></tr>\n'
+        html += ('<table><tr>'
+                 '<th title="Origin → Destination">Lane</th>'
+                 '<th title="Bookings won on this lane">Wins (#)</th>'
+                 '<th title="Quoted & Lost — OL responded but Lonny did not book">Q&amp;L (#)</th>'
+                 '<th title="Not Quoted — OL did not respond with a rate">NQ (#)</th>'
+                 '<th title="Total TEU won on this lane">TEU Won</th>'
+                 '<th title="Win Rate on this lane = Wins / (Wins + Q&amp;L + NQ). Same lane may also appear in Losing Lanes if it has high volume on both sides.">Win Rate</th>'
+                 '<th title="Carriers that won bookings on this lane">Winning Carriers</th></tr>\n')
         max_teu_won = max((l.get("teu_won", 0) for _, l in lane_wins), default=1) or 1
         for lane, l in lane_wins:
             decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
@@ -608,9 +661,20 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         key=lambda x: x[1].get("teu_quoted_lost", 0) + x[1].get("teu_not_quoted", 0),
         reverse=True,
     )[:10]
-    html += '<div class="section"><h2>🔴 Top Losing Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(by lane, excludes NO_RESPONSE)</span></h2>\n'
+    html += '<div class="section"><h2>🔴 Top Losing Lanes — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(top 10 by TEU Lost, excludes NO_RESPONSE)</span></h2>\n'
+    html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
+             f'Period: {_period} &nbsp;·&nbsp; '
+             f'<span style="color:#64748b;font-weight:normal">A lane can appear in BOTH Winning Lanes (by absolute wins) and Losing Lanes (by absolute losses) when high-volume on both sides — e.g. Oakland → Yokohama at 28.6% Win Rate has 6 wins AND 15 losses.</span></p>\n')
     if lane_losses:
-        html += '<table><tr><th>Lane</th><th>Q&amp;L</th><th>NQ</th><th>Pending</th><th>Won</th><th>TEU Lost</th><th>Win %</th><th>Winning Carriers</th></tr>\n'
+        html += ('<table><tr>'
+                 '<th title="Origin → Destination">Lane</th>'
+                 '<th title="Quoted & Lost — OL responded but Lonny did not book">Q&amp;L (#)</th>'
+                 '<th title="Not Quoted — OL did not respond with a rate">NQ (#)</th>'
+                 '<th title="Awaiting OL response or Lonny send-signal">Pending (#)</th>'
+                 '<th title="Wins on the same lane (shown for context)">Wins (#)</th>'
+                 '<th title="Total TEU lost on this lane (Q&amp;L + NQ)">TEU Lost</th>'
+                 '<th title="Win Rate on this lane = Wins / (Wins + Q&amp;L + NQ). NOT a parser metric.">Win Rate</th>'
+                 '<th title="Carriers that won bookings on this lane (shown to identify who beat us)">Winning Carriers</th></tr>\n')
         max_teu_lost = max((l.get("teu_quoted_lost", 0) + l.get("teu_not_quoted", 0) for _, l in lane_losses), default=1) or 1
         for lane, l in lane_losses:
             decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
@@ -690,7 +754,22 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 
     # Overview table
     html += '<div class="section"><h2>Carrier Performance Overview — PTD <span style="font-size:11px;color:#64748b;font-weight:normal">(per carrier; same losses also shown by lane above)</span></h2>\n'
-    html += '<table><tr><th>Carrier</th><th>Quotes</th><th>Wins</th><th>Q&amp;L</th><th>Pending</th><th>Win %</th><th>TEU Won</th><th>TEU Lost</th><th>Lanes</th><th>Avg Biz-Hrs</th><th>Avg ETD Fit</th><th>Verdict</th></tr>\n'
+    html += (f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">'
+             f'Period: {_period} &nbsp;·&nbsp; '
+             f'<span style="color:#64748b;font-weight:normal">"Win Rate" is per-carrier (Wins / Quotes). NOT a parser metric.</span></p>\n')
+    html += ('<table><tr>'
+             '<th title="Steamship carrier">Carrier</th>'
+             '<th title="Number of times this carrier was quoted (= number of rate responses they gave)">Quotes (#)</th>'
+             '<th title="Bookings won">Wins (#)</th>'
+             '<th title="Quoted & Lost — gave a rate but lost the booking">Q&amp;L (#)</th>'
+             '<th title="Awaiting Lonny send-signal or operator decision">Pending (#)</th>'
+             '<th title="Win Rate = Wins / Quotes. Per-carrier, NOT a parser metric.">Win Rate</th>'
+             '<th title="TEU on bookings this carrier won">TEU Won</th>'
+             '<th title="TEU on bookings this carrier lost">TEU Lost</th>'
+             '<th title="Distinct lanes this carrier was quoted on">Lanes (#)</th>'
+             '<th title="Average response time during business hours (8:30 AM – 5:30 PM ET weekdays)">Avg Biz-Hrs</th>'
+             '<th title="Average days between Lonny\'s requested ETA and OL\'s offered ETA. Negative = earlier than needed (good).">Avg ETD Fit</th>'
+             '<th title="Quick read on this carrier\'s performance">Verdict</th></tr>\n')
     for c, cm in sorted(carriers.items(), key=lambda x: x[1].get("quotes", 0), reverse=True):
         wr = cm.get("win_rate", 0)
         ta = cm.get("avg_turnaround_biz_hours")
@@ -756,12 +835,25 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
         html += '<p class="dod-empty">Nothing pending right now.</p>'
     html += '</div></div>\n'
 
-    # TAB: RATE TRENDS
+    # TAB: RATE TRENDS — 2026-05-19 Task #6 column-clarity overhaul. Every
+    # number now reads as "$X per FEU (40' equivalent), Carrier X over Lane Y".
     html += '<div id="tab-trends" class="tab-content">\n'
-    html += f'<div class="callout amber"><p>Rate trend detection: Carrier x lane combos where rates moved >={cfg["rules"]["rate_trend_threshold_pct"]}% vs prior average.</p></div>\n'
+    html += (f'<div class="callout amber"><p>'
+             f'<strong>Rate trend detection:</strong> Carrier × lane combos where the latest quoted '
+             f'rate moved ≥{cfg["rules"]["rate_trend_threshold_pct"]}% vs the prior 14-day average. '
+             f'All rates are <strong>per FEU</strong> (40\' equivalent) for cross-lane comparison; '
+             f'20\' rates are doubled. "Latest" = most recent rate quote; "Prior Avg" = mean of '
+             f'all prior quotes from this carrier on this lane.</p></div>\n')
+    html += f'<p style="font-size:12px;color:#374151;margin:0 0 4px;font-weight:600">Period: {_period} &nbsp;·&nbsp; <span style="color:#64748b;font-weight:normal">Sorted by absolute % change. Up arrow = rate increased (worse for us); down arrow = rate decreased (better).</span></p>\n'
     html += '<div class="section"><h2>Biggest Rate Movers</h2>\n'
     if trends:
-        html += '<table><tr><th>Carrier</th><th>Lane</th><th>Latest</th><th>Prior Avg</th><th>Change</th><th>Sample</th></tr>\n'
+        html += ('<table><tr>'
+                 '<th title="Carrier whose rate moved">Carrier</th>'
+                 '<th title="Origin → Destination">Lane</th>'
+                 '<th title="Most recent rate quoted per FEU">Latest ($ / FEU)</th>'
+                 '<th title="Mean of all prior rates for this carrier × lane combo">Prior Avg ($ / FEU)</th>'
+                 '<th title="Percent change of Latest vs Prior Avg. Positive = rate increased.">Change</th>'
+                 '<th title="Last 5 quotes — date:rate format">Recent Series</th></tr>\n')
         for t in trends:
             pct = t["pct_change"]
             arrow = "up" if pct > 0 else ("down" if pct < 0 else "-")

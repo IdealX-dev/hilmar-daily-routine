@@ -174,6 +174,97 @@ Recommended Hilmar KPI dashboard layout:
 - `reconcile.drift_count` > 5 for 3 consecutive runs → WARN
 - `qc.errors` count > 0 grouped by check_name (any new error) → already covered by issue alerts
 
+## Sentry-driven QC actions — Task #11 (live 2026-05-19)
+
+A polling-based "webhook equivalent" — runs as a step in the daily
+pipeline, scans recent unresolved Sentry issues, and dispatches QC
+remediation actions per the lookup table in
+`scripts/qc_actions_from_sentry.py::ACTIONS`.
+
+### Why polling (not webhook)?
+
+Sentry webhooks need a publicly reachable HTTPS endpoint. The Cloud PC
+runs behind NAT with no static IP. For a once-a-day pipeline, polling
+the Sentry REST API at the start of the post-patch QC phase is
+functionally equivalent — issues created since the prior fire get
+picked up within 26h. Sub-daily action would need a Cloudflare Worker
+or Azure Function endpoint (a deploy task, not a code task).
+
+### Action types
+
+| Type | Behavior |
+|---|---|
+| `log_only` | Post a Sentry comment with the documented remediation. Leave open. |
+| `resolve_if_post_fix` | Resolve if HEAD commit timestamp > issue lastSeen (fix has shipped). |
+| `resolve_if_stale` | Resolve if no events in N hours (default 24h). |
+| `rerun_parser_acc` | Re-compute parser accuracy + post the result as a comment. |
+| `flag_for_operator` | Post a ⚠️ comment. Stay open until human action. |
+| `trigger_seer` | Ask Seer to attempt autofix (Seer must be enabled in Sentry UI). |
+
+### Mapped issues (initial set)
+
+| qc_check tag | Action | Comment |
+|---|---|---|
+| `QC-027` (carrier extraction) | resolve_if_post_fix | Carrier extraction restored — patch_carriers PASS 4 + body_parser. |
+| `QC-038` (reconcile drift) | flag_for_operator | Compare reports/reconcile-quote-tracker.json for the mismatched booking. |
+| `QC-039` (parser accuracy) | rerun_parser_acc | Re-compute. If still <95%, see docs/PARSER-GAPS.md. |
+| `QC-040` (cross-folder drift) | flag_for_operator | Align scripts/core.py and src/hilmar/core.py. |
+| `QC-041` (classifier form drift) | flag_for_operator | Mixed 3/4-state status rows. Backup + single-form pass. |
+| `QC-042` (data-URI guard) | resolve_if_post_fix | Branding.py uses cid: now. |
+| `QC-043` (Sentry self-improvement) | log_only | Meta-issue; informational. |
+| `ingest.non_hilmar_filtered` | log_only | Correct NUMIDIA rejection — suppress in Sentry filters if noisy. |
+
+Unmapped issues fall through to `log_only` with a generic comment.
+
+### Pipeline wiring
+
+Inserted in `run_pipeline.py` between `QC self-heal (post-patch)` and
+`Dashboard HTML`. The runner writes
+`reports/qc-actions-from-sentry.json` so the daily audit email's
+Sentry section can show a `🤖 Sentry-driven actions` summary
+(handled by `gen_improvements_report._sentry_section_inline`).
+
+### Knobs
+
+- `HILMAR_QC_ACTIONS_DRY_RUN=1` — log what WOULD be done; don't post
+  comments or resolve.
+- `HILMAR_QC_ACTIONS_LOOKBACK_H` — issue lookback window (default 26h
+  = one fire + 2h slack).
+
+### Adding a new action
+
+1. Add a row to `ACTIONS` keyed by `qc_check` tag (or `QC-NNN` if the
+   pattern is matched from issue title).
+2. Pick one of the existing dispatchers, or add a new one to
+   `_DISPATCH`.
+3. Include a `comment` so the Sentry comment thread documents what
+   happened and why.
+
+## LLM PDF rescue — image-only booking PDFs (live 2026-05-19)
+
+`scripts/pdf_llm_rescue.py` is the Claude-vision fallback for the ~3%
+of OL booking PDFs that pdfplumber can't read (image-only scans).
+
+When pdf_parser.parse_booking_pdf gets empty text, it calls Claude's
+document-input API (PDF as base64-encoded `document` content block)
+with a structured-extraction prompt. The model returns JSON for the
+same 17 fields the regex parser produces (mdolx_ref, booking_ref,
+carrier_quoted, vessel_voyage, pol, pod, etd_offered, eta_offered,
+erd, doc_cutoff, port_cutoff, ol_rate, container_count, containers,
+teu_requested, product, temperature, origin_free_time, dest_free_time,
+transshipment).
+
+**Caching**: SHA1 of PDF bytes → `data/pdf_llm_cache.json`. Same PDF
+never costs twice across runs.
+
+**Budget**: `HILMAR_PDF_LLM_BUDGET` (default 20 calls/run). Beyond
+that the rescue silent no-ops. At ~$0.001/PDF on Haiku, 20 calls
+is ~$0.02 per fire.
+
+**API key**: `secrets/anthropic-api-key.txt` (gitignored) or
+`ANTHROPIC_API_KEY` env. Without it, the rescue is a silent no-op —
+the pipeline still runs, image-only PDFs just stay unextracted.
+
 ## Cost ceiling
 
 Sentry free tier: 10K events/month. Hilmar produces:

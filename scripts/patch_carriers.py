@@ -484,6 +484,22 @@ def main():
         "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
         "container_size", "pol", "pod", "dthc",
         "origin_cutoff", "doc_cutoff", "port_cutoff",
+        # 2026-05-19 parser-gap fix (Michael "no field should be empty ever"):
+        # extend patch_carriers PASS 2 to backfill the newly-extracted fields
+        # too. Without this, the new fields would be set on ingest but
+        # NOT enriched from sibling bodies — patch_carriers is the safety
+        # net that fills from any body in the conversation's source_imids.
+        "erd", "rate_expiry", "origin_free_time", "dest_free_time",
+        "product", "temperature", "requested_dates", "etd_requested",
+        "lonny_notes",
+        # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM"):
+        # extract container_count + teu_requested + containers string from
+        # the booking PDF so standalone WIN rows whose subject didn't carry
+        # an MDOLX container marker can still populate volume fields.
+        # Only the PDF reliably encodes quantity × size on a 3-container
+        # booking like the NUMIDIA samples (subject only says "1X40'HC"
+        # for 3 containers — wrong count).
+        "container_count", "teu_requested", "containers", "booking_ref",
     )
 
     for r in requests:
@@ -520,7 +536,18 @@ def main():
         #   2. Cross-reference by MDOLX (PDFs are indexed by the MDOLX
         #      number found in their text — works even when the row's
         #      source_imid doesn't match the PDF's imid)
-        if _PDF_OK and not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate")):
+        #
+        # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM
+        # AND INCLUDE ATTACHMENTS"): the gate also fires when PDF-ONLY
+        # fields are missing — erd, doc_cutoff, port_cutoff, dest_free_time,
+        # product. These only appear in the booking PDF; the email body
+        # rate-table doesn't have them. So even when etd/vessel/rate are
+        # already populated from the rate response, we still parse the
+        # PDF for the PDF-only enrichment.
+        _PDF_ONLY_TARGETS = ("erd", "doc_cutoff", "port_cutoff", "dest_free_time", "product")
+        _need_pdf_only = any(not r.get(k) for k in _PDF_ONLY_TARGETS) and r.get("status") == "WIN"
+        if _PDF_OK and (not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
+                        or _need_pdf_only):
             pdf_path = None
             # Try direct imid match
             for imid in imids:

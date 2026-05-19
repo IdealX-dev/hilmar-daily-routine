@@ -19,7 +19,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import body_parser as BP  # noqa: E402
 import fetch_bodies as FB  # noqa: E402
 
-BODIES = ROOT / "scripts" / "stage_emails_bodies.jsonl"
+# 2026-05-19: stage files renamed .jsonl → .txt 2026-05-06 (so SharePoint
+# indexes them). Resolve to the .txt file when present, fall back to the
+# legacy .jsonl for back-compat with older boxes.
+def _resolve(p: Path) -> Path:
+    txt = p.with_suffix(".txt")
+    legacy = p.with_suffix(".jsonl")
+    return txt if txt.exists() or not legacy.exists() else legacy
+BODIES = _resolve(ROOT / "scripts" / "stage_emails_bodies")
 
 
 def main() -> int:

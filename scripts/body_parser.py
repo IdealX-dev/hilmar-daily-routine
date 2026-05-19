@@ -8,14 +8,26 @@ Ingest merges these values ON TOP OF the existing preview-based extractions.
 Parsers:
   parse_subject_lane(subject)       -> (origin, destination) for MDOLX subjects
   parse_eta_requested(text)         -> ISO date  (Lonny's target cutoff/ETD)
+  parse_etd_requested(text)         -> ISO date  (Lonny's departure-side ask)
   parse_eta_offered(text)           -> ISO date  (OL's quoted ETA)
   parse_etd_offered(text)           -> ISO date  (OL's quoted ETD/sailing)
   parse_vessel(text)                -> "Vessel Name / V.123N"
   parse_transshipment(text)         -> "SIN" | "Direct" | None
-  parse_rate_table(text)            -> dict (carrier/ol_rate/etd/vessel/rate_expiry/...)
+  parse_rate_table(text)            -> dict (carrier/ol_rate/etd/vessel/rate_expiry/
+                                              origin_free_time/dest_free_time/erd/...)
   parse_send_signal(text)           -> bool   (Lonny says "send"/"book")
   parse_origin_cutoff(text)         -> ISO date
+  parse_temperature(text)           -> "-2C" | "34F" | "Frozen" | None  (reefer rows)
+  parse_product(text)               -> "Lactose" | "Cheese" | ...      (commodity)
+  parse_requested_dates(text)       -> "Cutoff next week or the following" | None
+  parse_lonny_notes(text)           -> free-text Lonny-side notes
   html_to_text(html)                -> plaintext
+
+Parser-gap fixes 2026-05-19 (per Michael "no field should be empty ever"):
+  - parse_temperature / parse_product / parse_requested_dates / parse_etd_requested /
+    parse_lonny_notes — extract Lonny-side fields previously 100% empty
+  - parse_rate_table now also surfaces rate_expiry, origin_free_time, dest_free_time,
+    and erd (previously buried in the table cells dict but never returned)
 """
 from __future__ import annotations
 
@@ -397,6 +409,266 @@ def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_AN
 def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Parser-gap fixes (Michael 2026-05-19 — "no field should be empty ever")
+# ─────────────────────────────────────────────────────────────────────
+
+# parse_etd_requested — Lonny's departure-side ask. In shipping vernacular
+# "cutoff" usually means ETD (you need to load/ship by X), so we accept both
+# the explicit "departure" anchors AND the "cutoff" patterns. The eta_requested
+# parser stays narrowly anchored on "ETA X" / "arrive by X" so the two fields
+# split cleanly when Lonny actually writes both.
+_ETD_REQ_ANCHORS = re.compile(
+    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave)"
+    r"|target\s+etd|requested\s+etd|require(?:d)?\s+(?:etd|to\s+depart)"
+    r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|departure\s+by"
+    r"|prefer(?:red)?\s+etd|preferred\s+departure"
+    r"|etd\s+by|departure\s+date|sail\s+by"
+    # 2026-05-19 broadening: Lonny's "cutoff" phrasing usually means ETD.
+    # Catches "Cutoff week of 4/27" / "Cut off 5/1" / "cutoff by 5/15".
+    r"|cut[-\s]?off"
+    r"|week\s+of"
+    r"|by\s+EOD)",
+    re.IGNORECASE,
+)
+
+def parse_etd_requested(text):
+    """Lonny's departure-date ask. Captures explicit "ship by X" / "departure
+    X" patterns AND the more common "cutoff X" phrasing (which functionally
+    means ETD in shipping vernacular). Returns ISO date or None."""
+    return _find_date_near(text or "", _ETD_REQ_ANCHORS)
+
+
+# parse_temperature — reefer rows only. Recognises:
+#   "-2C" / "+2°C" / "0F" / "34 F" / "34F" / "set at 34F"
+#   "frozen" / "chilled" / "ambient" / "dry"
+# Numeric range: -40..+60 (covers all real reefer temps); reject outside to
+# avoid false-positives like "234 FCL" or "5 days free".
+_TEMP_NUMERIC_RX = re.compile(
+    r"(?:^|\s|\b)(?P<sign>[+\-])?\s*(?P<val>\d{1,2})\s*°?\s*(?P<unit>[CF])\b",
+)
+_TEMP_KEYWORD_RX = re.compile(
+    r"\b(frozen|chilled|ambient|dry\s+container|reefer|temp(?:erature)?\s*[:\-]?\s*\w+)\b",
+    re.IGNORECASE,
+)
+
+def parse_temperature(text):
+    """Extract reefer temperature from text. Returns canonical string like
+    '-2C' / '34F' / 'Frozen' / 'Chilled'. None when no signal found.
+
+    Numeric matches are bounded to -40..+60 to avoid false positives
+    (e.g. '234 FCL' would otherwise read as '34F')."""
+    if not text:
+        return None
+    # Numeric match first (more specific). Walk all matches and pick the
+    # first one that lands in a plausible reefer-temperature range.
+    for m in _TEMP_NUMERIC_RX.finditer(text):
+        try:
+            sign = m.group("sign") or ""
+            val = int(m.group("val"))
+            unit = m.group("unit").upper()
+        except (ValueError, TypeError):
+            continue
+        signed = -val if sign == "-" else val
+        # C: -40..+30, F: -40..+120. Outside ranges = false positive.
+        if unit == "C" and not (-40 <= signed <= 30):
+            continue
+        if unit == "F" and not (-40 <= signed <= 120):
+            continue
+        # Reject if preceded by a digit (e.g. "234F" → not 34F)
+        lead = text[max(0, m.start()-1):m.start()]
+        if lead and lead[-1].isdigit():
+            continue
+        # Reject if followed by certain words ("Free", "Combined", "FCL")
+        tail = text[m.end():m.end()+10]
+        if re.match(r"\s*(free|combined|fcl|fcls|consolidated)\b", tail, re.IGNORECASE):
+            continue
+        return f"{sign if sign == '-' else ''}{val}{unit}"
+    # Keyword match — only return canonical reefer-condition words
+    m = _TEMP_KEYWORD_RX.search(text)
+    if m:
+        kw = m.group(1).strip().lower()
+        if kw in ("frozen", "chilled", "ambient"):
+            return kw.capitalize()
+        if kw.startswith("dry"):
+            return "Dry"
+    return None
+
+
+# parse_product — commodity description. Recognises "Product Lactose" /
+# "product: cheese" / "Product is Skim Milk Powder" patterns + bare commodity
+# words from a known-Hilmar dictionary.
+_PRODUCT_LABELED_RX = re.compile(
+    r"\bproduct\s*(?:is\s+|:\s*|\s+-\s*|-\s*|\s+)([A-Za-z][A-Za-z0-9 &\-/]{2,40})",
+    re.IGNORECASE,
+)
+_PRODUCT_COMMODITY_DICT = (
+    # Order matters — longer multi-word names first so "Skim Milk Powder"
+    # wins before bare "Milk". Lowercase for the regex; canonicalize on output.
+    ("skim milk powder", "Skim Milk Powder"),
+    ("whole milk powder", "Whole Milk Powder"),
+    ("milk powder", "Milk Powder"),
+    ("anhydrous milk fat", "Anhydrous Milk Fat"),
+    ("milk protein isolate", "Milk Protein Isolate"),
+    ("milk protein concentrate", "Milk Protein Concentrate"),
+    ("whey protein concentrate", "Whey Protein Concentrate"),
+    ("whey protein isolate", "Whey Protein Isolate"),
+    ("lactose", "Lactose"),
+    ("cheese", "Cheese"),
+    ("whey", "Whey"),
+    ("casein", "Casein"),
+    ("butter", "Butter"),
+    ("amf", "AMF"),
+    ("wpc 80", "WPC 80"),
+    ("wpc", "WPC"),
+    ("wpi", "WPI"),
+    ("mpc", "MPC"),
+    ("mpi", "MPI"),
+    ("protein", "Protein"),
+)
+_TRAILING_TRIM_RX = re.compile(r"[,.\n;:!?]")
+
+def parse_product(text):
+    """Extract commodity from RFQ / booking body text.
+
+    Returns canonical product string ('Lactose', 'Skim Milk Powder', etc.)
+    or None when no recognisable commodity is mentioned.
+    """
+    if not text:
+        return None
+    # Labeled pattern first (highest confidence)
+    m = _PRODUCT_LABELED_RX.search(text)
+    if m:
+        raw = m.group(1).strip()
+        # Trim at first punctuation
+        cut = _TRAILING_TRIM_RX.search(raw)
+        if cut:
+            raw = raw[:cut.start()]
+        raw = raw.strip()
+        # Try to canonicalize via the dictionary
+        low = raw.lower()
+        for needle, canonical in _PRODUCT_COMMODITY_DICT:
+            if needle in low:
+                return canonical
+        # Otherwise return whatever Lonny wrote (capitalized) if it looks
+        # like a real noun phrase (2-30 chars, no digits-only).
+        if 2 <= len(raw) <= 30 and not raw.isdigit():
+            return raw.title()
+    # Dictionary-only fallback (no "Product" label but commodity word present)
+    low = text.lower()
+    for needle, canonical in _PRODUCT_COMMODITY_DICT:
+        # Word-boundary match so "lactose" doesn't pick up inside other tokens
+        if re.search(rf"\b{re.escape(needle)}\b", low):
+            return canonical
+    return None
+
+
+# parse_requested_dates — Lonny's free-text date / sailing-window ask. This
+# is NOT an ISO date (use parse_eta_requested / parse_etd_requested for that).
+# It captures the raw phrase ("Cutoff next week or the following") so the
+# operator sees Lonny's actual ask in the daily audit.
+_REQ_DATES_ANCHORS = (
+    "cutoff", "cut-off", "cut off",
+    "need ", "needs ", "needed ",
+    "require", "required ", "requires ",
+    "sailing", "sail by", "ship by", "load by", "loading by",
+    "target etd", "requested etd", "preferred etd", "prefer etd",
+    "week of", "departure", "by eod", "by end of",
+    "asap",
+)
+_REQ_DATES_RX = re.compile(
+    r"(?P<anchor>" + "|".join(re.escape(a) for a in _REQ_DATES_ANCHORS) + r")"
+    r"\s*(?P<tail>[A-Za-z0-9][^.\n;!?]{2,60})",
+    re.IGNORECASE,
+)
+_REQ_DATES_REJECT_TAIL = re.compile(
+    r"^\s*(?:date|cargo|day|hour|time)\s+(?:is|are)\s+",
+    re.IGNORECASE,
+)
+
+def parse_requested_dates(text):
+    """Extract Lonny's free-text date ask (departure window, cutoff phrase).
+
+    Returns the matched phrase (anchor + short context) or None.
+    """
+    if not text:
+        return None
+    m = _REQ_DATES_RX.search(text)
+    if not m:
+        return None
+    anchor = m.group("anchor")
+    tail = m.group("tail").strip()
+    if _REQ_DATES_REJECT_TAIL.match(tail):
+        return None
+    # Reconstruct the full phrase, cap at 80 chars
+    phrase = f"{anchor} {tail}".strip()
+    phrase = re.sub(r"\s+", " ", phrase)
+    return phrase[:80] if 3 <= len(phrase) <= 200 else None
+
+
+# parse_lonny_notes — free-form Lonny-side body text. The simplest correct
+# answer: take Lonny's body, strip the email signature + Outlook quote chain,
+# return what's left. Capped at 300 chars so the audit display stays sane.
+_SIGNATURE_TRIM_RX = re.compile(
+    r"(?im)^\s*(?:thanks?|regards|best(?:\s+regards)?|cheers|sincerely)[,.\s]*$",
+)
+_OUTLOOK_QUOTE_RX = re.compile(
+    r"(?im)^(?:from:|sent:|on .+ wrote:).*$",
+)
+_LONNY_NAME_RX = re.compile(
+    r"(?im)^(?:lonny\s+upfold|logistics\s+coordinator|hilmar\s+ingredients).*$",
+)
+
+def parse_lonny_notes(text):
+    """Extract Lonny-side notes from an RFQ body. Strips signature, Outlook
+    quote chains, and common boilerplate. Returns the trimmed body up to
+    300 chars, or None when no meaningful text remains."""
+    if not text:
+        return None
+    t = text
+    # Strip signature block onwards
+    sig_match = _SIGNATURE_TRIM_RX.search(t)
+    if sig_match:
+        t = t[:sig_match.start()]
+    # Strip Outlook reply-chain headers (everything from "From: ..." down)
+    quote_match = _OUTLOOK_QUOTE_RX.search(t)
+    if quote_match:
+        t = t[:quote_match.start()]
+    # Strip Lonny's title lines if present
+    t = _LONNY_NAME_RX.sub("", t)
+    # Collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+    # Reject if too short to be a useful note
+    if len(t) < 8:
+        return None
+    return t[:300]
+
+
+# parse_rate_expiry regex bank — used by parse_rate_expiry() above. Recognises
+# the common "valid through" / "expires" prose patterns in OL rate-response
+# bodies. Each pattern captures the date-or-window phrase as group(1).
+_RATE_EXPIRY_RXES = [
+    re.compile(
+        r"(?:rate\s+)?valid\s+(?:thru|through|until|to)\s+"
+        r"([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:rate\s+)?expir(?:ation|ing|es|y|e)\s*(?:on|at|:|-)?\s*"
+        r"([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"good\s+(?:thru|through|until)\s+([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"validity\s*[:\-]?\s*([A-Za-z0-9 \-/,]{3,30})",
+        re.IGNORECASE,
+    ),
+]
+
+
 # ---------- Vessel / transshipment ----------
 
 _VESSEL_RX = re.compile(
@@ -552,6 +824,11 @@ def parse_rate_table(text: str) -> dict:
     for k_in, k_out in (
         ("etd", "etd_offered"),
         ("eta", "eta_offered"),
+        # ERD column → both `erd` (schema field) and `origin_cutoff` (legacy
+        # alias used by ingest/patch_carriers). Same value, two names.
+        # Per docs/PARSER-GAPS.md 2026-05-19: `erd` was 155/155 empty because
+        # parse_rate_table only emitted origin_cutoff. Fixed by surfacing both.
+        ("erd", "erd"),
         ("erd", "origin_cutoff"),
         ("doc_cut", "doc_cutoff"),
         ("port_cut", "port_cutoff"),
@@ -562,4 +839,42 @@ def parse_rate_table(text: str) -> dict:
         v = cells.get(k)
         if v:
             out[k] = v
+    # 2026-05-19 parser-gap fix: surface free-time + rate-expiry from the
+    # table cells. Header normalization via _norm_header() lowercases +
+    # replaces non-alnum with underscores, so:
+    #   "ORIGIN FREE TIME"      -> "origin_free_time"
+    #   "DESTINATION FREE TIME" -> "destination_free_time"  (alias to dest_free_time)
+    if cells.get("origin_free_time"):
+        out["origin_free_time"] = cells["origin_free_time"]
+    if cells.get("destination_free_time"):
+        out["dest_free_time"] = cells["destination_free_time"]
+    elif cells.get("dest_free_time"):
+        out["dest_free_time"] = cells["dest_free_time"]
+    # rate_expiry — typically NOT in the table itself but in the body
+    # prose (e.g. "valid through 5/31", "rate expires 6/15"). Parsed
+    # separately by parse_rate_expiry which is called from fetch_bodies.
+    # Leave the table parser pure; expiry is composed at the call site.
     return out
+
+
+def parse_rate_expiry(text):
+    """Extract validity-window string from an OL rate response body.
+
+    Recognised shapes:
+      "valid through 5/31"
+      "valid until 6/15"
+      "rate expires 6/15/26"
+      "expiry: 31-May-26"
+      "good through May 31"
+
+    Returns the matched expiry phrase (raw, trimmed) or None.
+    """
+    if not text:
+        return None
+    for rx in _RATE_EXPIRY_RXES:
+        m = rx.search(text)
+        if m:
+            raw = m.group(1).strip(' ,.;:-')
+            if 3 <= len(raw) <= 40:
+                return raw
+    return None

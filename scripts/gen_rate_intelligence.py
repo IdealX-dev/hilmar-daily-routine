@@ -241,20 +241,32 @@ def render_section_html(analysis: dict) -> str:
 </p>
 """]
 
-    # 1. Lane Cheat Sheet
+    # 1. Lane Cheat Sheet — 2026-05-19 Task #8 (Michael "on price levels.. latest
+    # is the latest date per what container size? what is the median? is this
+    # per container and how are you coming up with this? clarity is needed").
+    # Added a precise note + tooltipped column headers explaining basis.
     parts.append("""
 <h3 style="margin:16px 0 6px;font-size:14px;color:#0f172a">📋 Lane Cheat Sheet (top 15 by volume)</h3>
+<p style="margin:0 0 6px;font-size:11px;color:#64748b;line-height:1.4">
+  <strong>How to read this table:</strong> rates are normalized to <strong>per FEU</strong>
+  (40' equivalent — 20' rates are doubled) so different container sizes compare
+  apples-to-apples. <strong>Won median</strong> = the median of every WINNING rate
+  for this lane (the middle value when sorted). <strong>Lost median</strong> = same
+  median across Q&amp;L rates. <strong>Gap</strong> = Lost − Won (positive = wins are
+  cheaper, which is the normal pattern). Sample includes all rates in the data
+  window; outliers don't skew median like they would mean.
+</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:18px">
 <tr style="background:#0a2350;color:white">
-  <th style="padding:6px;text-align:left">Lane</th>
-  <th style="padding:6px;text-align:center">Quotes</th>
-  <th style="padding:6px;text-align:center">Win %</th>
-  <th style="padding:6px;text-align:center">TEU Won</th>
-  <th style="padding:6px;text-align:left">Winning Carriers</th>
-  <th style="padding:6px;text-align:center">Won median</th>
-  <th style="padding:6px;text-align:center">Lost median</th>
-  <th style="padding:6px;text-align:center">Gap</th>
-  <th style="padding:6px;text-align:center">Transit (days)</th>
+  <th style="padding:6px;text-align:left" title="Origin → Destination">Lane</th>
+  <th style="padding:6px;text-align:center" title="Number of rate quotes received (any status)">Quotes (#)</th>
+  <th style="padding:6px;text-align:center" title="Wins / decided requests on this lane">Win Rate</th>
+  <th style="padding:6px;text-align:center" title="Total TEU won (booked) on this lane">TEU Won</th>
+  <th style="padding:6px;text-align:left" title="Carriers that won bookings on this lane">Winning Carriers</th>
+  <th style="padding:6px;text-align:center" title="Median of WIN rates on this lane, per FEU (40' equivalent)">Won median ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Median of Quoted &amp; Lost rates on this lane, per FEU. This is what we got beat by.">Lost median ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Lost median − Won median. Positive = wins are cheaper than losses (normal).">Gap ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Median transit time in days for completed bookings on this lane">Transit median (days)</th>
 </tr>""")
     # Compute max TEU for bar scaling
     max_teu = max((r["teu_won"] for r in cheat), default=1) or 1
@@ -343,18 +355,25 @@ def render_section_html(analysis: dict) -> str:
         parts.append('<p style="margin:0 0 12px;color:#64748b;font-size:12px;font-style:italic">No lanes with 3+ losing streak — all lanes either winning or mixed recently.</p>')
 
     # 4. Carrier Rate Trends — compact view
+    # 2026-05-19 Task #8: per-FEU normalization + median definition tooltips.
     parts.append("""
 <h3 style="margin:18px 0 6px;font-size:14px;color:#0f172a">📊 Carrier Rate + Transit Ranges (current)</h3>
+<p style="margin:0 0 6px;font-size:11px;color:#64748b;line-height:1.4">
+  Rate columns are <strong>per FEU</strong> (40' equivalent; 20' rates doubled).
+  <strong>Min / median / max</strong> are the lowest, middle, and highest rates
+  this carrier quoted in the data window — across all lanes. Use median (not
+  mean) because outlier reefer or back-haul rates would skew the average.
+</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px">
 <tr style="background:#0a2350;color:white">
-  <th style="padding:6px;text-align:left">Carrier</th>
-  <th style="padding:6px;text-align:center">Quotes</th>
-  <th style="padding:6px;text-align:center">Win %</th>
-  <th style="padding:6px;text-align:center">Lanes</th>
-  <th style="padding:6px;text-align:center">Rate min</th>
-  <th style="padding:6px;text-align:center">Rate median</th>
-  <th style="padding:6px;text-align:center">Rate max</th>
-  <th style="padding:6px;text-align:center">Transit median</th>
+  <th style="padding:6px;text-align:left" title="Steamship carrier">Carrier</th>
+  <th style="padding:6px;text-align:center" title="Number of rate quotes from this carrier in the data window">Quotes (#)</th>
+  <th style="padding:6px;text-align:center" title="Wins / Quotes for this carrier">Win Rate</th>
+  <th style="padding:6px;text-align:center" title="Distinct lanes this carrier quoted on">Lanes (#)</th>
+  <th style="padding:6px;text-align:center" title="Lowest rate this carrier quoted, per FEU">Rate min ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Median of all rates this carrier quoted, per FEU">Rate median ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Highest rate this carrier quoted, per FEU">Rate max ($/FEU)</th>
+  <th style="padding:6px;text-align:center" title="Median transit time (days) for completed bookings with this carrier">Transit median (days)</th>
 </tr>""")
     max_q = max((t["quotes"] for t in trends.values()), default=1)
     for c, t in sorted(trends.items(), key=lambda x: -x[1]["quotes"]):

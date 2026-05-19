@@ -296,7 +296,7 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             "has_send": False,
             "mdolx_ref": None,
             "mdolx_refs_all": [],              # multiple MDOLX possible per request
-            "etd_requested": None,
+            "etd_requested": parsed.get("etd_requested"),  # 2026-05-19 parser-gap fix
             "etd_offered": None,
             "etd_fit_days": None,
             "eta_requested": eta_requested,
@@ -309,6 +309,13 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             "status_history": [],
             "source_imids": [row.get("imid")],
             "source_ids": [row.get("id")],
+            # 2026-05-19 parser-gap fix (Michael "no field should be empty ever") —
+            # Lonny-side fields extracted from RFQ body. Some are None when Lonny's
+            # RFQ template doesn't include them (e.g. temperature only on reefer).
+            "product":         parsed.get("product"),
+            "temperature":     parsed.get("temperature"),
+            "requested_dates": parsed.get("requested_dates"),
+            "lonny_notes":     parsed.get("lonny_notes"),
         })
     return _merge_thread_dupes(requests)
 
@@ -455,6 +462,11 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
                 "source_imid": row.get("imid"),
                 "source_id": row.get("id"),
                 "body_signer": body_parsed.get("ol_responder_signer"),
+                # 2026-05-19 parser-gap fix: carry forward the full parsed
+                # dict so link_bookings_to_requests + standalones can populate
+                # erd / origin_free_time / dest_free_time / rate_expiry /
+                # product / temperature from the booking confirmation body.
+                "body_parsed": body_parsed,
             }
 
     return bookings
@@ -548,6 +560,23 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             # the request didn't already have one, propagate it.
             if bk.get("body_signer") and not best.get("ol_responder_signer"):
                 best["ol_responder_signer"] = bk.get("body_signer")
+            # 2026-05-19 parser-gap fix: booking confirmations carry ERD +
+            # free-time + rate-expiry + product + temperature. Only set when
+            # the request side didn't already have these from the rate
+            # response (which is more authoritative for rate-side fields).
+            bp = bk.get("body_parsed") or {}
+            if not best.get("erd") and bp.get("erd"):
+                best["erd"] = bp["erd"]
+            if not best.get("origin_free_time") and bp.get("origin_free_time"):
+                best["origin_free_time"] = bp["origin_free_time"]
+            if not best.get("dest_free_time") and bp.get("dest_free_time"):
+                best["dest_free_time"] = bp["dest_free_time"]
+            if not best.get("rate_expiry") and bp.get("rate_expiry"):
+                best["rate_expiry"] = bp["rate_expiry"]
+            if not best.get("product") and bp.get("product"):
+                best["product"] = bp["product"]
+            if not best.get("temperature") and bp.get("temperature"):
+                best["temperature"] = bp["temperature"]
 
             # ONLY set response fields if we never captured a quote.
             # Preserve rate-response timestamp (true OL responsiveness) when present.
@@ -624,6 +653,10 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         # cargo + 0 TEU columns because we never parsed the subject.
         s_containers = BP.parse_subject_containers(raw_subj)
         s_count, s_teu = C.parse_teu(s_containers) if s_containers else (0, 0)
+        # 2026-05-19 parser-gap fix: pull body-parsed fields from the booking
+        # confirmation so standalone WINs surface erd / free_time / product /
+        # temperature instead of leaving them empty.
+        s_bp = bk.get("body_parsed") or {}
         standalones.append({
             "request_id": f"stand_{mdolx}",
             "status": "WIN",
@@ -654,6 +687,14 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             "status_history": [],
             "source_imids": [bk.get("source_imid")],
             "source_ids": [bk.get("source_id")],
+            # 2026-05-19 parser-gap fix: surface booking-body fields on the
+            # standalone WIN row so the audit/dashboard show real values.
+            "erd":              s_bp.get("erd"),
+            "origin_free_time": s_bp.get("origin_free_time"),
+            "dest_free_time":   s_bp.get("dest_free_time"),
+            "rate_expiry":      s_bp.get("rate_expiry"),
+            "product":          s_bp.get("product"),
+            "temperature":      s_bp.get("temperature"),
         })
     return requests, standalones
 
@@ -741,7 +782,15 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
         best["eta_offered"] = rt.get("eta") or parsed.get("eta_offered")
         best["vessel_voyage"] = rt.get("vessel_voyage") or parsed.get("vessel_voyage")
         best["transshipment"] = rt.get("transshipment") or parsed.get("transshipment")
-        best["rate_expiry"] = rt.get("rate_expiry")
+        # 2026-05-19 parser-gap fix: pull the 4 newly-exposed fields from
+        # the rate-table OR parsed.* (parsed bubbles them up in fetch_bodies).
+        best["rate_expiry"]       = rt.get("rate_expiry") or parsed.get("rate_expiry")
+        best["origin_free_time"]  = rt.get("origin_free_time") or parsed.get("origin_free_time")
+        best["dest_free_time"]    = rt.get("dest_free_time") or parsed.get("dest_free_time")
+        # ERD goes to both schema names (erd is canonical; origin_cutoff is legacy alias)
+        erd_val = rt.get("erd") or parsed.get("erd")
+        if erd_val:
+            best["erd"] = erd_val
         best["detention_free"] = rt.get("detention_free")
         best["demurrage_free"] = rt.get("demurrage_free")
         # OL signer: only override if the body produced a real name. parse_signer
