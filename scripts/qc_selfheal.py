@@ -1338,6 +1338,46 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-046: Pending Hilmar timestamps populating "
                        f"({_dash_cells} dash cells, real timestamps: {_real_ts})")
 
+        # QC-048: TURNAROUND SANITY CHECK — flags rows with implausible
+        # turnaround_biz_hours. Real OL rate-response turnaround is sub-day
+        # biz-hours (usually <4h). Values >40h biz-hours indicate the
+        # matcher used a stale timestamp source (e.g. measured Lonny RFQ →
+        # Booking Confirmation instead of Lonny RFQ → OL rate response).
+        # Caught 2026-05-19 PM: 3 WIN rows at 85.78h / 73.34h / 55.58h were
+        # all booking-link path with no prior rate response → biz_hours
+        # came from booking timestamp. Fix landed in ingest.py
+        # link_bookings_to_requests; this QC keeps it honest.
+        try:
+            _data_path = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
+            if _data_path.exists():
+                import json as _json_ta
+                _d = _json_ta.loads(_data_path.read_text(encoding="utf-8"))
+                _high_ta = []
+                for _r in (_d.get("requests") or []):
+                    _ta = _r.get("turnaround_biz_hours")
+                    if isinstance(_ta, (int, float)) and _ta > 40:
+                        _high_ta.append({
+                            "request_id": (_r.get("request_id") or "")[:30],
+                            "lane": _r.get("lane"),
+                            "biz_hours": round(_ta, 2),
+                            "status": _r.get("status"),
+                            "has_response_ts": bool(_r.get("response_timestamp")),
+                            "has_booking_ts": bool(_r.get("booking_timestamp")),
+                        })
+                if _high_ta:
+                    log.error(
+                        f"QC-048: {len(_high_ta)} row(s) have turnaround_biz_hours > 40h — "
+                        "implausible OL response time. Likely cause: booking timestamp "
+                        "leaked into turnaround calc (link_bookings_to_requests should "
+                        "leave turnaround None when no prior rate response). Sample: "
+                        + ", ".join(f"{x['request_id']} {x['lane']} {x['biz_hours']}h ({x['status']})"
+                                    for x in _high_ta[:3])
+                    )
+                else:
+                    log.ok("QC-048: all turnaround_biz_hours values plausible (≤40h)")
+        except Exception as _e:
+            log.warn(f"QC-048: check failed with exception: {_e}")
+
         # QC-047: WIN RATE FORMULA CONSISTENCY — the global Win Rate KPI tile
         # and the per-lane Win Rate cells must use the same formula
         # (Wins / (Wins + Q&L)). The explainer banner below the KPI grid

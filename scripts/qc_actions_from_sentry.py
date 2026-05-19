@@ -140,6 +140,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "KPI tile Win Rate % and explainer banner % disagree by >0.2pp. Means somebody changed one formula but not the other. Both should be Wins / (Wins + Q&L). Seer: locate the divergent computation and align.",
         "auto_resolve_safe": False,
     },
+    "QC-048": {
+        "name": "Implausible turnaround (>40h biz-hours)",
+        "action": "trigger_seer",
+        "comment": "Rows have turnaround_biz_hours > 40h. Real OL response time is sub-day. Likely cause: link_bookings_to_requests leaked booking timestamp into turnaround calc when no prior rate response existed. Seer: confirm scripts/ingest.py link_bookings_to_requests leaves turnaround_biz_hours None when bk.get('sent') is the only response signal.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",

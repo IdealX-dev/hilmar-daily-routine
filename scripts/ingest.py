@@ -580,16 +580,37 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
 
             # ONLY set response fields if we never captured a quote.
             # Preserve rate-response timestamp (true OL responsiveness) when present.
+            #
+            # 2026-05-19 PM bug fix (Michael "on turnaround report.. i think
+            # you have errors.. as no way is something 171 hours"): when a
+            # booking confirmation arrives WITHOUT a prior rate-response
+            # email, the old code set response_timestamp = booking_timestamp
+            # AND computed turnaround_biz_hours from it. That measured
+            # "Lonny RFQ → Booking Confirmation" (the FULL negotiation
+            # cycle, often 7-11 days) instead of "Lonny RFQ → OL rate
+            # response" (the chase metric, should be hours). Visible as
+            # the 85.78h / 73.34h / 55.58h rows on Apr 17 bookings.
+            #
+            # Fix: in the no-prior-quote branch, record `booking_timestamp`
+            # (separate schema field) for chronology but LEAVE turnaround
+            # fields unset. A row with `turnaround_biz_hours = None` means
+            # "no rate-response timing data" — which is the truth, not an
+            # 80h "response time".
             if not best.get("quoted") or not best.get("response_timestamp"):
                 best["quoted"] = True
-                best["response_timestamp"] = bk.get("sent")
+                # Use booking_timestamp (separate field) to preserve chronology;
+                # do NOT pollute response_timestamp with the booking time.
+                # response_timestamp stays None to signal "we never saw a
+                # rate response — booking arrived directly".
+                best["booking_timestamp"] = bk.get("sent")
+                # turnaround_biz_hours / turnaround_hours STAY None. They
+                # represent "Lonny RFQ → OL rate response" which never
+                # happened in this code path.
                 resp_dt = C.parse_iso(bk.get("sent"))
-                req_dt = C.parse_iso(best.get("request_timestamp"))
-                if resp_dt:
+                if resp_dt and not best.get("olusa_time_et"):
+                    # olusa_time_et is just the display label; safe to set
+                    # so the dashboard's "OL Response" column isn't blank.
                     best["olusa_time_et"] = C.fmt_et(resp_dt)
-                    if req_dt:
-                        best["turnaround_biz_hours"] = C.biz_hours_between(req_dt, resp_dt)
-                        best["turnaround_hours"] = C.clock_hours_between(req_dt, resp_dt)
 
             prior_detail = best.get("reason_detail") or ""
             prior_tag = prior_detail.split(" | ")[0] if "Rate responded" in prior_detail else ""
@@ -746,25 +767,68 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
                 if dest_canon in k or k in dest_canon:
                     candidates.extend(rs)
 
-        # Match the latest Lonny outbound request before this response, within 14d,
-        # that has not already been matched to a rate-response. Window widened from
-        # 10d to 14d 2026-04-30 — caught Apr 28 Manila/Xingang send-replies whose
-        # matching rate response was 12 days prior.
+        # 2026-05-19 PM (Michael "you have to check each email header as
+        # often lonny sends same rate requests/routes for the same moves he
+        # has regularly"): PREFER conversation_id match. Outlook's
+        # conversationId is stable across an entire email thread — the rate
+        # response is in the SAME thread as the RFQ Lonny sent. When both
+        # sides have a conversation_id, an exact match is the strongest
+        # signal we have for "this response belongs to THIS specific RFQ"
+        # (handles the case where Lonny sent 3 RFQs for Oakland → Yokohama
+        # in a week and OL responded to the most recent one — pure
+        # lane+time matching could mis-attribute).
+        #
+        # Fall back to lane + time-window matching ONLY when:
+        #   - rate response has no conversation_id (older fetched bodies)
+        #   - no Lonny outbound row in this conversation has a match
+        # The fallback uses the same "latest unmatched, within 14d" rule
+        # as before.
+        rr_conv = rr.get("conversation_id") or ""
         best = None
-        for r in candidates:
-            if r.get("quoted"):
-                continue  # one quote per request — earliest-first sort protects this
-            req_dt = C.parse_iso(r.get("request_timestamp"))
-            if not req_dt or req_dt > sent_dt:
-                continue
-            if (sent_dt - req_dt) > timedelta(days=14):
-                continue
-            if not best or (C.parse_iso(r["request_timestamp"]) >
-                            C.parse_iso(best["request_timestamp"])):
-                best = r
+        best_via = "lane+time"
+        if rr_conv:
+            # IMPORTANT (2026-05-19 PM 2nd round): in the conversation_id
+            # branch pick the LATEST unmatched RFQ in the thread that's
+            # BEFORE the response. Lonny re-uses Outlook threads for
+            # recurring rate requests (caught when QC-048 still flagged
+            # 27 rows post-fix — diagnostic showed rate responses being
+            # matched to the FIRST RFQ in a long-running thread, ignoring
+            # newer RFQs Lonny sent in the same thread). OL replies to
+            # the most recent ask in the conversation, not the original.
+            # Constrained to BEFORE the response timestamp so we don't
+            # match to a future RFQ.
+            for r in candidates:
+                if r.get("quoted"):
+                    continue
+                if r.get("conversation_id") != rr_conv:
+                    continue
+                req_dt = C.parse_iso(r.get("request_timestamp"))
+                if not req_dt or req_dt > sent_dt:
+                    continue
+                if not best or (C.parse_iso(r.get("request_timestamp") or "") >
+                                C.parse_iso(best.get("request_timestamp") or "")):
+                    best = r
+                    best_via = "conversation_id"
+        if not best:
+            # Fallback: latest unmatched RFQ before this response, within 14d.
+            # (Original logic — window widened to 14d 2026-04-30 for Apr 28
+            # Manila/Xingang send-replies whose matching rate response was
+            # 12 days prior.)
+            for r in candidates:
+                if r.get("quoted"):
+                    continue
+                req_dt = C.parse_iso(r.get("request_timestamp"))
+                if not req_dt or req_dt > sent_dt:
+                    continue
+                if (sent_dt - req_dt) > timedelta(days=14):
+                    continue
+                if not best or (C.parse_iso(r["request_timestamp"]) >
+                                C.parse_iso(best["request_timestamp"])):
+                    best = r
 
         if not best:
             continue
+        best["_match_via"] = best_via  # for QC + audit observability
 
         # Prefer body-parsed rate_table (populated when body was fetched);
         # fall back to legacy rr.rate_table for backward-compat.
