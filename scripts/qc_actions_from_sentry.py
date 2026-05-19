@@ -127,6 +127,19 @@ DEFAULT_ACTION = {
     "auto_resolve_safe": False,
 }
 
+# 2026-05-19 PM (Michael "assume you are now locked with sentry for auto
+# fix and seer"): for error-level issues with no documented QC mapping,
+# upgrade the default from log_only → trigger_seer so Seer attempts an
+# autofix on every unmapped error. The Seer trigger is a no-op when Seer
+# isn't enabled (sentry_seer.SentrySeer.enabled == False) so this stays
+# safe in non-Seer projects.
+ERROR_LEVEL_DEFAULT = {
+    "name": "Unmapped error — Seer triage",
+    "action": "trigger_seer",
+    "comment": "Unmapped error issue. Asking Seer to diagnose + propose autofix. Add to qc_actions_from_sentry.ACTIONS once remediation pattern is known.",
+    "auto_resolve_safe": False,
+}
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers
@@ -177,6 +190,11 @@ def _action_lookup(issue: dict) -> tuple[str, dict]:
                 qc_check = m.group(1)
     if qc_check and qc_check in ACTIONS:
         return qc_check, ACTIONS[qc_check]
+    # Unmapped: pick the right default based on issue level. Errors get
+    # Seer triage; warnings/info get log_only.
+    level = (issue.get("level") or "").lower()
+    if level in ("error", "fatal"):
+        return "unmapped-error", ERROR_LEVEL_DEFAULT
     return "unmapped", DEFAULT_ACTION
 
 

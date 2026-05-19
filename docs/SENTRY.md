@@ -174,6 +174,55 @@ Recommended Hilmar KPI dashboard layout:
 - `reconcile.drift_count` > 5 for 3 consecutive runs → WARN
 - `qc.errors` count > 0 grouped by check_name (any new error) → already covered by issue alerts
 
+## Sentry Seer — live 2026-05-19 PM
+
+Per Michael: "assume you are now locked with sentry for auto fix and
+seer." Seer is enabled in the hilmar-daily-tracker project; the
+pipeline now uses it actively.
+
+### Three integration points
+
+1. **Auto-trigger on recent errors.** `scripts/sentry_seer.py trigger
+   --apply` runs at the end of every daily fire (between
+   `qc_actions_from_sentry` and `Dashboard HTML`). For each error-level
+   issue that fired in the last 2 hours and doesn't already have an
+   in-progress or completed autofix, it asks Seer to attempt one. Seer
+   chews on it asynchronously; the next-day audit shows the result.
+
+2. **Audit-email enrichment.** `gen_improvements_report._sentry_section_inline`
+   calls `sentry_seer.enrich_audit_with_seer` on the issue list before
+   rendering. Each issue row now shows two new lines beneath the title:
+     - `🤖 Seer: <plain-English diagnosis>` (Issue Summary API)
+     - `🛠️ Autofix: <STATUS>` colored by state, with optional confidence %
+       and PR link when Seer proposed code
+   Statuses: COMPLETED (green), PROCESSING (blue), ERROR (red),
+   NEED_MORE_INFORMATION (amber).
+
+3. **Default for unmapped errors.** `qc_actions_from_sentry.ACTIONS`
+   table maps known QC checks to specific remediation actions. For
+   issues that DON'T match any mapped key AND have `level=error|fatal`,
+   the default action is now `trigger_seer` (was `log_only`). Seer
+   becomes the safety net for novel error patterns we haven't authored
+   a remediation playbook for yet. Warning/info-level unmapped issues
+   stay at `log_only` to avoid noisy Seer triggers on transient signals.
+
+### Cost model
+
+Seer is included in the paid Sentry Team tier we already use. Per-issue
+autofix invocations are metered against the Seer credit pool (separate
+from event volume). At current rate (~1 error issue/week worst case),
+well within the included allowance.
+
+### Disabling / dialing down
+
+- Remove the `sentry_seer.py trigger --apply` step from `run_pipeline.STEPS`
+  to stop auto-triggering. Audit-email enrichment + Sentry-driven QC
+  actions still work; only the proactive trigger goes away.
+- Set `qc_actions_from_sentry.ERROR_LEVEL_DEFAULT["action"]` back to
+  `"log_only"` to undo the unmapped-error → Seer default.
+- Or disable Seer in the Sentry UI; every integration point silent
+  no-ops when `SentrySeer.enabled == False`.
+
 ## Sentry-driven QC actions — Task #11 (live 2026-05-19)
 
 A polling-based "webhook equivalent" — runs as a step in the daily

@@ -530,6 +530,17 @@ def _sentry_section_inline():
         if not api.enabled:
             return ""
         s = get_issue_summary(api, period="24h")
+        # 2026-05-19 PM (Michael "assume you are now locked with sentry for
+        # auto fix and seer"): enrich each issue with Seer's diagnosis +
+        # autofix state so the audit row shows what Seer is doing. Silent
+        # no-op when Seer isn't enabled (returns issues unchanged).
+        try:
+            from sentry_seer import enrich_audit_with_seer
+            for k in ("new_in_period", "recurring", "resolved_in_period"):
+                if s.get(k):
+                    s[k] = enrich_audit_with_seer(s[k], max_issues=5)
+        except Exception:
+            pass  # Seer enrichment is best-effort; never breaks the audit
     except Exception:
         return ""
 
@@ -597,11 +608,39 @@ def _sentry_section_inline():
         count = issue.get("count", "?")
         last_seen = (issue.get("lastSeen") or "")[:16].replace("T", " ")
         permalink = issue.get("permalink") or ""
+        # 2026-05-19 PM Seer enrichment: when enrich_audit_with_seer
+        # attached seer_summary / seer_autofix, render them under the
+        # issue title so the operator sees Seer's diagnosis + autofix
+        # status inline. Status is colored by state.
+        seer_html = ""
+        seer_sum = issue.get("seer_summary") or ""
+        if seer_sum:
+            seer_html += f'<div style="font-size:11px;color:#475569;margin-top:3px;font-style:italic">🤖 Seer: {seer_sum[:200]}</div>'
+        seer_af = issue.get("seer_autofix") or {}
+        if seer_af.get("status"):
+            status = seer_af["status"]
+            colors = {
+                "COMPLETED":  "#16a34a",
+                "PROCESSING": "#3b82f6",
+                "ERROR":      "#dc2626",
+                "NEED_MORE_INFORMATION": "#d97706",
+            }
+            color = colors.get(status, "#64748b")
+            pr = seer_af.get("pr_url") or ""
+            pr_link = f' · <a href="{pr}" style="color:{color}">PR</a>' if pr else ""
+            conf = seer_af.get("confidence")
+            conf_s = f" · conf {conf:.0%}" if isinstance(conf, (int, float)) else ""
+            seer_html += (
+                f'<div style="font-size:11px;margin-top:2px">'
+                f'<span style="color:{color};font-weight:600">🛠️ Autofix: {status}</span>{conf_s}{pr_link}'
+                f'</div>'
+            )
         return (
-            f'<tr><td style="padding:4px 8px;font-family:monospace;font-size:11px;color:#0f172a">{marker} {short_id}</td>'
-            f'<td style="padding:4px 8px;font-size:12px"><a href="{permalink}" style="color:#1a3d9c">{title}</a></td>'
-            f'<td style="padding:4px 8px;text-align:center;font-size:12px;color:#475569">{count}x</td>'
-            f'<td style="padding:4px 8px;font-size:11px;color:#64748b">{last_seen}</td></tr>'
+            f'<tr><td style="padding:4px 8px;font-family:monospace;font-size:11px;color:#0f172a;vertical-align:top">{marker} {short_id}</td>'
+            f'<td style="padding:4px 8px;font-size:12px;vertical-align:top">'
+            f'<a href="{permalink}" style="color:#1a3d9c">{title}</a>{seer_html}</td>'
+            f'<td style="padding:4px 8px;text-align:center;font-size:12px;color:#475569;vertical-align:top">{count}x</td>'
+            f'<td style="padding:4px 8px;font-size:11px;color:#64748b;vertical-align:top">{last_seen}</td></tr>'
         )
 
     rows = []

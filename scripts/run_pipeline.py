@@ -67,6 +67,14 @@ STEPS = [
     # commit; flags others for operator. --apply needed to actually post
     # comments + resolve (dry-run is default for safety).
     ("Sentry-driven QC actions",  [PY, str(SCRIPTS / "qc_actions_from_sentry.py"), "--apply"]),
+    # 2026-05-19 PM (Michael "assume you are now locked with sentry for
+    # auto fix and seer"): Seer is enabled in the hilmar-daily-tracker
+    # Sentry project. Trigger Seer autofix on any error-level issue that
+    # fired in the last 2 hours — Seer chews on it asynchronously and the
+    # next audit email shows the diagnosis + proposed fix. --apply commits
+    # real triggers; dry-run is default in the CLI but the pipeline step
+    # opts in.
+    ("Sentry Seer autofix trigger", [PY, str(SCRIPTS / "sentry_seer.py"), "trigger", "--apply"]),
     ("Dashboard HTML",           [PY, str(SCRIPTS / "gen_dashboard.py")]),
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),
