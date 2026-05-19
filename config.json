@@ -55,12 +55,9 @@
       "reports/hilmar-report.pdf"
     ]
   },
-  "_iteration_mode_note": "Per Michael 2026-05-19 PM: 'keep testing but only send to me, not everyone else for now'. full_list locked to michael.deitchman@idealx.us only during formatting iteration. ORIGINAL 10-recipient distribution preserved in full_list_archived below — restore to full_list when Michael clears the iteration lock. QC-022 honors this lock via the _iteration_mode_note key being present.",
+  "_distribution_history": "Per Michael 2026-05-19 PM 'turn it live for everyone': iteration lock cleared, full 10-recipient distribution restored. Iteration lock had been in place since 2026-05-19 ('keep testing but only send to me, not everyone else for now') for the v1-v11 email format iteration cycle.",
   "distribution": {
     "full_list": [
-      "michael.deitchman@idealx.us"
-    ],
-    "full_list_archived": [
       "michael.deitchman@ol-usa.com",
       "michael.deitchman@idealx.us",
       "alan.baer@ol-usa.com",
