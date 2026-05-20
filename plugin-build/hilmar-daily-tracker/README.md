@@ -2,9 +2,9 @@
 
 Bundles the **Hilmar Daily Shipment Tracker** skill so Claude can understand,
 run, check, and report on the project. The skill is also committed to the repo
-at `.claude/skills/` — that is what makes it available on every device (other
-laptops and the iPhone Claude app), the same way the `ol-usa-quote-tracker`
-skill works for the rate checker.
+at `.claude/skills/`, so any Claude Code session that opens `hilmar-daily-routine`
+— on a laptop, on the web, or in the iPhone Claude app — discovers it
+automatically. That is what makes it available on every device.
 
 ## What it does
 
