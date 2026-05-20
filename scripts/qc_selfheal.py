@@ -403,15 +403,37 @@ def phase_3_entries(log: Log, data: dict):
     before = len(data["requests"])
     cleaned = []
     removed_misclassified = []
+    removed_numidia = []
     for r in data["requests"]:
         rid = r.get("request_id", "") or ""
         subj_up = (r.get("subject") or "").upper()
+        # Numidia exclusion (Michael 2026-05-20): any row whose subject
+        # mentions NUMIDIA is a move where Hilmar is the supplier, not our
+        # client — drop it regardless of the stand_ prefix or HILMAR also
+        # being present. ingest.py now blocks these at the source (subject
+        # + body); this is the backstop that purges rows already in the file.
+        if "NUMIDIA" in subj_up:
+            removed_numidia.append(rid or (r.get("subject") or "")[:40])
+            continue
         if rid.startswith("stand_") and "HILMAR" not in subj_up:
             removed_misclassified.append(rid)
             continue
         cleaned.append(r)
-    if removed_misclassified:
+    if removed_misclassified or removed_numidia:
         data["requests"] = cleaned
+    if removed_numidia:
+        log.fix(
+            f"PHASE 3 cleanup: removed {len(removed_numidia)} NUMIDIA row(s) "
+            f"(Hilmar is supplier, not client): "
+            f"{', '.join(removed_numidia[:5])}"
+            + (f" +{len(removed_numidia)-5} more" if len(removed_numidia) > 5 else "")
+        )
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment("qc.numidia_rows_removed", len(removed_numidia))
+            except Exception:
+                pass
+    if removed_misclassified:
         log.fix(
             f"PHASE 3 cleanup: removed {len(removed_misclassified)} misclassified "
             f"stand_* WIN(s) (subject lacks HILMAR): "

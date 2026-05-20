@@ -190,6 +190,27 @@ def is_operational_subject(subject: str | None) -> bool:
     return any(h in up for h in _OPERATIONAL_SUBJECT_HINTS)
 
 
+# Per Michael 2026-05-20: a booking or RFQ whose email mentions "Numidia"
+# (subject OR body) is a move where Hilmar is the SUPPLIER / origin shipper —
+# NOT our client. It must not count as a Hilmar move. The earlier filter only
+# dropped NUMIDIA-*only* subjects; a subject carrying BOTH tokens — e.g.
+# "MDOLX260558_NEW BOOKING CONFIRMATION// NUMIDIA 2X40'RF ... HILMAR -> ACAJUTLA"
+# — slipped through and became a standalone WIN. This drops the whole row.
+_NUMIDIA_RX = re.compile(r"numidia", re.IGNORECASE)
+
+
+def row_mentions_numidia(row: dict) -> bool:
+    """True if 'numidia' appears in the staged email's subject, body, or preview.
+
+    Such a row is not a Hilmar move (Hilmar is the supplier there) and is
+    dropped from ingest entirely — no request row, no booking, no win.
+    """
+    for field in ("subject", "text_body", "summary_preview"):
+        if _NUMIDIA_RX.search(row.get(field) or ""):
+            return True
+    return False
+
+
 def extract_mdolx(text: str | None) -> str | None:
     if not text:
         return None
@@ -1110,6 +1131,15 @@ def main() -> int:
             r["text_body"] = ""
     print(f"Body enrichment: {attached}/{len(rows)} rows have fetched bodies")
 
+    # Numidia exclusion (Michael 2026-05-20) — drop every staged row whose
+    # email mentions "Numidia" in subject or body BEFORE the bucket split, so
+    # no downstream path (requests, bookings, wins) can see a tainted row.
+    # Those are moves where Hilmar is the supplier, not our client.
+    _before_numidia = len(rows)
+    rows = [r for r in rows if not row_mentions_numidia(r)]
+    _dropped_numidia = _before_numidia - len(rows)
+    print(f"Numidia exclusion: dropped {_dropped_numidia} non-Hilmar row(s)")
+
     lonny_out   = [r for r in rows if r.get("bucket") == "lonny_outbound"]
     lonny_reply = [r for r in rows if r.get("bucket") == "lonny_reply"]
     rate_rsps   = [r for r in rows if r.get("bucket") == "mbd_rate_response"]
@@ -1197,6 +1227,12 @@ def main() -> int:
                 PRIOR_PATH.stat().st_mtime, tz=timezone.utc
             ).isoformat(timespec="seconds")
             for w in prior_wins:
+                # Numidia exclusion (Michael 2026-05-20): never resurrect a
+                # prior WIN whose email mentioned Numidia — Hilmar was the
+                # supplier on that move, not our client. The fresh ingest
+                # already drops these; the additive merge must not undo it.
+                if _NUMIDIA_RX.search(w.get("subject") or ""):
+                    continue
                 wm = w.get("mdolx_ref")
                 wma = list(w.get("mdolx_refs_all") or [])
                 wdate = (w.get("request_timestamp") or "")[:10]
