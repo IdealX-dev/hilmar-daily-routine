@@ -190,25 +190,45 @@ def is_operational_subject(subject: str | None) -> bool:
     return any(h in up for h in _OPERATIONAL_SUBJECT_HINTS)
 
 
-# Per Michael 2026-05-20: a booking or RFQ whose email mentions "Numidia"
-# (subject OR body) is a move where Hilmar is the SUPPLIER / origin shipper —
-# NOT our client. It must not count as a Hilmar move. The earlier filter only
-# dropped NUMIDIA-*only* subjects; a subject carrying BOTH tokens — e.g.
-# "MDOLX260558_NEW BOOKING CONFIRMATION// NUMIDIA 2X40'RF ... HILMAR -> ACAJUTLA"
-# — slipped through and became a standalone WIN. This drops the whole row.
-_NUMIDIA_RX = re.compile(r"numidia", re.IGNORECASE)
+# Per Michael 2026-05-20, confirmed by Linda Echevarria's 2026-05-19 audit of
+# the v11 dashboard: the intake must count ONLY genuine Hilmar ocean-freight
+# RFQs. Several classes of email slipped in that are NOT that, and each
+# inflated the win / loss / not-quoted counts:
+#   numidia  — Hilmar is the SUPPLIER on that move, not our client. A subject
+#              like "MDOLX260558 ... // NUMIDIA ... HILMAR -> ACAJUTLA" carries
+#              both tokens, so a HILMAR-required filter alone let it through.
+#   trucking — domestic road freight (FTL / LTL), not an ocean booking, e.g.
+#              "FTL Modesto CA 95357 to Sturgis MI 49091".
+#   recalled — the sender recalled the message (Outlook "Recall: ..." prefix);
+#              the request was withdrawn and must not seed a row.
+# Any staged row matching one of these is dropped from ingest entirely.
+# out_of_scope_reason() is the single source of truth — the qc_selfheal
+# PHASE 3 backstop imports and reuses it so the two can never drift (QC-040).
+_NUMIDIA_RX  = re.compile(r"numidia", re.IGNORECASE)
+_TRUCKING_RX = re.compile(r"\bFTL\b|\bLTL\b|truck\s?load|trucking", re.IGNORECASE)
+_RECALL_RX   = re.compile(r"\brecall:", re.IGNORECASE)
 
 
-def row_mentions_numidia(row: dict) -> bool:
-    """True if 'numidia' appears in the staged email's subject, body, or preview.
+def out_of_scope_reason(row: dict) -> str | None:
+    """Why this staged email is NOT a Hilmar ocean RFQ — or None if it is.
 
-    Such a row is not a Hilmar move (Hilmar is the supplier there) and is
-    dropped from ingest entirely — no request row, no booking, no win.
+    Returns 'numidia' | 'trucking' | 'recalled' | None. Rows with a reason are
+    dropped from ingest entirely (no request, booking, or win) and are the
+    same set the qc_selfheal PHASE 3 backstop purges from tracking-data-v2.
     """
-    for field in ("subject", "text_body", "summary_preview"):
-        if _NUMIDIA_RX.search(row.get(field) or ""):
-            return True
-    return False
+    subject = str(row.get("subject") or "")
+    preview = str(row.get("summary_preview") or "")
+    body = str(row.get("text_body") or "")
+    # Numidia — Hilmar-as-supplier. Per Michael, check subject AND body.
+    if _NUMIDIA_RX.search(subject) or _NUMIDIA_RX.search(body) or _NUMIDIA_RX.search(preview):
+        return "numidia"
+    # Trucking — the FTL/LTL request type is declared in the subject line.
+    if _TRUCKING_RX.search(subject) or _TRUCKING_RX.search(preview):
+        return "trucking"
+    # Recalled — Outlook message-recall prefixes the subject with "Recall: ".
+    if _RECALL_RX.search(subject):
+        return "recalled"
+    return None
 
 
 def extract_mdolx(text: str | None) -> str | None:
@@ -1131,14 +1151,22 @@ def main() -> int:
             r["text_body"] = ""
     print(f"Body enrichment: {attached}/{len(rows)} rows have fetched bodies")
 
-    # Numidia exclusion (Michael 2026-05-20) — drop every staged row whose
-    # email mentions "Numidia" in subject or body BEFORE the bucket split, so
-    # no downstream path (requests, bookings, wins) can see a tainted row.
-    # Those are moves where Hilmar is the supplier, not our client.
-    _before_numidia = len(rows)
-    rows = [r for r in rows if not row_mentions_numidia(r)]
-    _dropped_numidia = _before_numidia - len(rows)
-    print(f"Numidia exclusion: dropped {_dropped_numidia} non-Hilmar row(s)")
+    # Out-of-scope exclusion (Michael 2026-05-20; Linda Echevarria audit) —
+    # drop staged rows that are NOT Hilmar ocean RFQs (Numidia / trucking /
+    # recalled) BEFORE the bucket split, so no downstream path (requests,
+    # bookings, wins, not-quoted) can count them.
+    _oos = Counter()
+    _kept_rows = []
+    for _r in rows:
+        _reason = out_of_scope_reason(_r)
+        if _reason:
+            _oos[_reason] += 1
+        else:
+            _kept_rows.append(_r)
+    rows = _kept_rows
+    if _oos:
+        print("Out-of-scope exclusion: dropped "
+              + ", ".join(f"{n} {k}" for k, n in sorted(_oos.items())))
 
     lonny_out   = [r for r in rows if r.get("bucket") == "lonny_outbound"]
     lonny_reply = [r for r in rows if r.get("bucket") == "lonny_reply"]
@@ -1227,11 +1255,11 @@ def main() -> int:
                 PRIOR_PATH.stat().st_mtime, tz=timezone.utc
             ).isoformat(timespec="seconds")
             for w in prior_wins:
-                # Numidia exclusion (Michael 2026-05-20): never resurrect a
-                # prior WIN whose email mentioned Numidia — Hilmar was the
-                # supplier on that move, not our client. The fresh ingest
-                # already drops these; the additive merge must not undo it.
-                if _NUMIDIA_RX.search(w.get("subject") or ""):
+                # Out-of-scope exclusion (Michael 2026-05-20): never resurrect
+                # a prior WIN that is a Numidia / trucking / recalled row. The
+                # fresh ingest already drops these; the additive merge must
+                # not undo it. Prior rows carry only the subject.
+                if out_of_scope_reason({"subject": w.get("subject")}):
                     continue
                 wm = w.get("mdolx_ref")
                 wma = list(w.get("mdolx_refs_all") or [])

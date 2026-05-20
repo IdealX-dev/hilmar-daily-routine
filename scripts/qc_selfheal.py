@@ -28,6 +28,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import core
 import body_parser as BP
+# Single source of truth for "is this a Hilmar ocean RFQ" — shared with
+# ingest.py so the QC backstop and the intake filter never drift (QC-040).
+from ingest import out_of_scope_reason
 
 # ─────────────────────────────────────────────────────────────────────
 # COVERED-loss reason heuristics — promote OTHER → COVERED when we have
@@ -403,34 +406,40 @@ def phase_3_entries(log: Log, data: dict):
     before = len(data["requests"])
     cleaned = []
     removed_misclassified = []
-    removed_numidia = []
+    removed_oos = []  # (reason, id) — out-of-scope: numidia / trucking / recalled
     for r in data["requests"]:
         rid = r.get("request_id", "") or ""
         subj_up = (r.get("subject") or "").upper()
-        # Numidia exclusion (Michael 2026-05-20): any row whose subject
-        # mentions NUMIDIA is a move where Hilmar is the supplier, not our
-        # client — drop it regardless of the stand_ prefix or HILMAR also
-        # being present. ingest.py now blocks these at the source (subject
-        # + body); this is the backstop that purges rows already in the file.
-        if "NUMIDIA" in subj_up:
-            removed_numidia.append(rid or (r.get("subject") or "")[:40])
+        # Out-of-scope backstop (Michael 2026-05-20; Linda Echevarria audit
+        # 2026-05-19): purge any row that is not a Hilmar ocean RFQ — Numidia
+        # (Hilmar-as-supplier), trucking (FTL/LTL), or a recalled request.
+        # ingest.py blocks these at the source; this clears any already in
+        # the data file. Uses ingest.out_of_scope_reason so the backstop and
+        # the intake filter can never drift.
+        oos = out_of_scope_reason({"subject": r.get("subject")})
+        if oos:
+            removed_oos.append((oos, rid or (r.get("subject") or "")[:40]))
             continue
         if rid.startswith("stand_") and "HILMAR" not in subj_up:
             removed_misclassified.append(rid)
             continue
         cleaned.append(r)
-    if removed_misclassified or removed_numidia:
+    if removed_misclassified or removed_oos:
         data["requests"] = cleaned
-    if removed_numidia:
+    if removed_oos:
+        _by_reason = Counter(reason for reason, _ in removed_oos)
         log.fix(
-            f"PHASE 3 cleanup: removed {len(removed_numidia)} NUMIDIA row(s) "
-            f"(Hilmar is supplier, not client): "
-            f"{', '.join(removed_numidia[:5])}"
-            + (f" +{len(removed_numidia)-5} more" if len(removed_numidia) > 5 else "")
+            "PHASE 3 cleanup: removed %d out-of-scope row(s) [%s] — not Hilmar "
+            "ocean RFQs: %s" % (
+                len(removed_oos),
+                ", ".join(f"{n} {k}" for k, n in sorted(_by_reason.items())),
+                ", ".join(i for _, i in removed_oos[:5])
+                + (f" +{len(removed_oos) - 5} more" if len(removed_oos) > 5 else ""),
+            )
         )
         if _sentry is not None:
             try:
-                _sentry.metric_increment("qc.numidia_rows_removed", len(removed_numidia))
+                _sentry.metric_increment("qc.out_of_scope_rows_removed", len(removed_oos))
             except Exception:
                 pass
     if removed_misclassified:
