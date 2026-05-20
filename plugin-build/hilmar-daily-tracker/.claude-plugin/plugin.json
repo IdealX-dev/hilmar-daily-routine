@@ -1,0 +1,19 @@
+{
+  "name": "hilmar-daily-tracker",
+  "version": "0.1.0",
+  "description": "Hilmar Daily Shipment Tracker — run, check, debug, and report on the daily OL-USA shipment-tracker pipeline from any device, including the iPhone Claude app.",
+  "author": {
+    "name": "Michael Deitchman"
+  },
+  "homepage": "https://github.com/IdealX-dev/hilmar-daily-routine",
+  "repository": "https://github.com/IdealX-dev/hilmar-daily-routine",
+  "keywords": [
+    "hilmar",
+    "shipment-tracker",
+    "ocean-freight",
+    "ol-usa",
+    "logistics",
+    "mdolx",
+    "daily-pipeline"
+  ]
+}
