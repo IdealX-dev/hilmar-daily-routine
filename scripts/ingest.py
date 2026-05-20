@@ -41,6 +41,10 @@ STAGE_PATH = _resolve_stage("stage_emails")
 BODIES_PATH = _resolve_stage("stage_emails_bodies")
 OUT_PATH_DEFAULT = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
 
+# Operator-corrections file — authoritative human overrides applied AFTER all
+# automatic classification, on every ingest, so a verdict survives re-ingest.
+CORRECTIONS_PATH = Path(__file__).resolve().parent / "operator_corrections.json"
+
 OL_RESPONDER_NAME = "MBD Ocean Export Booking"   # shared mailbox identity
 OL_RESPONDER_EMAIL = "MBD_OceanExportBookingShared@ol-usa.com"
 
@@ -1126,6 +1130,57 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Operator corrections — authoritative human overrides
+# ─────────────────────────────────────────────────────────────────────
+
+def apply_operator_corrections(requests: list[dict]) -> int:
+    """Apply authoritative operator corrections from operator_corrections.json.
+
+    Runs LAST — after every automatic classification — and on EVERY ingest, so
+    a human's verdict on a specific row survives re-ingest (which otherwise
+    rebuilds the row from the staged email and re-promotes it). Each correction
+    is matched by request_id; the row's fields are overwritten per `set`, the
+    row is marked manual_locked so qc_selfheal won't re-decide it, and the
+    override is recorded in status_history + reason_detail. Idempotent.
+
+    qc_selfheal imports and calls this same function as a self-heal backstop —
+    one source of truth, so the intake apply and the QC apply cannot drift.
+    """
+    if not CORRECTIONS_PATH.exists():
+        return 0
+    try:
+        doc = json.loads(CORRECTIONS_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARN: operator_corrections.json unreadable — skipping ({e})")
+        return 0
+    by_id = {r.get("request_id"): r for r in requests}
+    applied = 0
+    for corr in doc.get("corrections", []):
+        rid = corr.get("request_id")
+        changes = corr.get("set") or {}
+        row = by_id.get(rid)
+        if not row:
+            print(f"WARN: operator correction for {rid} has no matching row — skipped")
+            continue
+        # Idempotent — qc_selfheal re-runs this; only act when something changes.
+        if all(row.get(k) == v for k, v in changes.items()):
+            continue
+        prior_status = row.get("status")
+        row.update(changes)
+        row["manual_locked"] = True
+        row.setdefault("status_history", []).append({
+            "at": C.now_utc().isoformat(),
+            "from": prior_status,
+            "to": changes.get("status", prior_status),
+            "reason": "Operator correction: " + (corr.get("note") or corr.get("source") or ""),
+        })
+        if corr.get("note"):
+            row["reason_detail"] = corr["note"]
+        applied += 1
+    return applied
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────
 
@@ -1296,6 +1351,12 @@ def main() -> int:
         all_requests.extend(preserved_recs)
 
     age_requests(all_requests)
+
+    # Operator corrections — authoritative human overrides, applied LAST so
+    # they win over every automatic classification and survive re-ingest.
+    corrected = apply_operator_corrections(all_requests)
+    if corrected:
+        print(f"Operator corrections applied: {corrected}")
 
     summary = C.aggregate_summary(all_requests)
     lanes   = C.aggregate_lanes(all_requests)

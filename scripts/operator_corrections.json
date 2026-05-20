@@ -1,0 +1,19 @@
+{
+  "_comment": "Operator corrections for the Hilmar tracker. Authoritative human overrides, applied by ingest.apply_operator_corrections() AFTER all automatic classification and on EVERY run, so a verdict survives re-ingest (which otherwise rebuilds the row from the staged email and re-promotes it). qc_selfheal imports and re-applies the same function as a self-heal backstop. Add an entry when an operator (OL ops / Lonny / Michael) authoritatively corrects a row the pipeline classified wrong; match by request_id; `set` lists the fields to overwrite.",
+  "corrections": [
+    {
+      "request_id": "req_37936a4d93d12ea1",
+      "set": { "status": "LOSS", "loss_reason": "SEND_NO_BOOKING" },
+      "note": "Linda Echevarria (OL Ocean Export Manager) audit 2026-05-19: 4/16 Oakland to HCMC DID NOT WIN. A send-signal promoted it to WIN but no MDOLX booking confirmation ever arrived.",
+      "source": "Linda Echevarria 2026-05-19",
+      "added": "2026-05-20"
+    },
+    {
+      "request_id": "req_0456878ac1d606e7",
+      "set": { "status": "LOSS", "loss_reason": "SEND_NO_BOOKING" },
+      "note": "Linda Echevarria (OL Ocean Export Manager) audit 2026-05-19: 5/14 Oakland to Osaka DID NOT WIN. A send-signal promoted it to WIN but no MDOLX booking confirmation ever arrived.",
+      "source": "Linda Echevarria 2026-05-19",
+      "added": "2026-05-20"
+    }
+  ]
+}

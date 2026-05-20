@@ -30,7 +30,7 @@ import core
 import body_parser as BP
 # Single source of truth for "is this a Hilmar ocean RFQ" — shared with
 # ingest.py so the QC backstop and the intake filter never drift (QC-040).
-from ingest import out_of_scope_reason
+from ingest import out_of_scope_reason, apply_operator_corrections
 
 # ─────────────────────────────────────────────────────────────────────
 # COVERED-loss reason heuristics — promote OTHER → COVERED when we have
@@ -456,6 +456,23 @@ def phase_3_entries(log: Log, data: dict):
                     "qc.misclassified_stand_removed",
                     len(removed_misclassified),
                 )
+            except Exception:
+                pass
+
+    # Operator corrections — authoritative human overrides (Linda Echevarria
+    # audits etc.). Re-applied here as a self-heal backstop using the SAME
+    # ingest.apply_operator_corrections() the pipeline runs, so the QC layer
+    # enforces the same verdicts and the two can never drift. Runs before the
+    # per-row decide loop so corrected rows are manual_locked and not re-decided.
+    _op_corrected = apply_operator_corrections(data["requests"])
+    if _op_corrected:
+        log.fix(
+            f"PHASE 3: re-applied {_op_corrected} operator correction(s) "
+            f"from operator_corrections.json (authoritative human overrides)"
+        )
+        if _sentry is not None:
+            try:
+                _sentry.metric_increment("qc.operator_corrections_applied", _op_corrected)
             except Exception:
                 pass
 
