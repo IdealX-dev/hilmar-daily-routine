@@ -625,30 +625,78 @@ def phase_3_entries(log: Log, data: dict):
 def phase_4_duplicates(log: Log, data: dict):
     log.section("PHASE 4: DUPLICATE DETECTION")
     requests = data["requests"]
-    seen = Counter()
-    for r in requests:
-        seen[r.get("request_id", "")] += 1
-    dupes = {k: v for k, v in seen.items() if v > 1 and k}
-    if not dupes:
-        log.ok("No duplicate request_ids")
-        return
-    keepers = []
-    dropped = []
+
+    # Pass 1 — exact request_id collisions: keep the richest copy.
     by_id: dict[str, list[dict]] = {}
     for r in requests:
         by_id.setdefault(r.get("request_id", ""), []).append(r)
+    keepers: list[dict] = []
+    id_dupes = 0
     for rid, group in by_id.items():
         if len(group) == 1:
             keepers.append(group[0])
             continue
         canonical = max(group, key=lambda r: sum(1 for v in r.values() if v not in (None, "", [])))
-        for other in group:
-            if other is canonical:
-                continue
-            dropped.append(other)
         keepers.append(canonical)
+        id_dupes += len(group) - 1
         log.fix(f"Deduped request_id={rid} — kept richest, dropped {len(group)-1}")
-    data["requests"] = keepers
+    if id_dupes == 0:
+        log.ok("No duplicate request_ids")
+
+    # Pass 2 — CONTENT duplicates: the same shipment ingested as 2+ rows with
+    # different request_ids. A shipment is uniquely identified by
+    # (conversation_id, destination, request_date, containers) — same Outlook
+    # thread + same lane + same calendar day + same container line. When a
+    # booking confirmation links to one copy, the OTHER copy still gets flipped
+    # to WIN on a send-signal → a phantom UNCONFIRMED win that inflates the win
+    # count (Hamburg/Nagoya/Xingang, found in the 2026-05-21 audit).
+    # SAFE BY CONSTRUCTION: only fires when a group has BOTH a booking-confirmed
+    # win (has mdolx_ref) AND an unconfirmed win (status WIN, no mdolx); NEVER
+    # when the group holds 2+ distinct MDOLX refs (two real bookings — e.g. the
+    # 4/9 Tokyo pair); LOSS / PENDING rows are never touched. Distinct same-day
+    # same-lane shipments differ in container count, so they land in separate
+    # groups and are left alone.
+    content: dict[tuple, list[dict]] = {}
+    for r in keepers:
+        cid = (r.get("conversation_id") or "").strip()
+        dest = (r.get("destination") or "").strip().lower()
+        rdate = r.get("request_date") or ""
+        cont = (r.get("containers") or "").strip().lower()
+        if cid and dest and rdate and cont:
+            content.setdefault((cid, dest, rdate, cont), []).append(r)
+
+    drop_ids: set[int] = set()
+    content_dupes = 0
+    for grp in content.values():
+        if len(grp) < 2:
+            continue
+        confirmed = [r for r in grp if r.get("status") == "WIN" and r.get("mdolx_ref")]
+        unconfirmed = [r for r in grp if r.get("status") == "WIN" and not r.get("mdolx_ref")]
+        distinct_mdolx = {str(r.get("mdolx_ref")) for r in grp if r.get("mdolx_ref")}
+        if len(distinct_mdolx) >= 2 or not confirmed or not unconfirmed:
+            continue
+        canonical = confirmed[0]
+        for dup in unconfirmed:
+            canonical["source_imids"] = sorted(set(
+                (canonical.get("source_imids") or []) + (dup.get("source_imids") or [])))
+            canonical["source_ids"] = sorted(set(
+                (canonical.get("source_ids") or []) + (dup.get("source_ids") or [])))
+            canonical.setdefault("merge_notes", []).append(
+                f"Absorbed content-duplicate {dup.get('request_id')} "
+                f"(send-signal WIN, no separate booking) {dup.get('request_date')}")
+            drop_ids.add(id(dup))
+            content_dupes += 1
+            log.fix(f"Content-duplicate collapsed: {dup.get('request_id')} "
+                    f"({dup.get('lane')} {dup.get('request_date')}) was a phantom "
+                    f"unconfirmed win — same shipment as booking-confirmed "
+                    f"{canonical.get('request_id')} (MDOLX{canonical.get('mdolx_ref')})")
+
+    data["requests"] = [r for r in keepers if id(r) not in drop_ids]
+    if content_dupes:
+        log.fix(f"PHASE 4: collapsed {content_dupes} phantom unconfirmed-win "
+                f"duplicate(s) — win count now reflects distinct shipments")
+    else:
+        log.ok("No content-duplicate phantom wins")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1481,6 +1529,45 @@ def phase_6_rules(log: Log, data: dict):
                     )
         except Exception as _e:
             log.warn(f"QC-049: check failed with exception: {_e}")
+
+        # QC-051: PHANTOM-DUPLICATE WIN GUARD — verifies phase_4's content-
+        # dedup held. A phantom duplicate is an unconfirmed WIN (no MDOLX)
+        # sharing (conversation_id, destination, request_date, containers)
+        # with a booking-confirmed WIN — the same shipment counted twice,
+        # which inflates the win count. phase_4_duplicates collapses these;
+        # if any survive here, that dedup didn't run or has regressed.
+        try:
+            _pd_path = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
+            if _pd_path.exists():
+                import json as _json_pd
+                _pdd = _json_pd.loads(_pd_path.read_text(encoding="utf-8"))
+                _pdg: dict = {}
+                for _r in (_pdd.get("requests") or []):
+                    _cid = (_r.get("conversation_id") or "").strip()
+                    _dst = (_r.get("destination") or "").strip().lower()
+                    _rdt = _r.get("request_date") or ""
+                    _cnt = (_r.get("containers") or "").strip().lower()
+                    if _cid and _dst and _rdt and _cnt:
+                        _pdg.setdefault((_cid, _dst, _rdt, _cnt), []).append(_r)
+                _phantom = []
+                for _grp in _pdg.values():
+                    _conf = [x for x in _grp if x.get("status") == "WIN" and x.get("mdolx_ref")]
+                    _unc = [x for x in _grp if x.get("status") == "WIN" and not x.get("mdolx_ref")]
+                    _dm = {str(x.get("mdolx_ref")) for x in _grp if x.get("mdolx_ref")}
+                    if _conf and _unc and len(_dm) < 2:
+                        _phantom += _unc
+                if _phantom:
+                    log.warn(
+                        f"QC-051: {len(_phantom)} phantom-duplicate win(s) survived "
+                        "phase_4 content-dedup (same shipment as a booking-confirmed "
+                        "win) — "
+                        + ", ".join(f"{x.get('request_id','')} {x.get('lane','')}"
+                                    for x in _phantom[:5])
+                    )
+                else:
+                    log.ok("QC-051: no phantom-duplicate wins — content-dedup clean")
+        except Exception as _e:
+            log.warn(f"QC-051: check failed with exception: {_e}")
 
         # QC-048: TURNAROUND SANITY CHECK — flags rows with implausible
         # turnaround_biz_hours. Real OL rate-response turnaround is sub-day
