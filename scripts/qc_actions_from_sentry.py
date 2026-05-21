@@ -80,6 +80,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "Parser accuracy regression. Re-run computed accuracy below; if still <95% see docs/PARSER-GAPS.md.",
         "auto_resolve_safe": False,
     },
+    "QC-049": {
+        "name": "Unconfirmed wins (no MDOLX booking)",
+        "action": "flag_for_operator",
+        "comment": "Wins flipped on a send-signal with no booking confirmation linked. Review each: link the real booking confirmation, or demote the false win via the operator-corrections layer.",
+        "auto_resolve_safe": False,
+    },
     "QC-040": {
         "name": "Cross-folder enum drift",
         "action": "flag_for_operator",

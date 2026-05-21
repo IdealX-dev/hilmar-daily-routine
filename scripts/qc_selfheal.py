@@ -1434,35 +1434,51 @@ def phase_6_rules(log: Log, data: dict):
         except Exception as _e:
             log.warn(f"QC-050: check failed with exception: {_e}")
 
-        # QC-049: WIN-NO-MDOLX TRACKING — Michael 2026-05-19 PM "in the
-        # portal missing mdolx for way too many files that you mark as won".
-        # WIN rows without mdolx_ref usually came via send-signal promotion.
-        # The booking confirmation EMAIL exists in OL's inbox same day but
-        # our matcher missed it. Fix landed in ingest.link_bookings_to_requests
-        # to use email In-Reply-To / References headers; new stage records
-        # have those fields. WARN (not ERROR) since some of these are
-        # genuine — Lonny said send, OL hasn't booked yet — so an alert is
-        # informational, not gating.
+        # QC-049: UNCONFIRMED WINS — every WIN must be backed by an MDOLX
+        # booking confirmation. Rows flipped PENDING->WIN on a "Lonny send-
+        # reply" signal alone, with no booking confirmation ever linked, are
+        # UNCONFIRMED: the reported win count overstates confirmed bookings.
+        # This is the exact pattern Linda Echevarria's 2026-05-19 audit caught
+        # (2 rows demoted via the operator-corrections layer). QC-049 lists
+        # EVERY stale unconfirmed win — old enough that a booking confirmation
+        # should already have arrived — so each gets the same review. It does
+        # NOT auto-demote: a win-status change is operator judgment. A win too
+        # recent for the booking to have arrived yet is normal lag, not flagged.
+        # ERROR severity so it lands in the audit red-flags + fires Sentry —
+        # this directly affects the headline win count, it must not be quiet.
         try:
+            from datetime import datetime as _dt49, timedelta as _td49, timezone as _tz49
             _data_path = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
             if _data_path.exists():
                 import json as _json_mdx
                 _d = _json_mdx.loads(_data_path.read_text(encoding="utf-8"))
                 _wins = [r for r in (_d.get("requests") or []) if r.get("status") == "WIN"]
-                _no_mdolx = [r for r in _wins if not r.get("mdolx_ref")]
-                if _wins:
-                    _pct = 100.0 * len(_no_mdolx) / len(_wins)
-                    if _pct > 15:
-                        log.warn(
-                            f"QC-049: {len(_no_mdolx)}/{len(_wins)} WINs lack MDOLX "
-                            f"({_pct:.0f}%). Investigate booking-team mailbox header "
-                            "match — ingest.link_bookings_to_requests should match via "
-                            "In-Reply-To / References for these. Sample: "
-                            + ", ".join(f"{r.get('request_id','')[:25]} {r.get('lane','')}"
-                                        for r in _no_mdolx[:3])
-                        )
-                    else:
-                        log.ok(f"QC-049: WIN-no-MDOLX rate OK ({len(_no_mdolx)}/{len(_wins)} = {_pct:.0f}%)")
+                _unconf = [r for r in _wins
+                           if not r.get("mdolx_ref") and not r.get("mdolx_refs_all")]
+                _cut49 = (_dt49.now(_tz49.utc) - _td49(days=7)).date().isoformat()
+                _stale = [r for r in _unconf
+                          if (r.get("request_date") or "0000-00-00") < _cut49]
+                if not _wins:
+                    log.ok("QC-049: no WIN rows to check")
+                elif not _unconf:
+                    log.ok(f"QC-049: all {len(_wins)} wins confirmed by an MDOLX booking ref")
+                elif not _stale:
+                    log.ok(f"QC-049: {len(_unconf)} unconfirmed win(s), all recent "
+                           f"(<7d) — normal booking-confirmation lag, not flagged")
+                else:
+                    _rows49 = "; ".join(
+                        f"{r.get('request_id','')} {r.get('lane','')} "
+                        f"({r.get('request_date','')})" for r in _stale)
+                    log.error(
+                        f"QC-049: {len(_stale)} of {len(_wins)} reported wins are "
+                        f"UNCONFIRMED — flipped to WIN on a send-signal with no MDOLX "
+                        f"booking confirmation linked, and old enough (>7d) that one "
+                        f"should have arrived. Reported wins {len(_wins)}, confirmed by "
+                        f"a booking {len(_wins) - len(_unconf)}. Each needs a booking-"
+                        f"team review (cf. Linda Echevarria 2026-05-19 audit — some are "
+                        f"real with an unlinked booking confirmation, some are false "
+                        f"wins). Rows: {_rows49}"
+                    )
         except Exception as _e:
             log.warn(f"QC-049: check failed with exception: {_e}")
 
