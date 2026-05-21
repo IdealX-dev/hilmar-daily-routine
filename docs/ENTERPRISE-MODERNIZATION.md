@@ -367,7 +367,138 @@ which is why §8 and §9 recommend against them.
 
 ---
 
-## 15. Summary
+## 15. Decision matrix — pros, cons, security, governance, cost
+
+Each major modernization decision is spelled out below across the five
+lenses the review cares about: **pros**, **cons / tradeoffs**, **security**,
+**enterprise & governance**, and **cost**. Costs are monthly USD estimates
+(see §13 for the consolidated total).
+
+### 15.1 Compute — Windows Cloud PC → Azure Container Apps Job
+
+- **Pros:** no always-on machine to maintain; consumption billing (runs only
+  the ~15-minute daily window); immutable, version-controlled container
+  image; no desktop-OS patching burden.
+- **Cons / tradeoffs:** requires containerizing the app (Dockerfile + PDF
+  system libraries); introduces a build/release pipeline; the team learns
+  Container Apps operations.
+- **Security:** eliminates the interactive **RDP attack surface** and the
+  logged-in desktop session; the image is registry-scanned; the job runs as
+  a **managed identity**, not as a signed-in user.
+- **Enterprise & governance:** the resource sits in a governed resource
+  group under Azure RBAC and Azure Policy; fully reproducible from source;
+  matches the standard OL deployment pattern.
+- **Cost:** ~$0–10 compute + ~$5 container registry.
+
+### 15.2 Authentication — device-code / token-cache → app-only federated auth
+
+- **Pros:** fully unattended — no device-code prompts, no manual token
+  refreshes; not tied to any individual's account; clean service-principal
+  audit trail; survives password/MFA/Conditional-Access changes.
+- **Cons / tradeoffs:** requires a one-time OL tenant-admin action (app
+  registration, admin consent, Application Access Policy); a contained code
+  change in `scripts/outlook_send.py`.
+- **Security — this is the #1 item.** Removes the on-disk bearer credential
+  (`token-cache.json`); removes the personal-account and offboarding risk;
+  the **Application Access Policy** scopes the app to exactly **one
+  mailbox**, so even the app's permissions cannot reach other mailboxes;
+  with workload identity federation there is **no stored secret to leak or
+  rotate at all**.
+- **Enterprise & governance:** the pipeline runs as a governed service
+  principal with least-privilege, admin-consented permissions — the
+  enterprise-grade unattended-auth pattern the review asked for.
+- **Cost:** ~$0 with workload identity federation; certificate fallback adds
+  only its Key Vault storage (counted in §15.3).
+
+### 15.3 Secrets — local `secrets/` folder → Azure Key Vault
+
+- **Pros:** centralized, encrypted, access-logged secret storage; rotation
+  and expiry alerting are native; the on-disk `secrets/` folder is
+  eliminated.
+- **Cons / tradeoffs:** application reads secrets over the network at
+  startup (negligible for a daily job); one more resource to provision.
+- **Security:** no plaintext credentials on any filesystem or in OneDrive
+  sync; access is gated by managed identity and logged for audit; blast
+  radius of a host compromise drops sharply.
+- **Enterprise & governance:** RBAC-scoped access, full audit trail, and
+  centralized rotation policy — a hard OL requirement.
+- **Cost:** ~$1–3 (operation-based).
+
+### 15.4 Scheduling — Windows Task Scheduler → Azure-native trigger
+
+- **Pros:** scheduling is declarative and version-controlled; no dependency
+  on a specific machine being awake; restart/retry handled by the platform.
+- **Cons / tradeoffs:** Container Apps Job cron is **UTC-only** — exact
+  10:00 ET across DST needs either two seasonal entries or a timezone-aware
+  Logic App trigger.
+- **Security:** no scheduled task defined on an interactive desktop; trigger
+  configuration is governed as code.
+- **Enterprise & governance:** the schedule is an Azure resource under RBAC,
+  visible and auditable centrally rather than buried in a Windows desktop.
+- **Cost:** ~$0 (Container Apps cron) or ~$0–5 (Logic App, if used for
+  exact-ET scheduling).
+
+### 15.5 Data store — JSON file → Azure Blob Storage *(vs the review's relational DB)*
+
+- **Pros (Blob, recommended):** versioning + soft-delete give change
+  history, an audit trail, and point-in-time recovery; lifecycle policy
+  automates backup retention; minimal cost; no DB to patch or tune.
+- **Cons / tradeoffs (Blob):** not a queryable relational store — acceptable
+  here because the whole dataset is one 155–170 row JSON document loaded
+  into memory.
+- **Pros / cons of the relational alternative:** PostgreSQL / Azure SQL add
+  query, constraints, and concurrency the workload does not need, at
+  materially higher cost and operational overhead. If a relational store is
+  a hard OL standard, **Azure SQL serverless** (auto-pause) is the
+  lighter, cheaper choice over provisioned PostgreSQL.
+- **Security:** either option gives encryption at rest/in transit and RBAC;
+  Blob with managed-identity access removes any connection string entirely.
+- **Enterprise & governance:** Blob versioning satisfies the governance
+  intent behind "move off a flat file" — audit trail, recovery, governed
+  access — without the DB footprint.
+- **Cost:** Blob ~$1–5; Azure SQL serverless +$15–40; provisioned
+  PostgreSQL +$50–150 (**not recommended at this data scale**).
+
+### 15.6 Observability — Sentry → Azure Monitor + App Insights *(vs Datadog)*
+
+- **Pros (Azure Monitor + App Insights, recommended):** genuinely
+  Azure-native — telemetry stays inside the OL tenant; billed on the Azure
+  invoice; governed by the same Entra RBAC; covers exception tracking, the
+  cron heartbeat, and custom metrics.
+- **Cons / tradeoffs:** weaker error-grouping UX than Sentry; no built-in AI
+  autofix; the closed-loop self-heal must be re-instrumented.
+- **Pros / cons — Datadog:** best-in-class for fleet-scale infra/APM, but
+  **overkill and the most expensive option** for one daily batch job; and
+  although billed through Azure, telemetry **still egresses to a third-party
+  SaaS**, so it is not Azure-native for data-residency purposes.
+- **Pros / cons — keeping Sentry:** purpose-built for error tracking and
+  already carrying the self-heal loop; lowest cost and lowest migration
+  risk; but it is a third-party SaaS and not the OL standard.
+- **Security:** Azure Monitor keeps all telemetry tenant-resident — the
+  strongest data-residency posture of the three.
+- **Enterprise & governance:** Azure Monitor is the only option that is
+  natively governed by OL Azure RBAC and policy; Datadog only if OL
+  standardizes on it org-wide.
+- **Cost:** Azure Monitor + App Insights ~$5–15; Datadog +$20–60; keeping
+  Sentry adds no Azure cost (existing Sentry subscription only).
+
+### 15.7 Governance & RBAC — single-operator → centralized model
+
+- **Pros:** access via Entra groups, not individuals; clear ownership
+  matrix; Azure Policy enforces tagging, region, and SKU compliance.
+- **Cons / tradeoffs:** requires up-front agreement with OL IT on roles and
+  the ownership/on-call matrix.
+- **Security:** least-privilege role assignments; no shared credentials;
+  service-to-service auth via managed identity; centralized access logging.
+- **Enterprise & governance:** this *is* the governance layer — it is what
+  makes the system OL-ownable, and it becomes the reusable reference pattern
+  for future projects.
+- **Cost:** ~$0 incremental — RBAC and Azure Policy are built-in Azure
+  features.
+
+---
+
+## 16. Summary
 
 The review's central finding is correct and we agree with it: the
 **authentication model is the real security gap**, and the supporting
