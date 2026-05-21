@@ -32,7 +32,6 @@ yesterday) plus period-to-date rollups. Never label cumulative numbers as
 | 13 | Share to client_intelligence | `share_intel.py export` | Pushes Hilmar data to the shared cross-project intelligence store. |
 | 14 | Rate intelligence | `gen_rate_intelligence.py --quiet` | Rate-negotiation cheat sheet + cooling/regression alerts. |
 | 15 | Sync to ol-quote-tracker | `sync_to_quote_tracker.py` | Pushes entities to ol-quote-tracker's Turso registry. No-op if password absent. |
-| 16 | Reconcile with ol-quote-tracker | `reconcile_with_quote_tracker.py` | Cross-checks Hilmar wins vs ol-quote-tracker. Surfaces drift. |
 
 The **email send** is a separate step after this list — `outlook_send.py`
 delivers `reports/email-body.html` + attachments to the distribution.

@@ -74,12 +74,6 @@ ACTIONS: dict[str, dict] = {
         "comment": "Carrier extraction restored — see patch_carriers.py PASS 4 + body_parser.parse_subject_carrier.",
         "auto_resolve_safe": True,
     },
-    "QC-038": {
-        "name": "Reconcile drift with ol-quote-tracker",
-        "action": "flag_for_operator",
-        "comment": "Reconcile drift detected. Compare reports/reconcile-quote-tracker.json to find the mismatched booking.",
-        "auto_resolve_safe": False,
-    },
     "QC-039": {
         "name": "Parser accuracy below threshold",
         "action": "rerun_parser_acc",

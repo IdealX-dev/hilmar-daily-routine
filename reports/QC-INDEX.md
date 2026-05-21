@@ -4,7 +4,7 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-05-17 (post-consolidation). Total active checks: **43**
+Generated 2026-05-13, updated 2026-05-21 (post-consolidation). Total active checks: **42**
 (QC-001 through QC-020a/b + QC-021 through QC-041, including QC-014a/b
 and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
 
@@ -67,12 +67,12 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-035 | ERROR/WARN | stage_emails.txt >20MB (ERROR) / >5MB (WARN) — unbounded stage growth | None — run `refresh_stage.py --rotate-stage-older-than 90` | 2026-05-14 (best-practices batch) |
 | QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
 | QC-037 | WARN | ol-quote-tracker sync log missing, stale (>36h), or last sync errored | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`) |
-| QC-038 | WARN | ol-quote-tracker reconcile stale (>36h) or win-count drift >2 between Hilmar and ol-quote-tracker | None — drift = one system missed/mis-classified an OL email; manual investigation | 2026-05-17 (`f64b98e`) |
+| QC-038 | _retired 2026-05-21_ | ol-quote-tracker reconciliation — retired: a live API probe proved ol-quote-tracker holds zero Hilmar rows, so the cross-check only ever produced phantom drift | n/a — check + script + pipeline step removed | 2026-05-21 |
 | QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
 | QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 
-## Newest checks (QC-027 through QC-038) — what each was added for
+## Newest checks (QC-027 through QC-037) — what each was added for
 
 | # | Trigger | Date | Commit |
 |---|---|---|---|
@@ -87,7 +87,6 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-035 | Best-practices batch: stage rotation flag added — without a size gate, `stage_emails.txt` would grow unbounded over months and silently OOM the parser | 2026-05-14 | best-practices batch |
 | QC-036 | Best-practices batch: tests/ folder + 50 unit tests added — needed a check that the regression net stays present and grows with future modules | 2026-05-14 | best-practices batch |
 | QC-037 | Per Michael "client intelligence is on turso for it" — built sync_to_quote_tracker.py to push 13 Hilmar entities to ol-quote-tracker's `/api/intelligence/sync`; QC-037 ensures the audit log stays fresh and surfaces APP_PASSWORD / endpoint errors | 2026-05-16 | `c8c3d14` |
-| QC-038 | Per Michael "you see hilmar data is also on there as a good check point for won bookings" — built reconcile_with_quote_tracker.py to cross-check Hilmar wins vs ol-quote-tracker's records (both systems independently ingest the same OL emails — counts SHOULD match). QC-038 catches stale reconcile or significant drift | 2026-05-17 | pending commit |
 
 ## Errors this session that drove the new checks
 

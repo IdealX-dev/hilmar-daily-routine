@@ -103,18 +103,12 @@ def build_widgets():
             [_metric_query("pipeline.step_duration_s", "step_dur", "p95")],
             layout={"x": 2, "y": 2, "w": 2, "h": 2, "minH": 2},
         ),
-        # Row 3: QC + reconcile
+        # Row 3: QC
         _widget(
             "QC Errors by Check (counter)",
             "bar",
             [_metric_query("qc.errors", "errors", "sum")],
             layout={"x": 0, "y": 4, "w": 2, "h": 2, "minH": 2},
-        ),
-        _widget(
-            "Reconcile Drift Trend",
-            "line",
-            [_metric_query("reconcile.drift_count", "drift")],
-            layout={"x": 2, "y": 4, "w": 2, "h": 2, "minH": 2},
         ),
         # Row 4: Send + Sentry health
         _widget(

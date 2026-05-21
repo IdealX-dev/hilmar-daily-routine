@@ -412,8 +412,6 @@ def finish_cron_checkin(check_in_id: str | None, success: bool) -> None:
 #   qc.fixes                             counter
 #   send.success                         counter  tagged recipient_type=full|audit|test
 #   send.failure                         counter  tagged error_type=<class>
-#   reconcile.drift_count                gauge   integer delta
-#   reconcile.drift_teu                  gauge   integer delta
 #   ingest.rows_processed                counter
 #   ingest.wins_today                    counter
 #   ingest.qa_today                      counter

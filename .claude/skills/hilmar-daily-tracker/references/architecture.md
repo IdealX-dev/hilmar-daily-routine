@@ -63,7 +63,6 @@ Notable checks:
 - **QC-022** — distribution-list invariants (recipient count, no external
   domains, honors the iteration lock)
 - **QC-027** — carrier-extraction completeness
-- **QC-038** — ol-quote-tracker reconciliation freshness + drift
 - **QC-039** — parser accuracy ≥ 95% gate (ERRORs the pipeline)
 - **QC-040** — cross-folder enum drift (`scripts/core.py` ↔ `src/hilmar/core.py`)
 - **QC-041** — classifier-form consistency (3-state vs 4-state)

@@ -21,7 +21,6 @@ real-time channel that complements the once-a-day audit email.
 | `qc_selfheal.py` `log.warn()` | QC-039 / QC-040 / QC-041 + parser-accuracy warnings | `warning` |
 | `outlook_send.py` | Uncaught exception during send | `error` |
 | `sync_to_quote_tracker.py` | Auth or sync failure (network errors caught + audit-logged separately) | `error` |
-| `reconcile_with_quote_tracker.py` | Same | `error` |
 
 Every event has these tags:
 
@@ -87,7 +86,7 @@ py -3 scripts/sentry_setup.py
 | `QC-041: CLASSIFIER DRIFT` | tracking-data-v2.json has rows in mixed LEGACY/STRICT form | Parser bug — at least one ingest pass wrote the wrong form. Re-check `core.decide_status` outputs. |
 | `pipeline.step_failure` | A specific pipeline step exited non-zero | Look at `component` tag for which script; check the daily email or stdout from the Cloud PC scheduled-task log |
 | MSAL / Graph auth errors | Token cache expired or Conditional Access changed | Re-run `outlook_send.py auth` interactively to refresh device-code token |
-| `requests.exceptions.ConnectionError` from `sync_to_quote_tracker` / `reconcile` | ol-quote-tracker-prod Azure App Service hiccup | These have graceful-degradation (audit-log + return 0); pipeline continues. If persistent, check Azure portal |
+| `requests.exceptions.ConnectionError` from `sync_to_quote_tracker` | ol-quote-tracker-prod Azure App Service hiccup | Graceful-degradation (audit-log + return 0); pipeline continues. If persistent, check Azure portal |
 
 ## Cron monitor — silent-failure detection
 
@@ -143,14 +142,6 @@ for retention; free tier collects but doesn't trend over time):
 - `send.success` (counter, tagged `recipient_type=full/audit/test` + `attach_count`)
 - `send.failure` (counter, tagged `recipient_type` + `status_code`)
 
-### ol-quote-tracker reconciliation (from reconcile_with_quote_tracker.py)
-- `reconcile.qt_wins` (gauge, tagged `window_days`)
-- `reconcile.hilmar_wins` (gauge)
-- `reconcile.drift_count` (gauge) — Hilmar-QT difference in win count
-- `reconcile.drift_teu` (gauge) — same for TEU
-- `reconcile.lanes_matched` (gauge)
-- `reconcile.lanes_total` (gauge)
-
 ### Dashboard widgets (build in Sentry UI: Dashboards → New)
 
 Recommended Hilmar KPI dashboard layout:
@@ -161,7 +152,6 @@ Recommended Hilmar KPI dashboard layout:
 | 1 | Pipeline Duration (90d) | `pipeline.duration_s` p50+p95 line |
 | 2 | QC Errors by Check (30d) | `qc.errors` stacked-bar, group by `check` |
 | 2 | Per-field Accuracy (latest) | `parser.accuracy_per_field` table, sort by rate ascending |
-| 3 | Reconcile Drift (60d) | `reconcile.drift_count` line, `reconcile.drift_teu` line (dual-axis) |
 | 3 | Send Success Rate | `send.success` / (`send.success`+`send.failure`) ratio |
 | 4 | Step Duration Heatmap | `pipeline.step_duration_s` p95 by `step` |
 | 4 | Cron Status | monitor status board for `hilmar-daily-pipeline` |
@@ -171,7 +161,6 @@ Recommended Hilmar KPI dashboard layout:
 - `parser.accuracy_overall` < 0.98 for 2 consecutive runs → ERROR
 - `pipeline.duration_s` > 2× rolling 7-day median → WARN
 - `send.failure` > 0 → ERROR (any send failure)
-- `reconcile.drift_count` > 5 for 3 consecutive runs → WARN
 - `qc.errors` count > 0 grouped by check_name (any new error) → already covered by issue alerts
 
 ## Sentry Seer — live 2026-05-19 PM
@@ -255,7 +244,6 @@ or Azure Function endpoint (a deploy task, not a code task).
 | qc_check tag | Action | Comment |
 |---|---|---|
 | `QC-027` (carrier extraction) | resolve_if_post_fix | Carrier extraction restored — patch_carriers PASS 4 + body_parser. |
-| `QC-038` (reconcile drift) | flag_for_operator | Compare reports/reconcile-quote-tracker.json for the mismatched booking. |
 | `QC-039` (parser accuracy) | rerun_parser_acc | Re-compute. If still <95%, see docs/PARSER-GAPS.md. |
 | `QC-040` (cross-folder drift) | flag_for_operator | Align scripts/core.py and src/hilmar/core.py. |
 | `QC-041` (classifier form drift) | flag_for_operator | Mixed 3/4-state status rows. Backup + single-form pass. |
