@@ -551,6 +551,20 @@ def phase_3_entries(log: Log, data: dict):
             if not r.get("olusa_time_et"):
                 r["olusa_time_et"] = core.fmt_et(resp_dt, with_date=False)
 
+        # QC-048 self-heal: a real OL rate-response turnaround is sub-day
+        # (biz-hours, usually <4h). A value above 40 biz-hours means the
+        # response_timestamp was mis-paired — a stale rate response from a
+        # later thread, or a leaked booking timestamp — not a real response
+        # time. None ("no reliable timing") is the honest value. This runs
+        # after the backfill above, every pass, so a re-backfill from the
+        # bad timestamp can never resurrect the implausible number.
+        _tabh = r.get("turnaround_biz_hours")
+        if isinstance(_tabh, (int, float)) and _tabh > 40:
+            r["turnaround_biz_hours"] = None
+            r["turnaround_hours"] = None
+            log.fix(f"{rid_label}: implausible turnaround ({_tabh:.1f} biz-hrs "
+                    ">40) cleared — response_timestamp mis-paired, no reliable timing")
+
         if r.get("etd_fit_days") is None and r.get("quoted"):
             lonny_ask = r.get("eta_requested") or r.get("requested_dates") or r.get("cutoff_requested")
             ol_offer = r.get("eta_offered") or r.get("etd_offered")
