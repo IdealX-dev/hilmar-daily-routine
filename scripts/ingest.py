@@ -613,8 +613,19 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
                 if best:
                     break
 
-        # Fallback: latest unmatched RFQ on the same lane, within 14d.
+        # Fallback: score unmatched RFQs on the lane within 14d. The booking
+        # confirmation subject carries the container count + carrier
+        # ("HILMAR 1X40'HC Oakland to Hamburg// ONE: ...") — matching those
+        # against a request's container_count + carrier_quoted is a far
+        # stronger link than "latest RFQ on the lane". Highest score wins;
+        # ties break to the latest RFQ sent before the booking.
         if not best:
+            bk_carrier = BP.parse_subject_carrier(bk.get("subject"))
+            if bk_carrier:
+                bk_carrier = C.normalize_carrier(bk_carrier) or bk_carrier
+            _ccm = re.search(r"(\d+)\s*[xX]\s*\d{2}", raw_subj)
+            bk_ccount = int(_ccm.group(1)) if _ccm else None
+            scored: list[tuple] = []
             for r in candidates:
                 if r.get("mdolx_ref"):           # already matched a win
                     continue
@@ -623,9 +634,20 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
                     continue
                 if (bk_ts - req_ts) > timedelta(days=14):
                     continue
-                if not best or (C.parse_iso(r["request_timestamp"]) >
-                                C.parse_iso(best["request_timestamp"])):
-                    best = r
+                score = 0
+                r_carrier = r.get("carrier_quoted")
+                if r_carrier:
+                    r_carrier = C.normalize_carrier(r_carrier) or r_carrier
+                if bk_carrier and r_carrier and bk_carrier == r_carrier:
+                    score += 2
+                if bk_ccount and r.get("container_count") == bk_ccount:
+                    score += 2
+                scored.append((score, req_ts, r))
+            if scored:
+                scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+                best = scored[0][2]
+                if scored[0][0] > 0:
+                    best_via = "lane+container+carrier"
 
         if best:
             best["status"] = "WIN"
