@@ -134,11 +134,63 @@ def load_raw(folder: Path):
 
 
 def parse_ol_options(body_text: str) -> list[dict]:
-    """Placeholder — parse OL options table out of body text/html.
-    The v1 build_ops_flow_inquiries.py has a working implementation; re-use that.
-    For v2 we accept None/empty options as a degraded signal — status still
-    correct because pairing proves OL responded."""
-    return []
+    """Parse OL rate-quote options out of an email body excerpt.
+
+    Delegates to ``hilmar.body_parser.parse_rate_table``, which handles both
+    the column-layout MBD format and prose fallbacks. That parser returns a
+    single dict; we wrap it in the v1-shaped list-of-options structure so
+    downstream consumers see ``options[0]`` exactly as v1 emitted.
+
+    Returns ``[]`` when the body excerpt is empty, the parser extracts no
+    fields, or the import fails — empty options remain an acceptable
+    degraded signal here because pairing alone proves OL responded.
+    """
+    if not body_text:
+        return []
+    try:
+        import sys as _sys
+        _src_dir = Path(__file__).resolve().parent.parent / "src"
+        if str(_src_dir) not in _sys.path:
+            _sys.path.insert(0, str(_src_dir))
+        from hilmar.body_parser import parse_rate_table
+    except Exception:
+        return []
+
+    parsed = parse_rate_table(body_text) or {}
+    if not parsed:
+        return []
+
+    vessel_voyage = parsed.get("vessel_voyage")
+    vessel = voyage = None
+    if vessel_voyage:
+        parts = [p.strip() for p in vessel_voyage.split("/", 1)]
+        vessel = parts[0] or None
+        voyage = parts[1] if len(parts) > 1 and parts[1] else None
+
+    rate_val = parsed.get("ol_rate")
+    rate_usd = int(rate_val) if isinstance(rate_val, (int, float)) else None
+
+    option = {
+        "option": 1,
+        "carrier": parsed.get("carrier_quoted"),
+        "vessel": vessel,
+        "voyage": voyage,
+        "container_size": None,
+        "commodity": None,
+        "erd": parsed.get("erd") or parsed.get("origin_cutoff"),
+        "doc_cut": None,
+        "port_cut": None,
+        "etd": parsed.get("etd"),
+        "eta": parsed.get("eta"),
+        "transshipment": parsed.get("transshipment"),
+        "rate_usd": rate_usd,
+        "dthc_included": None,
+        "origin_free_time_days": parsed.get("origin_free_time"),
+        "dest_free_time_days": parsed.get("dest_free_time"),
+    }
+    if not any(v not in (None, "", 1) for k, v in option.items() if k != "option"):
+        return []
+    return [option]
 
 
 def build():
@@ -292,6 +344,7 @@ def build():
         hours_to_pick = (send_dt_val - ol_dt_val).total_seconds()/3600.0 if (ol_dt_val and send_dt_val) else None
 
         inq_id = f"inq_{inq_dt.strftime('%Y%m%d_%H%M%S')}"
+        ol_options = parse_ol_options(ol_response.get("body_first_500", "")) if ol_response else []
         inquiries.append({
             "inquiry_id": inq_id,
             "conversation_id": cid,
@@ -309,8 +362,8 @@ def build():
                 "uri": ol_response.get("_src_file"),
                 "received_at": ol_response.get("receivedDateTime") or ol_response.get("sentDateTime"),
                 "sender": ol_response.get("sender") or ol_response.get("from_address"),
-                "options": parse_ol_options(ol_response.get("body_first_500","")),
-                "options_count": None,
+                "options": ol_options,
+                "options_count": len(ol_options),
             },
             "lonny_send_reply": None if not send_reply else {
                 "message_id": send_reply.get("id"),
