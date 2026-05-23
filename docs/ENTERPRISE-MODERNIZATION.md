@@ -171,9 +171,11 @@ Application Insights.
 
 ## 7. Compute & scheduling
 
-- **Containerize:** a `Dockerfile` on a `python:3.11-slim` base. Note
-  WeasyPrint / PDF rendering needs system libraries (`libpango`, `libcairo`,
-  fonts) installed in the image.
+- **Containerize:** a `Dockerfile` on a `python:3.11-slim` base. The PDF
+  library is **reportlab** (pure-Python, pulled in via `pip`) plus Pillow
+  for images and any TrueType fonts the report templates reference
+  (e.g. an `apt-get install fonts-dejavu-core` line, or bundled TTFs).
+  No pango/cairo system stack required.
 - Image pushed to **Azure Container Registry** (Basic tier).
 - **Azure Container Apps Job** (Schedule trigger type) replaces Windows Task
   Scheduler — consumption-billed, runs only for the ~15-minute daily window.
@@ -362,7 +364,7 @@ which is why §8 and §9 recommend against them.
 | Application Access Policy mis-scoped → over-broad mailbox access | Treat the Access Policy as a security gate; verify with `Test-ApplicationAccessPolicy` before go-live |
 | Loss of Sentry self-heal loop during the observability migration | Keep the vendor-agnostic Claude-diagnose fallback; run the old and new observability stacks in parallel through the migration |
 | DST drift on UTC-only cron | Use the Logic App timezone-aware trigger |
-| PDF rendering dependencies in the container | Bake WeasyPrint system libraries into the image; validate in sandbox |
+| PDF rendering dependencies in the container | Pip-install reportlab + Pillow; add the TrueType fonts the report templates reference; validate in sandbox |
 | Cutover regression | Sandbox parallel-run against the live Cloud PC before production cutover |
 
 ---
