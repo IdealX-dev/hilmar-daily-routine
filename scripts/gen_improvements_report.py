@@ -78,6 +78,38 @@ def _read_json(path: Path):
         return None
 
 
+_QC_PREFIX_RE = re.compile(r"^\s*(QC-\d+[a-z]?)\s*:\s*", re.IGNORECASE)
+
+
+def _strip_qc_prefix(msg, check_id):
+    if not msg:
+        return ""
+    m = _QC_PREFIX_RE.match(msg)
+    if m and m.group(1).upper() == check_id.upper():
+        return msg[m.end():].strip()
+    return msg.strip()
+
+
+def _group_qc_messages(messages):
+    """Group QC log messages by their QC-NNN prefix.
+
+    Returns (grouped, ungrouped) where:
+      - grouped is a list of (check_id, [msgs]) sorted by check id, preserving
+        original order within each group
+      - ungrouped is the messages with no QC-NNN prefix (defensive — shouldn't
+        normally happen but phase_1/phase_2 hard failures don't carry one)
+    """
+    buckets = defaultdict(list)
+    ungrouped = []
+    for msg in messages or []:
+        m = _QC_PREFIX_RE.match(msg or "")
+        if m:
+            buckets[m.group(1).upper()].append(msg)
+        else:
+            ungrouped.append(msg)
+    return sorted(buckets.items()), ungrouped
+
+
 def _report_date():
     """Mirror gen_email._report_date — the previous business day in ET."""
     now_et = datetime.now(timezone.utc).astimezone(core.ET).date()
@@ -150,16 +182,44 @@ def collect_red_flags(data, qc, drift):
                 "detail": reason,
             })
 
-    # 5. QC errors (status != CLEAN)
+    # 5. QC errors (status != CLEAN) — surface each failing check as its own
+    # red flag with the actual error text. Prior version pointed to
+    # reports/qc-result.json, which is unreadable from the iPhone audit. Group
+    # repeated firings by QC-NNN so a check that fires across 5 records
+    # collapses to one row with a count + sample messages.
     if qc and qc.get("status") != "CLEAN":
-        flags.append({
-            "level": "🔴",
-            "title": f"QC status: {qc.get('status', '?')}",
-            "detail": (
-                f"Errors: {qc.get('errors', 0)} | Warnings: {qc.get('warnings', 0)}. "
-                "Review reports/qc-result.json error_details."
-            ),
-        })
+        error_details = qc.get("error_details") or []
+        grouped, ungrouped = _group_qc_messages(error_details)
+        if not grouped and not ungrouped:
+            # Counts say errors exist but no per-message detail came through —
+            # fall back to the headline so we never go silent.
+            flags.append({
+                "level": "🔴",
+                "title": f"QC status: {qc.get('status', '?')}",
+                "detail": (
+                    f"Errors: {qc.get('errors', 0)} | Warnings: {qc.get('warnings', 0)}. "
+                    "qc-result.json had no error_details to expand."
+                ),
+            })
+        else:
+            shown = 0
+            for check_id, msgs in grouped:
+                if shown >= 8:
+                    break
+                count = len(msgs)
+                title = f"{check_id} ERROR" + (f" × {count}" if count > 1 else "")
+                preview = msgs[:3]
+                detail = " · ".join(_strip_qc_prefix(m, check_id) for m in preview)
+                if count > len(preview):
+                    detail += f" · +{count - len(preview)} more"
+                flags.append({"level": "🔴", "title": title, "detail": detail})
+                shown += 1
+            for msg in ungrouped[:max(0, 8 - shown)]:
+                flags.append({
+                    "level": "🔴",
+                    "title": "QC error (uncategorized)",
+                    "detail": msg,
+                })
 
     # 6. Stage stale > 36h on weekday
     # Bug fix 2026-05-07: was reading stale .jsonl (legacy) instead of current
@@ -223,6 +283,56 @@ def collect_observations(data, qc, drift):
     obs = []
     requests = data.get("requests", []) or []
     summary = data.get("summary") or {}
+
+    # 0. QC warnings — surface inline so they don't stay buried in
+    # qc-result.json. Warnings don't block ship, hence yellow, but Michael
+    # needs to see them from the iPhone audit. Grouped by check id;
+    # exception-only warnings (QC-NN: check failed with exception …) are
+    # rolled into a single line so a single broken check doesn't drown the
+    # section.
+    if qc:
+        warning_details = qc.get("warning_details") or []
+        grouped, ungrouped = _group_qc_messages(warning_details)
+        # Split exception warnings from real findings — exceptions point at a
+        # check that crashed, not at data drift.
+        exception_groups = []
+        finding_groups = []
+        for check_id, msgs in grouped:
+            non_exc = [m for m in msgs if "check failed with exception" not in (m or "")]
+            exc_only = len(non_exc) == 0 and len(msgs) > 0
+            if exc_only:
+                exception_groups.append((check_id, msgs))
+            else:
+                finding_groups.append((check_id, non_exc))
+        shown = 0
+        for check_id, msgs in finding_groups:
+            if shown >= 6:
+                break
+            count = len(msgs)
+            title = f"{check_id} WARN" + (f" × {count}" if count > 1 else "")
+            preview = msgs[:3]
+            detail = " · ".join(_strip_qc_prefix(m, check_id) for m in preview)
+            if count > len(preview):
+                detail += f" · +{count - len(preview)} more"
+            obs.append({"level": "🟡", "title": title, "detail": detail})
+            shown += 1
+        if exception_groups:
+            ids = ", ".join(cid for cid, _ in exception_groups[:6])
+            extra = "" if len(exception_groups) <= 6 else f" +{len(exception_groups) - 6} more"
+            obs.append({
+                "level": "🟡",
+                "title": f"{len(exception_groups)} QC check(s) crashed",
+                "detail": (
+                    f"Threw an exception during evaluation: {ids}{extra}. "
+                    "The check itself is broken, not the data — see qc_selfheal.py."
+                ),
+            })
+        for msg in ungrouped[:3]:
+            obs.append({
+                "level": "🟡",
+                "title": "QC warning (uncategorized)",
+                "detail": msg,
+            })
 
     # 1. This week's quote rate
     today = datetime.now(timezone.utc).astimezone(core.ET).date()
