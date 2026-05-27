@@ -1129,7 +1129,26 @@ def phase_6_rules(log: Log, data: dict):
                         " missing — investigate run-log."
                     )
                 else:
-                    log.warn("QC-021: today's wrapper started but pipeline never completed")
+                    # Report the LAST step marker seen for today so the audit
+                    # tells us WHERE the wrapper got stuck — instead of just
+                    # "didn't complete". Wrapper logs lines like
+                    # "--- refresh_stage ---", "--- run_pipeline ---", etc.
+                    import re as _re21
+                    _steps = _re21.findall(r"^---\s*(.+?)\s*---\s*$",
+                                           _after, _re21.MULTILINE)
+                    _last_step = _steps[-1] if _steps else None
+                    if _last_step:
+                        log.warn(
+                            f"QC-021: today's wrapper started but pipeline never "
+                            f"completed — last step logged was '{_last_step}'. "
+                            f"Check that step's output in reports/run-log.txt."
+                        )
+                    else:
+                        log.warn(
+                            "QC-021: today's wrapper started but pipeline never "
+                            "completed — no step markers found (wrapper may have "
+                            "died before the refresh_stage echo)."
+                        )
             else:
                 # No fire today yet — only WARN on weekday afternoons
                 _now_et = _dt.now(core.ET)
