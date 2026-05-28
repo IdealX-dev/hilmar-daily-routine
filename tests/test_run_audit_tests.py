@@ -15,8 +15,16 @@ import run_audit_tests as RAT  # noqa: E402
 
 
 def test_read_gate_from_pyproject():
-    # pyproject.toml sets --cov-fail-under=85
-    assert RAT._read_gate_from_pyproject() == 85.0
+    # The gate is a ratchet — read whatever the current pyproject value is
+    # rather than pinning a specific number (else this test fights the
+    # ratchet every time we bump it).
+    import re
+    pp = (RAT.ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r"--cov-fail-under[=\s]+(\d+(?:\.\d+)?)", pp)
+    assert m, "pyproject.toml is missing --cov-fail-under in addopts"
+    expected = float(m.group(1))
+    assert RAT._read_gate_from_pyproject() == expected
+    assert expected >= 85.0, "Gate must never be lowered below 85 (regression ratchet)"
 
 
 def test_read_gate_fallback(tmp_path, monkeypatch):

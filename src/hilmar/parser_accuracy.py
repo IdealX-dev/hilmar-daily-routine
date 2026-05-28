@@ -301,10 +301,12 @@ def format_report(result: dict) -> str:
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    # CLI: run accuracy against the canonical tracking-data-v2.json
+def cli_main() -> int:
+    """CLI entry point. Reads tracking-data-v2.json, prints accuracy + per-
+    field detail, returns the exit code (0 PASS / 1 FAIL / 2 data missing).
+    Extracted from the __main__ block 2026-05-28 so it's directly testable
+    in-process (subprocess-launched CLIs don't count toward coverage)."""
     import json
-    import sys
     from pathlib import Path
 
     data_path = Path(__file__).resolve().parent.parent.parent / "tracking-data-v2.json"
@@ -313,16 +315,21 @@ if __name__ == "__main__":
         data_path = Path(__file__).resolve().parents[3] / "tracking-data-v2.json"
     if not data_path.exists():
         print(f"⚠️  tracking-data-v2.json not found near {Path(__file__).resolve()}")
-        sys.exit(2)
+        return 2
 
     data = json.loads(data_path.read_text(encoding="utf-8"))
     result = compute_accuracy(data.get("requests", []))
     print(format_report(result))
     print()
-    print(f"Per-field detail:")
+    print("Per-field detail:")
     for field, s in sorted(result["field_stats"].items()):
         if s.get("n_a"):
             print(f"  {field:20} N/A (no applicable rows)")
         else:
             print(f"  {field:20} {s['populated']}/{s['applicable']} ({s['rate']:.1%})")
-    sys.exit(0 if result["pass"] else 1)
+    return 0 if result["pass"] else 1
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(cli_main())
