@@ -1642,6 +1642,73 @@ def phase_6_rules(log: Log, data: dict):
         except Exception as _e:
             log.warn(f"QC-048: check failed with exception: {_e}")
 
+        # QC-052: TEST + COVERAGE GATE — verifies the daily test routine ran
+        # and the code is green. Reads reports/test-result.json (written by
+        # scripts/run_audit_tests.py, an observer step in run_pipeline.py).
+        # Added 2026-05-28 per Michael "a complete audit ... daily ...
+        # checking that every line of code has testing on it and successful
+        # ... must be in routines". This closes the gap where a 587-test
+        # suite + 85% coverage gate existed in pyproject but ran NOWHERE in
+        # the daily fire, so the audit was blind to code health.
+        #   FAIL (test failed / coverage below gate) -> ERROR (audit red flag)
+        #   SKIPPED (pytest unavailable on this host) -> WARN (install dev deps)
+        #   modules below the per-module floor        -> WARN (learning target)
+        try:
+            _tr_path = Path(__file__).resolve().parent.parent / "reports" / "test-result.json"
+            if not _tr_path.exists():
+                log.warn(
+                    "QC-052: reports/test-result.json absent — daily test routine "
+                    "(run_audit_tests.py) hasn't run. Code health is unverified."
+                )
+            else:
+                import json as _json_tr
+                _tr = _json_tr.loads(_tr_path.read_text(encoding="utf-8"))
+                _st = _tr.get("status")
+                _cov = _tr.get("total_coverage")
+                _gate = _tr.get("gate")
+                _counts = _tr.get("counts") or {}
+                if _st == "SKIPPED":
+                    log.warn(
+                        f"QC-052: test routine SKIPPED — {_tr.get('reason', 'pytest unavailable')}"
+                    )
+                elif _st == "FAIL":
+                    _why = []
+                    if not _tr.get("tests_ok", True):
+                        _why.append(
+                            f"{_counts.get('failed', 0)} failed / "
+                            f"{_counts.get('error', 0)} error of "
+                            f"{_counts.get('passed', 0) + _counts.get('failed', 0) + _counts.get('error', 0)}"
+                        )
+                    if not _tr.get("coverage_ok", True):
+                        _why.append(f"coverage {_cov}% < gate {_gate}%")
+                    log.error(
+                        "QC-052: daily test/coverage routine FAILED — "
+                        + "; ".join(_why)
+                        + ". The shipped code is not green. See reports/test-result.json."
+                    )
+                else:  # PASS
+                    log.ok(
+                        f"QC-052: tests green ({_counts.get('passed', 0)} passed) "
+                        f"coverage {_cov}% ≥ gate {_gate}%"
+                    )
+                # Learning loop: name under-tested modules so "every line tested"
+                # has a concrete worklist, even when the global gate passes.
+                _below = _tr.get("modules_below_floor") or []
+                _untested = _tr.get("untested_modules") or []
+                if _untested:
+                    log.warn(
+                        f"QC-052: {len(_untested)} module(s) with 0% coverage — "
+                        f"{', '.join(_untested[:5])}. These ship untested; add tests."
+                    )
+                elif _below:
+                    log.warn(
+                        f"QC-052: {len(_below)} module(s) below the "
+                        f"{_tr.get('module_floor')}% floor — "
+                        + ", ".join(f"{m['module']} ({m['coverage']}%)" for m in _below[:5])
+                    )
+        except Exception as _e:
+            log.warn(f"QC-052: check failed with exception: {_e}")
+
         # QC-047: WIN RATE FORMULA CONSISTENCY — the global Win Rate KPI tile
         # and the per-lane Win Rate cells must use the same formula
         # (Wins / (Wins + Q&L)). The explainer banner below the KPI grid

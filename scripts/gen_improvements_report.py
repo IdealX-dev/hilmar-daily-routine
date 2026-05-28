@@ -182,6 +182,31 @@ def collect_red_flags(data, qc, drift):
                 "detail": reason,
             })
 
+    # 4b. Daily test/coverage routine failed (added 2026-05-28). The audit
+    # is now the place a code regression surfaces — run_audit_tests.py writes
+    # reports/test-result.json every fire; a FAIL means a test broke or
+    # coverage fell below the pyproject gate.
+    test_res = _read_json(REPORTS / "test-result.json") or {}
+    if test_res.get("status") == "FAIL":
+        counts = test_res.get("counts") or {}
+        why = []
+        if not test_res.get("tests_ok", True):
+            why.append(f"{counts.get('failed', 0)} failed, {counts.get('error', 0)} error")
+        if not test_res.get("coverage_ok", True):
+            why.append(
+                f"coverage {test_res.get('total_coverage')}% below "
+                f"gate {test_res.get('gate')}%"
+            )
+        flags.append({
+            "level": "🔴",
+            "title": "Daily test/coverage routine FAILED",
+            "detail": (
+                f"{'; '.join(why)}. The shipped code is not green — fix before "
+                "the next fire. Run: python3 scripts/run_audit_tests.py. "
+                "Detail in reports/test-result.json."
+            ),
+        })
+
     # 5. QC errors (status != CLEAN) — surface each failing check as its own
     # red flag with the actual error text. Prior version pointed to
     # reports/qc-result.json, which is unreadable from the iPhone audit. Group
@@ -284,6 +309,7 @@ def collect_observations(data, qc, drift):
     requests = data.get("requests", []) or []
     summary = data.get("summary") or {}
 
+<<<<<<< HEAD
     # 0. QC warnings — surface inline so they don't stay buried in
     # qc-result.json. Warnings don't block ship, hence yellow, but Michael
     # needs to see them from the iPhone audit. Grouped by check id;
@@ -332,6 +358,46 @@ def collect_observations(data, qc, drift):
                 "level": "🟡",
                 "title": "QC warning (uncategorized)",
                 "detail": msg,
+            })
+
+    # Code-health from the daily test routine (added 2026-05-28). PASS with
+    # under-tested modules is an observation (the learning worklist for
+    # "every line of code has testing"); SKIPPED means dev deps are missing
+    # on this host so the audit couldn't verify code health at all.
+    test_res = _read_json(REPORTS / "test-result.json") or {}
+    if test_res.get("status") == "SKIPPED":
+        obs.append({
+            "level": "🟡",
+            "title": "Test/coverage routine skipped — code health unverified",
+            "detail": (
+                f"{test_res.get('reason', 'pytest unavailable on this host')} "
+                "Install dev deps so the daily audit can confirm the suite is green: "
+                "pip install -e '.[dev]'."
+            ),
+        })
+    elif test_res.get("status") == "PASS":
+        untested = test_res.get("untested_modules") or []
+        below = test_res.get("modules_below_floor") or []
+        if untested:
+            obs.append({
+                "level": "🟡",
+                "title": f"{len(untested)} module(s) ship with 0% test coverage",
+                "detail": (
+                    f"{', '.join(untested[:6])}. Suite is green and overall "
+                    f"coverage {test_res.get('total_coverage')}% clears the "
+                    f"{test_res.get('gate')}% gate, but these files have no tests "
+                    "at all — the top targets for 'every line tested'."
+                ),
+            })
+        elif below:
+            obs.append({
+                "level": "🟡",
+                "title": f"{len(below)} module(s) below the {test_res.get('module_floor')}% coverage floor",
+                "detail": (
+                    ", ".join(f"{m['module']} ({m['coverage']}%)" for m in below[:6])
+                    + ". Overall coverage clears the gate; these are the next "
+                    "tests to write."
+                ),
             })
 
     # 1. This week's quote rate
