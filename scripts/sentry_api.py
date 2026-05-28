@@ -323,21 +323,31 @@ def get_issue_summary(
     cutoff_ts = datetime.now(timezone.utc).timestamp() - period_h * 3600
     for issue in unresolved:
         first_seen_s = issue.get("firstSeen", "")
-        if not first_seen_s:
-            continue
+        last_seen_s = issue.get("lastSeen", "")
         try:
-            first_seen = datetime.fromisoformat(first_seen_s.replace("Z", "+00:00"))
-            if first_seen.timestamp() >= cutoff_ts:
-                summary["new_in_period"].append(issue)
+            first_seen = datetime.fromisoformat(first_seen_s.replace("Z", "+00:00")) \
+                if first_seen_s else None
         except Exception:
-            continue
-        # Recurring: count events in period
+            first_seen = None
+        try:
+            last_seen = datetime.fromisoformat(last_seen_s.replace("Z", "+00:00")) \
+                if last_seen_s else None
+        except Exception:
+            last_seen = None
+        if first_seen and first_seen.timestamp() >= cutoff_ts:
+            summary["new_in_period"].append(issue)
+        # Recurring: count events AND require lastSeen within period.
+        # Without the lastSeen gate, a 14d-old issue that hasn't fired in 11
+        # days still shows up as "recurring" because its 14d count is >=3.
+        # That false-flags QC-043 "active regression" for stale-but-unresolved
+        # issues (HILMAR-DAILY-TRACKER-5 NameError last fired 2026-05-17 was
+        # surfacing as "firing ≥5×/24h" through 2026-05-28).
         try:
             count = int(issue.get("count", 0))
-            if count >= 3:
-                summary["recurring"].append(issue)
         except Exception:
-            pass
+            count = 0
+        if count >= 3 and last_seen and last_seen.timestamp() >= cutoff_ts:
+            summary["recurring"].append(issue)
 
     # Resolved in period
     resolved = api.list_issues(

@@ -103,6 +103,10 @@ _TRADE_REGION_MAP = {
     "hamburg": "Europe", "rotterdam": "Europe", "antwerp": "Europe",
     "felixstowe": "Europe", "le havre": "Europe", "algeciras": "Europe",
     "valencia": "Europe", "genoa": "Europe", "barcelona": "Europe",
+    # Dublin (Ireland) — added 2026-05-28 after QC-015 surfaced it as
+    # Unmapped. Ireland's main container port for Hilmar dairy exports
+    # into the UK/Irish market.
+    "dublin": "Europe",
     # Mid-East
     "jebel ali": "Middle East", "dammam": "Middle East", "jeddah": "Middle East",
     "ashdod": "Middle East", "haifa": "Middle East",
