@@ -43,6 +43,13 @@ _POST_PATCH_ENV = {"HILMAR_QC_PHASE": "post-patch"}
 
 STEPS = [
     ("Backup snapshot",          [PY, str(SCRIPTS / "backup.py")]),
+    # 2026-05-28 (Michael "a complete audit ... daily ... checking that every
+    # line of code has testing on it and successful ... must be in routines"):
+    # run the pytest suite under coverage and write reports/test-result.json
+    # so the daily systems audit can red-flag a code regression. This is an
+    # OBSERVER step — run_audit_tests.py always exits 0 so a failing test
+    # never blocks the client email; QC-052 + the audit decide severity.
+    ("Test + coverage routine",  [PY, str(SCRIPTS / "run_audit_tests.py"), "--quiet"]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
     # 2026-05-06: drift_check wired in per orchestrator.md step 3.5. Runs
     # BEFORE QC. 6 phases: imid uniqueness, matcher quality, quote-rate

@@ -104,10 +104,26 @@ email) that you must not skip.
    or any critical field drops below threshold. Never lower the gate to make a
    red check pass — fix the parser.
 
-4. **Every new code pattern ships with its QC check + self-heal in the SAME
-   commit.** This is a standing rule. New mailbox/folder pattern → walk it.
-   New scheduled job → staleness check. New API integration → freshness check.
-   New email path → bounce check. See the `qc-and-self-heal` skill.
+4. **Every new code pattern ships with its QC check + self-heal AND its
+   tests in the SAME commit.** This is a standing rule. New mailbox/folder
+   pattern → walk it. New scheduled job → staleness check. New API
+   integration → freshness check. New email path → bounce check. New
+   function → a test that exercises it (the daily routine in rule #7 will
+   red-flag you if coverage drops below the gate). See the `qc-and-self-heal`
+   skill.
+
+7. **The code is audited daily, same as the data.** `scripts/run_audit_tests.py`
+   runs the full pytest suite under coverage on every fire (a step in
+   `run_pipeline.py`) and writes `reports/test-result.json`. **QC-052** + the
+   private systems audit red-flag a failed test or a coverage drop below the
+   `pyproject.toml` gate (`--cov-fail-under`), and name modules below the
+   per-module floor as the worklist for "every line tested". The coverage
+   gate is a one-way ratchet — raise it, never lower it to make a run pass.
+   The routine is an OBSERVER: it always exits 0 so a red test never blocks
+   the client email; the audit is where the regression is loud. On a host
+   without dev deps the artifact records `SKIPPED` and the audit nudges you to
+   `pip install -e '.[dev]'` — that's the one manual step to make the routine
+   actually run on the Cloud PC.
 
 5. **Mirror edits.** `scripts/` exists in TWO places — the git repo
    (`hilmar-daily-routine/scripts/`) and production (`PROJECT HILMAR/scripts/`).
