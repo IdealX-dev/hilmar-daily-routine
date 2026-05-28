@@ -63,11 +63,15 @@ python_files = ["test_*.py"]
 # Linux CI it didn't, which is what broke the runs before a983e33.
 # Keeping both fixes in place avoids regression on either OS in future.
 pythonpath = ["."]
-addopts = "-ra --strict-markers --cov=hilmar --cov-report=term-missing --cov-fail-under=85"
-# NOTE: coverage gate restored to the 85 target after M3.8's interim
-# 77 floor. Bump rather than lower — it's a regression ratchet. Largest
-# remaining gap is qc.py (~72%, mostly Phase 6 cross-check error paths
-# and the CLI main()).
+addopts = "-ra --strict-markers --cov=hilmar --cov-report=term-missing --cov-fail-under=87"
+# NOTE: coverage gate is a ONE-WAY RATCHET — only bump up, never lower it to
+# make a failing run pass. Per Michael 2026-05-28 "push toward 100%":
+#   - 77 (M3.8 interim floor)  →  85 (M3.x restore)  →  87 (2026-05-28)
+# 2026-05-28 rung: parser_accuracy.py went from 0% → 97.8% (new
+# tests/test_parser_accuracy.py + a cli_main() extraction so the CLI is
+# in-process testable). Next-largest gap by missing-stmts: ingest.py
+# (744 stmts, 74.5% covered, ~190 missing) — drive coverage there to
+# justify the next rung (target 90).
 
 [tool.ruff]
 line-length = 100

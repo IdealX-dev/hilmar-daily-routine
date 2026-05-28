@@ -4,10 +4,13 @@ routine (run_audit_tests.py, added 2026-05-28) surfaced it as the top
 untested module, and this closes that gap."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from hilmar.parser_accuracy import (
     ACCURACY_THRESHOLD,
     CRITICAL_FIELDS,
     PER_FIELD_THRESHOLDS,
+    _is_active,
     _is_populated,
     _is_quoted,
     _is_standalone,
@@ -55,6 +58,16 @@ def test_standalone_and_chain_quoted():
     # standalone WIN is quoted but NOT chain-quoted (no rate-response email)
     assert _is_chain_quoted(standalone) is False
     assert _is_chain_quoted(chain) is True
+
+
+def test_is_active_excludes_no_contest():
+    assert _is_active({"status": "WIN"}) is True
+    assert _is_active({"status": "Q&L"}) is True
+    assert _is_active({"status": "PENDING"}) is True
+    assert _is_active({"status": "NQ"}) is False
+    # Legacy LOSS with quoted=False is NQ-equivalent → not active
+    assert _is_active({"status": "LOSS", "quoted": False}) is False
+    assert _is_active({"status": "LOSS", "quoted": True}) is True
 
 
 def test_threshold_for_uses_overrides():
@@ -142,3 +155,57 @@ def test_format_report_pass_and_fail():
     assert "PASS" in ok and "All fields" in ok
     fail = format_report(compute_accuracy([_good_row(carrier_quoted=None)]))
     assert "FAIL" in fail and "CRITICAL" in fail
+
+
+# ── cli_main (in-process, counts toward coverage) ────────────────────────────
+#
+# Production layout: src/hilmar/parser_accuracy.py looks for
+# tracking-data-v2.json at .parent.parent.parent (repo root). Live in-process
+# the module's __file__ resolves to the real src/hilmar/ — so the tests below
+# point that lookup at a sandbox via monkeypatching __file__.
+
+
+def _isolated_cli(tmp_path, monkeypatch, requests):
+    """Helper: drop a synthetic tracking-data-v2.json at the sandbox root,
+    re-point parser_accuracy.__file__ at a fake src/hilmar/ inside it, then
+    invoke cli_main() in-process. Captures stdout via capsys in the caller."""
+    import json as _json
+    import hilmar.parser_accuracy as PA
+    fake_module_path = tmp_path / "src" / "hilmar" / "parser_accuracy.py"
+    fake_module_path.parent.mkdir(parents=True)
+    fake_module_path.write_text("# placeholder so resolve() works\n")
+    (tmp_path / "tracking-data-v2.json").write_text(
+        _json.dumps({"requests": requests})
+    )
+    monkeypatch.setattr(PA, "__file__", str(fake_module_path))
+    return PA.cli_main()
+
+
+def test_cli_main_pass(tmp_path, monkeypatch, capsys):
+    rc = _isolated_cli(tmp_path, monkeypatch, [_good_row()])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Parser Accuracy: PASS" in out
+    assert "Per-field detail" in out
+
+
+def test_cli_main_fail_on_missing_critical_field(tmp_path, monkeypatch, capsys):
+    rc = _isolated_cli(tmp_path, monkeypatch, [_good_row(carrier_quoted=None)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "Parser Accuracy: FAIL" in out
+    # Per-field detail prints N/A for fields with zero applicable rows
+    assert "N/A" in out
+
+
+def test_cli_main_missing_data_file(tmp_path, monkeypatch, capsys):
+    import hilmar.parser_accuracy as PA
+    fake_module_path = tmp_path / "src" / "hilmar" / "parser_accuracy.py"
+    fake_module_path.parent.mkdir(parents=True)
+    fake_module_path.write_text("# placeholder\n")
+    # No tracking-data-v2.json on either lookup path → exit 2
+    monkeypatch.setattr(PA, "__file__", str(fake_module_path))
+    rc = PA.cli_main()
+    out = capsys.readouterr().out
+    assert rc == 2
+    assert "tracking-data-v2.json not found" in out

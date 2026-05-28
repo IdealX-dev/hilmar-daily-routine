@@ -182,6 +182,43 @@ def collect_red_flags(data, qc, drift):
                 "detail": reason,
             })
 
+    # 4a. ol-quote-tracker (Turso) sync failure streak — added 2026-05-28
+    # per Michael's "verify/harden existing sync" direction. Read the audit
+    # log directly so the red flag has the actual error string the operator
+    # needs (QC-037 also fires, but the audit's QC line is generic).
+    try:
+        sync_log = REPORTS / "quote-tracker-sync.log"
+        if sync_log.exists():
+            lines = [
+                ln for ln in sync_log.read_text(encoding="utf-8", errors="ignore").splitlines()
+                if ln.strip()
+            ]
+            streak = 0
+            last_err = None
+            for ln in reversed(lines):
+                if "ok=True" in ln or "no APP_PASSWORD configured" in ln:
+                    break
+                streak += 1
+                if last_err is None:
+                    last_err = ln
+                if streak >= 5:
+                    break
+            if streak >= 3 and last_err:
+                err_excerpt = last_err.split("err=", 1)[-1][:200] if "err=" in last_err else last_err[:200]
+                flags.append({
+                    "level": "🔴",
+                    "title": f"Turso sync failed {streak} fires in a row",
+                    "detail": (
+                        f"ol-quote-tracker entity registry is going stale. "
+                        f"Last error: {err_excerpt}. "
+                        f"Check {sync_log.name} for the full sequence and run "
+                        f"`python3 scripts/sync_to_quote_tracker.py --verbose` "
+                        f"locally to reproduce."
+                    ),
+                })
+    except Exception:
+        pass
+
     # 4b. Daily test/coverage routine failed (added 2026-05-28). The audit
     # is now the place a code regression surfaces — run_audit_tests.py writes
     # reports/test-result.json every fire; a FAIL means a test broke or
@@ -309,7 +346,6 @@ def collect_observations(data, qc, drift):
     requests = data.get("requests", []) or []
     summary = data.get("summary") or {}
 
-<<<<<<< HEAD
     # 0. QC warnings — surface inline so they don't stay buried in
     # qc-result.json. Warnings don't block ship, hence yellow, but Michael
     # needs to see them from the iPhone audit. Grouped by check id;

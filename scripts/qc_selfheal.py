@@ -1295,7 +1295,30 @@ def phase_6_rules(log: Log, data: dict):
                     log.warn("QC-037: APP_PASSWORD not configured — sync skipped each fire. "
                              "Drop password in secrets/quote-tracker-pwd.txt to enable.")
                 else:
-                    log.warn(f"QC-037: last sync failed: {_last[:120]}")
+                    # Consecutive-failure streak detection (added 2026-05-28 per
+                    # Michael's "verify/harden existing sync" answer). A single
+                    # failure can be a transient network blip; THREE in a row
+                    # means the Turso sync is genuinely broken and the entity
+                    # registry is going stale. ERROR-severity so the audit
+                    # red-flags it and Sentry catches it.
+                    _streak = 0
+                    for _ln in reversed(_lines):
+                        if not _ln.strip():
+                            continue
+                        if "ok=True" in _ln:
+                            break
+                        if "no APP_PASSWORD configured" in _ln:
+                            break
+                        _streak += 1
+                        if _streak >= 5:
+                            break
+                    if _streak >= 3:
+                        log.error(
+                            f"QC-037: ol-quote-tracker sync FAILED {_streak} fires in a row "
+                            f"— Turso entity registry going stale. Last error: {_last[:160]}"
+                        )
+                    else:
+                        log.warn(f"QC-037: last sync failed: {_last[:120]}")
     except Exception as _e:
         log.warn(f"QC-037: check failed with exception: {_e}")
 
