@@ -72,6 +72,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 | QC-052 | **ERROR** | Daily test/coverage routine failed — a test broke OR coverage fell below the `pyproject` gate; also WARNs on modules below the per-module floor (learning worklist for "every line tested") | None — reads `reports/test-result.json` from `run_audit_tests.py`; surfaces in audit red-flags | 2026-05-28 |
+| QC-053 | **ERROR** | Local repo HEAD is behind `origin/main` — Cloud PC is running stale code, so pushed fixes aren't actually deployed. Catches the failure mode where a PR with production fixes sits unmerged or `git pull` silently failed at wrapper Step 0. | None — operator must merge / re-pull. Audit also raises a dedicated red flag with the explicit `git pull` instruction. | 2026-05-28 (after a 4-commit branch sat unmerged 5 days) |
 
 > **Index backlog (2026-05-28):** QC-042 through QC-051 exist in
 > `scripts/qc_selfheal.py` but predate this row and are not yet listed above

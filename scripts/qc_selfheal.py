@@ -1732,6 +1732,71 @@ def phase_6_rules(log: Log, data: dict):
         except Exception as _e:
             log.warn(f"QC-052: check failed with exception: {_e}")
 
+        # QC-053: DEPLOYMENT DRIFT — local checkout vs origin/main. Added
+        # 2026-05-28 after Michael's "how is this possible" audit on May 28:
+        # 4 commits of production fixes (Caucedo, Dublin, Sentry filter,
+        # QC-021 step name, QC-052) had been pushed to a feature branch and
+        # piled into a docs PR. The wrapper does `git pull --quiet origin
+        # main` then xcopies into PROJECT HILMAR/scripts/ — so the Cloud PC
+        # ran main, the PR never merged, none of the fixes took effect for
+        # ~5 days. The audit kept reporting the SAME problems because
+        # nothing was actually deployed. This check ERRORs if the local
+        # repo HEAD is behind origin/main (the production case that bit us)
+        # AND if a deployment-marker indicates the production xcopy is
+        # behind the local repo. Read-only — does not run `git fetch`
+        # (the wrapper Step 0 already pulled).
+        try:
+            import subprocess as _sp53
+            from pathlib import Path as _Path53
+            _git_dir = _Path53(__file__).resolve().parent.parent / ".git"
+            if not _git_dir.exists():
+                # Production xcopy has no .git nearby — read the marker the
+                # wrapper writes after a successful git pull.
+                _marker = _Path53(__file__).resolve().parent.parent / "reports" / "deployment-sha.txt"
+                if _marker.exists():
+                    _txt = _marker.read_text(encoding="utf-8").strip()
+                    log.ok(f"QC-053: production checkout (no .git here) — marker: {_txt[:80]}")
+                else:
+                    log.warn(
+                        "QC-053: no .git directory and no reports/deployment-sha.txt "
+                        "— cannot verify the deployed code is current with origin/main. "
+                        "Update deploy/run_daily_laptop.cmd Step 0 to write the marker."
+                    )
+            else:
+                _head = _sp53.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                ).stdout.strip() or "unknown"
+                _r = _sp53.run(
+                    ["git", "rev-list", "--count", "HEAD..origin/main"],
+                    cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                )
+                if _r.returncode != 0:
+                    log.warn(
+                        f"QC-053: could not compare HEAD vs origin/main: "
+                        f"{(_r.stderr or '').strip()[:160]}"
+                    )
+                else:
+                    _behind = int((_r.stdout or "0").strip() or "0")
+                    if _behind > 0:
+                        # Get the subject lines of the unmerged commits so the
+                        # audit shows WHAT we're missing, not just a count.
+                        _l = _sp53.run(
+                            ["git", "log", "--oneline", "-5", "HEAD..origin/main"],
+                            cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                        )
+                        _samples = (_l.stdout or "").strip().splitlines()[:3]
+                        _sample_txt = " · ".join(_samples) if _samples else "(no log)"
+                        log.error(
+                            f"QC-053: local HEAD ({_head}) is {_behind} commit(s) "
+                            f"BEHIND origin/main — Cloud PC is running stale code. "
+                            f"Wrapper Step 0 git-pull may have failed. Missing: {_sample_txt}"
+                        )
+                    else:
+                        log.ok(f"QC-053: deployment current — HEAD {_head} == origin/main")
+        except Exception as _e:
+            log.warn(f"QC-053: check failed with exception: {_e}")
+
         # QC-047: WIN RATE FORMULA CONSISTENCY — the global Win Rate KPI tile
         # and the per-lane Win Rate cells must use the same formula
         # (Wins / (Wins + Q&L)). The explainer banner below the KPI grid

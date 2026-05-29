@@ -219,6 +219,32 @@ def collect_red_flags(data, qc, drift):
     except Exception:
         pass
 
+    # 4c. Deployment drift — local repo HEAD is behind origin/main, meaning
+    # fixes that have been pushed are not actually running on the Cloud PC.
+    # Reads deploy/run_daily_laptop.cmd's reports/deployment-sha.txt marker
+    # (also surfaced by QC-053; this gives the audit a dedicated red flag
+    # with the explicit "git pull" instruction).
+    try:
+        dep_marker = REPORTS / "deployment-sha.txt"
+        if dep_marker.exists():
+            txt = dep_marker.read_text(encoding="utf-8").strip()
+            m = re.search(r"BEHIND=(\d+)", txt)
+            if m and int(m.group(1)) > 0:
+                flags.append({
+                    "level": "🔴",
+                    "title": f"Cloud PC running stale code — {m.group(1)} commit(s) behind main",
+                    "detail": (
+                        f"deployment-sha.txt: {txt[:200]}. "
+                        "Wrapper Step 0 `git pull` either failed or there are "
+                        "merge conflicts blocking the pull. Open the Cloud PC, "
+                        "cd to OneDrive/PROJECT HILMAR/hilmar-daily-routine, run "
+                        "`git pull origin main` manually, and check the run-log "
+                        "for the next failure."
+                    ),
+                })
+    except Exception:
+        pass
+
     # 4b. Daily test/coverage routine failed (added 2026-05-28). The audit
     # is now the place a code regression surfaces — run_audit_tests.py writes
     # reports/test-result.json every fire; a FAIL means a test broke or
