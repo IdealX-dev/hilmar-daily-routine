@@ -77,3 +77,47 @@ def test_skipped_path_writes_artifact_and_exits_zero(tmp_path, monkeypatch):
     written = json.loads((tmp_path / "test-result.json").read_text())
     assert written["status"] == "SKIPPED"
     assert "pytest" in written["reason"]
+
+
+# ── _test_root() — Cloud PC layout detection ─────────────────────────────────
+
+def test_test_root_finds_dev_layout(monkeypatch, tmp_path):
+    """When tests/ and src/hilmar/ are siblings of ROOT, return ROOT."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "hilmar").mkdir(parents=True)
+    monkeypatch.setattr(RAT, "ROOT", tmp_path)
+    assert RAT._test_root() == tmp_path
+
+
+def test_test_root_finds_cloudpc_layout(monkeypatch, tmp_path):
+    """When ROOT is a production xcopy dir (no tests/ or src/) but
+    ROOT/hilmar-daily-routine/ has them, return the sibling — this is
+    the failure mode QC-052 hit on the 2026-05-30 Cloud PC fire."""
+    repo = tmp_path / "hilmar-daily-routine"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "hilmar").mkdir(parents=True)
+    monkeypatch.setattr(RAT, "ROOT", tmp_path)
+    assert RAT._test_root() == repo
+
+
+def test_test_root_returns_none_when_neither_layout_present(monkeypatch, tmp_path):
+    """No tests/ + no src/hilmar/ anywhere → caller must SKIP gracefully
+    instead of feeding pytest a dir it can't find tests in."""
+    monkeypatch.setattr(RAT, "ROOT", tmp_path)
+    assert RAT._test_root() is None
+
+
+def test_main_skips_when_no_test_root(monkeypatch, tmp_path):
+    """Reproduce the Cloud PC failure: pytest available but no test
+    layout found → must write SKIPPED status, not bomb with collection
+    errors (the 0/22 mode the audit reported)."""
+    monkeypatch.setattr(RAT, "REPORTS", tmp_path)
+    monkeypatch.setattr(RAT, "ARTIFACT", tmp_path / "test-result.json")
+    monkeypatch.setattr(RAT, "ROOT", tmp_path)  # no tests/, no src/, no sibling
+    monkeypatch.setattr(sys, "argv", ["run_audit_tests.py", "--quiet"])
+    rc = RAT.main()
+    assert rc == 0
+    import json
+    written = json.loads((tmp_path / "test-result.json").read_text())
+    assert written["status"] == "SKIPPED"
+    assert "tests/" in written["reason"]

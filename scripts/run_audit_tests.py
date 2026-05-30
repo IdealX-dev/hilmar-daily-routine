@@ -47,6 +47,37 @@ REPORTS = ROOT / "reports"
 ARTIFACT = REPORTS / "test-result.json"
 COVERAGE_JSON = REPORTS / "coverage.json"
 
+
+def _test_root() -> Path | None:
+    """Locate the directory that contains tests/ + src/hilmar/ + pyproject.toml.
+
+    Two layouts to handle:
+
+    1. **Development / CI** — this script lives at the repo root's
+       ``scripts/``, with ``tests/`` and ``src/hilmar/`` as siblings.
+       ROOT itself IS the test root.
+
+    2. **Cloud PC production** — the wrapper xcopies ``scripts/*.py`` from
+       the git checkout (``PROJECT HILMAR/hilmar-daily-routine/scripts/``)
+       to a parallel ``PROJECT HILMAR/scripts/``. So when this script
+       runs, ROOT = ``PROJECT HILMAR/`` — which has NO ``tests/`` and NO
+       ``src/`` (only runtime data + the scripts copy). The actual git
+       checkout (with tests + src + pyproject) is at
+       ``ROOT/hilmar-daily-routine/``. Detect that and point pytest at
+       the right place.
+
+    Returns the test root directory if found, or ``None`` if neither
+    layout matches — caller writes SKIPPED in that case rather than
+    bombing pytest with a "no tests collected" error.
+    """
+    if (ROOT / "tests").is_dir() and (ROOT / "src" / "hilmar").is_dir():
+        return ROOT
+    sibling = ROOT / "hilmar-daily-routine"
+    if (sibling / "tests").is_dir() and (sibling / "src" / "hilmar").is_dir():
+        return sibling
+    return None
+
+
 # A per-module floor below which we surface the module in the audit as an
 # under-tested learning target. The global gate lives in pyproject; this is
 # the "every line of code has testing" signal Michael asked for — it names
@@ -55,8 +86,11 @@ MODULE_FLOOR = 80.0
 
 
 def _read_gate_from_pyproject() -> float:
-    """Read --cov-fail-under from pyproject.toml addopts. Fallback 85."""
-    pp = ROOT / "pyproject.toml"
+    """Read --cov-fail-under from pyproject.toml addopts. Fallback 85.
+    Reads from the test root's pyproject (not ROOT's) so the Cloud PC
+    layout reads the correct gate."""
+    test_root = _test_root() or ROOT
+    pp = test_root / "pyproject.toml"
     try:
         txt = pp.read_text(encoding="utf-8")
         m = re.search(r"--cov-fail-under[=\s]+(\d+(?:\.\d+)?)", txt)
@@ -115,17 +149,43 @@ def main() -> int:
         print(f"⏭️  test-result.json: SKIPPED — {reason}")
         return 0  # observer: never block the pipeline
 
+    # Locate tests/ + src/hilmar/. On Cloud PC production these live one
+    # level deeper than ROOT (in hilmar-daily-routine/). Without this,
+    # pytest gets a cwd with no tests + no `hilmar` package and emits a
+    # wall of collection errors — exactly the QC-052 failure mode
+    # observed in production on the 2026-05-30 manual fire.
+    test_root = _test_root()
+    if test_root is None:
+        artifact = {
+            "status": "SKIPPED",
+            "reason": (
+                "Could not locate tests/ + src/hilmar/ next to this script "
+                f"(checked {ROOT} and {ROOT / 'hilmar-daily-routine'}). The "
+                "test routine needs the git checkout layout to discover "
+                "tests — verify the wrapper's git pull is current."
+            ),
+            "generated_at": now,
+            "gate": gate,
+        }
+        _write(artifact)
+        print(f"⏭️  test-result.json: SKIPPED — no tests/+src/hilmar/ found")
+        return 0  # observer: never block the pipeline
+
     # Run the suite with a JSON coverage report we can parse for per-module %.
     # --cov-fail-under=0 here so pytest's own exit code reflects ONLY test
     # pass/fail; the coverage-gate decision is made below against `gate` so we
     # can report the exact margin instead of a bare non-zero exit.
+    # Coverage JSON goes to the test_root's reports/ so the file ends up
+    # next to where pytest writes it; we read it back below regardless of
+    # whether REPORTS (under ROOT) is the same dir.
+    coverage_json = test_root / "reports" / "coverage.json"
     cmd = [
         sys.executable, "-m", "pytest", "-q", "--no-header",
         "--cov=hilmar",
-        f"--cov-report=json:{COVERAGE_JSON}",
+        f"--cov-report=json:{coverage_json}",
         "--cov-fail-under=0",
     ]
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=str(test_root), capture_output=True, text=True)
     stdout = proc.stdout + "\n" + proc.stderr
     if not args.quiet:
         print(stdout[-4000:])
@@ -137,7 +197,7 @@ def main() -> int:
     modules_below_floor: list[dict] = []
     untested: list[str] = []
     try:
-        cov = json.loads(COVERAGE_JSON.read_text(encoding="utf-8"))
+        cov = json.loads(coverage_json.read_text(encoding="utf-8"))
         total_cov = round(float(cov["totals"]["percent_covered"]), 2)
         for path, fdata in (cov.get("files") or {}).items():
             pct = round(float(fdata["summary"]["percent_covered"]), 2)
@@ -148,7 +208,7 @@ def main() -> int:
                 modules_below_floor.append({"module": mod, "coverage": pct})
         modules_below_floor.sort(key=lambda m: m["coverage"])
     except Exception as e:
-        print(f"⚠️  could not parse {COVERAGE_JSON}: {e}")
+        print(f"⚠️  could not parse {coverage_json}: {e}")
 
     coverage_ok = total_cov is not None and total_cov >= gate
 
