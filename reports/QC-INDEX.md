@@ -74,6 +74,17 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-052 | **ERROR** | Daily test/coverage routine failed — a test broke OR coverage fell below the `pyproject` gate; also WARNs on modules below the per-module floor (learning worklist for "every line tested") | None — reads `reports/test-result.json` from `run_audit_tests.py`; surfaces in audit red-flags | 2026-05-28 |
 | QC-053 | **ERROR** | Local repo HEAD is behind `origin/main` — Cloud PC is running stale code, so pushed fixes aren't actually deployed. Catches the failure mode where a PR with production fixes sits unmerged or `git pull` silently failed at wrapper Step 0. | None — operator must merge / re-pull. Audit also raises a dedicated red flag with the explicit `git pull` instruction. | 2026-05-28 (after a 4-commit branch sat unmerged 5 days) |
 
+## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
+
+These are not QC checks per se — they're operator-loop closures that build on
+existing infrastructure so the daily audit stops being a list of things that
+never get followed up on.
+
+| # | What it does | Where | Trigger |
+|---|---|---|---|
+| Stale Sentry auto-resolve | Any UNMAPPED Sentry issue silent ≥ `STALE_AUTO_RESOLVE_DAYS` (default 7) routes to `resolve_if_stale` with an explanatory comment. Closes the loop that left HILMAR-DAILY-TRACKER-5 (NameError 'os' not defined) unresolved for 11 days after the bug was fixed in code. Mapped issues retain their explicit `ACTIONS` route. | `scripts/qc_actions_from_sentry._action_lookup` | Daily pipeline step "Sentry-driven QC actions" |
+| QC-049 booking-team auto-notify | Each unconfirmed WIN (status=WIN, no `mdolx_ref`, request_date ≥ 7d ago) generates ONE Teams/Slack alert per ISO week with the lane, age, and explicit "review and either link the MDOLX booking or demote to Q&L" instruction. De-duped by `_was_alerted`. | `scripts/teams_alert.detect_events` event `qc049_unconfirmed_win` | Daily pipeline step "teams_alerts" (Step 4.5 in wrapper); requires `"qc049_unconfirmed_win"` in `config.json.alerts.events` |
+
 > **Index backlog (2026-05-28):** QC-042 through QC-051 exist in
 > `scripts/qc_selfheal.py` but predate this row and are not yet listed above
 > (data-URI guard, Sentry loop, double-escape guard, table-header, pending

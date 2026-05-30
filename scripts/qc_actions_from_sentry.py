@@ -167,6 +167,14 @@ ACTIONS: dict[str, dict] = {
 }
 
 
+#: Days of silence after which an UNMAPPED issue auto-resolves (added
+#: 2026-05-28). Mapped issues honor their ACTIONS entry; this only fires for
+#: orphaned unresolved errors that the operator never closed manually.
+#: A re-occurrence after auto-resolve creates a fresh issue, so nothing is
+#: actually lost — Sentry's grouping means the same fingerprint re-opens.
+STALE_AUTO_RESOLVE_DAYS = 7
+
+
 # Fallback action when no qc_check tag matches
 DEFAULT_ACTION = {
     "name": "Unmapped issue",
@@ -238,6 +246,30 @@ def _action_lookup(issue: dict) -> tuple[str, dict]:
                 qc_check = m.group(1)
     if qc_check and qc_check in ACTIONS:
         return qc_check, ACTIONS[qc_check]
+    # STALE AUTO-RESOLVE (added 2026-05-28). Per Michael "do all 7-9": close
+    # the loop on unresolved errors that have stopped firing — e.g.
+    # HILMAR-DAILY-TRACKER-5 (NameError 'os' not defined) hasn't fired since
+    # 2026-05-17 because the bug was fixed, but it sat unresolved in Sentry
+    # for 11 days because no action routed it to resolve. From now on any
+    # unmapped issue silent >= STALE_AUTO_RESOLVE_DAYS auto-resolves with
+    # an explanatory comment. Mapped issues stay on their explicit ACTIONS
+    # route (so an explicit `flag_for_operator` action wins over auto-stale).
+    if not qc_check:
+        last_seen = _parse_iso_utc(issue.get("lastSeen") or "")
+        if last_seen:
+            age_days = (datetime.now(timezone.utc) - last_seen).total_seconds() / 86400.0
+            if age_days >= STALE_AUTO_RESOLVE_DAYS:
+                return "unmapped-stale", {
+                    "name": f"Unmapped issue stale {age_days:.0f}d — auto-resolve",
+                    "action": "resolve_if_stale",
+                    "comment": (
+                        f"No qc_check tag and silent for {age_days:.0f} days "
+                        f"(threshold {STALE_AUTO_RESOLVE_DAYS}d). Auto-resolving — "
+                        "if this issue truly needs attention it will re-fire on next "
+                        "occurrence."
+                    ),
+                    "auto_resolve_safe": True,
+                }
     # Unmapped: pick the right default based on issue level. Errors get
     # Seer triage; warnings/info get log_only.
     level = (issue.get("level") or "").lower()
