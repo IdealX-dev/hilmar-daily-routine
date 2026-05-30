@@ -508,6 +508,34 @@ class StatusDecision:
     #   "OTHER"           — Q&L, malformed timestamp / unknown
 
 
+def send_signal_stale(send_dt: datetime | None, now: datetime | None = None) -> bool:
+    """True when a Lonny "send" has gone unconfirmed long enough that the
+    booking is functionally lost.
+
+    Real wins confirm same/next business day — within ~48h (Michael
+    2026-05-30). Rule: stale after 48h, EXCEPT a Friday or weekend send
+    isn't stale until the following Monday 18:00 ET — OL doesn't book
+    over the weekend, so the 48h clock must not run out across it
+    ("48 hours except fridays cancel monday evenings following").
+
+    Kept byte-for-byte identical to scripts/core.send_signal_stale — the
+    cross-tree parity test (tests/test_core_parity.py) fails if they
+    drift. This is the check that would have caught the classifier
+    divergence that produced the phantom WINs.
+    """
+    if send_dt is None:
+        return False
+    now = now or now_utc()
+    send_et = send_dt.astimezone(ET)
+    if send_et.weekday() >= 4:                       # Fri=4, Sat=5, Sun=6
+        days_to_mon = (7 - send_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
+        deadline = (send_et + timedelta(days=days_to_mon)).replace(
+            hour=18, minute=0, second=0, microsecond=0)
+    else:
+        deadline = send_et + timedelta(hours=48)
+    return now.astimezone(ET) > deadline
+
+
 def decide_status(
     *,
     has_send: bool,
@@ -578,14 +606,12 @@ def decide_status(
                 send_at = ts
         if send_at is None:
             send_at = parse_iso(response_timestamp)
-        if send_at is not None:
-            hours_since_send = (now - send_at).total_seconds() / 3600.0
-            if hours_since_send > AWAITING_MDOLX_AGING_HOURS:
-                return StatusDecision(
-                    STATUS_Q_AND_L, True, False, "SEND_NO_BOOKING",
-                    f"Send received {hours_since_send:.0f}h ago, no MDOLX — "
-                    f"aged out of AWAITING_MDOLX past {AWAITING_MDOLX_AGING_HOURS}h cutoff"
-                )
+        if send_signal_stale(send_at, now):
+            return StatusDecision(
+                STATUS_Q_AND_L, True, False, "SEND_NO_BOOKING",
+                "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
+                "booking never confirmed (real wins confirm same/next business day)"
+            )
         return StatusDecision(STATUS_PENDING, True, True, "AWAITING_MDOLX",
                               "Lonny replied Send — awaiting MDOLX booking confirmation")
 

@@ -606,6 +606,34 @@ class StatusDecision:
     reason_detail: str             # human-readable why
 
 
+def send_signal_stale(send_dt: datetime | None, now: datetime | None = None) -> bool:
+    """True when a Lonny "send" has gone unconfirmed long enough that the
+    booking is functionally lost.
+
+    Real wins confirm same/next business day — within ~48h (Michael
+    2026-05-30). Rule: stale after 48h, EXCEPT a Friday or weekend send
+    isn't stale until the following Monday 18:00 ET — OL doesn't book
+    over the weekend, so the 48h clock must not run out across it
+    ("48 hours except fridays cancel monday evenings following").
+
+    Kept byte-for-byte identical to src/hilmar/core.send_signal_stale —
+    the cross-tree parity test (tests/test_core_parity.py) fails if they
+    drift. This is the check that would have caught the classifier
+    divergence that produced the phantom WINs.
+    """
+    if send_dt is None:
+        return False
+    now = now or now_utc()
+    send_et = send_dt.astimezone(ET)
+    if send_et.weekday() >= 4:                       # Fri=4, Sat=5, Sun=6
+        days_to_mon = (7 - send_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
+        deadline = (send_et + timedelta(days=days_to_mon)).replace(
+            hour=18, minute=0, second=0, microsecond=0)
+    else:
+        deadline = send_et + timedelta(hours=48)
+    return now.astimezone(ET) > deadline
+
+
 def decide_status(
     *,
     has_send: bool,
@@ -613,17 +641,53 @@ def decide_status(
     response_timestamp: str | None,
     quoted: bool,
     etd_fit_days: int | None,
+    send_signal_events: list | None = None,
     now: datetime | None = None,
 ) -> StatusDecision:
     """
     Pure classification. Inputs are the minimum facts needed to make a call.
     Called by the processor on ingestion AND by QC to re-age pending entries.
+
+    WIN requires BOTH a Lonny "send" handoff AND an OL-side MDOLX booking
+    confirmation (Reading B, Michael 2026-04-27 — ported into production
+    2026-05-30 after the old ``has_send OR mdolx`` rule produced
+    permanent phantom WINs from send-signals that never booked). A send
+    with no MDOLX stages as PENDING(AWAITING_MDOLX) and auto-promotes to
+    WIN when the booking lands; if it goes stale (see send_signal_stale —
+    real wins confirm within ~48h biz) it demotes to LOSS(SEND_NO_BOOKING),
+    which the audit displays as Q&L.
     """
     now = now or now_utc()
+    has_mdolx = bool(mdolx_ref and str(mdolx_ref).strip())
 
-    # WIN takes precedence — either accepted or booked
-    if has_send or (mdolx_ref and mdolx_ref.strip()):
-        return StatusDecision("WIN", True, True, None, "Lonny replied Send or MDOLX booking found")
+    # WIN — strict: requires BOTH signals.
+    if has_send and has_mdolx:
+        return StatusDecision("WIN", True, True, None,
+                              "Lonny replied Send AND MDOLX booking confirmed")
+
+    # MDOLX present but no send — anomaly. Hold PENDING for ops review
+    # rather than auto-winning (mirrors src/hilmar Reading-B).
+    if has_mdolx and not has_send:
+        return StatusDecision("PENDING", True, True, "MDOLX_NO_SEND",
+                              "MDOLX booking present but no Lonny Send — anomaly, review")
+
+    # Send received, MDOLX not yet — booking in flight. Demote to
+    # Q&L(SEND_NO_BOOKING) once the send goes stale; otherwise hold
+    # PENDING(AWAITING_MDOLX) so a later run can promote to WIN when
+    # MDOLX lands.
+    if has_send and not has_mdolx:
+        send_at = parse_iso(response_timestamp)
+        for ev in (send_signal_events or []):
+            ts = parse_iso(ev.get("at") if isinstance(ev, dict) else None)
+            if ts and (send_at is None or ts > send_at):
+                send_at = ts
+        if send_signal_stale(send_at, now):
+            return StatusDecision(
+                "LOSS", True, False, "SEND_NO_BOOKING",
+                "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
+                "booking never confirmed (real wins confirm same/next business day)")
+        return StatusDecision("PENDING", True, True, "AWAITING_MDOLX",
+                              "Lonny replied Send — awaiting MDOLX booking confirmation")
 
     # No response at all
     if not quoted or not response_timestamp:

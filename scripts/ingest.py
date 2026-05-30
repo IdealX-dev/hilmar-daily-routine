@@ -1133,7 +1133,13 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
 def age_requests(requests: list[dict], now: datetime | None = None) -> None:
     now = now or C.now_utc()
     for r in requests:
-        if r.get("status") == "WIN":
+        # CONFIRMED wins (have an MDOLX booking) are terminal — skip.
+        # But a row that's WIN with NO mdolx is a send-signal-only
+        # promotion that must stay re-evaluable: if it never booked it
+        # has to demote to SEND_NO_BOOKING. The old unconditional
+        # `status == "WIN": continue` froze those as permanent phantom
+        # wins (the QC-049 backlog). Fixed 2026-05-30.
+        if r.get("status") == "WIN" and (r.get("mdolx_ref") or r.get("mdolx_refs_all")):
             continue
         # For pending requests where we never saw a quote, decide_status is the authority
         decision = C.decide_status(
@@ -1142,6 +1148,7 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
             response_timestamp=r.get("response_timestamp"),
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
+            send_signal_events=r.get("send_signal_events"),
             now=now,
         )
         r["status"] = decision.status

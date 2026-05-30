@@ -162,17 +162,18 @@ def test_decide_status_win_via_secondary_fields_only():
     assert d.status == "WIN"
 
 
-def test_decide_status_awaiting_mdolx_ages_out_to_q_and_l_after_72h():
+def test_decide_status_awaiting_mdolx_ages_out_to_q_and_l_after_48h():
     """Send-only PENDING(AWAITING_MDOLX) auto-demotes to Q&L(SEND_NO_BOOKING)
-    once the most-recent send signal is older than AWAITING_MDOLX_AGING_HOURS
-    (72h). Beyond that point the deal is functionally lost — OL dropped
-    the ball, carrier never confirmed, or it moved off-system."""
-    now = datetime(2026, 4, 30, 12, 0, tzinfo=timezone.utc)
-    aged_send_at = "2026-04-26T05:00:00Z"  # ~103h before now — past 72h cutoff
+    once the send goes stale. Real wins confirm same/next business day, so
+    the cutoff is 48h business-hours (Michael 2026-05-30). Use a Tuesday
+    send checked the following Monday — unambiguously past 48h."""
+    # 2026-04-21 is a Tuesday; 2026-04-27 is the next Monday (~6 days later).
+    aged_send_at = "2026-04-21T13:00:00Z"
+    now = datetime(2026, 4, 27, 13, 0, tzinfo=timezone.utc)
     d = core.decide_status(
         has_send=True,
         mdolx_ref=None,
-        response_timestamp="2026-04-26T05:00:00Z",
+        response_timestamp=aged_send_at,
         quoted=True,
         etd_fit_days=0,
         send_signal_events=[{"at": aged_send_at, "source": "lonny_reply"}],
@@ -182,15 +183,16 @@ def test_decide_status_awaiting_mdolx_ages_out_to_q_and_l_after_72h():
     assert d.loss_reason == "SEND_NO_BOOKING"
 
 
-def test_decide_status_awaiting_mdolx_stays_within_72h_window():
-    """Inside the 72h cutoff, send-only stays PENDING(AWAITING_MDOLX)
-    and continues to be eligible for maturation to WIN when MDOLX lands."""
-    now = datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc)
-    fresh_send_at = "2026-04-28T03:00:00Z"  # 9h before now — well inside 72h
+def test_decide_status_awaiting_mdolx_stays_within_48h_window():
+    """Inside the 48h cutoff, send-only stays PENDING(AWAITING_MDOLX)
+    and remains eligible to mature to WIN when MDOLX lands. Tuesday send
+    checked 9h later — well inside the window."""
+    fresh_send_at = "2026-04-21T03:00:00Z"   # Tuesday
+    now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)  # 9h later, same day
     d = core.decide_status(
         has_send=True,
         mdolx_ref=None,
-        response_timestamp="2026-04-27T15:00:00Z",
+        response_timestamp="2026-04-21T03:00:00Z",
         quoted=True,
         etd_fit_days=0,
         send_signal_events=[{"at": fresh_send_at, "source": "lonny_reply"}],
@@ -198,6 +200,34 @@ def test_decide_status_awaiting_mdolx_stays_within_72h_window():
     )
     assert d.status == "PENDING"
     assert d.loss_reason == "AWAITING_MDOLX"
+
+
+def test_decide_status_friday_send_not_stale_monday_morning():
+    """The Friday carve-out: a Friday send is NOT stale Monday morning
+    (OL doesn't book over the weekend) — only after Monday 18:00 ET.
+    2026-04-24 is a Friday; check Monday 2026-04-27 at 14:00 ET (18:00 UTC)."""
+    fri_send = "2026-04-24T20:00:00Z"   # Fri ~16:00 ET
+    mon_morning = datetime(2026, 4, 27, 18, 0, tzinfo=timezone.utc)  # Mon 14:00 ET
+    d = core.decide_status(
+        has_send=True, mdolx_ref=None, response_timestamp=fri_send,
+        quoted=True, etd_fit_days=0,
+        send_signal_events=[{"at": fri_send}], now=mon_morning,
+    )
+    assert d.status == "PENDING", "Friday send must survive the weekend"
+    assert d.loss_reason == "AWAITING_MDOLX"
+
+
+def test_decide_status_friday_send_stale_monday_evening():
+    """Same Friday send IS stale after Monday 18:00 ET."""
+    fri_send = "2026-04-24T20:00:00Z"
+    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=timezone.utc)  # Mon 19:00 ET
+    d = core.decide_status(
+        has_send=True, mdolx_ref=None, response_timestamp=fri_send,
+        quoted=True, etd_fit_days=0,
+        send_signal_events=[{"at": fri_send}], now=mon_evening,
+    )
+    assert d.status == "Q&L"
+    assert d.loss_reason == "SEND_NO_BOOKING"
 
 
 def test_decide_status_maturation_send_only_then_mdolx_arrives_promotes_to_win():
