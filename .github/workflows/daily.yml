@@ -1,0 +1,131 @@
+name: Daily
+
+# Scheduled daily run. Today this is the OBSERVABILITY trigger only —
+# runs the test+coverage routine + the audit-pipeline dry-run, captures
+# artifacts, and reports green/red as a GitHub check. Real production
+# email-send still fires from the Cloud PC at 10 AM ET because three
+# prerequisites are not yet met (see docs/MOVE-OFF-CLOUDPC.md):
+#   1. App-only Graph auth — scaffolding shipped (src/hilmar/app_auth.py),
+#      requires OL IT to register the app + grant Mail.Read.Shared scoped
+#      to MBD_OceanExportBookingShared.
+#   2. State location — tracking-data-v2.json + MSAL cache + stage emails
+#      live on OneDrive. GH runners can't reach OneDrive. Need migration
+#      to Azure Blob (versioned) or GitHub release artifacts.
+#   3. Secret distribution — sentry DSN/auth, ANTHROPIC_API_KEY, QT_APP_PASSWORD
+#      need to be in GH Actions secrets (matching what's in secrets/*.txt
+#      on the Cloud PC).
+#
+# Once those three land, flip RUN_PRODUCTION_FIRE below to `true` and the
+# daily fire moves here — kills the silent-non-deploy class entirely
+# because there's no `git pull` + `xcopy` chain to break.
+
+on:
+  schedule:
+    # 14:00 UTC = 10:00 AM ET during EDT (Mar-Nov); 15:00 UTC during EST.
+    # Cron in GH Actions is UTC only and doesn't honor DST. The one-hour
+    # winter drift is an acceptable bridge during the migration period —
+    # the Cloud PC remains canonical until cutover. Cutover-time decision:
+    # either two cron entries (one each for EDT/EST) or accept the drift.
+    - cron: "0 14 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode"
+        required: true
+        default: "audit-only"
+        type: choice
+        options:
+          - audit-only        # Tests + coverage + dry-run (today's default)
+          - production-fire   # The real daily fire (gated on the 3 prerequisites above)
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+  HILMAR_PARSER_FALLBACK_DISABLE: "1"
+
+jobs:
+  audit:
+    name: Daily test + coverage audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            reportlab msal requests tzdata pdfplumber \
+            sentry-sdk jsonschema python-dateutil jinja2 anthropic \
+            pytest pytest-cov responses
+
+      - name: Run the test + coverage routine
+        # Same script the Cloud PC runs as the first pipeline step (QC-052).
+        # Writes reports/test-result.json with status, gate, per-module
+        # coverage, untested modules.
+        run: python3 scripts/run_audit_tests.py
+
+      - name: Upload artifacts
+        # The audit artifacts are how Michael verifies "what did the daily
+        # run actually see". On the Cloud PC they live in OneDrive; on GH
+        # Actions they need explicit upload to be reviewable.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-audit-${{ github.run_id }}
+          path: |
+            reports/test-result.json
+            reports/coverage.json
+            reports/qc-result.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Surface failure to the GH check
+        if: failure()
+        run: |
+          echo "::error::Daily audit run failed — see test-result.json artifact"
+          if [ -f reports/test-result.json ]; then
+            python3 -c "import json; d=json.load(open('reports/test-result.json')); print(f\"status={d.get('status')} tests_ok={d.get('tests_ok')} coverage={d.get('total_coverage')}%\")"
+          fi
+
+  # Gated job: actually runs the daily pipeline. Disabled until the three
+  # prerequisites in the file header are met. When enabled, the secrets
+  # listed below MUST be configured in repo Settings → Secrets and
+  # variables → Actions.
+  production-fire:
+    name: Production fire (gated)
+    if: github.event.inputs.mode == 'production-fire'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    needs: audit
+    steps:
+      - name: Verify prerequisites — refuse to fire if anything's missing
+        # The pipeline silently degrades on missing secrets, so we hard-fail
+        # here BEFORE the fire to make a misconfiguration loud.
+        env:
+          GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+          GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+          GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          missing=0
+          for v in GRAPH_APP_TENANT_ID GRAPH_APP_CLIENT_ID GRAPH_APP_CLIENT_SECRET SENTRY_DSN ANTHROPIC_API_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Secret $v is not set — production-fire blocked"
+              missing=$((missing+1))
+            fi
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::Refusing to fire — set the secrets in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "All secrets present. Production fire would proceed here."
+          echo "TODO: invoke scripts/run_pipeline.py with app-only auth env vars"
+          echo "(blocked on docs/MOVE-OFF-CLOUDPC.md prerequisites)"
