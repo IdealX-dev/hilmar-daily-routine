@@ -182,6 +182,94 @@ def collect_red_flags(data, qc, drift):
                 "detail": reason,
             })
 
+    # 4a. ol-quote-tracker (Turso) sync failure streak — added 2026-05-28
+    # per Michael's "verify/harden existing sync" direction. Read the audit
+    # log directly so the red flag has the actual error string the operator
+    # needs (QC-037 also fires, but the audit's QC line is generic).
+    try:
+        sync_log = REPORTS / "quote-tracker-sync.log"
+        if sync_log.exists():
+            lines = [
+                ln for ln in sync_log.read_text(encoding="utf-8", errors="ignore").splitlines()
+                if ln.strip()
+            ]
+            streak = 0
+            last_err = None
+            for ln in reversed(lines):
+                if "ok=True" in ln or "no APP_PASSWORD configured" in ln:
+                    break
+                streak += 1
+                if last_err is None:
+                    last_err = ln
+                if streak >= 5:
+                    break
+            if streak >= 3 and last_err:
+                err_excerpt = last_err.split("err=", 1)[-1][:200] if "err=" in last_err else last_err[:200]
+                flags.append({
+                    "level": "🔴",
+                    "title": f"Turso sync failed {streak} fires in a row",
+                    "detail": (
+                        f"ol-quote-tracker entity registry is going stale. "
+                        f"Last error: {err_excerpt}. "
+                        f"Check {sync_log.name} for the full sequence and run "
+                        f"`python3 scripts/sync_to_quote_tracker.py --verbose` "
+                        f"locally to reproduce."
+                    ),
+                })
+    except Exception:
+        pass
+
+    # 4c. Deployment drift — local repo HEAD is behind origin/main, meaning
+    # fixes that have been pushed are not actually running on the Cloud PC.
+    # Reads deploy/run_daily_laptop.cmd's reports/deployment-sha.txt marker
+    # (also surfaced by QC-053; this gives the audit a dedicated red flag
+    # with the explicit "git pull" instruction).
+    try:
+        dep_marker = REPORTS / "deployment-sha.txt"
+        if dep_marker.exists():
+            txt = dep_marker.read_text(encoding="utf-8").strip()
+            m = re.search(r"BEHIND=(\d+)", txt)
+            if m and int(m.group(1)) > 0:
+                flags.append({
+                    "level": "🔴",
+                    "title": f"Cloud PC running stale code — {m.group(1)} commit(s) behind main",
+                    "detail": (
+                        f"deployment-sha.txt: {txt[:200]}. "
+                        "Wrapper Step 0 `git pull` either failed or there are "
+                        "merge conflicts blocking the pull. Open the Cloud PC, "
+                        "cd to OneDrive/PROJECT HILMAR/hilmar-daily-routine, run "
+                        "`git pull origin main` manually, and check the run-log "
+                        "for the next failure."
+                    ),
+                })
+    except Exception:
+        pass
+
+    # 4b. Daily test/coverage routine failed (added 2026-05-28). The audit
+    # is now the place a code regression surfaces — run_audit_tests.py writes
+    # reports/test-result.json every fire; a FAIL means a test broke or
+    # coverage fell below the pyproject gate.
+    test_res = _read_json(REPORTS / "test-result.json") or {}
+    if test_res.get("status") == "FAIL":
+        counts = test_res.get("counts") or {}
+        why = []
+        if not test_res.get("tests_ok", True):
+            why.append(f"{counts.get('failed', 0)} failed, {counts.get('error', 0)} error")
+        if not test_res.get("coverage_ok", True):
+            why.append(
+                f"coverage {test_res.get('total_coverage')}% below "
+                f"gate {test_res.get('gate')}%"
+            )
+        flags.append({
+            "level": "🔴",
+            "title": "Daily test/coverage routine FAILED",
+            "detail": (
+                f"{'; '.join(why)}. The shipped code is not green — fix before "
+                "the next fire. Run: python3 scripts/run_audit_tests.py. "
+                "Detail in reports/test-result.json."
+            ),
+        })
+
     # 5. QC errors (status != CLEAN) — surface each failing check as its own
     # red flag with the actual error text. Prior version pointed to
     # reports/qc-result.json, which is unreadable from the iPhone audit. Group
@@ -332,6 +420,46 @@ def collect_observations(data, qc, drift):
                 "level": "🟡",
                 "title": "QC warning (uncategorized)",
                 "detail": msg,
+            })
+
+    # Code-health from the daily test routine (added 2026-05-28). PASS with
+    # under-tested modules is an observation (the learning worklist for
+    # "every line of code has testing"); SKIPPED means dev deps are missing
+    # on this host so the audit couldn't verify code health at all.
+    test_res = _read_json(REPORTS / "test-result.json") or {}
+    if test_res.get("status") == "SKIPPED":
+        obs.append({
+            "level": "🟡",
+            "title": "Test/coverage routine skipped — code health unverified",
+            "detail": (
+                f"{test_res.get('reason', 'pytest unavailable on this host')} "
+                "Install dev deps so the daily audit can confirm the suite is green: "
+                "pip install -e '.[dev]'."
+            ),
+        })
+    elif test_res.get("status") == "PASS":
+        untested = test_res.get("untested_modules") or []
+        below = test_res.get("modules_below_floor") or []
+        if untested:
+            obs.append({
+                "level": "🟡",
+                "title": f"{len(untested)} module(s) ship with 0% test coverage",
+                "detail": (
+                    f"{', '.join(untested[:6])}. Suite is green and overall "
+                    f"coverage {test_res.get('total_coverage')}% clears the "
+                    f"{test_res.get('gate')}% gate, but these files have no tests "
+                    "at all — the top targets for 'every line tested'."
+                ),
+            })
+        elif below:
+            obs.append({
+                "level": "🟡",
+                "title": f"{len(below)} module(s) below the {test_res.get('module_floor')}% coverage floor",
+                "detail": (
+                    ", ".join(f"{m['module']} ({m['coverage']}%)" for m in below[:6])
+                    + ". Overall coverage clears the gate; these are the next "
+                    "tests to write."
+                ),
             })
 
     # 1. This week's quote rate

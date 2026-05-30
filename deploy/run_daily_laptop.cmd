@@ -75,6 +75,17 @@ echo --- git_pull --- >> "%LOG%"
 if exist "%ROOT%\hilmar-daily-routine\.git" (
   pushd "%ROOT%\hilmar-daily-routine"
   git pull --quiet origin main >> "%LOG%" 2>&1
+  REM Deployment marker for QC-053 (added 2026-05-28 after a feature
+  REM branch sat unmerged for 5 days while the daily audit reported the
+  REM SAME issues every morning). Captures HEAD SHA + how many commits
+  REM behind origin/main this checkout currently is, so the production
+  REM xcopy of scripts/ (which has no .git nearby) can still verify it
+  REM matches what's on main.
+  if not exist "%ROOT%\reports" mkdir "%ROOT%\reports"
+  for /f "delims=" %%S in ('git rev-parse --short HEAD') do set HEAD_SHA=%%S
+  for /f "delims=" %%B in ('git rev-list --count HEAD..origin/main') do set BEHIND=%%B
+  echo HEAD=!HEAD_SHA! BEHIND=!BEHIND! AT=%DATE% %TIME% > "%ROOT%\reports\deployment-sha.txt"
+  echo deployment-sha.txt: HEAD=!HEAD_SHA! BEHIND=!BEHIND! >> "%LOG%"
   popd
   REM Copy any updated scripts + wrapper from the repo to the live OneDrive
   REM locations the pipeline reads. xcopy /Y overwrites without prompting,

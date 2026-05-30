@@ -180,7 +180,50 @@ def detect_events(data: dict, cfg: dict) -> list[dict]:
             except Exception:
                 pass
 
-    # 4. Big-day WIN (total TEU won today ≥ threshold)
+    # 4. QC-049 unconfirmed WINs — auto-notify booking team for review.
+    # Added 2026-05-28 per Michael's "do all 7-9" direction. The audit
+    # surfaces these as a red flag in QC-049, but until now there was no
+    # mechanism to push them to whoever owns the booking-team handoff.
+    # Now: each unconfirmed WIN that's >=7d old generates ONE alert per
+    # week (de-duped via _was_alerted using a week-keyed event-key). Alert
+    # is informational/amber, not critical — the work is human review of
+    # whether it's a real win with an unlinked booking or a false win.
+    if "qc049_unconfirmed_win" in enabled:
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+        wk = datetime.now(core.ET).strftime("%Y-W%V")  # iso year+week for de-dup window
+        for r in rows:
+            if r.get("status") != "WIN":
+                continue
+            if r.get("mdolx_ref") or r.get("mdolx_refs_all"):
+                continue
+            req_date = r.get("request_date") or ""
+            if req_date >= cutoff_iso:
+                continue  # too recent — normal booking-confirmation lag
+            key = f"qc049_unconfirmed_win:{r.get('request_id')}:{wk}"
+            if _was_alerted(key):
+                continue
+            age_days = (datetime.now(timezone.utc).date()
+                        - datetime.strptime(req_date, "%Y-%m-%d").date()).days \
+                       if req_date else "?"
+            events.append({
+                "type": "qc049_unconfirmed_win",
+                "key": key,
+                "color": "f59e0b",  # amber — informational, not critical
+                "title": f"📋 Unconfirmed WIN — {r.get('lane', '?')} ({age_days}d old)",
+                "text": (
+                    f"**Request**: {r.get('request_id', '?')} | "
+                    f"**Lane**: {r.get('lane', '?')} | "
+                    f"**Date**: {req_date}\n\n"
+                    f"Flipped to WIN on a Lonny send-signal but no MDOLX booking "
+                    f"confirmation has linked back after {age_days} days. Per the "
+                    f"Linda Echevarria 2026-05-19 audit, some of these are real "
+                    f"with an unlinked confirmation; some are false wins. "
+                    f"**Booking team: please review and either link the MDOLX "
+                    f"booking or demote to Q&L via the operator-corrections layer.**"
+                ),
+            })
+
+    # 5. Big-day WIN (total TEU won today ≥ threshold)
     if "big_day" in enabled:
         teu_today = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                         for r in rows

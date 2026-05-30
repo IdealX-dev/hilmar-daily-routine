@@ -1129,7 +1129,26 @@ def phase_6_rules(log: Log, data: dict):
                         " missing — investigate run-log."
                     )
                 else:
-                    log.warn("QC-021: today's wrapper started but pipeline never completed")
+                    # Report the LAST step marker seen for today so the audit
+                    # tells us WHERE the wrapper got stuck — instead of just
+                    # "didn't complete". Wrapper logs lines like
+                    # "--- refresh_stage ---", "--- run_pipeline ---", etc.
+                    import re as _re21
+                    _steps = _re21.findall(r"^---\s*(.+?)\s*---\s*$",
+                                           _after, _re21.MULTILINE)
+                    _last_step = _steps[-1] if _steps else None
+                    if _last_step:
+                        log.warn(
+                            f"QC-021: today's wrapper started but pipeline never "
+                            f"completed — last step logged was '{_last_step}'. "
+                            f"Check that step's output in reports/run-log.txt."
+                        )
+                    else:
+                        log.warn(
+                            "QC-021: today's wrapper started but pipeline never "
+                            "completed — no step markers found (wrapper may have "
+                            "died before the refresh_stage echo)."
+                        )
             else:
                 # No fire today yet — only WARN on weekday afternoons
                 _now_et = _dt.now(core.ET)
@@ -1276,7 +1295,30 @@ def phase_6_rules(log: Log, data: dict):
                     log.warn("QC-037: APP_PASSWORD not configured — sync skipped each fire. "
                              "Drop password in secrets/quote-tracker-pwd.txt to enable.")
                 else:
-                    log.warn(f"QC-037: last sync failed: {_last[:120]}")
+                    # Consecutive-failure streak detection (added 2026-05-28 per
+                    # Michael's "verify/harden existing sync" answer). A single
+                    # failure can be a transient network blip; THREE in a row
+                    # means the Turso sync is genuinely broken and the entity
+                    # registry is going stale. ERROR-severity so the audit
+                    # red-flags it and Sentry catches it.
+                    _streak = 0
+                    for _ln in reversed(_lines):
+                        if not _ln.strip():
+                            continue
+                        if "ok=True" in _ln:
+                            break
+                        if "no APP_PASSWORD configured" in _ln:
+                            break
+                        _streak += 1
+                        if _streak >= 5:
+                            break
+                    if _streak >= 3:
+                        log.error(
+                            f"QC-037: ol-quote-tracker sync FAILED {_streak} fires in a row "
+                            f"— Turso entity registry going stale. Last error: {_last[:160]}"
+                        )
+                    else:
+                        log.warn(f"QC-037: last sync failed: {_last[:120]}")
     except Exception as _e:
         log.warn(f"QC-037: check failed with exception: {_e}")
 
@@ -1622,6 +1664,138 @@ def phase_6_rules(log: Log, data: dict):
                     log.ok("QC-048: all turnaround_biz_hours values plausible (≤40h)")
         except Exception as _e:
             log.warn(f"QC-048: check failed with exception: {_e}")
+
+        # QC-052: TEST + COVERAGE GATE — verifies the daily test routine ran
+        # and the code is green. Reads reports/test-result.json (written by
+        # scripts/run_audit_tests.py, an observer step in run_pipeline.py).
+        # Added 2026-05-28 per Michael "a complete audit ... daily ...
+        # checking that every line of code has testing on it and successful
+        # ... must be in routines". This closes the gap where a 587-test
+        # suite + 85% coverage gate existed in pyproject but ran NOWHERE in
+        # the daily fire, so the audit was blind to code health.
+        #   FAIL (test failed / coverage below gate) -> ERROR (audit red flag)
+        #   SKIPPED (pytest unavailable on this host) -> WARN (install dev deps)
+        #   modules below the per-module floor        -> WARN (learning target)
+        try:
+            _tr_path = Path(__file__).resolve().parent.parent / "reports" / "test-result.json"
+            if not _tr_path.exists():
+                log.warn(
+                    "QC-052: reports/test-result.json absent — daily test routine "
+                    "(run_audit_tests.py) hasn't run. Code health is unverified."
+                )
+            else:
+                import json as _json_tr
+                _tr = _json_tr.loads(_tr_path.read_text(encoding="utf-8"))
+                _st = _tr.get("status")
+                _cov = _tr.get("total_coverage")
+                _gate = _tr.get("gate")
+                _counts = _tr.get("counts") or {}
+                if _st == "SKIPPED":
+                    log.warn(
+                        f"QC-052: test routine SKIPPED — {_tr.get('reason', 'pytest unavailable')}"
+                    )
+                elif _st == "FAIL":
+                    _why = []
+                    if not _tr.get("tests_ok", True):
+                        _why.append(
+                            f"{_counts.get('failed', 0)} failed / "
+                            f"{_counts.get('error', 0)} error of "
+                            f"{_counts.get('passed', 0) + _counts.get('failed', 0) + _counts.get('error', 0)}"
+                        )
+                    if not _tr.get("coverage_ok", True):
+                        _why.append(f"coverage {_cov}% < gate {_gate}%")
+                    log.error(
+                        "QC-052: daily test/coverage routine FAILED — "
+                        + "; ".join(_why)
+                        + ". The shipped code is not green. See reports/test-result.json."
+                    )
+                else:  # PASS
+                    log.ok(
+                        f"QC-052: tests green ({_counts.get('passed', 0)} passed) "
+                        f"coverage {_cov}% ≥ gate {_gate}%"
+                    )
+                # Learning loop: name under-tested modules so "every line tested"
+                # has a concrete worklist, even when the global gate passes.
+                _below = _tr.get("modules_below_floor") or []
+                _untested = _tr.get("untested_modules") or []
+                if _untested:
+                    log.warn(
+                        f"QC-052: {len(_untested)} module(s) with 0% coverage — "
+                        f"{', '.join(_untested[:5])}. These ship untested; add tests."
+                    )
+                elif _below:
+                    log.warn(
+                        f"QC-052: {len(_below)} module(s) below the "
+                        f"{_tr.get('module_floor')}% floor — "
+                        + ", ".join(f"{m['module']} ({m['coverage']}%)" for m in _below[:5])
+                    )
+        except Exception as _e:
+            log.warn(f"QC-052: check failed with exception: {_e}")
+
+        # QC-053: DEPLOYMENT DRIFT — local checkout vs origin/main. Added
+        # 2026-05-28 after Michael's "how is this possible" audit on May 28:
+        # 4 commits of production fixes (Caucedo, Dublin, Sentry filter,
+        # QC-021 step name, QC-052) had been pushed to a feature branch and
+        # piled into a docs PR. The wrapper does `git pull --quiet origin
+        # main` then xcopies into PROJECT HILMAR/scripts/ — so the Cloud PC
+        # ran main, the PR never merged, none of the fixes took effect for
+        # ~5 days. The audit kept reporting the SAME problems because
+        # nothing was actually deployed. This check ERRORs if the local
+        # repo HEAD is behind origin/main (the production case that bit us)
+        # AND if a deployment-marker indicates the production xcopy is
+        # behind the local repo. Read-only — does not run `git fetch`
+        # (the wrapper Step 0 already pulled).
+        try:
+            import subprocess as _sp53
+            from pathlib import Path as _Path53
+            _git_dir = _Path53(__file__).resolve().parent.parent / ".git"
+            if not _git_dir.exists():
+                # Production xcopy has no .git nearby — read the marker the
+                # wrapper writes after a successful git pull.
+                _marker = _Path53(__file__).resolve().parent.parent / "reports" / "deployment-sha.txt"
+                if _marker.exists():
+                    _txt = _marker.read_text(encoding="utf-8").strip()
+                    log.ok(f"QC-053: production checkout (no .git here) — marker: {_txt[:80]}")
+                else:
+                    log.warn(
+                        "QC-053: no .git directory and no reports/deployment-sha.txt "
+                        "— cannot verify the deployed code is current with origin/main. "
+                        "Update deploy/run_daily_laptop.cmd Step 0 to write the marker."
+                    )
+            else:
+                _head = _sp53.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                ).stdout.strip() or "unknown"
+                _r = _sp53.run(
+                    ["git", "rev-list", "--count", "HEAD..origin/main"],
+                    cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                )
+                if _r.returncode != 0:
+                    log.warn(
+                        f"QC-053: could not compare HEAD vs origin/main: "
+                        f"{(_r.stderr or '').strip()[:160]}"
+                    )
+                else:
+                    _behind = int((_r.stdout or "0").strip() or "0")
+                    if _behind > 0:
+                        # Get the subject lines of the unmerged commits so the
+                        # audit shows WHAT we're missing, not just a count.
+                        _l = _sp53.run(
+                            ["git", "log", "--oneline", "-5", "HEAD..origin/main"],
+                            cwd=str(_git_dir.parent), capture_output=True, text=True, timeout=10,
+                        )
+                        _samples = (_l.stdout or "").strip().splitlines()[:3]
+                        _sample_txt = " · ".join(_samples) if _samples else "(no log)"
+                        log.error(
+                            f"QC-053: local HEAD ({_head}) is {_behind} commit(s) "
+                            f"BEHIND origin/main — Cloud PC is running stale code. "
+                            f"Wrapper Step 0 git-pull may have failed. Missing: {_sample_txt}"
+                        )
+                    else:
+                        log.ok(f"QC-053: deployment current — HEAD {_head} == origin/main")
+        except Exception as _e:
+            log.warn(f"QC-053: check failed with exception: {_e}")
 
         # QC-047: WIN RATE FORMULA CONSISTENCY — the global Win Rate KPI tile
         # and the per-lane Win Rate cells must use the same formula

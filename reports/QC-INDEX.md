@@ -66,11 +66,31 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-034 | ERROR | tracking-data-v2.json shape invalid (missing keys / wrong types / invalid status/loss_reason enums) | None — gates ship; structural drift surfaced loudly | 2026-05-14 (best-practices batch) |
 | QC-035 | ERROR/WARN | stage_emails.txt >20MB (ERROR) / >5MB (WARN) — unbounded stage growth | None — run `refresh_stage.py --rotate-stage-older-than 90` | 2026-05-14 (best-practices batch) |
 | QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
-| QC-037 | WARN | ol-quote-tracker sync log missing, stale (>36h), or last sync errored | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`) |
+| QC-037 | WARN / **ERROR** | ol-quote-tracker sync log missing, stale (>36h), or last sync errored. **ERROR-severity** when ≥3 consecutive fires fail (Turso entity registry going stale; audit also raises a dedicated red flag with the actual error excerpt). | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`), streak detection 2026-05-28 |
 | QC-038 | _retired 2026-05-21_ | ol-quote-tracker reconciliation — retired: a live API probe proved ol-quote-tracker holds zero Hilmar rows, so the cross-check only ever produced phantom drift | n/a — check + script + pipeline step removed | 2026-05-21 |
 | QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
 | QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
+| QC-052 | **ERROR** | Daily test/coverage routine failed — a test broke OR coverage fell below the `pyproject` gate; also WARNs on modules below the per-module floor (learning worklist for "every line tested") | None — reads `reports/test-result.json` from `run_audit_tests.py`; surfaces in audit red-flags | 2026-05-28 |
+| QC-053 | **ERROR** | Local repo HEAD is behind `origin/main` — Cloud PC is running stale code, so pushed fixes aren't actually deployed. Catches the failure mode where a PR with production fixes sits unmerged or `git pull` silently failed at wrapper Step 0. | None — operator must merge / re-pull. Audit also raises a dedicated red flag with the explicit `git pull` instruction. | 2026-05-28 (after a 4-commit branch sat unmerged 5 days) |
+
+## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
+
+These are not QC checks per se — they're operator-loop closures that build on
+existing infrastructure so the daily audit stops being a list of things that
+never get followed up on.
+
+| # | What it does | Where | Trigger |
+|---|---|---|---|
+| Stale Sentry auto-resolve | Any UNMAPPED Sentry issue silent ≥ `STALE_AUTO_RESOLVE_DAYS` (default 7) routes to `resolve_if_stale` with an explanatory comment. Closes the loop that left HILMAR-DAILY-TRACKER-5 (NameError 'os' not defined) unresolved for 11 days after the bug was fixed in code. Mapped issues retain their explicit `ACTIONS` route. | `scripts/qc_actions_from_sentry._action_lookup` | Daily pipeline step "Sentry-driven QC actions" |
+| QC-049 booking-team auto-notify | Each unconfirmed WIN (status=WIN, no `mdolx_ref`, request_date ≥ 7d ago) generates ONE Teams/Slack alert per ISO week with the lane, age, and explicit "review and either link the MDOLX booking or demote to Q&L" instruction. De-duped by `_was_alerted`. | `scripts/teams_alert.detect_events` event `qc049_unconfirmed_win` | Daily pipeline step "teams_alerts" (Step 4.5 in wrapper); requires `"qc049_unconfirmed_win"` in `config.json.alerts.events` |
+
+> **Index backlog (2026-05-28):** QC-042 through QC-051 exist in
+> `scripts/qc_selfheal.py` but predate this row and are not yet listed above
+> (data-URI guard, Sentry loop, double-escape guard, table-header, pending
+> timestamp, win-rate consistency, turnaround sanity, unconfirmed wins, backup
+> freshness, phantom-dup guard). Backfill from the code comments when next
+> editing this file — see `git grep "QC-04" scripts/qc_selfheal.py`.
 
 ## Newest checks (QC-027 through QC-037) — what each was added for
 

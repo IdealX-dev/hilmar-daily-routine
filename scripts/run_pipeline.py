@@ -43,6 +43,13 @@ _POST_PATCH_ENV = {"HILMAR_QC_PHASE": "post-patch"}
 
 STEPS = [
     ("Backup snapshot",          [PY, str(SCRIPTS / "backup.py")]),
+    # 2026-05-28 (Michael "a complete audit ... daily ... checking that every
+    # line of code has testing on it and successful ... must be in routines"):
+    # run the pytest suite under coverage and write reports/test-result.json
+    # so the daily systems audit can red-flag a code regression. This is an
+    # OBSERVER step — run_audit_tests.py always exits 0 so a failing test
+    # never blocks the client email; QC-052 + the audit decide severity.
+    ("Test + coverage routine",  [PY, str(SCRIPTS / "run_audit_tests.py"), "--quiet"]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
     # 2026-05-06: drift_check wired in per orchestrator.md step 3.5. Runs
     # BEFORE QC. 6 phases: imid uniqueness, matcher quality, quote-rate
@@ -110,6 +117,28 @@ except ImportError:
     _sentry = None
 
 
+# 2026-05-28 (Michael — Sentry-9 "Cron failure: hilmar-daily-pipeline" firing
+# at ~14:30 ET, 4.5h after the 10 AM fire): a step is hanging long enough
+# that the cron monitor's max_runtime=60min check-in window expires before
+# the pipeline calls finish. Network-bound steps (Sentry actions, Seer
+# autofix, Turso sync, ol-quote-tracker login) are the prime suspects.
+# Cap each step at STEP_TIMEOUT_S so a hung step can't drag the pipeline
+# past the cron window. Override per-step via STEP_TIMEOUTS_S below.
+STEP_TIMEOUT_S = 300            # 5 minutes default per step
+STEP_TIMEOUTS_S = {
+    # Quick steps don't need the full budget; long ones get more.
+    "Backup snapshot":            60,
+    "Test + coverage routine":    180,
+    "Drift check (pre-QC)":       120,
+    "QC self-heal (pre-patch)":   180,
+    "QC self-heal (post-patch)":  180,
+    "Sentry-driven QC actions":   240,   # polls 7 issues, 30s each worst-case
+    "Sentry Seer autofix trigger": 180,
+    "Sync to ol-quote-tracker":   180,
+    "Share to client_intelligence": 180,
+}
+
+
 def run_step(name, cmd, dry_run=False, extra_env=None):
     print()
     print("═" * 70)
@@ -142,9 +171,17 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
     if extra_env:
         sub_env.update(extra_env)
 
+    timeout_s = STEP_TIMEOUTS_S.get(name, STEP_TIMEOUT_S)
     step_started = _time.monotonic()
+    timed_out = False
     try:
-        result = subprocess.run(cmd, cwd=str(ROOT), env=sub_env)
+        try:
+            result = subprocess.run(cmd, cwd=str(ROOT), env=sub_env, timeout=timeout_s)
+            rc = result.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            rc = 124  # GNU `timeout` convention — distinguishable from app exit codes
+            print(f"⏱️  TIMEOUT — {name} exceeded {timeout_s}s limit and was killed")
         step_elapsed = _time.monotonic() - step_started
 
         # Per-step duration metric — powers the Sentry dashboard heatmap
@@ -152,22 +189,24 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
         # group / filter.
         if _sentry is not None:
             try:
+                status = "timeout" if timed_out else ("ok" if rc == 0 else "failed")
                 _sentry.metric_distribution(
                     "pipeline.step_duration_s",
                     step_elapsed,
                     step=name,
-                    status="ok" if result.returncode == 0 else "failed",
+                    status=status,
                 )
             except Exception:
                 pass
 
-        if result.returncode != 0:
-            print(f"❌ FAIL — {name} exited {result.returncode}")
+        if rc != 0:
+            label = f"TIMEOUT @ {timeout_s}s" if timed_out else f"exited {rc}"
+            print(f"❌ FAIL — {name} {label}")
             if _sentry is not None:
                 try:
                     _sentry.capture_qc_error(
                         "pipeline.step_failure",
-                        f"{name} exited rc={result.returncode}",
+                        f"{name} {label}",
                     )
                 except Exception:
                     pass

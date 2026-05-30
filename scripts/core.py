@@ -103,6 +103,10 @@ _TRADE_REGION_MAP = {
     "hamburg": "Europe", "rotterdam": "Europe", "antwerp": "Europe",
     "felixstowe": "Europe", "le havre": "Europe", "algeciras": "Europe",
     "valencia": "Europe", "genoa": "Europe", "barcelona": "Europe",
+    # Dublin (Ireland) — added 2026-05-28 after QC-015 surfaced it as
+    # Unmapped. Ireland's main container port for Hilmar dairy exports
+    # into the UK/Irish market.
+    "dublin": "Europe",
     # Mid-East
     "jebel ali": "Middle East", "dammam": "Middle East", "jeddah": "Middle East",
     "ashdod": "Middle East", "haifa": "Middle East",
@@ -118,6 +122,12 @@ _TRADE_REGION_MAP = {
     "puerto cortes": "Central America", "puerto quetzal": "Central America",
     "puerto limon": "Central America", "balboa": "Central America",
     "manzanillo (panama)": "Central America",
+    # Caucedo (DP World, Dominican Republic) — added 2026-05-27 after QC-015
+    # surfaced it as Unmapped. Major Caribbean transshipment hub; grouped with
+    # Central America to match the existing trade-lane buckets (no separate
+    # Caribbean bucket — same role as Balboa / Manzanillo Panama for region
+    # rollups in client reporting).
+    "caucedo": "Central America",
     # North America inland (rare — usually a typo or a US-side movement
     # tracked in the same data file. Sturgis MI surfaced 2026-05-07).
     "sturgis mi": "North America", "sturgis": "North America",

@@ -75,6 +75,9 @@ Notable checks:
 - **QC-048** — turnaround sanity (flags implausible >40h biz-hours)
 - **QC-049** — WIN-rows-missing-MDOLX rate
 - **QC-050** — backup freshness + retention
+- **QC-052** — daily test/coverage routine result (ERRORs the audit on a
+  failed test or coverage below the `pyproject` gate; reads
+  `reports/test-result.json` written by `scripts/run_audit_tests.py`)
 
 When shipping a new pattern, add its QC check + self-heal in the same commit
 (see the `qc-and-self-heal` skill). New QC checks also get an entry in
