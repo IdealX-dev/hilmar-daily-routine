@@ -1,0 +1,195 @@
+name: Sentry tools
+
+# One-stop manual-trigger workflow for Sentry + Seer operations from
+# the phone — Actions UI on iOS works fine. Avoids having to remember
+# CLI syntax or log into the Cloud PC.
+#
+# REQUIRES: SENTRY_AUTH_TOKEN secret in repo Settings → Secrets and
+# variables → Actions. Value = contents of secrets/sentry-auth-token.txt
+# on the Cloud PC. One-time paste.
+#
+# Optional: SENTRY_DSN secret (for sentry_setup.init in seer commands —
+# unused for resolve/list).
+#
+# All operations live under sentry_api.py + sentry_seer.py which already
+# exist in scripts/. This workflow is just a manual front-end so they're
+# triggerable from Actions UI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        required: true
+        default: "list-unresolved"
+        type: choice
+        options:
+          - list-unresolved      # show open issues + counts (read-only)
+          - resolve              # resolve a specific shortId
+          - resolve-stale        # bulk-resolve any unmapped issue silent ≥7d
+          - trigger-seer         # ask Seer to autofix an issue
+          - claude-diagnose      # post Claude's diagnosis as a comment
+      short_id:
+        description: "Sentry shortId (e.g. HILMAR-DAILY-TRACKER-5). Required for resolve, trigger-seer, claude-diagnose."
+        required: false
+        default: ""
+        type: string
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+jobs:
+  sentry:
+    name: ${{ inputs.action }} ${{ inputs.short_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install minimal deps for Sentry API + Seer scripts
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests sentry-sdk anthropic
+
+      - name: Stage secrets where scripts/ expects them
+        # sentry_api.py reads secrets/sentry-auth-token.txt directly.
+        # sentry_setup.py reads secrets/sentry-dsn.txt for the DSN.
+        # Materialize them from GH Actions secrets so the existing
+        # scripts work unchanged.
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -e
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "::error::SENTRY_AUTH_TOKEN secret is not set. Add it in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          mkdir -p secrets
+          printf '%s' "$SENTRY_AUTH_TOKEN"  > secrets/sentry-auth-token.txt
+          if [ -n "$SENTRY_DSN" ]; then
+            printf '%s' "$SENTRY_DSN" > secrets/sentry-dsn.txt
+          fi
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            printf '%s' "$ANTHROPIC_API_KEY" > secrets/anthropic-api-key.txt
+          fi
+          chmod 600 secrets/*.txt
+
+      - name: list-unresolved
+        if: inputs.action == 'list-unresolved'
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from sentry_api import SentryAPI, get_issue_summary
+          api = SentryAPI()
+          if not api.enabled:
+              raise SystemExit('SentryAPI is disabled — token missing or invalid')
+          s = get_issue_summary(api, period='24h')
+          print(f'Unresolved: {s[\"unresolved_count\"]}')
+          print(f'New in 24h: {len(s[\"new_in_period\"])}')
+          print(f'Recurring in 24h: {len(s[\"recurring\"])}')
+          print(f'Resolved in 24h: {len(s[\"resolved_in_period\"])}')
+          print(f'Total events 24h: {s[\"total_events_in_period\"]}')
+          unresolved = api.list_issues(stats_period='14d', query='is:unresolved', limit=50)
+          print()
+          print(f'{\"shortId\":30} {\"count\":>6} {\"lastSeen\":20} title')
+          for i in unresolved:
+              print(f'{i.get(\"shortId\",\"?\"):30} {str(i.get(\"count\",\"?\")):>6} {(i.get(\"lastSeen\",\"\") or \"\")[:19]:20} {(i.get(\"title\",\"\") or \"\")[:80]}')
+          "
+
+      - name: resolve
+        if: inputs.action == 'resolve'
+        run: |
+          if [ -z "${{ inputs.short_id }}" ]; then
+            echo "::error::short_id input is required for resolve"
+            exit 1
+          fi
+          python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from sentry_api import SentryAPI
+          api = SentryAPI()
+          short = '${{ inputs.short_id }}'
+          # Find the issue ID from the shortId
+          issues = api.list_issues(stats_period='90d', query=f'is:unresolved short_id:{short}', limit=5)
+          if not issues:
+              # Fall back to listing all and grepping — short_id query support varies
+              all_open = api.list_issues(stats_period='90d', query='is:unresolved', limit=200)
+              issues = [i for i in all_open if i.get('shortId') == short]
+          if not issues:
+              raise SystemExit(f'No unresolved issue found with shortId={short}')
+          issue = issues[0]
+          ok = api.resolve_issue(issue['id'], reason='Manually resolved via sentry-tools.yml workflow_dispatch')
+          if ok:
+              print(f'✅ Resolved {short} (issue id {issue[\"id\"]}, title: {issue.get(\"title\",\"\")[:80]})')
+          else:
+              raise SystemExit(f'❌ resolve_issue returned False for {short}')
+          "
+
+      - name: resolve-stale
+        # Same logic as the in-pipeline stale auto-resolve, runnable
+        # ad-hoc. Defaults to STALE_AUTO_RESOLVE_DAYS=7.
+        if: inputs.action == 'resolve-stale'
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from datetime import datetime, timezone, timedelta
+          from sentry_api import SentryAPI
+          from qc_actions_from_sentry import _action_lookup, _do_resolve_if_stale, STALE_AUTO_RESOLVE_DAYS
+          api = SentryAPI()
+          if not api.enabled:
+              raise SystemExit('SentryAPI disabled')
+          open_issues = api.list_issues(stats_period='90d', query='is:unresolved', limit=200)
+          resolved = []
+          skipped = []
+          for issue in open_issues:
+              key, spec = _action_lookup(issue)
+              if spec.get('action') == 'resolve_if_stale' and key == 'unmapped-stale':
+                  result = _do_resolve_if_stale(api, issue, spec, dry_run=False, stale_hours=STALE_AUTO_RESOLVE_DAYS * 24)
+                  if result.get('resolved'):
+                      resolved.append(issue.get('shortId'))
+                  else:
+                      skipped.append((issue.get('shortId'), result.get('reason')))
+          print(f'Resolved: {len(resolved)}')
+          for s in resolved: print(f'  ✅ {s}')
+          print(f'Skipped: {len(skipped)}')
+          for s, r in skipped: print(f'  ⏭️  {s}: {r}')
+          "
+
+      - name: trigger-seer
+        if: inputs.action == 'trigger-seer'
+        run: |
+          if [ -z "${{ inputs.short_id }}" ]; then
+            echo "::error::short_id input is required for trigger-seer"; exit 1
+          fi
+          python3 scripts/sentry_seer.py trigger --apply --short-id "${{ inputs.short_id }}" \
+            || echo "::warning::Seer trigger returned non-zero (may be normal if Seer can't analyze this issue)"
+
+      - name: claude-diagnose
+        if: inputs.action == 'claude-diagnose'
+        run: |
+          if [ -z "${{ inputs.short_id }}" ]; then
+            echo "::error::short_id input is required for claude-diagnose"; exit 1
+          fi
+          # claude_diagnose action is invoked by qc_actions_from_sentry.py
+          # in dispatch mode. For ad-hoc, we re-use _do_claude_diagnose.
+          python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          from sentry_api import SentryAPI
+          from qc_actions_from_sentry import _do_claude_diagnose
+          api = SentryAPI()
+          short = '${{ inputs.short_id }}'
+          open_issues = api.list_issues(stats_period='90d', query='is:unresolved', limit=200)
+          match = [i for i in open_issues if i.get('shortId') == short]
+          if not match:
+              raise SystemExit(f'No unresolved issue with shortId={short}')
+          result = _do_claude_diagnose(api, match[0], spec={'comment': 'Manual diagnosis via sentry-tools.yml'}, dry_run=False)
+          print(result)
+          "

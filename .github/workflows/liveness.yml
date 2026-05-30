@@ -1,0 +1,152 @@
+name: Liveness monitor
+
+# Catches the failure mode where the Cloud PC was asleep / network down /
+# Windows update reboot / Sentry asleep at 10 AM ET and NO pipeline fired
+# at all. Today's daily audit only reports IF the pipeline ran — silent
+# absence is invisible.
+#
+# This workflow runs on GitHub-hosted Ubuntu (always available, free,
+# independent of the Cloud PC). Fires at 11:30 AM ET — 1.5h after the
+# Cloud PC fire is supposed to land — and posts a GitHub issue if no
+# successful fire arrived. The Cloud PC runner pushes a "I fired"
+# heartbeat as the last step of daily-fire.yml; this workflow checks
+# whether that heartbeat exists for today.
+#
+# Heartbeat mechanism: the Cloud PC fire writes
+# reports/deployment-sha.txt with a timestamp on every run. This
+# workflow pulls the file via the GitHub Contents API (no token-
+# protected paths involved) and parses the AT= line.
+#
+# Failure escalates to a GitHub issue tagged `cloud-pc-down`. Issue is
+# auto-closed when the next successful fire updates the heartbeat.
+
+on:
+  schedule:
+    # 15:30 UTC = 11:30 AM ET in EDT. Gives the Cloud PC fire (10 AM ET)
+    # + 60-min per-step timeout budget + small grace window to finish.
+    - cron: "30 15 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  check-heartbeat:
+    name: Verify the Cloud PC fired today
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write      # to file the alert issue if check fails
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # We need the most recent successful artifact, not the latest
+          # commit — but checkout's enough to read scripts that might
+          # parse heartbeat formats in the future.
+          fetch-depth: 1
+
+      - name: Find latest daily-fire run + check artifact freshness
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          # Get the most recent daily-fire.yml run on main.
+          latest=$(gh run list --workflow=daily-fire.yml --branch=main \
+                              --limit=1 --json status,conclusion,createdAt,databaseId \
+                              -q '.[0]')
+          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+            echo "no_fire=true" >> "$GITHUB_OUTPUT"
+            echo "reason=No daily-fire.yml run has ever happened on main" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          run_id=$(echo "$latest" | jq -r .databaseId)
+          conclusion=$(echo "$latest" | jq -r .conclusion)
+          created=$(echo "$latest" | jq -r .createdAt)
+          # Age in hours since the run started. >25h means we missed today's
+          # 10 AM window (and likely yesterday's too).
+          age_h=$(python3 -c "
+          from datetime import datetime, timezone
+          import sys
+          ts = datetime.fromisoformat('$created'.replace('Z', '+00:00'))
+          print(f'{(datetime.now(timezone.utc) - ts).total_seconds() / 3600:.1f}')
+          ")
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "conclusion=$conclusion" >> "$GITHUB_OUTPUT"
+          echo "created=$created" >> "$GITHUB_OUTPUT"
+          echo "age_h=$age_h" >> "$GITHUB_OUTPUT"
+          # Decide pass/fail
+          stale="false"
+          if [ "$(python3 -c "print(float('$age_h') > 25)")" = "True" ]; then
+            stale="true"
+          fi
+          failed="false"
+          if [ "$conclusion" != "success" ] && [ "$conclusion" != "null" ]; then
+            failed="true"
+          fi
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+          if [ "$stale" = "true" ] || [ "$failed" = "true" ]; then
+            echo "no_fire=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no_fire=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: All good
+        if: steps.check.outputs.no_fire != 'true'
+        run: |
+          echo "✅ Daily fire run #${{ steps.check.outputs.run_id }} (${{ steps.check.outputs.conclusion }}) at ${{ steps.check.outputs.created }} — ${{ steps.check.outputs.age_h }}h ago"
+
+      - name: File alert issue (Cloud PC missed its fire)
+        if: steps.check.outputs.no_fire == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # De-dupe: if there's already an open `cloud-pc-down` issue
+          # from today, comment on it rather than spamming a new one.
+          today=$(date -u +%Y-%m-%d)
+          existing=$(gh issue list --label cloud-pc-down --state open \
+                                   --search "created:>=$today" \
+                                   --json number,title -q '.[0].number' 2>/dev/null || true)
+          body="**Liveness check failed** at $(date -u +'%Y-%m-%dT%H:%M:%SZ').
+
+          - Latest daily-fire run: \`${{ steps.check.outputs.run_id }}\`
+          - Conclusion: \`${{ steps.check.outputs.conclusion }}\`
+          - Started at: \`${{ steps.check.outputs.created }}\`
+          - Age: \`${{ steps.check.outputs.age_h }}h\` (threshold: 25h)
+          - Stale: \`${{ steps.check.outputs.stale }}\`
+          - Failed: \`${{ steps.check.outputs.failed }}\`
+
+          ## Likely causes
+          - Cloud PC asleep / network down at 10 AM ET
+          - Self-hosted runner service stopped (check the runner's
+            status: \`Get-Service actions.runner.*\`)
+          - Windows Update reboot consumed the fire window
+          - Pipeline failed and self-hosted runner couldn't recover
+
+          ## Recovery
+          - Manually trigger \`daily-fire.yml\` via Actions UI → Run workflow
+          - Or log into the Cloud PC and run the wrapper directly
+          - Or wait for tomorrow's 10 AM ET fire if today's audit isn't critical
+
+          This issue will auto-close when the next successful daily-fire run lands.
+          "
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing issue #$existing"
+          else
+            gh issue create \
+              --title "Liveness check failed — Cloud PC may have missed daily fire" \
+              --label cloud-pc-down \
+              --body "$body"
+          fi
+
+      - name: Auto-close stale alert issues (next successful fire)
+        if: steps.check.outputs.no_fire != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Close any open `cloud-pc-down` issues — the fire recovered.
+          for n in $(gh issue list --label cloud-pc-down --state open --json number -q '.[].number'); do
+            gh issue comment "$n" --body "Recovered: daily-fire run #${{ steps.check.outputs.run_id }} succeeded at ${{ steps.check.outputs.created }}. Auto-closing."
+            gh issue close "$n"
+          done
