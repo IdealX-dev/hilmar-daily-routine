@@ -35,18 +35,17 @@ BIZ_START = time(8, 30)   # 8:30 AM ET
 BIZ_END   = time(17, 30)  # 5:30 PM ET
 BIZ_DAY_HOURS = 9.0
 
-# Pending → Q&L aging cutoff. Per Michael 2026-05-01, give Lonny up to
-# two business days to respond with "send" before flipping a quoted row
-# to Q&L. Was 24h; widened to 48h because real client decision cycles
-# routinely span a full business day plus an overnight, and the prior
-# 24h was producing premature Q&L flips on rows Lonny went on to win.
+#: Window before a QUOTED-but-not-booked PENDING row ages out to Q&L.
+#: 48h biz-hours (Michael 2026-05-01 / 2026-05-30) with the Friday
+#: weekend carve-out applied via is_business_stale (Fri/Sat/Sun → Monday
+#: 18:00 ET). Real client decision cycles span a business day + an
+#: overnight; 24h was producing premature Q&L flips on rows Lonny went
+#: on to win. tests/test_core_parity.py asserts this matches scripts/.
 PENDING_WINDOW_HOURS = 48
-#: AWAITING_MDOLX aging cutoff. Send-only PENDING rows (Lonny said "Send"
-#: but OL hasn't generated MDOLX) auto-demote to Q&L (SEND_NO_BOOKING)
-#: after this many hours. 72h = three days + buffer for weekends/holidays;
-#: at that point either OL dropped the ball, the carrier never confirmed,
-#: or the deal moved off-system. Per Michael's policy 2026-04-28.
-AWAITING_MDOLX_AGING_HOURS = 72
+# AWAITING_MDOLX_AGING_HOURS (was 72) was removed 2026-05-30 — the
+# send-aging branch now uses is_business_stale(send_at, now, hours=48)
+# for symmetry with PENDING_WINDOW_HOURS and to pick up the same Friday
+# weekend carve-out. The audit confirmed zero callers existed.
 RATE_TREND_THRESHOLD_PCT = 10
 
 #: Status enum — TWO classifiers coexist intentionally during the
@@ -508,32 +507,44 @@ class StatusDecision:
     #   "OTHER"           — Q&L, malformed timestamp / unknown
 
 
-def send_signal_stale(send_dt: datetime | None, now: datetime | None = None) -> bool:
-    """True when a Lonny "send" has gone unconfirmed long enough that the
-    booking is functionally lost.
+def is_business_stale(
+    dt: datetime | None,
+    now: datetime | None = None,
+    hours: int = 48,
+) -> bool:
+    """True when ``dt`` is older than ``hours`` business-hours, with the
+    weekend carve-out: a Friday/Saturday/Sunday timestamp isn't stale
+    until the following Monday 18:00 ET ("the 48h clock must not run out
+    across the weekend — OL doesn't book Sat/Sun").
 
-    Real wins confirm same/next business day — within ~48h (Michael
-    2026-05-30). Rule: stale after 48h, EXCEPT a Friday or weekend send
-    isn't stale until the following Monday 18:00 ET — OL doesn't book
-    over the weekend, so the 48h clock must not run out across it
-    ("48 hours except fridays cancel monday evenings following").
+    Used for BOTH staleness windows in decide_status:
+      - send-signal aging (PENDING(AWAITING_MDOLX) → Q&L(SEND_NO_BOOKING))
+      - quote-window aging (PENDING(quoted) → Q&L)
 
-    Kept byte-for-byte identical to scripts/core.send_signal_stale — the
-    cross-tree parity test (tests/test_core_parity.py) fails if they
-    drift. This is the check that would have caught the classifier
-    divergence that produced the phantom WINs.
+    Both run on the same 48h policy (Michael 2026-05-01 / 2026-05-30).
+    Real Lonny decision cycles span a business day + an overnight; 48h
+    biz captures that without flipping rows Lonny still wins.
+
+    Kept byte-for-byte identical to scripts/core.is_business_stale —
+    tests/test_core_parity.py fails if they drift.
     """
-    if send_dt is None:
+    if dt is None:
         return False
     now = now or now_utc()
-    send_et = send_dt.astimezone(ET)
-    if send_et.weekday() >= 4:                       # Fri=4, Sat=5, Sun=6
-        days_to_mon = (7 - send_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
-        deadline = (send_et + timedelta(days=days_to_mon)).replace(
+    dt_et = dt.astimezone(ET)
+    if dt_et.weekday() >= 4:                         # Fri=4, Sat=5, Sun=6
+        days_to_mon = (7 - dt_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
+        deadline = (dt_et + timedelta(days=days_to_mon)).replace(
             hour=18, minute=0, second=0, microsecond=0)
     else:
-        deadline = send_et + timedelta(hours=48)
+        deadline = dt_et + timedelta(hours=hours)
     return now.astimezone(ET) > deadline
+
+
+# Backwards-compatibility alias — the original public name. Older code
+# and tests call send_signal_stale(send_dt, now); preserved as an alias
+# now that is_business_stale is the canonical name.
+send_signal_stale = is_business_stale
 
 
 def decide_status(
@@ -606,7 +617,7 @@ def decide_status(
                 send_at = ts
         if send_at is None:
             send_at = parse_iso(response_timestamp)
-        if send_signal_stale(send_at, now):
+        if is_business_stale(send_at, now):
             return StatusDecision(
                 STATUS_Q_AND_L, True, False, "SEND_NO_BOOKING",
                 "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
@@ -643,9 +654,13 @@ def decide_status(
                               "Quoted but response_timestamp unparseable — assumed aged")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
-    if hours_since <= PENDING_WINDOW_HOURS:
+    # Weekend-aware check — a Friday quote doesn't flip to Q&L over the
+    # weekend before Lonny's Monday workday (is_business_stale handles
+    # the Fri/Sat/Sun → Monday 18:00 ET carve-out).
+    if not is_business_stale(resp_dt, now, hours=PENDING_WINDOW_HOURS):
         return StatusDecision(STATUS_PENDING, True, False, None,
-                              f"Quoted {hours_since:.1f}h ago — Lonny still within {PENDING_WINDOW_HOURS}h window")
+                              f"Quoted {hours_since:.1f}h ago — Lonny still within "
+                              f"{PENDING_WINDOW_HOURS}h biz window (weekend-aware)")
 
     # Quoted & Lost. Tag the reason as best we can.
     if etd_fit_days is not None:

@@ -79,6 +79,100 @@ def test_send_signal_stale_none_parity():
     assert scripts_core.send_signal_stale(None) == hilmar_core.send_signal_stale(None) == False
 
 
+# ── is_business_stale: same function under canonical name ─────────────────
+
+@pytest.mark.parametrize("send_iso,now_iso,hours", [
+    # Default 48h cases
+    ("2026-04-21T03:00:00Z", "2026-04-21T12:00:00Z", 48),
+    ("2026-04-21T13:00:00Z", "2026-04-27T13:00:00Z", 48),
+    # Custom hours param (e.g. for short pings — must work both trees)
+    ("2026-04-22T12:00:00Z", "2026-04-23T13:00:00Z", 24),
+    ("2026-04-22T12:00:00Z", "2026-04-22T20:00:00Z", 4),
+])
+def test_is_business_stale_parity(send_iso, now_iso, hours):
+    send_dt = datetime.fromisoformat(send_iso.replace("Z", "+00:00"))
+    now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    a = scripts_core.is_business_stale(send_dt, now, hours=hours)
+    b = hilmar_core.is_business_stale(send_dt, now, hours=hours)
+    assert a == b, f"is_business_stale drift: scripts={a} hilmar={b} for {send_iso}/{now_iso}/{hours}h"
+
+
+def test_send_signal_stale_alias_is_same_callable():
+    """send_signal_stale is the backwards-compat alias for is_business_stale.
+    The cross-tree drift catcher relies on the canonical name; the alias
+    must keep working until any external caller is migrated off it."""
+    assert scripts_core.send_signal_stale is scripts_core.is_business_stale
+    assert hilmar_core.send_signal_stale is hilmar_core.is_business_stale
+
+
+# ── Constant equality — locks the PR #13-class bug ────────────────────────
+
+# Constants intentionally allowed to differ between trees. Adding a name
+# here documents the divergence; nothing else may diverge silently.
+ALLOWED_CROSS_FOLDER_DRIFT = {
+    "VALID_STATUSES": (
+        "scripts/ uses LEGACY 3-set {WIN,LOSS,PENDING}; src/hilmar/ uses "
+        "STRICT+LEGACY union. QC-041 enforces production stays LEGACY-form. "
+        "These intentionally differ — do not unify without changing every "
+        "stored row's status field."
+    ),
+}
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("PENDING_WINDOW_HOURS", 48),
+    ("RATE_TREND_THRESHOLD_PCT", 10),
+])
+def test_numeric_constants_match_across_trees(name, expected):
+    """Locks the constants that gate behavior. Any numeric/policy constant
+    that exists in BOTH cores MUST match — if you need to diverge, add to
+    ALLOWED_CROSS_FOLDER_DRIFT with a written explanation. This is the
+    check that would have caught PENDING_WINDOW_HOURS=24 vs 48 drifting
+    for a month with a green suite (audit finding #2, 2026-05-31)."""
+    a = getattr(scripts_core, name, None)
+    b = getattr(hilmar_core, name, None)
+    assert a == b == expected, (
+        f"{name} drift: scripts={a} hilmar={b} (expected {expected}). "
+        f"Either fix the drift or add {name!r} to ALLOWED_CROSS_FOLDER_DRIFT "
+        f"with a written rationale."
+    )
+
+
+def test_loss_reasons_set_equal_across_trees():
+    """LOSS_REASONS must match (status semantics depend on this). QC-040
+    also checks this — duplicated here so the parity test is self-contained
+    and a fresh checkout's CI catches it without needing QC to run."""
+    a = scripts_core.LOSS_REASONS
+    b = hilmar_core.LOSS_REASONS
+    assert a == b, f"LOSS_REASONS drift: scripts-only={a-b} hilmar-only={b-a}"
+
+
+def test_no_undocumented_constants_drift():
+    """Walk all UPPERCASE module-level names in BOTH cores. Any name that
+    exists in both, holds a (numeric/string/tuple/frozenset) literal, and
+    is NOT in ALLOWED_CROSS_FOLDER_DRIFT must have equal values across
+    the trees. This catches the next PR #13-class drift before it ships."""
+    import re
+    def constants(mod):
+        out = {}
+        for n in dir(mod):
+            if not re.match(r"^[A-Z][A-Z0-9_]+$", n):
+                continue
+            v = getattr(mod, n)
+            if isinstance(v, (int, float, str, bytes, tuple, frozenset, set, dict)):
+                out[n] = v
+        return out
+    sc = constants(scripts_core)
+    hc = constants(hilmar_core)
+    common = set(sc) & set(hc) - set(ALLOWED_CROSS_FOLDER_DRIFT)
+    drifted = {n: (sc[n], hc[n]) for n in common if sc[n] != hc[n]}
+    assert not drifted, (
+        f"Undocumented constant drift between scripts/core.py and "
+        f"src/hilmar/core.py:\n  " +
+        "\n  ".join(f"{n}: scripts={a!r} hilmar={b!r}" for n, (a, b) in drifted.items())
+    )
+
+
 # ── decide_status: canonical outcome parity (accounts for LEGACY vs STRICT) ──
 
 def _canon(decision) -> tuple:

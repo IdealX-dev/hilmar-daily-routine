@@ -35,7 +35,14 @@ BIZ_START = time(8, 30)   # 8:30 AM ET
 BIZ_END   = time(17, 30)  # 5:30 PM ET
 BIZ_DAY_HOURS = 9.0
 
-PENDING_WINDOW_HOURS = 24
+#: Window before a QUOTED-but-not-booked PENDING row ages out to Q&L.
+#: Set to 48h biz-hours (Michael 2026-05-01 / 2026-05-30) with the Friday
+#: weekend carve-out applied via is_business_stale (Fri/Sat/Sun → Monday
+#: 18:00 ET). Real client decision cycles span a business day + an
+#: overnight; 24h was producing premature Q&L flips on rows Lonny went
+#: on to win. tests/test_core_parity.py asserts this matches src/hilmar/
+#: byte-for-byte.
+PENDING_WINDOW_HOURS = 48
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
@@ -606,32 +613,44 @@ class StatusDecision:
     reason_detail: str             # human-readable why
 
 
-def send_signal_stale(send_dt: datetime | None, now: datetime | None = None) -> bool:
-    """True when a Lonny "send" has gone unconfirmed long enough that the
-    booking is functionally lost.
+def is_business_stale(
+    dt: datetime | None,
+    now: datetime | None = None,
+    hours: int = 48,
+) -> bool:
+    """True when ``dt`` is older than ``hours`` business-hours, with the
+    weekend carve-out: a Friday/Saturday/Sunday timestamp isn't stale
+    until the following Monday 18:00 ET ("the 48h clock must not run out
+    across the weekend — OL doesn't book Sat/Sun").
 
-    Real wins confirm same/next business day — within ~48h (Michael
-    2026-05-30). Rule: stale after 48h, EXCEPT a Friday or weekend send
-    isn't stale until the following Monday 18:00 ET — OL doesn't book
-    over the weekend, so the 48h clock must not run out across it
-    ("48 hours except fridays cancel monday evenings following").
+    Used for BOTH staleness windows in decide_status:
+      - send-signal aging (PENDING(AWAITING_MDOLX) → Q&L(SEND_NO_BOOKING))
+      - quote-window aging (PENDING(quoted) → Q&L)
 
-    Kept byte-for-byte identical to src/hilmar/core.send_signal_stale —
-    the cross-tree parity test (tests/test_core_parity.py) fails if they
-    drift. This is the check that would have caught the classifier
-    divergence that produced the phantom WINs.
+    Both run on the same 48h policy (Michael 2026-05-01 / 2026-05-30).
+    Real Lonny decision cycles span a business day + an overnight; 48h
+    biz captures that without flipping rows Lonny still wins.
+
+    Kept byte-for-byte identical to src/hilmar/core.is_business_stale —
+    tests/test_core_parity.py fails if they drift.
     """
-    if send_dt is None:
+    if dt is None:
         return False
     now = now or now_utc()
-    send_et = send_dt.astimezone(ET)
-    if send_et.weekday() >= 4:                       # Fri=4, Sat=5, Sun=6
-        days_to_mon = (7 - send_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
-        deadline = (send_et + timedelta(days=days_to_mon)).replace(
+    dt_et = dt.astimezone(ET)
+    if dt_et.weekday() >= 4:                         # Fri=4, Sat=5, Sun=6
+        days_to_mon = (7 - dt_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
+        deadline = (dt_et + timedelta(days=days_to_mon)).replace(
             hour=18, minute=0, second=0, microsecond=0)
     else:
-        deadline = send_et + timedelta(hours=48)
+        deadline = dt_et + timedelta(hours=hours)
     return now.astimezone(ET) > deadline
+
+
+# Backwards-compatibility alias — the original public name. Older code
+# and tests call send_signal_stale(send_dt, now); preserved as an alias
+# now that is_business_stale is the canonical name.
+send_signal_stale = is_business_stale
 
 
 def decide_status(
@@ -700,9 +719,12 @@ def decide_status(
         return StatusDecision("LOSS", True, False, "OTHER", "Quoted but response_timestamp unparseable — assumed aged")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
-    if hours_since <= PENDING_WINDOW_HOURS:
+    # Use the business-hours staleness helper so a Friday quote isn't
+    # flipped to Q&L over the weekend before Lonny's Monday workday.
+    if not is_business_stale(resp_dt, now, hours=PENDING_WINDOW_HOURS):
         return StatusDecision("PENDING", True, False, None,
-                              f"Quoted {hours_since:.1f}h ago — Lonny still within 24h window")
+                              f"Quoted {hours_since:.1f}h ago — Lonny still within "
+                              f"{PENDING_WINDOW_HOURS}h biz window (weekend-aware)")
 
     # Quoted & Lost. Try to tag a reason.
     reason = "OTHER"

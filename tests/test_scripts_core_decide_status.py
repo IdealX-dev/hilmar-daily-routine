@@ -86,9 +86,10 @@ def test_no_response_is_legacy_loss_no_response():
 
 
 def test_quoted_within_window_is_pending():
-    now = datetime(2026, 4, 21, 12, 0, tzinfo=UTC)
+    """Inside the 48h biz window on a normal weekday — stays PENDING."""
+    now = datetime(2026, 4, 23, 12, 0, tzinfo=UTC)  # Thu 23h after Wed quote
     d = SC.decide_status(has_send=False, mdolx_ref=None,
-                         response_timestamp="2026-04-21T03:00:00Z",  # 9h < 24h
+                         response_timestamp="2026-04-22T13:00:00Z",  # Wed
                          quoted=True, etd_fit_days=0, now=now)
     assert d.status == "PENDING"
 
@@ -100,3 +101,34 @@ def test_quoted_aged_is_loss():
                          quoted=True, etd_fit_days=2, now=now)
     assert d.status == "LOSS"
     assert d.loss_reason in ("PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED")
+
+
+def test_quoted_friday_not_stale_monday_morning():
+    """Production-form check of the Friday/weekend carve-out for quote
+    aging. Prior to 2026-05-30 fix, scripts/core.py used a flat clock
+    and would flip Friday quotes to Q&L over the weekend."""
+    fri_quote = "2026-04-24T20:00:00Z"   # Fri ~16:00 ET
+    mon_morning = datetime(2026, 4, 27, 18, 0, tzinfo=UTC)  # Mon 14:00 ET
+    d = SC.decide_status(has_send=False, mdolx_ref=None,
+                         response_timestamp=fri_quote, quoted=True,
+                         etd_fit_days=0, now=mon_morning)
+    assert d.status == "PENDING", "Friday quote must survive the weekend"
+
+
+def test_quoted_friday_stale_monday_evening():
+    """Same Friday quote IS stale after Monday 18:00 ET — flips to LEGACY
+    LOSS (the LEGACY form of Q&L in production)."""
+    fri_quote = "2026-04-24T20:00:00Z"
+    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=UTC)  # Mon 19:00 ET
+    d = SC.decide_status(has_send=False, mdolx_ref=None,
+                         response_timestamp=fri_quote, quoted=True,
+                         etd_fit_days=0, now=mon_evening)
+    assert d.status == "LOSS"             # LEGACY form
+    assert d.loss_reason in ("PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED")
+
+
+def test_pending_window_hours_is_48():
+    """Lock the production constant. Audit finding 2026-05-31: scripts/
+    had drifted to 24 while src/hilmar/ said 48 per Michael's 2026-05-01
+    policy. This test fails if either tree silently reverts."""
+    assert SC.PENDING_WINDOW_HOURS == 48
