@@ -896,6 +896,61 @@ def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
     return lanes
 
 
+def aggregate_loss_reasons(
+    requests: list[dict],
+    window_days: int | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Book-wide loss-reason mix — the "why did we not win" lens.
+
+    Kept byte-for-byte identical to src/hilmar/core.aggregate_loss_reasons;
+    tests/test_core_parity.py guards drift. See that module's docstring
+    for the full output shape.
+    """
+    losses = []
+    cutoff = None
+    if window_days is not None:
+        cutoff = (now or now_utc()) - timedelta(days=window_days)
+
+    for r in requests:
+        status = r.get("status")
+        if status not in {"Q&L", "NQ", "LOSS"}:
+            continue
+        lr = r.get("loss_reason")
+        if not lr:
+            continue
+        if cutoff is not None:
+            ts = (parse_iso(r.get("response_timestamp"))
+                  or parse_iso(r.get("request_timestamp")))
+            if ts is None or ts < cutoff:
+                continue
+        losses.append(lr)
+
+    by_reason: dict[str, int] = {}
+    for lr in losses:
+        by_reason[lr] = by_reason.get(lr, 0) + 1
+    ranked = sorted(by_reason.items(), key=lambda kv: -kv[1])
+
+    _RATE_DRIVEN = {"PRICE"}
+    _ETD_DRIVEN = {"ETD_MISS"}
+    _OL_SILENT = {"NO_RESPONSE", "RESPONSE_NO_RATE", "SEND_NO_BOOKING"}
+    actionable = {
+        "rate_driven": sum(c for lr, c in by_reason.items() if lr in _RATE_DRIVEN),
+        "etd_driven":  sum(c for lr, c in by_reason.items() if lr in _ETD_DRIVEN),
+        "ol_silent":   sum(c for lr, c in by_reason.items() if lr in _OL_SILENT),
+        "other":       sum(c for lr, c in by_reason.items()
+                           if lr not in (_RATE_DRIVEN | _ETD_DRIVEN | _OL_SILENT)),
+    }
+
+    return {
+        "total": len(losses),
+        "by_reason": by_reason,
+        "ranked": ranked,
+        "window_days": window_days,
+        "actionable_mix": actionable,
+    }
+
+
 def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
     car: dict[str, dict] = {}
     for r in requests:

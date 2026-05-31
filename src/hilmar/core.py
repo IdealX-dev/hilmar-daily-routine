@@ -830,6 +830,84 @@ def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
     return lanes
 
 
+def aggregate_loss_reasons(
+    requests: list[dict],
+    window_days: int | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Book-wide loss-reason mix — the "why did we not win" lens.
+
+    Returns::
+
+      {
+        "total":   <int>,                 # total losses in window
+        "by_reason": {"PRICE": 28, "ETD_MISS": 12, "NO_RESPONSE": 5, ...},
+        "ranked":  [("PRICE", 28), ("ETD_MISS", 12), ...],   # high → low
+        "window_days": <int>|None,        # None = all-time
+        "actionable_mix": {               # buckets for the daily email banner
+            "rate_driven":  <int>,    # PRICE
+            "etd_driven":   <int>,    # ETD_MISS
+            "ol_silent":    <int>,    # NO_RESPONSE + RESPONSE_NO_RATE + SEND_NO_BOOKING
+            "other":        <int>,    # OTHER + QUOTED_NOT_BOOKED + COVERED + DRAFT_ONLY
+        },
+      }
+
+    This is the chart the daily email never shipped — per the 2026-05-31
+    audit, ``aggregate_carriers.loss_reasons`` already computes a
+    per-carrier mix but the book-wide rollup was missing. With this in
+    place, the daily email can show e.g. "of your 47 losses last 30d:
+    28 PRICE, 12 ETD_MISS, 5 NO_RESPONSE" — telling Michael whether to
+    push carriers (rate_driven), push ops (etd_driven), or push Lonny
+    (ol_silent).
+
+    Counts BOTH STRICT (status=="Q&L"/"NQ") and LEGACY (status=="LOSS")
+    rows so the function works against either tree's status vocabulary.
+    Rows without a loss_reason are dropped.
+    """
+    losses = []
+    cutoff = None
+    if window_days is not None:
+        cutoff = (now or now_utc()) - timedelta(days=window_days)
+
+    for r in requests:
+        status = r.get("status")
+        if status not in {"Q&L", "NQ", "LOSS"}:
+            continue
+        lr = r.get("loss_reason")
+        if not lr:
+            continue
+        if cutoff is not None:
+            ts = (parse_iso(r.get("response_timestamp"))
+                  or parse_iso(r.get("request_timestamp")))
+            if ts is None or ts < cutoff:
+                continue
+        losses.append(lr)
+
+    by_reason: dict[str, int] = {}
+    for lr in losses:
+        by_reason[lr] = by_reason.get(lr, 0) + 1
+    ranked = sorted(by_reason.items(), key=lambda kv: -kv[1])
+
+    _RATE_DRIVEN = {"PRICE"}
+    _ETD_DRIVEN = {"ETD_MISS"}
+    _OL_SILENT = {"NO_RESPONSE", "RESPONSE_NO_RATE", "SEND_NO_BOOKING"}
+    actionable = {
+        "rate_driven": sum(c for lr, c in by_reason.items() if lr in _RATE_DRIVEN),
+        "etd_driven":  sum(c for lr, c in by_reason.items() if lr in _ETD_DRIVEN),
+        "ol_silent":   sum(c for lr, c in by_reason.items() if lr in _OL_SILENT),
+        "other":       sum(c for lr, c in by_reason.items()
+                           if lr not in (_RATE_DRIVEN | _ETD_DRIVEN | _OL_SILENT)),
+    }
+
+    return {
+        "total": len(losses),
+        "by_reason": by_reason,
+        "ranked": ranked,
+        "window_days": window_days,
+        "actionable_mix": actionable,
+    }
+
+
 def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
     car: dict[str, dict] = {}
     for r in requests:
