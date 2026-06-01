@@ -1704,10 +1704,30 @@ def phase_6_rules(log: Log, data: dict):
                         )
                     if not _tr.get("coverage_ok", True):
                         _why.append(f"coverage {_cov}% < gate {_gate}%")
+                    # 2026-06-01: surface diagnostic detail when present so
+                    # the audit email tells the operator WHAT broke. Without
+                    # this, QC-052 was emitting opaque "22 errors" lines with
+                    # no signal on the underlying cause (collection failure,
+                    # missing dep, fixture crash, etc.). Backward-compatible:
+                    # absent fields => same headline-only message as before.
+                    _buckets = _tr.get("error_type_buckets") or []
+                    _coll = _tr.get("collection_error")
+                    _diag_parts = []
+                    if _coll:
+                        _diag_parts.append("pytest collection failed (modules failed to import)")
+                    if _buckets:
+                        _bucket_text = ", ".join(
+                            f"{b.get('count', 0)}x {b.get('error_type', '?')}" for b in _buckets[:4]
+                        )
+                        _diag_parts.append(f"top error types: {_bucket_text}")
+                    _diag = (" Diagnosis: " + "; ".join(_diag_parts) + ".") if _diag_parts else ""
+                    _out_ref = _tr.get("pytest_output_path") or "reports/pytest-output.txt"
                     log.error(
                         "QC-052: daily test/coverage routine FAILED — "
                         + "; ".join(_why)
-                        + ". The shipped code is not green. See reports/test-result.json."
+                        + ". The shipped code is not green."
+                        + _diag
+                        + f" Full output: {_out_ref}."
                     )
                 else:  # PASS
                     log.ok(

@@ -39,6 +39,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,6 +47,19 @@ ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
 ARTIFACT = REPORTS / "test-result.json"
 COVERAGE_JSON = REPORTS / "coverage.json"
+# Per-test stdout/stderr capture — when QC-052 reports failures, the audit
+# email points the operator here for the full traceback. Written each fire,
+# overwritten by the next. Added 2026-06-01 after the Cloud PC reported
+# "0 failed, 22 error; coverage None%" with no diagnostic detail.
+PYTEST_OUTPUT = REPORTS / "pytest-output.txt"
+
+# How many per-failure excerpts to keep in the artifact. The audit email
+# truncates again to ~5; we keep a few extra so QC-052 has signal even when
+# the audit clips.
+MAX_ERRORS_IN_ARTIFACT = 25
+# Cap each traceback excerpt to keep test-result.json bounded — the full
+# pytest output is always available in PYTEST_OUTPUT for the operator.
+MAX_TRACEBACK_LINES = 4
 
 
 def _test_root() -> Path | None:
@@ -125,6 +139,154 @@ def _parse_counts(stdout: str) -> dict:
     return counts
 
 
+# Pytest's "short test summary info" block is the most reliable place to
+# extract per-test diagnostics across pytest versions: one line per failed/
+# errored test in the form:
+#   FAILED tests/test_x.py::test_foo - AssertionError: x != y
+#   ERROR tests/test_x.py - ModuleNotFoundError: No module named 'foo'
+_SUMMARY_LINE_RE = re.compile(
+    r"^(FAILED|ERROR)\s+([^\s]+(?:::[^\s]+)?)(?:\s+-\s+(.*))?$"
+)
+# A typed exception always shows up as "TypeName: message" once we strip a
+# leading "E   " marker pytest adds in --tb=short output. Used both to
+# bucket and to recognize the "short message" payload.
+_EXC_RE = re.compile(
+    r"^([A-Z][A-Za-z_0-9.]*Error|Exception|Warning|TimeoutError|KeyboardInterrupt)(?::\s*(.*))?$"
+)
+
+
+def _classify_error_type(short_msg: str) -> str:
+    """Bucket a short error message into a typed exception name.
+
+    Falls back to ``UnknownError`` when pytest's summary line doesn't carry a
+    typed exception (rare — happens for some plugin hook crashes). Used by
+    both the artifact's ``error_type_buckets`` array and the QC-052 audit
+    text so the operator sees ``12x ModuleNotFoundError`` instead of just
+    ``22 error``.
+    """
+    if not short_msg:
+        return "UnknownError"
+    s = short_msg.strip()
+    m = _EXC_RE.match(s)
+    if m:
+        return m.group(1)
+    # Collection failures may have prose preamble; pull the typed name out.
+    m2 = re.search(r"\b([A-Z][A-Za-z_0-9.]*Error)\b", s)
+    if m2:
+        return m2.group(1)
+    return "UnknownError"
+
+
+def _parse_failures(stdout: str, *, max_errors: int = MAX_ERRORS_IN_ARTIFACT) -> list[dict]:
+    """Extract per-test failure/error diagnostics from pytest's output.
+
+    Parses two regions of pytest's text output:
+
+    1. **Short test summary info** — one line per failure/error, gives us
+       nodeid + a typed short message. This is what pytest emits with
+       ``-rfE`` (or ``-ra`` which the suite uses by default).
+    2. **FAILURES / ERRORS sections** — multi-line tracebacks per test.
+       We pick the first ~4 lines of each as the "traceback excerpt" so
+       the audit email has enough context to triage without dumping the
+       full stack.
+
+    Returns at most ``max_errors`` entries to bound test-result.json size.
+    The full output is always preserved in PYTEST_OUTPUT for the operator.
+
+    No new pytest plugin / dependency — text parsing only. Cost of fighting
+    pytest version drift is contained and locked in by tests.
+    """
+    failures: list[dict] = []
+
+    # Pass 1 — short summary block. Format is stable across recent pytest:
+    #   ========== short test summary info ==========
+    #   FAILED tests/x.py::test_y - AssertionError: ...
+    #   ERROR  tests/x.py - ModuleNotFoundError: ...
+    summary_idx = stdout.find("short test summary info")
+    summary_block = stdout[summary_idx:] if summary_idx >= 0 else stdout
+    for raw in summary_block.splitlines():
+        line = raw.strip()
+        m = _SUMMARY_LINE_RE.match(line)
+        if not m:
+            continue
+        phase_word = m.group(1)
+        nodeid = m.group(2)
+        short_msg = (m.group(3) or "").strip()
+        failures.append({
+            "nodeid": nodeid,
+            "phase": "collect" if phase_word == "ERROR" else "call",
+            "error_type": _classify_error_type(short_msg),
+            "short_message": short_msg[:300],  # bound per-entry size
+            "traceback_excerpt": [],
+        })
+        if len(failures) >= max_errors:
+            break
+
+    # Pass 2 — try to attach a short traceback excerpt for each. Look in
+    # the FAILURES / ERRORS sections by header (pytest underlines test
+    # names with ``___`` so each test's traceback starts predictably).
+    if failures:
+        sections = re.split(r"^=+\s+(FAILURES|ERRORS)\s+=+\s*$", stdout, flags=re.MULTILINE)
+        body = ""
+        for i in range(1, len(sections), 2):
+            if i + 1 < len(sections):
+                body += "\n" + sections[i + 1]
+        if body:
+            # Each per-test block starts with a header line of underscores
+            # surrounding the test name. We capture the body until the next
+            # header or the end of the body.
+            header_re = re.compile(r"^_{3,}\s+(.+?)\s+_{3,}\s*$", re.MULTILINE)
+            matches = list(header_re.finditer(body))
+            for idx, mat in enumerate(matches):
+                name = mat.group(1).strip()
+                start = mat.end()
+                end = matches[idx + 1].start() if idx + 1 < len(matches) else len(body)
+                tb_lines = [
+                    ln.rstrip()
+                    for ln in body[start:end].splitlines()
+                    if ln.strip()
+                ][:MAX_TRACEBACK_LINES]
+                # Match this traceback to a failure by suffix on the nodeid.
+                for f in failures:
+                    if f["nodeid"].endswith("::" + name) or f["nodeid"].endswith(name):
+                        if not f["traceback_excerpt"]:
+                            f["traceback_excerpt"] = tb_lines
+                        break
+
+    return failures
+
+
+def _bucket_error_types(failures: list[dict]) -> list[dict]:
+    """Aggregate failures into an ordered ``[{error_type, count}, ...]`` list.
+
+    Sorted by descending count then alphabetical so the audit email's "most
+    common error type" line is deterministic across re-runs of the same set.
+    """
+    if not failures:
+        return []
+    c = Counter(f.get("error_type") or "UnknownError" for f in failures)
+    return [
+        {"error_type": et, "count": n}
+        for et, n in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+
+
+def _detect_collection_error(stdout: str, failures: list[dict]) -> bool:
+    """True when pytest hit collection errors (modules failed to import).
+
+    Two signals: the explicit ``Interrupted: N error during collection`` line
+    pytest prints when collection is fatal, OR a majority of the captured
+    failures are in the ``collect`` phase. Used to set ``collection_error``
+    in the artifact so the audit email can lead with the right diagnosis
+    ("modules failed to import" vs "tests ran but failed").
+    """
+    if re.search(r"Interrupted:\s+\d+\s+error[s]?\s+during\s+collection", stdout):
+        return True
+    if failures and sum(1 for f in failures if f.get("phase") == "collect") >= max(1, len(failures) // 2):
+        return True
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true", help="Suppress pytest stdout")
@@ -179,8 +341,15 @@ def main() -> int:
     # next to where pytest writes it; we read it back below regardless of
     # whether REPORTS (under ROOT) is the same dir.
     coverage_json = test_root / "reports" / "coverage.json"
+    # ``-rfE`` forces pytest to emit the per-test "FAILED ..." / "ERROR ..."
+    # lines in the short summary block — _parse_failures() reads those to
+    # produce per-test diagnostics so the audit email isn't blind.
+    # ``--tb=short`` keeps the FAILURES section compact enough to scrape a
+    # few-line excerpt per test without explosion on a 22-error fire.
     cmd = [
         sys.executable, "-m", "pytest", "-q", "--no-header",
+        "-rfE",
+        "--tb=short",
         "--cov=hilmar",
         f"--cov-report=json:{coverage_json}",
         "--cov-fail-under=0",
@@ -190,7 +359,18 @@ def main() -> int:
     if not args.quiet:
         print(stdout[-4000:])
 
+    # Persist the raw output so the audit email can point the operator at it
+    # without us trying to cram a 22-traceback wall into test-result.json.
+    try:
+        REPORTS.mkdir(parents=True, exist_ok=True)
+        PYTEST_OUTPUT.write_text(stdout, encoding="utf-8")
+    except Exception as _e:  # pragma: no cover - defensive
+        print(f"⚠️  could not write {PYTEST_OUTPUT}: {_e}")
+
     counts = _parse_counts(stdout)
+    failures = _parse_failures(stdout)
+    error_buckets = _bucket_error_types(failures)
+    collection_error = _detect_collection_error(stdout, failures)
     tests_ok = proc.returncode == 0 and counts["failed"] == 0 and counts["error"] == 0
 
     total_cov = None
@@ -218,6 +398,17 @@ def main() -> int:
     else:
         status = "PASS"
 
+    # pytest_output_path: serialize as a repo-relative POSIX path when the
+    # output landed under ROOT; otherwise fall back to the absolute path.
+    # Using POSIX form keeps the audit email readable across Windows/Linux.
+    try:
+        if PYTEST_OUTPUT.is_relative_to(ROOT):
+            output_ref = PYTEST_OUTPUT.relative_to(ROOT).as_posix()
+        else:  # pragma: no cover - defensive
+            output_ref = str(PYTEST_OUTPUT)
+    except (AttributeError, ValueError):  # pragma: no cover - py<3.9 / cross-drive
+        output_ref = str(PYTEST_OUTPUT)
+
     artifact = {
         "status": status,
         "tests_ok": tests_ok,
@@ -229,6 +420,13 @@ def main() -> int:
         "module_floor": MODULE_FLOOR,
         "modules_below_floor": modules_below_floor,
         "untested_modules": untested,
+        # NEW 2026-06-01: per-test diagnostics so the daily audit isn't blind
+        # when the suite breaks. Old consumers that didn't know these fields
+        # ignore them — backward compatible by addition, not rename.
+        "errors": failures,
+        "error_type_buckets": error_buckets,
+        "collection_error": collection_error,
+        "pytest_output_path": output_ref,
         "generated_at": now,
     }
     _write(artifact)
