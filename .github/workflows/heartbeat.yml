@@ -1,0 +1,65 @@
+name: Heartbeat — Cloud PC fired
+
+# Pure observability signal. The Cloud PC's daily wrapper triggers this
+# workflow at the END of a successful fire, via
+#   gh workflow run heartbeat.yml -f at=<iso> -f sha=<head> -f status=success
+# The workflow itself does nothing — its mere successful run history IS
+# the heartbeat. The liveness monitor (`liveness.yml`) reads
+#   gh run list --workflow=heartbeat.yml --branch=main --status=success
+# and alerts when the most recent run is older than 25h.
+#
+# This decouples liveness from `daily-fire.yml` (the planned self-hosted
+# runner trigger that isn't deployed yet) and lets the existing Cloud PC
+# wrapper + Windows Task Scheduler keep firing without changes — just
+# add a final `gh workflow run` call to the wrapper to emit the
+# heartbeat.
+#
+# Failure mode: if the Cloud PC can't reach github.com or its PAT
+# expired, the wrapper's heartbeat call fails (but the daily email
+# already sent — see best-effort treatment in run_daily_laptop.cmd).
+# liveness.yml will then file a `cloud-pc-down` issue at 11:30 AM ET.
+# Recovery: refresh PAT, re-run wrapper, or manually trigger this
+# workflow via Actions UI to clear the alert.
+
+on:
+  workflow_dispatch:
+    inputs:
+      at:
+        description: "ISO timestamp of the fire (UTC preferred)"
+        required: false
+        type: string
+      sha:
+        description: "Repo HEAD SHA at fire time"
+        required: false
+        type: string
+      status:
+        description: "success | partial | failed"
+        required: false
+        default: "success"
+        type: string
+      host:
+        description: "Identifier of the firing host (e.g. cloud-pc, ttsww)"
+        required: false
+        default: "cloud-pc"
+        type: string
+
+jobs:
+  record:
+    name: Record heartbeat
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - name: Echo heartbeat payload
+        run: |
+          echo "✅ Hilmar daily fire heartbeat received"
+          echo "  at:     ${{ github.event.inputs.at }}"
+          echo "  sha:    ${{ github.event.inputs.sha }}"
+          echo "  status: ${{ github.event.inputs.status }}"
+          echo "  host:   ${{ github.event.inputs.host }}"
+          echo ""
+          echo "Heartbeat workflow run timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          # The mere existence of this successful run (and its
+          # github-recorded created_at timestamp) IS the heartbeat.
+          # liveness.yml reads `gh run list --workflow=heartbeat.yml`.
