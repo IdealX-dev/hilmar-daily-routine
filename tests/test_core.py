@@ -230,6 +230,57 @@ def test_decide_status_friday_send_stale_monday_evening():
     assert d.loss_reason == "SEND_NO_BOOKING"
 
 
+def test_decide_status_quoted_friday_not_stale_monday_morning():
+    """Quote-aging branch: a Friday-afternoon quote with no Send by
+    Monday morning must STAY PENDING (Lonny's workday hasn't started
+    yet). Same weekend carve-out as send-signal aging — added 2026-05-30
+    to fix the production drift where scripts/ used 24h flat-clock and
+    flipped premature Q&L on Friday quotes."""
+    fri_quote = "2026-04-24T20:00:00Z"   # Fri ~16:00 ET
+    mon_morning = datetime(2026, 4, 27, 18, 0, tzinfo=timezone.utc)  # Mon 14:00 ET
+    d = core.decide_status(
+        has_send=False, mdolx_ref=None, response_timestamp=fri_quote,
+        quoted=True, etd_fit_days=0, now=mon_morning,
+    )
+    assert d.status == "PENDING", "Friday quote must survive the weekend"
+
+
+def test_decide_status_quoted_friday_stale_monday_evening():
+    """Same Friday quote IS stale after Monday 18:00 ET — falls through
+    to Q&L (or LEGACY LOSS in scripts/)."""
+    fri_quote = "2026-04-24T20:00:00Z"
+    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=timezone.utc)  # Mon 19:00 ET
+    d = core.decide_status(
+        has_send=False, mdolx_ref=None, response_timestamp=fri_quote,
+        quoted=True, etd_fit_days=0, now=mon_evening,
+    )
+    # src/hilmar uses STRICT vocab Q&L; scripts uses LEGACY LOSS. This
+    # test runs under src/hilmar so STRICT.
+    assert d.status == "Q&L"
+
+
+def test_decide_status_quoted_wednesday_within_48h():
+    """Inside the 48h biz window on a normal weekday — stays PENDING."""
+    wed_quote = "2026-04-22T13:00:00Z"   # Wed
+    thu_check = datetime(2026, 4, 23, 12, 0, tzinfo=timezone.utc)  # ~23h later
+    d = core.decide_status(
+        has_send=False, mdolx_ref=None, response_timestamp=wed_quote,
+        quoted=True, etd_fit_days=0, now=thu_check,
+    )
+    assert d.status == "PENDING"
+
+
+def test_decide_status_quoted_wednesday_past_48h():
+    """Past 48h biz on a normal weekday — flips to Q&L."""
+    wed_quote = "2026-04-22T13:00:00Z"
+    fri_check = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)  # ~49h later
+    d = core.decide_status(
+        has_send=False, mdolx_ref=None, response_timestamp=wed_quote,
+        quoted=True, etd_fit_days=0, now=fri_check,
+    )
+    assert d.status == "Q&L"
+
+
 def test_decide_status_maturation_send_only_then_mdolx_arrives_promotes_to_win():
     """The maturation contract: a row classified PENDING(AWAITING_MDOLX)
     on day N, re-ingested on day N+1 with MDOLX now present, must

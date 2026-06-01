@@ -1356,6 +1356,121 @@ def _pending_html(rows):
 """
 
 
+def _loss_reason_mix_html(data) -> str:
+    """Book-wide "Why we lost" mix chart — 30/60-day windows + actionable
+    bucketing (rate_driven / etd_driven / ol_silent / other).
+
+    Renders nothing when there are no losses in the window — prevents an
+    empty section in newly-deployed environments. Outlook-safe HTML:
+    plain ``<table>`` with width % per bar; no SVG, no flexbox, no
+    linear-gradient (QC-045's lesson).
+
+    Added 2026-05-31 per the audit's "loss-reason mix chart is the single
+    most actionable client-facing piece you don't ship" finding.
+    """
+    requests = data.get("requests", []) or []
+    if not requests:
+        return ""
+
+    mix_30 = core.aggregate_loss_reasons(requests, window_days=30)
+    mix_60 = core.aggregate_loss_reasons(requests, window_days=60)
+    if mix_30["total"] == 0 and mix_60["total"] == 0:
+        return ""
+
+    # Reason → display label + category color (Hilmar palette).
+    _REASON_META = {
+        "PRICE":             ("Price (rate-driven)",      "#0a2350"),   # Hilmar navy
+        "ETD_MISS":          ("ETD missed",               "#1e40af"),   # blue
+        "NO_RESPONSE":       ("OL didn't respond",        "#7c2d12"),   # rust
+        "RESPONSE_NO_RATE":  ("OL acked but no rate",     "#9a3412"),
+        "SEND_NO_BOOKING":   ("Send w/o MDOLX booking",   "#b45309"),   # amber-deep
+        "QUOTED_NOT_BOOKED": ("Quoted, generic no-fit",   "#475569"),   # slate
+        "COVERED":           ("Lonny covered w/ competitor", "#5b21b6"),
+        "DRAFT_ONLY":        ("Booking draft-only",       "#475569"),
+        "OTHER":             ("Other",                    "#94a3b8"),
+    }
+    _ACTIONABLE_META = {
+        "rate_driven": ("Push carriers — rate-driven",  "#0a2350"),
+        "etd_driven":  ("Push ops — ETD-driven",        "#1e40af"),
+        "ol_silent":   ("Push OL — silent or late",     "#b45309"),
+        "other":       ("Other",                         "#94a3b8"),
+    }
+
+    def _bar_row(label, count, total, color):
+        pct = (count * 100.0 / total) if total else 0
+        # Inline-styled table cell with width:N% as the bar fill, plus the
+        # label/count to the right. Outlook respects this; flexbox does not.
+        return (
+            '<tr>'
+            f'<td style="padding:6px 12px 6px 0;color:#0f172a;font-size:13px;'
+            f'white-space:nowrap;font-weight:500">{_esc(label)}</td>'
+            f'<td style="padding:6px 0;width:60%">'
+            f'<table cellspacing="0" cellpadding="0" border="0" '
+            f'style="width:100%;border-collapse:collapse">'
+            f'<tr><td style="background:{color};color:#fff;padding:3px 8px;'
+            f'border-radius:3px;font-size:12px;width:{max(pct, 4):.0f}%;'
+            f'white-space:nowrap;font-variant-numeric:tabular-nums">'
+            f'{count} &middot; {pct:.0f}%</td>'
+            f'<td style="padding-left:6px"></td></tr></table>'
+            f'</td></tr>'
+        )
+
+    def _window_block(label, mix):
+        if mix["total"] == 0:
+            return ""
+        out = (
+            f'<div style="margin:14px 0 6px 0;font-size:13px;color:#475569;'
+            f'font-weight:600;letter-spacing:0.02em">'
+            f'{label} &nbsp;&middot;&nbsp; <span style="color:#0f172a;'
+            f'font-variant-numeric:tabular-nums">{mix["total"]} losses</span>'
+            f'</div>'
+            f'<table cellspacing="0" cellpadding="0" border="0" '
+            f'style="width:100%;border-collapse:collapse">'
+        )
+        # By-reason bars (top 6 by count).
+        for reason, count in mix["ranked"][:6]:
+            label_str, color = _REASON_META.get(reason, (reason, "#94a3b8"))
+            out += _bar_row(label_str, count, mix["total"], color)
+        out += '</table>'
+        # Actionable summary line.
+        am = mix["actionable_mix"]
+        chunks = []
+        for key in ("rate_driven", "etd_driven", "ol_silent", "other"):
+            if am[key] <= 0:
+                continue
+            tag_label, color = _ACTIONABLE_META[key]
+            pct = am[key] * 100.0 / mix["total"]
+            chunks.append(
+                f'<span style="display:inline-block;margin:4px 8px 0 0;'
+                f'padding:2px 8px;background:{color};color:#fff;border-radius:3px;'
+                f'font-size:11px;font-variant-numeric:tabular-nums">'
+                f'{_esc(tag_label)}: {am[key]} ({pct:.0f}%)</span>'
+            )
+        if chunks:
+            out += (
+                f'<div style="margin:8px 0 0 0;font-size:11px;color:#64748b;'
+                f'line-height:1.8">{ "".join(chunks) }</div>'
+            )
+        return out
+
+    html = (
+        '<div style="margin:28px 0 8px 0">'
+        '<h2 style="font-size:15px;color:#0a2350;margin:0 0 4px 0;'
+        'font-weight:700;letter-spacing:-0.01em">Why We Lost &mdash; '
+        'Loss-Reason Mix</h2>'
+        '<div style="font-size:12px;color:#64748b;margin-bottom:4px">'
+        'Where the deals went. Buckets tag the action that follows: '
+        '<em>Push carriers</em> when rate-driven dominates, '
+        '<em>Push ops</em> on ETD misses, '
+        '<em>Push OL</em> when OL is silent.'
+        '</div>'
+    )
+    html += _window_block("Last 30 days", mix_30)
+    html += _window_block("Last 60 days", mix_60)
+    html += "</div>"
+    return html
+
+
 def _trade_region_html(data, summary):
     """Volume by Trade Region — must reconcile to summary totals."""
     try:
@@ -1479,6 +1594,9 @@ def build_body(data, cfg):
     html_body = _header_html(report_label, date_range, updated_label)
     html_body += _today_block_html(report_label, new_req, ol_resp, status_ch, pending)
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
+    # Loss-reason mix — the "why we lost" lens. Renders nothing when
+    # there are no losses in the 30/60-day windows.
+    html_body += _loss_reason_mix_html(data)
     html_body += _week_block_html(week_rows)
     html_body += _carrier_block_html(carrier_rows)
     html_body += _trade_region_html(data, data.get("summary", {}) or {})

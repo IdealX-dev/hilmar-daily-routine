@@ -145,10 +145,12 @@ REM Step 4.7 — weekly executive summary (Friday only — script self-gates)
 echo --- weekly_summary --- >> "%LOG%"
 "%PY%" scripts\gen_weekly_summary.py >> "%LOG%" 2>&1
 
-REM Step 4.8 — pending auto-chase (only fires if config.auto_chase.enabled
-REM == true AND it's past earliest_send_hour_et). No-op by default.
-echo --- auto_chase --- >> "%LOG%"
-"%PY%" scripts\auto_chase_pending.py >> "%LOG%" 2>&1
+REM Step 4.8 — auto-chase MOVED to deploy/run_chase_evening.cmd (2026-05-31).
+REM The morning fire was always a no-op because auto_chase requires the
+REM current ET hour to be >= earliest_send_hour_et (16). Set up a separate
+REM Cloud PC scheduled task at 16:30 ET to fire run_chase_evening.cmd.
+REM See that file's header for the schtasks one-liner.
+echo --- auto_chase scheduled separately (run_chase_evening.cmd at 16:30 ET) --- >> "%LOG%"
 
 REM Step 4.9 — dual-target offline backup (separate OneDrive folder + local
 REM offline folder). Defense in depth against OneDrive corruption / accidental
