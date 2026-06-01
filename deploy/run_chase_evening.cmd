@@ -19,9 +19,19 @@ REM   - secrets\token-cache.json must be present (MSAL device flow done
 REM     within the last 80 days; QC-023 warns + errors on freshness).
 REM   - config.json auto_chase.enabled == true (defaults true post-audit).
 REM
-REM Cloud PC scheduled task setup (one-time, run as the user):
-REM   schtasks /Create /TN "Hilmar Auto-Chase Evening" /SC WEEKLY /D MON,TUE,WED,THU,FRI ^
-REM     /ST 16:30 /TR "\"%USERPROFILE%\OneDrive - IdealX\claude\PROJECT HILMAR\deploy\run_chase_evening.cmd\""
+REM Cloud PC scheduled task setup (one-time, run as the user). Two
+REM equivalent install lines — pick the shell you're actually in:
+REM
+REM   PowerShell (verified working 2026-05-31 on Cloud PC; ` escapes
+REM   the inner double-quotes, $env: replaces %% env-var syntax):
+REM     schtasks /Create /TN "Hilmar Auto-Chase Evening" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 16:30 /TR "`"$env:USERPROFILE\OneDrive - IdealX\claude\PROJECT HILMAR\deploy\run_chase_evening.cmd`""
+REM
+REM   cmd.exe (uses ^ line continuation + \" inner-quote escape):
+REM     schtasks /Create /TN "Hilmar Auto-Chase Evening" /SC WEEKLY /D MON,TUE,WED,THU,FRI ^
+REM       /ST 16:30 /TR "\"%USERPROFILE%\OneDrive - IdealX\claude\PROJECT HILMAR\deploy\run_chase_evening.cmd\""
+REM
+REM Verify after install (either shell):
+REM   schtasks /Query /TN "Hilmar Auto-Chase Evening" /V /FO LIST | findstr /R "Task.To.Run Next.Run Status"
 
 setlocal enableextensions enabledelayedexpansion
 set ROOT=%USERPROFILE%\OneDrive - IdealX\claude\PROJECT HILMAR
