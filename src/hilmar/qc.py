@@ -603,9 +603,10 @@ def phase_6_rules(log: Log, data: dict) -> None:
     now = core.now_utc()
     for r in pending:
         # QC-007 was written for the original PENDING semantics — quoted
-        # within Lonny's 24h response window. Reading B (commit ee392d5)
+        # within Lonny's response window. Reading B (commit ee392d5)
         # introduced two new PENDING sub-states (AWAITING_MDOLX,
-        # MDOLX_NO_SEND) where exceeding 24h is EXPECTED, not an error:
+        # MDOLX_NO_SEND) where exceeding the window is EXPECTED, not an
+        # error:
         #   AWAITING_MDOLX  — waiting for OL to generate MDOLX after
         #                     Lonny's send; can legitimately take days
         #   MDOLX_NO_SEND   — anomaly, separately surfaced; doesn't need
@@ -615,10 +616,17 @@ def phase_6_rules(log: Log, data: dict) -> None:
         if r.get("loss_reason") in ("AWAITING_MDOLX", "MDOLX_NO_SEND"):
             continue
         rt = core.parse_iso(r.get("response_timestamp"))
-        if rt and (now - rt).total_seconds() / 3600 > 24:
+        # Must use is_business_stale + PENDING_WINDOW_HOURS so this check
+        # stays aligned with decide_status. Hardcoded 24h drifted from the
+        # classifier's 48h+Friday-rule on 2026-06-01 (PR #14 updated
+        # decide_status; QC-007 was missed). Result: 2 Friday-quoted rows
+        # fired QC-007 ERRORs even though decide_status correctly kept
+        # them PENDING.
+        if rt and core.is_business_stale(rt, now, hours=core.PENDING_WINDOW_HOURS):
             log.error(
-                f"QC-007: {r['request_id']} still PENDING past 24h — "
-                "state machine should have aged this"
+                f"QC-007: {r['request_id']} still PENDING past "
+                f"{core.PENDING_WINDOW_HOURS}h biz-window — state "
+                f"machine should have aged this"
             )
 
 

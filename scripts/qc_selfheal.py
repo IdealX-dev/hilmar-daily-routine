@@ -784,8 +784,18 @@ def phase_6_rules(log: Log, data: dict):
     now = core.now_utc()
     for r in pending:
         rt = core.parse_iso(r.get("response_timestamp"))
-        if rt and (now - rt).total_seconds() / 3600 > 24:
-            log.error(f"QC-007: {r['request_id']} still PENDING past 24h — state machine should have aged this")
+        # Must use is_business_stale + PENDING_WINDOW_HOURS so this check
+        # stays aligned with decide_status. Hardcoded 24h drifted from the
+        # classifier's 48h+Friday-rule on 2026-06-01 (PR #14 updated
+        # decide_status; QC-007 was missed). Result: 2 Friday-quoted rows
+        # fired QC-007 ERRORs even though decide_status correctly kept
+        # them PENDING. Same drift class the parity test catches between
+        # scripts/core ↔ src/hilmar/core — now also between qc_selfheal
+        # ↔ core.is_business_stale.
+        if rt and core.is_business_stale(rt, now, hours=core.PENDING_WINDOW_HOURS):
+            log.error(f"QC-007: {r['request_id']} still PENDING past "
+                      f"{core.PENDING_WINDOW_HOURS}h biz-window — state "
+                      f"machine should have aged this")
 
     # ─────────────────────────────────────────────────────────────────
     # QC-008/009/010 — paired with refresh_stage.py and the additive
