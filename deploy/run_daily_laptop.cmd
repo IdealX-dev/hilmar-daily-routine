@@ -166,5 +166,45 @@ echo --- improvements_report (Michael only) --- >> "%LOG%"
   --body-from-file reports\improvements-report.html >> "%LOG%" 2>&1
 echo Improvements send exit code: %ERRORLEVEL% >> "%LOG%"
 
+REM Step 6 — GitHub Actions heartbeat (2026-06-01 — replaces the missing
+REM daily-fire.yml self-hosted runner trigger). Tells the liveness monitor
+REM workflow that the daily fire actually completed. Best-effort: if gh
+REM CLI isn't installed, the PAT isn't configured, or github.com is
+REM unreachable, this logs the failure and exits 0 — the email already
+REM went out, and the liveness workflow filing an alert is a tolerable
+REM secondary failure.
+REM
+REM One-time setup on Cloud PC:
+REM   1. Install gh CLI: winget install --id GitHub.cli
+REM   2. Authenticate ONCE as the operator:
+REM        gh auth login --hostname github.com --git-protocol https --web
+REM      OR drop a PAT (scope: actions:write) into secrets\github-pat.txt
+REM      and run: gh auth login --with-token < secrets\github-pat.txt
+REM   3. Verify: gh auth status
+REM See docs\CLOUD-PC-HEARTBEAT-SETUP.md for the full walkthrough.
+echo --- heartbeat dispatch --- >> "%LOG%"
+where gh >nul 2>&1
+if errorlevel 1 (
+  echo gh CLI not found; heartbeat skipped ^(install: winget install GitHub.cli^) >> "%LOG%"
+) else (
+  REM Pass timestamp + repo HEAD so the heartbeat workflow's run log
+  REM ties back to a specific commit. Best-effort — non-blocking.
+  set HB_AT=%DATE%T%TIME%
+  set HB_SHA=
+  if exist "%ROOT%\reports\deployment-sha.txt" (
+    for /f "tokens=2 delims= " %%S in ('findstr /b "HEAD=" "%ROOT%\reports\deployment-sha.txt" 2^>nul') do (
+      set HB_SHA=%%S
+      set HB_SHA=!HB_SHA:HEAD=!
+    )
+  )
+  gh workflow run heartbeat.yml ^
+    -R IdealX-dev/hilmar-daily-routine ^
+    -f at="!HB_AT!" ^
+    -f sha="!HB_SHA!" ^
+    -f status="success" ^
+    -f host="cloud-pc" >> "%LOG%" 2>&1
+  echo Heartbeat dispatch exit code: !ERRORLEVEL! >> "%LOG%"
+)
+
 endlocal
 exit /b 0

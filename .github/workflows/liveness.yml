@@ -8,17 +8,21 @@ name: Liveness monitor
 # This workflow runs on GitHub-hosted Ubuntu (always available, free,
 # independent of the Cloud PC). Fires at 11:30 AM ET — 1.5h after the
 # Cloud PC fire is supposed to land — and posts a GitHub issue if no
-# successful fire arrived. The Cloud PC runner pushes a "I fired"
-# heartbeat as the last step of daily-fire.yml; this workflow checks
-# whether that heartbeat exists for today.
+# successful heartbeat arrived.
 #
-# Heartbeat mechanism: the Cloud PC fire writes
-# reports/deployment-sha.txt with a timestamp on every run. This
-# workflow pulls the file via the GitHub Contents API (no token-
-# protected paths involved) and parses the AT= line.
+# Heartbeat mechanism (2026-06-01 redesign — was: check daily-fire.yml
+# runs; that workflow isn't deployed since the self-hosted runner
+# migration is incomplete):
+#   The Cloud PC's wrapper (`deploy/run_daily_laptop.cmd`) makes a final
+#   call to `gh workflow run heartbeat.yml ...` after a successful fire.
+#   This workflow then reads
+#     gh run list --workflow=heartbeat.yml --branch=main --status=success
+#   and checks the most-recent run's age. Decoupled from daily-fire.yml
+#   so the existing Cloud-PC-via-Task-Scheduler trigger keeps working
+#   while the self-hosted runner migration finishes.
 #
 # Failure escalates to a GitHub issue tagged `cloud-pc-down`. Issue is
-# auto-closed when the next successful fire updates the heartbeat.
+# auto-closed when the next successful heartbeat lands.
 
 on:
   schedule:
@@ -44,19 +48,44 @@ jobs:
           # parse heartbeat formats in the future.
           fetch-depth: 1
 
-      - name: Find latest daily-fire run + check artifact freshness
+      - name: Ensure cloud-pc-down label exists
+        # Pre-2026-06-01 this workflow assumed the label was present and
+        # `gh issue create --label cloud-pc-down` would just work. On
+        # first run after merge the label didn't exist yet and the
+        # workflow failed with a label-not-found error (today's
+        # noticed-via-email failure). Idempotent: succeeds if label
+        # exists; creates it if not.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh label list --search cloud-pc-down --json name -q '.[].name' \
+                | grep -Fxq cloud-pc-down; then
+            gh label create cloud-pc-down \
+              --color B60205 \
+              --description "Liveness monitor: Cloud PC missed a scheduled fire"
+          fi
+
+      - name: Find latest heartbeat + check freshness
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          # Get the most recent daily-fire.yml run on main.
-          latest=$(gh run list --workflow=daily-fire.yml --branch=main \
+          # Heartbeat = successful run of heartbeat.yml triggered by the
+          # Cloud PC's wrapper at end of fire (2026-06-01 redesign).
+          latest=$(gh run list --workflow=heartbeat.yml --branch=main \
+                              --status=success \
                               --limit=1 --json status,conclusion,createdAt,databaseId \
                               -q '.[0]')
           if [ -z "$latest" ] || [ "$latest" = "null" ]; then
             echo "no_fire=true" >> "$GITHUB_OUTPUT"
-            echo "reason=No daily-fire.yml run has ever happened on main" >> "$GITHUB_OUTPUT"
+            echo "reason=No heartbeat.yml run has ever happened on main — Cloud PC wrapper may not be wired to dispatch heartbeats yet, see docs/CLOUD-PC-HEARTBEAT-SETUP.md" >> "$GITHUB_OUTPUT"
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "conclusion=" >> "$GITHUB_OUTPUT"
+            echo "created=" >> "$GITHUB_OUTPUT"
+            echo "age_h=" >> "$GITHUB_OUTPUT"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           run_id=$(echo "$latest" | jq -r .databaseId)
@@ -94,7 +123,7 @@ jobs:
       - name: All good
         if: steps.check.outputs.no_fire != 'true'
         run: |
-          echo "✅ Daily fire run #${{ steps.check.outputs.run_id }} (${{ steps.check.outputs.conclusion }}) at ${{ steps.check.outputs.created }} — ${{ steps.check.outputs.age_h }}h ago"
+          echo "✅ Heartbeat run #${{ steps.check.outputs.run_id }} (${{ steps.check.outputs.conclusion }}) at ${{ steps.check.outputs.created }} — ${{ steps.check.outputs.age_h }}h ago"
 
       - name: File alert issue (Cloud PC missed its fire)
         if: steps.check.outputs.no_fire == 'true'
@@ -109,7 +138,7 @@ jobs:
                                    --json number,title -q '.[0].number' 2>/dev/null || true)
           body="**Liveness check failed** at $(date -u +'%Y-%m-%dT%H:%M:%SZ').
 
-          - Latest daily-fire run: \`${{ steps.check.outputs.run_id }}\`
+          - Latest heartbeat run: \`${{ steps.check.outputs.run_id }}\`
           - Conclusion: \`${{ steps.check.outputs.conclusion }}\`
           - Started at: \`${{ steps.check.outputs.created }}\`
           - Age: \`${{ steps.check.outputs.age_h }}h\` (threshold: 25h)
@@ -118,17 +147,21 @@ jobs:
 
           ## Likely causes
           - Cloud PC asleep / network down at 10 AM ET
-          - Self-hosted runner service stopped (check the runner's
-            status: \`Get-Service actions.runner.*\`)
+          - Cloud PC wrapper completed fire but heartbeat dispatch failed
+            (gh CLI auth, PAT expired, network glitch)
+          - Windows Task Scheduler missed the 10 AM trigger
           - Windows Update reboot consumed the fire window
-          - Pipeline failed and self-hosted runner couldn't recover
+          - Wrapper not yet wired to dispatch heartbeats (see
+            docs/CLOUD-PC-HEARTBEAT-SETUP.md)
 
           ## Recovery
-          - Manually trigger \`daily-fire.yml\` via Actions UI → Run workflow
-          - Or log into the Cloud PC and run the wrapper directly
+          - Log into the Cloud PC and run \`deploy\\\\run_daily_laptop.cmd\` manually
+          - Or manually trigger \`heartbeat.yml\` via Actions UI → Run workflow
+            to clear today's alert (only do this if you've verified the
+            fire actually completed)
           - Or wait for tomorrow's 10 AM ET fire if today's audit isn't critical
 
-          This issue will auto-close when the next successful daily-fire run lands.
+          This issue will auto-close when the next successful heartbeat lands.
           "
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             gh issue comment "$existing" --body "$body"
@@ -147,6 +180,6 @@ jobs:
         run: |
           # Close any open `cloud-pc-down` issues — the fire recovered.
           for n in $(gh issue list --label cloud-pc-down --state open --json number -q '.[].number'); do
-            gh issue comment "$n" --body "Recovered: daily-fire run #${{ steps.check.outputs.run_id }} succeeded at ${{ steps.check.outputs.created }}. Auto-closing."
+            gh issue comment "$n" --body "Recovered: heartbeat run #${{ steps.check.outputs.run_id }} succeeded at ${{ steps.check.outputs.created }}. Auto-closing."
             gh issue close "$n"
           done
