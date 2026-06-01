@@ -153,3 +153,121 @@ def test_build_entities_with_minimal_share_intel(monkeypatch, tmp_path):
     assert "Lonny Upfold" in names
     roles = {e["role"] for e in entities}
     assert roles == {"client"}  # no carriers, no OL operators
+
+
+# ── main() — the best-effort contract (Layer 1, 2026-06-01) ──────────────
+#
+# main() MUST NEVER return non-zero. Sync is downstream-bonus; if it fails
+# for any reason — missing password, missing SHARED dir, network down, bad
+# data, programmer error — the daily pipeline must continue so the client
+# email goes out. The audit log records the failure; QC-037 surfaces it.
+#
+# These tests lock that contract for every failure mode actually observed
+# in production (the 2026-06-01 TTSWW run was a missing SHARED dir →
+# uncaught FileNotFoundError → pipeline rc=1 → wrapper abort → no email).
+
+from unittest import mock as _mock  # noqa: E402
+
+def _patch_argv(*args):
+    return _mock.patch.object(sys, "argv", ["sync_to_quote_tracker.py", *args])
+
+
+def test_main_returns_0_when_password_missing(monkeypatch, capsys):
+    """Existing baseline — preserved by Layer 1: no password → exit 0."""
+    monkeypatch.setattr(ST, "_load_password", lambda: None)
+    with _patch_argv():
+        rc = ST.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No APP_PASSWORD" in out or "no APP_PASSWORD" in out.lower()
+
+
+def test_main_returns_0_when_build_entities_raises_filenotfound(monkeypatch, capsys):
+    """The 2026-06-01 TTSWW bug. SHARED/client_intelligence/hilmar/ wasn't
+    synced; build_entities raised FileNotFoundError; the script exited 1;
+    run_pipeline aborted; the daily email + audit email were never sent.
+    Now caught at main() with a clear log line."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "build_entities",
+                        _mock.Mock(side_effect=FileNotFoundError("hilmar/quotes.jsonl")))
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock())
+    with _patch_argv():
+        rc = ST.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "build_entities failed" in out
+    assert "FileNotFoundError" in out
+
+
+def test_main_returns_0_for_any_build_entities_exception(monkeypatch):
+    """build_entities can fail many ways — JSONDecodeError, PermissionError,
+    KeyError on malformed data, etc. ALL must short-circuit to exit 0."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock())
+    for exc in (PermissionError("denied"), json.JSONDecodeError("bad", "doc", 0),
+                KeyError("status"), ValueError("bad shape"), RuntimeError("?")):
+        monkeypatch.setattr(ST, "build_entities", _mock.Mock(side_effect=exc))
+        with _patch_argv():
+            rc = ST.main()
+        assert rc == 0, f"main() returned {rc} for {type(exc).__name__}"
+
+
+def test_build_entities_failure_still_writes_audit_log(monkeypatch):
+    """When build_entities crashes, audit log MUST still record it so
+    QC-037 surfaces the recurring failure to the operator."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "build_entities",
+                        _mock.Mock(side_effect=PermissionError("denied")))
+    write_audit_mock = _mock.Mock()
+    monkeypatch.setattr(ST, "write_audit", write_audit_mock)
+    with _patch_argv():
+        ST.main()
+    write_audit_mock.assert_called_once()
+    result = write_audit_mock.call_args[0][0]
+    assert result["ok"] is False
+    assert "PermissionError" in result["error"]
+
+
+def test_audit_log_write_failure_does_not_propagate(monkeypatch):
+    """If write_audit itself fails (disk full), main() must STILL return
+    0. The audit-log write is best-effort within best-effort."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "build_entities",
+                        _mock.Mock(side_effect=ValueError("bad data")))
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock(side_effect=IOError("disk full")))
+    with _patch_argv():
+        rc = ST.main()
+    assert rc == 0
+
+
+def test_main_returns_0_when_sync_entities_itself_raises(monkeypatch):
+    """sync_entities is supposed to catch its own exceptions, but if a
+    programmer-error path escapes (e.g., AttributeError before the
+    try/except scope), the outer try in main() saves the pipeline."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "build_entities",
+                        lambda: [{"role": "client", "name": "Hilmar"}])
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock())
+    monkeypatch.setattr(ST, "sync_entities",
+                        _mock.Mock(side_effect=AttributeError("regression")))
+    with _patch_argv():
+        rc = ST.main()
+    assert rc == 0
+
+
+def test_main_returns_0_on_successful_sync(monkeypatch, capsys):
+    """Happy path: nothing has changed for successful runs."""
+    monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
+    monkeypatch.setattr(ST, "build_entities",
+                        lambda: [{"role": "client", "name": "Hilmar"},
+                                  {"role": "contact", "name": "Lonny"}])
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock())
+    monkeypatch.setattr(ST, "sync_entities",
+                        lambda *a, **kw: {"base_url": "http://x", "entity_count": 2,
+                                          "ok": True, "error": None, "response": {"synced": 2}})
+    with _patch_argv():
+        rc = ST.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "built 2 entities" in out
+    assert '"ok": true' in out
