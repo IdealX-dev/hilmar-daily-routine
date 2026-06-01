@@ -591,7 +591,11 @@ def test_qc_007_skips_awaiting_mdolx_pending(workspace, capsys):
     # Pick the existing PENDING row from golden_day, mutate to AWAITING_MDOLX
     # with a 72h-old response_timestamp so QC-007's 24h check would otherwise
     # fire.
-    aged_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    # 120h aged so the row is stale under BOTH the original 24h check and
+    # the new 48h+Friday-rule check, regardless of which weekday pytest
+    # runs on. 72h was previously safe but breaks on Mondays under the
+    # Friday rule (Fri quote, Mon morning = still inside biz window).
+    aged_ts = (datetime.now(timezone.utc) - timedelta(hours=120)).isoformat()
     seeded = False
     for r in data["requests"]:
         if r["status"] == "PENDING":
@@ -613,6 +617,129 @@ def test_qc_007_skips_awaiting_mdolx_pending(workspace, capsys):
     )
 
 
+def test_qc_007_does_not_fire_inside_business_window(monkeypatch, workspace):
+    """The 2026-06-01 bug: a Friday-quoted PENDING row 30h old at Monday
+    morning. Under the new 48h+Friday-rule classifier (PR #14), this row
+    legitimately stays PENDING — the weekend doesn't count. QC-007's
+    hardcoded 24h check fired anyway and surfaced 2 false-positive ERRORs
+    in Monday's audit email. Fixed 2026-06-01.
+    """
+    from datetime import datetime, timedelta, timezone
+    # Lock "now" so this test is deterministic regardless of when it runs.
+    fixed_now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)   # Mon 10:00 ET
+    # Quote sent late Friday afternoon, ~30h before "now".
+    fri_quote = datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc)  # Fri ~16:00 ET
+    monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
+
+    data = json.loads(workspace["data"].read_text())
+    seeded = False
+    for r in data["requests"]:
+        if r["status"] == "PENDING":
+            r["loss_reason"] = None
+            r["response_timestamp"] = fri_quote.isoformat()
+            r["has_send"] = False
+            r["mdolx_ref"] = None
+            r["quoted"] = True
+            r["status"] = "PENDING"
+            seeded = True
+            break
+    assert seeded
+    workspace["data"].write_text(json.dumps(data))
+
+    log = qc.Log()
+    test_data = json.loads(workspace["data"].read_text())
+    qc.phase_6_rules(log, test_data)
+    qc007_errors = [e for e in log.errors if "QC-007" in e]
+    assert not qc007_errors, (
+        f"QC-007 must NOT fire on Friday-quoted rows still inside the "
+        f"weekend-aware 48h biz window. Fired: {qc007_errors}"
+    )
+
+
+def test_qc_007_fires_when_friday_window_expires_monday_evening(monkeypatch, workspace):
+    """Defensive complement: a Friday-quoted row IS stale once we're past
+    Monday 18:00 ET. The Friday rule extends the window — it doesn't
+    eliminate it. QC-007 must fire here."""
+    from datetime import datetime, timedelta, timezone
+    fixed_now = datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)   # Mon 19:00 ET
+    fri_quote = datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc)  # Fri ~16:00 ET
+    monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
+
+    data = json.loads(workspace["data"].read_text())
+    seeded = False
+    for r in data["requests"]:
+        if r["status"] == "PENDING":
+            r["loss_reason"] = None
+            r["response_timestamp"] = fri_quote.isoformat()
+            r["has_send"] = False
+            r["mdolx_ref"] = None
+            r["quoted"] = True
+            r["status"] = "PENDING"
+            seeded = True
+            break
+    assert seeded
+    workspace["data"].write_text(json.dumps(data))
+
+    log = qc.Log()
+    test_data = json.loads(workspace["data"].read_text())
+    qc.phase_6_rules(log, test_data)
+    qc007_errors = [e for e in log.errors if "QC-007" in e]
+    assert qc007_errors, (
+        "QC-007 must fire on Friday-quoted rows past Monday 18:00 ET "
+        "(weekend-aware window has elapsed)."
+    )
+
+
+@pytest.mark.parametrize("quote_iso,now_iso,should_fire", [
+    # Normal weekday: quoted Tue 8 AM ET, viewed Thu 9 AM (49h biz → STALE)
+    ("2026-04-21T12:00:00Z", "2026-04-23T13:00:00Z", True),
+    # Normal weekday: quoted Tue 8 AM, viewed Wed 11 AM (27h → INSIDE 48h)
+    ("2026-04-21T12:00:00Z", "2026-04-22T15:00:00Z", False),
+    # Friday/weekend rule: Fri 4 PM ET, viewed Mon 10 AM (66h wall) → INSIDE
+    ("2026-04-24T20:00:00Z", "2026-04-27T14:00:00Z", False),
+    # Friday/weekend rule: Fri 4 PM ET, viewed Mon 7 PM (75h wall) → STALE
+    ("2026-04-24T20:00:00Z", "2026-04-27T23:00:00Z", True),
+    # Saturday quote: Sat 10 AM ET → Mon 18 ET deadline; viewed Mon 17 ET → INSIDE
+    ("2026-04-25T14:00:00Z", "2026-04-27T21:00:00Z", False),
+])
+def test_qc_007_matches_decide_status_business_stale(
+    monkeypatch, workspace, quote_iso, now_iso, should_fire,
+):
+    """Parity guard — for any quote timestamp + viewing time, QC-007's
+    fire decision MUST match what decide_status would do (i.e. is the
+    row still PENDING or should it have aged to Q&L). The hardcoded 24h
+    check was the original drift; this parametrized check is the lock
+    against the next drift."""
+    from datetime import datetime, timezone
+    fixed_now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
+
+    data = json.loads(workspace["data"].read_text())
+    seeded = False
+    for r in data["requests"]:
+        if r["status"] == "PENDING":
+            r["loss_reason"] = None
+            r["response_timestamp"] = quote_iso
+            r["has_send"] = False
+            r["mdolx_ref"] = None
+            r["quoted"] = True
+            r["status"] = "PENDING"
+            seeded = True
+            break
+    assert seeded
+    workspace["data"].write_text(json.dumps(data))
+
+    log = qc.Log()
+    test_data = json.loads(workspace["data"].read_text())
+    qc.phase_6_rules(log, test_data)
+    qc007_fired = any("QC-007" in e for e in log.errors)
+    assert qc007_fired == should_fire, (
+        f"QC-007 fire decision drifted from decide_status. "
+        f"Quote at {quote_iso}, now={now_iso}: "
+        f"expected fire={should_fire}, got fire={qc007_fired}"
+    )
+
+
 def test_qc_007_still_fires_on_unaged_original_pending(workspace):
     """Defensive: QC-007 must still catch the original failure mode it
     was designed for — a row that's PENDING with no Reading-B sub-state
@@ -620,7 +747,11 @@ def test_qc_007_still_fires_on_unaged_original_pending(workspace):
     bug (decide_status should have aged it to Q&L)."""
     from datetime import datetime, timedelta, timezone
     data = json.loads(workspace["data"].read_text())
-    aged_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    # 120h aged so the row is stale under BOTH the original 24h check and
+    # the new 48h+Friday-rule check, regardless of which weekday pytest
+    # runs on. 72h was previously safe but breaks on Mondays under the
+    # Friday rule (Fri quote, Mon morning = still inside biz window).
+    aged_ts = (datetime.now(timezone.utc) - timedelta(hours=120)).isoformat()
     # Mutate a row that classifies under Reading B's 24h window — quoted=True,
     # has_send=False, mdolx_ref=None — but force its STATUS to PENDING and
     # leave loss_reason=None so the AWAITING_MDOLX skip doesn't apply.
