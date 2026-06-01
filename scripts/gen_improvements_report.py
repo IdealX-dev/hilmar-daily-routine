@@ -110,6 +110,64 @@ def _group_qc_messages(messages):
     return sorted(buckets.items()), ungrouped
 
 
+# Max characters per excerpt line before we visually truncate. Picked so a
+# pasted long stacktrace line can't blow out the audit email width in
+# Outlook (which doesn't word-wrap inside <pre>).
+_EXCERPT_LINE_MAX = 180
+# Max per-test excerpts to render — keeps the audit email bounded when the
+# 22-error collection-failure mode hits.
+_MAX_EXCERPTS_RENDERED = 5
+
+
+def _truncate_line(line, n=_EXCERPT_LINE_MAX):
+    if not line:
+        return ""
+    s = str(line)
+    if len(s) <= n:
+        return s
+    return s[: n - 1].rstrip() + "…"
+
+
+def _format_test_excerpts(errors):
+    """Render a monospace <pre> block of per-test pytest excerpts.
+
+    Each entry shows a short header (nodeid + classified error_type) and up
+    to 4 truncated traceback lines. All text is ``_esc()``'d so quotes,
+    unicode, ``<``/``>`` etc. can't break the audit HTML. Returns ``""``
+    when there are no errors so the section just shows the headline detail.
+
+    Outlook-safe: a plain ``<pre>`` tag with explicit ``font-family`` +
+    ``white-space: pre-wrap``. No flexbox, SVG, or linear-gradient.
+    """
+    if not errors:
+        return ""
+    rendered = []
+    for e in errors[:_MAX_EXCERPTS_RENDERED]:
+        nodeid = _esc(_truncate_line(e.get("nodeid") or "?"))
+        et = _esc(e.get("error_type") or "UnknownError")
+        short = _esc(_truncate_line(e.get("short_message") or ""))
+        header = f"<strong>{nodeid}</strong> — {et}"
+        if short:
+            header += f": {short}"
+        tb = e.get("traceback_excerpt") or []
+        tb_text = "\n".join(_esc(_truncate_line(ln)) for ln in tb[:4])
+        block = header
+        if tb_text:
+            block += "\n" + tb_text
+        rendered.append(block)
+    extra = ""
+    if len(errors) > _MAX_EXCERPTS_RENDERED:
+        extra = f"\n… +{len(errors) - _MAX_EXCERPTS_RENDERED} more — see full output for the rest."
+    return (
+        '<pre style="margin:8px 0 0;padding:10px;background:#0f172a;color:#e2e8f0;'
+        'border-radius:4px;font-family:Consolas,Menlo,monospace;font-size:11px;'
+        'line-height:1.45;white-space:pre-wrap;overflow-x:auto">'
+        + "\n\n".join(rendered)
+        + extra
+        + "</pre>"
+    )
+
+
 def _report_date():
     """Mirror gen_email._report_date — the previous business day in ET."""
     now_et = datetime.now(timezone.utc).astimezone(core.ET).date()
@@ -245,10 +303,17 @@ def collect_red_flags(data, qc, drift):
     except Exception:
         pass
 
-    # 4b. Daily test/coverage routine failed (added 2026-05-28). The audit
-    # is now the place a code regression surfaces — run_audit_tests.py writes
-    # reports/test-result.json every fire; a FAIL means a test broke or
-    # coverage fell below the pyproject gate.
+    # 4b. Daily test/coverage routine failed (added 2026-05-28; 2026-06-01
+    # extended with per-test diagnostics). The audit is now the place a code
+    # regression surfaces — run_audit_tests.py writes reports/test-result.json
+    # every fire; a FAIL means a test broke or coverage fell below the
+    # pyproject gate.
+    #
+    # 2026-06-01 — when the artifact carries the new per-test fields
+    # (errors[], error_type_buckets[], collection_error, pytest_output_path),
+    # render them so the audit tells Michael WHAT broke instead of just
+    # "22 error". Backward-compatible: an artifact from before this change
+    # (no errors[]) renders as the original headline-only flag.
     test_res = _read_json(REPORTS / "test-result.json") or {}
     if test_res.get("status") == "FAIL":
         counts = test_res.get("counts") or {}
@@ -260,14 +325,34 @@ def collect_red_flags(data, qc, drift):
                 f"coverage {test_res.get('total_coverage')}% below "
                 f"gate {test_res.get('gate')}%"
             )
+        buckets = test_res.get("error_type_buckets") or []
+        coll = test_res.get("collection_error")
+        out_ref = test_res.get("pytest_output_path") or "reports/pytest-output.txt"
+        bucket_text = ""
+        if buckets:
+            bucket_text = "Top error types: " + ", ".join(
+                f"{b.get('count', 0)}x {b.get('error_type', '?')}" for b in buckets[:4]
+            ) + ". "
+        coll_text = "pytest collection failed (modules failed to import). " if coll else ""
+
+        # Build a <pre> block of up to 5 representative per-test excerpts.
+        # All content goes through _esc to handle quotes / unicode / HTML
+        # specials; lines that look long are visually truncated so a giant
+        # traceback line can't blow the email out.
+        excerpt_html = _format_test_excerpts(test_res.get("errors") or [])
+
         flags.append({
             "level": "🔴",
             "title": "Daily test/coverage routine FAILED",
             "detail": (
                 f"{'; '.join(why)}. The shipped code is not green — fix before "
-                "the next fire. Run: python3 scripts/run_audit_tests.py. "
-                "Detail in reports/test-result.json."
+                "the next fire. "
+                + coll_text
+                + bucket_text
+                + f"Run: python3 scripts/run_audit_tests.py. "
+                f"Full pytest output: {out_ref}."
             ),
+            "extra_html": excerpt_html,
         })
 
     # 5. QC errors (status != CLEAN) — surface each failing check as its own
@@ -688,10 +773,16 @@ def _section_html(title, color, items, empty_msg):
     else:
         rows = ""
         for it in items:
+            # Optional pre-formatted HTML appended after the escaped detail.
+            # Used by the test-diagnostics red flag (QC-052) to embed a
+            # monospace <pre> block of pytest error excerpts. Stays Outlook-safe:
+            # <pre> renders, no flexbox/SVG/linear-gradient.
+            extra = it.get("extra_html") or ""
             rows += f"""
 <div style="margin:10px 0;padding:12px;background:#f8fafc;border-left:3px solid {color};border-radius:4px">
   <div style="font-weight:600;color:#0f172a;font-size:14px">{_esc(it.get('level', ''))} {_esc(it.get('title', ''))}</div>
   <div style="margin-top:4px;color:#475569;font-size:13px;line-height:1.5">{_esc(it.get('detail', ''))}</div>
+  {extra}
 </div>"""
     return f"""
 <h2 style="margin:20px 0 8px;color:{color};font-size:16px;border-bottom:1px solid #e2e8f0;padding-bottom:6px">
