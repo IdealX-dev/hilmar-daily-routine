@@ -276,28 +276,74 @@ def main():
         print("Exiting without error so pipeline continues.")
         return 0
 
-    entities = build_entities()
+    # ALL real work happens inside this try/except. Any uncaught exception
+    # from build_entities (missing SHARED dir, malformed jsonl), sync
+    # network calls, or audit logging must NOT bubble up — this step is
+    # explicitly "best-effort". Discovered 2026-06-01 on TTSWW: when
+    # SHARED/client_intelligence/hilmar/ isn't synced, build_entities
+    # raises FileNotFoundError, the script exits 1, run_pipeline aborts
+    # the whole wrapper (no email-send, no audit email, no backup).
+    # QC-037 reads the audit log we write below and surfaces the failure
+    # at the next QC pass with the specific error excerpt.
+    try:
+        entities = build_entities()
+    except Exception as e:
+        msg = f"⚠️  build_entities failed ({type(e).__name__}: {e}); pipeline continues"
+        print(msg)
+        try:
+            write_audit({
+                "base_url": args.base_url,
+                "entity_count": 0,
+                "ok": False,
+                "error": f"build_entities: {type(e).__name__}: {e}",
+                "response": None,
+            })
+        except Exception:
+            pass    # audit-log write is best-effort too
+        return 0
+
     print(f"sync_to_quote_tracker: built {len(entities)} entities")
     role_counts = Counter(e.get("role") for e in entities)
     for role, n in sorted(role_counts.items()):
         print(f"  {role}: {n}")
 
-    result = sync_entities(entities, base_url=args.base_url,
-                            password=password, dry=args.dry, verbose=args.verbose)
+    try:
+        result = sync_entities(entities, base_url=args.base_url,
+                                password=password, dry=args.dry, verbose=args.verbose)
+    except Exception as e:
+        # sync_entities already has its own try/except (returns result
+        # with error set), so reaching here means a never-classified
+        # failure path. Belt-and-suspenders.
+        result = {
+            "base_url": args.base_url,
+            "entity_count": len(entities),
+            "ok": False,
+            "error": f"sync_entities raised: {type(e).__name__}: {e}",
+            "response": None,
+        }
+
     # Only audit-log REAL sends — dry-runs would pollute QC-037's freshness read
     if not args.dry:
-        write_audit(result)
-    print(json.dumps({k: v for k, v in result.items() if k != "preview"},
-                     indent=2, default=str))
+        try:
+            write_audit(result)
+        except Exception:
+            pass    # audit-log write is best-effort too
+    try:
+        print(json.dumps({k: v for k, v in result.items() if k != "preview"},
+                         indent=2, default=str))
+    except Exception:
+        print(f"(unable to serialize result: ok={result.get('ok')} error={result.get('error')})")
     if result.get("preview") and args.dry:
         print("\nPreview of entities that would be pushed:")
         for e in result["preview"]:
             print(f"  {e['role']:10} {e['name']}")
-    # 2026-05-17: ALWAYS return 0 even on sync failure. Sync is a NICE-TO-HAVE
-    # checkpoint — ol-quote-tracker being slow/down/misconfigured must NEVER
-    # break the daily pipeline (which produces the critical email artifact).
-    # QC-037 reads the audit log written by write_audit() above and surfaces
-    # the failure in the next QC pass with the specific error excerpt.
+    # 2026-05-17 / 2026-06-01: ALWAYS return 0 — even on sync failure,
+    # build_entities crash, or unrecognised exception type. Sync is a
+    # NICE-TO-HAVE checkpoint; ol-quote-tracker / the SHARED dir / any
+    # other downstream concern being unavailable must NEVER break the
+    # daily pipeline (which produces the critical email artifact).
+    # Layer 2 (run_pipeline.BEST_EFFORT_STEPS) is the structural backstop
+    # in case THIS layer ever fails to swallow a bad exception.
     if not result.get("ok") and not args.dry:
         print(f"⚠️  sync failed (pipeline continues): {result.get('error')}")
     return 0

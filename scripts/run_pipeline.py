@@ -107,6 +107,31 @@ STEPS = [
 
 SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
 
+# Step classification — which failures abort the pipeline vs. log + continue.
+#
+# A CLIENT-BLOCKING step produces (or directly enables) the daily email +
+# dashboard + PDF — the artifacts the 10-recipient distribution depends on.
+# If one of these fails, stop; the wrapper must NOT proceed to send a stale
+# or incomplete email.
+#
+# A BEST-EFFORT step is downstream telemetry / housekeeping / supplemental
+# output. None of these affect what Hilmar receives. Their failures are
+# logged + audited but never abort the pipeline. The wrapper proceeds to
+# send the email regardless.
+#
+# Added 2026-06-01 after `Sync to ol-quote-tracker` returned 1 on TTSWW and
+# aborted the entire wrapper — preventing outlook_send, qc_alert_if_needed,
+# the audit email, AND backup_offline from running. A downstream-bonus step
+# must never gate the upstream client deliverable.
+BEST_EFFORT_STEPS = {
+    "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
+    "Sentry Seer autofix trigger",     # autofix attempts; no client impact
+    "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
+    "Share to client_intelligence",    # SHARED-folder export; no client impact
+    "Rate intelligence",               # idealx.us-only cheat sheet; not in email
+    "Sync to ol-quote-tracker",        # downstream registry push; no client impact
+}
+
 
 # Sentry observability — initialized lazily so the pipeline runs fine
 # even when sentry-sdk isn't installed or the DSN is missing.
@@ -315,9 +340,17 @@ def main():
             continue
         if not run_step(name, cmd, dry_run=args.dry_run, extra_env=extra_env):
             failures.append(name)
-            # QC is allowed to warn; anything else stops the line
-            if "QC self-heal" not in name:
-                break
+            # Non-blocking failure classes:
+            #   - QC self-heal: WARN-grade findings expected (already-handled exception)
+            #   - Best-effort steps: telemetry + housekeeping, never blocks client output
+            # Anything else (Ingest, Drift, Carrier patch, Dashboard, PDF, Email
+            # body) is client-blocking — failing a step there means the email
+            # would be stale/broken, so STOP. The wrapper sees rc=1 and skips
+            # outlook_send (which is the correct behaviour for those steps).
+            if "QC self-heal" in name or name in BEST_EFFORT_STEPS:
+                print(f"⚠️  Best-effort step '{name}' failed — continuing pipeline")
+                continue
+            break
 
     # Pipeline-level metrics — duration + final status counter. These
     # power the Sentry dashboard's "Pipeline duration trend" and
@@ -370,13 +403,30 @@ def main():
             pass
 
     elapsed = (datetime.now() - started).total_seconds()
+    # Partition failures into client-blocking vs best-effort. The pipeline's
+    # exit code is gated only on client-blocking ones so a single bad
+    # telemetry/sync step can't drop the daily email.
+    blocking_failures = [f for f in failures
+                         if "QC self-heal" not in f and f not in BEST_EFFORT_STEPS]
+    best_effort_failures = [f for f in failures if f not in blocking_failures]
     print()
     print("═" * 70)
-    if failures:
+    if blocking_failures:
         print(f"❌ PIPELINE FAILED in {elapsed:.1f}s")
-        print(f"   Failed steps: {', '.join(failures)}")
+        print(f"   Client-blocking failures: {', '.join(blocking_failures)}")
+        if best_effort_failures:
+            print(f"   Also (best-effort): {', '.join(best_effort_failures)}")
         sys.exit(1)
-    print(f"✅ PIPELINE COMPLETE in {elapsed:.1f}s")
+    if best_effort_failures:
+        # Successful client deliverable, but telemetry/sync misbehaved. Exit 0
+        # so the wrapper proceeds to send the email; QC-052 + the audit will
+        # surface the warnings at the next pass.
+        print(f"✅ PIPELINE COMPLETE in {elapsed:.1f}s  "
+              f"(with {len(best_effort_failures)} best-effort warning"
+              f"{'s' if len(best_effort_failures) != 1 else ''})")
+        print(f"   Best-effort failures (non-blocking): {', '.join(best_effort_failures)}")
+    else:
+        print(f"✅ PIPELINE COMPLETE in {elapsed:.1f}s")
     print(f"   Reports: {ROOT / 'reports'}")
     print(f"   Data:    {ROOT / 'tracking-data-v2.json'}")
 
