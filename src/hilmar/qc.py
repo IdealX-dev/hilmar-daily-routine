@@ -179,6 +179,14 @@ def phase_3_entries(log: Log, data: dict) -> None:
         log.fix("Dropped duplicate legacy top-level 'data_range' (kept 'date_range')")
 
     requests = data["requests"]
+
+    # Compute lane winning medians ONCE before the per-row decide loop.
+    # decide_status uses this to determine PRICE vs UNDIFFERENTIATED on
+    # Q&L rows — see core.decide_status docstring (2026-06-02 rewrite).
+    # Computed BEFORE the loop because each row's decision is per-row pure
+    # but needs book-wide WIN-rate context for the gap calc.
+    _lane_winning_median = core.compute_lane_winning_medians(requests)
+
     for i, r in enumerate(requests):
         rid_label = f"[{i}] {r.get('request_date') or r.get('date','?')} {r.get('destination','?')}"
 
@@ -307,6 +315,9 @@ def phase_3_entries(log: Log, data: dict) -> None:
             etd_fit_days=r.get("etd_fit_days"),
             send_signal_events=r.get("send_signal_events"),
             mdolx_refs_all=r.get("mdolx_refs_all"),
+            ol_rate=r.get("ol_rate"),
+            lane=r.get("lane"),
+            lane_winning_median=_lane_winning_median,
         )
         if prior_status != decision.status:
             core.record_transition(r, decision.status, decision.reason_detail)

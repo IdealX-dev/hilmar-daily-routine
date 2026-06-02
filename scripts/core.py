@@ -57,8 +57,18 @@ VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
 # NO_RESPONSE        = OL never responded (display: NQ)
 # RESPONSE_NO_RATE   = MBD acked but did not quote (display: NQ)
 # QUOTED_NOT_BOOKED  = quoted, generic no-ETD signal (display: Q&L)
-# PRICE              = quoted, ETD fit OK, likely rate-driven (display: Q&L)
+# PRICE              = quoted, OL's rate was uncompetitive vs winning lane
+#                       median (>5% above) — real rate-gap determination
+#                       (display: Q&L). Pre-2026-06-02 this was the
+#                       catch-all fallback; see UNDIFFERENTIATED.
 # ETD_MISS           = quoted but ETD missed Lonny's ask by ≥5d (display: Q&L)
+# UNDIFFERENTIATED   = quoted & lost, but no concrete signal explains why.
+#                       Rate was at/below winning lane median, ETD fit OK,
+#                       no other reason — the honest "we lost, can't say
+#                       what tipped it" bucket. Added 2026-06-02 to stop
+#                       PRICE from being a false-positive catch-all that
+#                       drove the "Push carriers" tag on rate-competitive
+#                       losses (display: Q&L).
 # AWAITING_MDOLX     = PENDING sub-state: Send received, MDOLX pending
 # MDOLX_NO_SEND      = PENDING sub-state: MDOLX without send (anomaly)
 # SEND_NO_BOOKING    = AWAITING_MDOLX aged out past 72h (display: Q&L)
@@ -68,6 +78,7 @@ LOSS_REASONS = {
     "QUOTED_NOT_BOOKED",
     "PRICE",
     "ETD_MISS",
+    "UNDIFFERENTIATED",
     "OTHER",
     "COVERED",
     "DRAFT_ONLY",
@@ -75,6 +86,18 @@ LOSS_REASONS = {
     "MDOLX_NO_SEND",
     "SEND_NO_BOOKING",
 }
+
+#: Multiplier above lane winning median where we call a loss "PRICE".
+#: A 5% premium above the lane winning median is the threshold; below
+#: that the rate was competitive and the loss is UNDIFFERENTIATED.
+#: Mirrored in src/hilmar/core.py — tests/test_core_parity.py guards.
+PRICE_GAP_THRESHOLD_MULT = 1.05
+
+#: Minimum number of historical WINs on a lane before we'll trust the
+#: lane winning median for PRICE determination. Fewer than 3 WINs and
+#: we lack signal — fall through to UNDIFFERENTIATED.
+#: Mirrored in src/hilmar/core.py — tests/test_core_parity.py guards.
+PRICE_GAP_MIN_LANE_WINS = 3
 
 # ─────────────────────────────────────────────────────────────────────
 # Trade-region map — destination → region (used for "Volume by Trade Region")
@@ -662,6 +685,9 @@ def decide_status(
     etd_fit_days: int | None,
     send_signal_events: list | None = None,
     now: datetime | None = None,
+    ol_rate: float | str | None = None,
+    lane: str | None = None,
+    lane_winning_median: dict[str, float] | None = None,
 ) -> StatusDecision:
     """
     Pure classification. Inputs are the minimum facts needed to make a call.
@@ -675,6 +701,24 @@ def decide_status(
     WIN when the booking lands; if it goes stale (see send_signal_stale —
     real wins confirm within ~48h biz) it demotes to LOSS(SEND_NO_BOOKING),
     which the audit displays as Q&L.
+
+    PRICE determination (Q&L sub-classification, 2026-06-02 rewrite):
+      The pre-rewrite code labeled every Q&L row with etd_fit_days<5 as
+      "PRICE" — a catch-all that produced 94% PRICE-driven readouts even
+      when winning median and losing median on a lane were identical.
+      Now PRICE requires a concrete rate gap:
+        ol_rate > lane_winning_median[lane] * PRICE_GAP_THRESHOLD_MULT
+      When the rate is competitive (≤ threshold) OR we lack signal
+      (no lane median, no ol_rate, fewer than PRICE_GAP_MIN_LANE_WINS
+      historical wins on the lane) → UNDIFFERENTIATED. That's the honest
+      "we lost, the data doesn't tell us why" bucket — it surfaces as the
+      operator's signal to dig into the email thread rather than blaming
+      rate by default.
+
+    ``lane_winning_median`` is computed once by the caller (use
+    ``compute_lane_winning_medians(requests)``) and passed as a lookup
+    dict so this function stays per-row pure. When None or missing the
+    lane key, PRICE never fires — UNDIFFERENTIATED is the safe fallback.
     """
     now = now or now_utc()
     has_mdolx = bool(mdolx_ref and str(mdolx_ref).strip())
@@ -727,21 +771,46 @@ def decide_status(
                               f"{PENDING_WINDOW_HOURS}h biz window (weekend-aware)")
 
     # Quoted & Lost. Try to tag a reason.
-    reason = "OTHER"
     detail = f"Quoted {hours_since:.1f}h ago, no Send — Quoted & Lost"
-    if etd_fit_days is not None:
-        if etd_fit_days >= 10:
-            reason = "ETD_MISS"
-            detail += f" (ETD missed Lonny's ask by {etd_fit_days}d)"
-        elif etd_fit_days >= 5:
-            reason = "ETD_MISS"
-            detail += f" (ETD missed Lonny's ask by {etd_fit_days}d)"
-        else:
-            reason = "PRICE"
-            detail += " (ETD fit OK → likely rate-driven)"
-    else:
-        reason = "PRICE"  # default fallback when ETDs were both present but ok-ish
 
+    # ETD-miss wins first — a missed ETD is a concrete signal regardless
+    # of price competitiveness.
+    if etd_fit_days is not None and etd_fit_days >= 5:
+        reason = "ETD_MISS"
+        detail += f" (ETD missed Lonny's ask by {etd_fit_days}d)"
+        return StatusDecision("LOSS", True, False, reason, detail)
+
+    # Otherwise, did OL's rate actually clear above the winning lane
+    # median? Only call PRICE when we have a real rate gap.
+    rate_val = parse_rate(ol_rate) if isinstance(ol_rate, str) else (
+        float(ol_rate) if isinstance(ol_rate, (int, float)) else None
+    )
+    lane_med = None
+    if lane_winning_median and lane:
+        lane_med = lane_winning_median.get(lane)
+    if rate_val is not None and lane_med and lane_med > 0:
+        if rate_val > lane_med * PRICE_GAP_THRESHOLD_MULT:
+            reason = "PRICE"
+            gap_pct = (rate_val - lane_med) / lane_med * 100.0
+            detail += (
+                f" (rate ${rate_val:.0f} is {gap_pct:.0f}% above lane "
+                f"winning median ${lane_med:.0f} → rate-driven)"
+            )
+            return StatusDecision("LOSS", True, False, reason, detail)
+        # Rate was at/below winning median — not a price story.
+        reason = "UNDIFFERENTIATED"
+        detail += (
+            f" (rate ${rate_val:.0f} ≤ lane winning median "
+            f"${lane_med:.0f} — competitive on price, root cause unclear)"
+        )
+        return StatusDecision("LOSS", True, False, reason, detail)
+
+    # No signal to determine PRICE — be honest about the gap.
+    reason = "UNDIFFERENTIATED"
+    if rate_val is None:
+        detail += " (no ol_rate to compare against lane winning median)"
+    elif lane_med is None:
+        detail += " (no lane winning history to benchmark against)"
     return StatusDecision("LOSS", True, False, reason, detail)
 
 
@@ -896,6 +965,74 @@ def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
     return lanes
 
 
+def compute_lane_winning_medians(
+    requests: list[dict],
+    *,
+    min_wins: int = PRICE_GAP_MIN_LANE_WINS,
+) -> dict[str, float]:
+    """Build a {lane: median_winning_rate} lookup for PRICE classification.
+
+    The "winning lane median" is the median ol_rate across WIN rows on a
+    given lane. ``decide_status`` consumes this lookup to determine when
+    a Q&L row's rate was actually uncompetitive vs simply lost for some
+    other reason.
+
+    Scope decisions (documented per CLAUDE.md §3 "every new pattern ships
+    with its QC + tests"):
+      - Lane key = ``r["lane"]`` (the same canonical "Oakland → Yokohama"
+        format used by aggregate_lanes). Falls back to constructing from
+        origin/destination if `lane` is missing.
+      - WIN scope = ALL WINs in the input dataset. The tracking-data file
+        already represents the active 30-day rolling window per the
+        architecture, so the dataset itself is the time-bounded universe.
+      - Lanes with fewer than ``min_wins`` (default 3) WINs are EXCLUDED
+        — too little signal to call a median. Those lanes fall through to
+        UNDIFFERENTIATED in decide_status (the honest "no benchmark"
+        case).
+      - Carrier scope: ALL winning carriers count. A losing-rate analysis
+        cares about what cleared on the lane, not which carrier did.
+      - Rates that don't parse are skipped silently (they shouldn't be in
+        the dataset post-ingest, but decide_status is per-row and we
+        prefer "no signal" over a crash here).
+
+    Kept byte-for-byte identical to src/hilmar/core.compute_lane_winning_medians
+    — tests/test_core_parity.py guards drift.
+    """
+    by_lane: dict[str, list[float]] = {}
+    for r in requests or []:
+        if r.get("status") != "WIN":
+            continue
+        lane = r.get("lane")
+        if not lane:
+            origin = r.get("origin")
+            dest = r.get("destination")
+            if origin and dest:
+                lane = f"{origin} → {dest}"
+        if not lane:
+            continue
+        # ol_rate may be a string ("$3500/40HC") or a bare number — ingest
+        # stores both forms across the dataset.
+        raw = r.get("ol_rate")
+        rate = parse_rate(raw) if isinstance(raw, str) else (
+            float(raw) if isinstance(raw, (int, float)) else None
+        )
+        if rate is None or rate <= 0:
+            continue
+        by_lane.setdefault(lane, []).append(rate)
+
+    medians: dict[str, float] = {}
+    for lane, rates in by_lane.items():
+        if len(rates) < min_wins:
+            continue
+        rates_sorted = sorted(rates)
+        n = len(rates_sorted)
+        if n % 2 == 1:
+            medians[lane] = rates_sorted[n // 2]
+        else:
+            medians[lane] = (rates_sorted[n // 2 - 1] + rates_sorted[n // 2]) / 2.0
+    return medians
+
+
 def aggregate_loss_reasons(
     requests: list[dict],
     window_days: int | None = None,
@@ -931,6 +1068,11 @@ def aggregate_loss_reasons(
         by_reason[lr] = by_reason.get(lr, 0) + 1
     ranked = sorted(by_reason.items(), key=lambda kv: -kv[1])
 
+    # NB UNDIFFERENTIATED falls into "other" intentionally — those losses
+    # had no concrete rate gap, no ETD miss, and no OL-silent signal. We
+    # don't know what tipped them, so be honest: NOT rate_driven. This is
+    # the fix for the 2026-06-02 "94% PRICE" distortion that arose from
+    # the old PRICE catch-all on the decide_status side.
     _RATE_DRIVEN = {"PRICE"}
     _ETD_DRIVEN = {"ETD_MISS"}
     _OL_SILENT = {"NO_RESPONSE", "RESPONSE_NO_RATE", "SEND_NO_BOOKING"}

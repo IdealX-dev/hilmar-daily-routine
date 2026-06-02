@@ -133,7 +133,9 @@ def test_actionable_mix_buckets_correctly(core):
        - rate_driven (PRICE) → push carriers
        - etd_driven (ETD_MISS) → push ops
        - ol_silent (NO_RESPONSE/RESPONSE_NO_RATE/SEND_NO_BOOKING) → push OL
-       - other (OTHER/QUOTED_NOT_BOOKED/COVERED/DRAFT_ONLY) → no signal
+       - other (UNDIFFERENTIATED/OTHER/QUOTED_NOT_BOOKED/COVERED/DRAFT_ONLY)
+         → no actionable signal (UNDIFFERENTIATED is the honest "lost,
+         data doesn't tell us why" bucket, not a rate-driven one)
     """
     rows = [
         _row(status="LOSS", loss_reason="PRICE"),
@@ -145,14 +147,31 @@ def test_actionable_mix_buckets_correctly(core):
         _row(status="LOSS", loss_reason="OTHER"),
         _row(status="LOSS", loss_reason="QUOTED_NOT_BOOKED"),
         _row(status="LOSS", loss_reason="COVERED"),
+        _row(status="LOSS", loss_reason="UNDIFFERENTIATED"),
+        _row(status="LOSS", loss_reason="UNDIFFERENTIATED"),
     ]
     out = core.aggregate_loss_reasons(rows)
     assert out["actionable_mix"] == {
         "rate_driven": 2,   # PRICE×2
         "etd_driven":  1,   # ETD_MISS
         "ol_silent":   3,   # NO_RESPONSE + RESPONSE_NO_RATE + SEND_NO_BOOKING
-        "other":       3,   # OTHER + QUOTED_NOT_BOOKED + COVERED
+        "other":       5,   # OTHER + QUOTED_NOT_BOOKED + COVERED + UNDIFFERENTIATED×2
     }
+
+
+def test_undifferentiated_does_not_inflate_rate_driven(core):
+    """Regression test for the 2026-06-02 "94% PRICE" distortion.
+
+    Before the smarter-PRICE-classifier rewrite, every Q&L row with
+    etd_fit_days<5 got labeled "PRICE" as a catch-all — including rows
+    where OL's rate matched winning lane medians. UNDIFFERENTIATED is
+    the new honest fallback; aggregate_loss_reasons MUST bucket it into
+    "other", NOT "rate_driven". If this test fails, the chart is back
+    to telling Michael "push carriers" on rate-competitive losses."""
+    rows = [_row(status="LOSS", loss_reason="UNDIFFERENTIATED") for _ in range(10)]
+    out = core.aggregate_loss_reasons(rows)
+    assert out["actionable_mix"]["rate_driven"] == 0
+    assert out["actionable_mix"]["other"] == 10
 
 
 # ── window_days filtering ───────────────────────────────────────────────

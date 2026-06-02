@@ -29,6 +29,13 @@ GE = importlib.util.module_from_spec(spec)
 sys.modules["ge_under_test"] = GE
 spec.loader.exec_module(GE)
 
+# Load scripts/core.py for the actionable_mix sanity-check assertion
+# below (UNDIFFERENTIATED bucketing).
+core_spec = importlib.util.spec_from_file_location("scripts_core_lrmix", SCRIPTS / "core.py")
+core_mod = importlib.util.module_from_spec(core_spec)
+sys.modules["scripts_core_lrmix"] = core_mod
+core_spec.loader.exec_module(core_mod)
+
 UTC = timezone.utc
 
 
@@ -154,3 +161,45 @@ def test_lonely_no_response_only_still_renders_section():
             or "OL didn&#39;t respond" in out
             or "OL didn't respond" in out)
     assert "Push OL" in out
+
+
+def test_undifferentiated_renders_with_distinct_label():
+    """UNDIFFERENTIATED — the new (2026-06-02) "lost but rate was
+    competitive" bucket — must render with the explicit "needs
+    investigation" label so Michael sees it as a research signal, not
+    just another rate-driven row."""
+    data = {"requests": [
+        {"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(2)},
+        {"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(5)},
+    ]}
+    out = GE._loss_reason_mix_html(data)
+    assert "Undifferentiated" in out
+    # Label must say "needs investigation" so the action implication is
+    # explicit — UNDIFFERENTIATED is the operator's signal to dig into
+    # the email thread, not just another rate-driven bar.
+    assert "needs investigation" in out
+
+
+def test_undifferentiated_does_not_inflate_push_carriers_tag():
+    """The "Push carriers" actionable tag must NOT pick up UNDIFFERENTIATED
+    counts. That was the bug this whole PR existed to fix.
+
+    NB the preamble text mentions "Push carriers" inline as a banner
+    description. We assert the action-TAG isn't rendered (which embeds
+    a count like "Push carriers — rate-driven: 3 (100%)") rather than
+    checking for the bare phrase."""
+    data = {"requests": [
+        {"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(2)},
+        {"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(5)},
+        {"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(10)},
+    ]}
+    out = GE._loss_reason_mix_html(data)
+    # The action-TAG label "Push carriers — rate-driven" only renders
+    # when rate_driven count > 0. With ALL UNDIFFERENTIATED, rate_driven
+    # is 0 so the tag is suppressed entirely.
+    assert "Push carriers &mdash; rate-driven" not in out
+    assert "Push carriers — rate-driven" not in out
+    # The "Other" actionable bucket gets all 3 UNDIFFERENTIATED rows.
+    am_30 = core_mod.aggregate_loss_reasons(data["requests"], window_days=30)
+    assert am_30["actionable_mix"]["rate_driven"] == 0
+    assert am_30["actionable_mix"]["other"] == 3

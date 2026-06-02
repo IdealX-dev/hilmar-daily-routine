@@ -1132,6 +1132,9 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
 
 def age_requests(requests: list[dict], now: datetime | None = None) -> None:
     now = now or C.now_utc()
+    # Compute lane winning medians ONCE before the per-row decide loop —
+    # see core.decide_status docstring (2026-06-02 PRICE classifier).
+    lane_winning_median = C.compute_lane_winning_medians(requests)
     for r in requests:
         # CONFIRMED wins (have an MDOLX booking) are terminal — skip.
         # But a row that's WIN with NO mdolx is a send-signal-only
@@ -1150,6 +1153,9 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
             etd_fit_days=r.get("etd_fit_days"),
             send_signal_events=r.get("send_signal_events"),
             now=now,
+            ol_rate=r.get("ol_rate"),
+            lane=r.get("lane"),
+            lane_winning_median=lane_winning_median,
         )
         r["status"] = decision.status
         r["loss_reason"] = decision.loss_reason

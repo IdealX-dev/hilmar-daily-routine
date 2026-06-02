@@ -100,7 +100,11 @@ def test_quoted_aged_is_loss():
                          response_timestamp="2026-04-21T03:00:00Z",  # ~4 days
                          quoted=True, etd_fit_days=2, now=now)
     assert d.status == "LOSS"
-    assert d.loss_reason in ("PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED")
+    # 2026-06-02: PRICE only fires with a concrete rate gap; the catch-all
+    # is now UNDIFFERENTIATED. Both are valid Q&L outcomes.
+    assert d.loss_reason in (
+        "PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED", "UNDIFFERENTIATED"
+    )
 
 
 def test_quoted_friday_not_stale_monday_morning():
@@ -124,7 +128,11 @@ def test_quoted_friday_stale_monday_evening():
                          response_timestamp=fri_quote, quoted=True,
                          etd_fit_days=0, now=mon_evening)
     assert d.status == "LOSS"             # LEGACY form
-    assert d.loss_reason in ("PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED")
+    # 2026-06-02: PRICE only fires with a concrete rate gap; the catch-all
+    # is now UNDIFFERENTIATED. Both are valid Q&L outcomes.
+    assert d.loss_reason in (
+        "PRICE", "ETD_MISS", "OTHER", "QUOTED_NOT_BOOKED", "UNDIFFERENTIATED"
+    )
 
 
 def test_pending_window_hours_is_48():

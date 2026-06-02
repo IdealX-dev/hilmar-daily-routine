@@ -122,6 +122,10 @@ ALLOWED_CROSS_FOLDER_DRIFT = {
 @pytest.mark.parametrize("name,expected", [
     ("PENDING_WINDOW_HOURS", 48),
     ("RATE_TREND_THRESHOLD_PCT", 10),
+    # 2026-06-02 — smarter PRICE classifier knobs. Locks the threshold
+    # and minimum-wins requirement across trees.
+    ("PRICE_GAP_THRESHOLD_MULT", 1.05),
+    ("PRICE_GAP_MIN_LANE_WINS", 3),
 ])
 def test_numeric_constants_match_across_trees(name, expected):
     """Locks the constants that gate behavior. Any numeric/policy constant

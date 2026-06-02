@@ -20,9 +20,19 @@ EXTRACT_PATH = ROOT / "scripts" / "ingest_extract.json"
 DATA_PATH = ROOT / "tracking-data-v2.json"
 
 
-def merge_record(rec: dict, existing_requests: list[dict]) -> tuple[str, dict]:
+def merge_record(
+    rec: dict,
+    existing_requests: list[dict],
+    lane_winning_median: dict[str, float] | None = None,
+) -> tuple[str, dict]:
     """
     Returns (action, request_dict) where action in {"created", "updated", "noop"}.
+
+    ``lane_winning_median`` powers the PRICE-vs-UNDIFFERENTIATED branch in
+    decide_status (2026-06-02 rewrite). Caller may pass a pre-computed
+    {lane: median_rate} dict; when omitted, defaults to None — PRICE never
+    fires and Q&L rows fall through to UNDIFFERENTIATED. Pass-in is the
+    expected production usage so the same medians apply across the batch.
     """
     conv_id = rec.get("conversationId")
     req_ts = rec.get("request_timestamp")
@@ -56,12 +66,18 @@ def merge_record(rec: dict, existing_requests: list[dict]) -> tuple[str, dict]:
     # We don't always have a requested ETD to compare, so skip unless present.
 
     # status decision
+    rec_lane = rec.get("lane")
+    if not rec_lane and rec.get("origin") and rec.get("destination"):
+        rec_lane = f"{rec['origin']} → {rec['destination']}"
     decision = core.decide_status(
         has_send=bool(rec.get("has_send")),
         mdolx_ref=rec.get("mdolx_ref"),
         response_timestamp=rec.get("response_timestamp"),
         quoted=bool(rec.get("quoted")),
         etd_fit_days=etd_fit_days,
+        ol_rate=rec.get("ol_rate"),
+        lane=rec_lane,
+        lane_winning_median=lane_winning_median,
     )
 
     # Loss reason already captured in decision.loss_reason
@@ -175,9 +191,13 @@ def main():
     records = extract.get("records", [])
     requests = data.setdefault("requests", [])
 
+    # Compute lane winning medians once from existing dataset — see
+    # core.decide_status docstring (2026-06-02 PRICE classifier).
+    lane_winning_median = core.compute_lane_winning_medians(requests)
+
     created = updated = noop = 0
     for rec in records:
-        action, _ = merge_record(rec, requests)
+        action, _ = merge_record(rec, requests, lane_winning_median=lane_winning_median)
         if action == "created":
             created += 1
         elif action == "updated":
