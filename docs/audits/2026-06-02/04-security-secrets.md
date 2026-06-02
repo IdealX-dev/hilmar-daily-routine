@@ -176,34 +176,23 @@ device-code if no token. QC-023 warns at 60d / errors at 80d. Scopes:
 public-client app id `14d82eec-204b-4c2f-b7e8-296a70dab67e` (Microsoft's
 generic Azure CLI client).
 
-#### F-3.1 — MSAL re-auth is a hard single-point-of-failure
-**Severity:** Medium
+#### F-3.1 — MSAL re-auth single-point-of-failure (Medium)
 **Files:** `scripts/outlook_send.py:84-99`, `scripts/refresh_stage.py`
-If Michael misses the 80d window while travelling, the daily pipeline
-silently breaks: silent refresh returns `None`, then `acquire_token_by_
-device_flow` blocks on stdin (impossible inside the scheduled task) and
-fails. QC-023 fires Sentry but the email already won't send. Recovery
-requires RDP into the Cloud PC and an interactive auth — there is no
-remote path.
-**Fix:** the `cmd_auth_bg` path already exists (`outlook_send.py:289-335`)
-and writes the device code to a file. Trigger it from a GitHub Actions
-workflow_dispatch on the Cloud PC self-hosted runner so the operator
-can re-auth from the phone. Alternative: enable app-only Graph auth
-(`docs/MOVE-OFF-CLOUDPC.md` step 1) which removes device-code entirely.
-**Effort:** 1-2 hours for the GH Actions trigger; weeks for app-only
-(needs OL IT).
+If the 80d window is missed while travelling: silent refresh returns
+None, `acquire_token_by_device_flow` blocks on stdin (impossible inside
+the scheduled task), QC-023 fires Sentry but no email sends. Recovery
+requires RDP + interactive auth — no remote path today.
+**Fix:** wire `cmd_auth_bg` (already exists,
+`outlook_send.py:289-335`) into a `workflow_dispatch` so the operator
+can re-auth from the phone. Long-term: app-only auth per
+`docs/MOVE-OFF-CLOUDPC.md`. **Effort:** 1-2h for GH dispatch.
 
-#### F-3.2 — Public-client tenant `common` accepts personal accounts
-**Severity:** Low
+#### F-3.2 — Public-client tenant `common` accepts personal accounts (Low)
 **File:** `scripts/outlook_send.py:44`
-`TENANT = "common"` means the auth endpoint accepts both work and
-personal Microsoft accounts. If the operator authenticates a personal
-`@outlook.com` account by mistake, the cache binds to it and silent
-refresh works — but Graph calls fail at a different layer. Not
-exploitable; just confusing.
-**Fix:** pin `TENANT` to the OL-USA tenant ID once known. Or add a
-post-auth assertion that `preferred_username` ends with `@ol-usa.com`.
-**Effort:** 10 minutes.
+`TENANT = "common"`. Personal `@outlook.com` could bind to the cache;
+Graph calls would fail elsewhere. Confusing, not exploitable.
+**Fix:** pin tenant ID, or assert `preferred_username` ends
+`@ol-usa.com` post-auth. **Effort:** 10 minutes.
 
 ### 3.2 GitHub PAT (PR #19 heartbeat)
 
@@ -220,15 +209,11 @@ before the heartbeat is fired (step 6 in the wrapper) — so a revoked
 PAT triggers `liveness.yml` at 11:30 AM ET but does not break the
 daily email.
 
-#### F-3.3 — PAT setup uses interactive choice `Option A` OR `Option B`, only B leaves a token-on-disk artifact
-**Severity:** Low
-The docs at `CLOUD-PC-HEARTBEAT-SETUP.md:50-58` give two equivalent
-paths. **Option A** stores the token in the Windows Credential Vault
-(safe). **Option B** writes a literal `ghp_…` value into
-`secrets/github-pat.txt`. The `secrets/` directory is gitignored, but
-it is OneDrive-synced — so the PAT lands in OneDrive plaintext.
-**Fix:** recommend Option A as the default; mark Option B as
-"only if `gh auth login --with-token` won't run interactively".
+#### F-3.3 — PAT Option B writes PAT to OneDrive-synced secrets file (Low)
+**File:** `docs/CLOUD-PC-HEARTBEAT-SETUP.md:50-58`
+Option A uses Windows Credential Vault (safe). Option B writes the
+literal `ghp_…` into `secrets/github-pat.txt`, which is OneDrive-synced.
+**Fix:** mark Option A as default; Option B as fallback only.
 **Effort:** 5 minutes doc-only.
 
 ### 3.3 Anthropic API key
@@ -242,49 +227,32 @@ then env. Use is bounded:
 `HILMAR_PDF_LLM_BUDGET=20` caps per-run cost. No reported rotation
 cadence — F-3.4 below.
 
-#### F-3.4 — Anthropic key has no rotation policy or freshness gate
-**Severity:** Medium
-**Files:** `scripts/pdf_llm_rescue.py:61`, `secrets/anthropic-api-key.txt`
-There is no QC check on Anthropic-key age (vs QC-023 for MSAL). A
-compromised key would keep working indefinitely. Anthropic console
-charges accumulate silently.
-**Fix:** add a QC check that reads the file's mtime and warns at 90d /
-errors at 180d (mirroring QC-023). Add a Sentry metric `anthropic.
-tokens_used` (already produced by `qc_actions_from_sentry.py` as
-`tokens_in/tokens_out`) — wire to a Sentry alert at >100K/day.
-**Effort:** 30 minutes.
+#### F-3.4 — Anthropic key has no rotation gate (Medium)
+**File:** `scripts/pdf_llm_rescue.py:61`
+No QC equivalent to QC-023 for the Anthropic key. Compromised key
+works indefinitely; charges silent.
+**Fix:** mtime-based QC check (warn 90d / error 180d); Sentry alert on
+`tokens_out` >100K/day. **Effort:** 30 minutes.
 
 ### 3.4 Sentry auth token
 
-`scripts/sentry_api.py:60-72`, `scripts/sentry_seer.py:67-78` resolve
-the same `secrets/sentry-auth-token.txt`. The validator accepts only
-`sntrys_*` or `sntryu_*` prefixes — good. No rotation policy.
+`scripts/sentry_api.py:60-72` validates `sntrys_*` / `sntryu_*` prefix.
+No rotation policy.
 
-#### F-3.5 — Sentry auth token has no rotation policy
-**Severity:** Low
-Same shape as F-3.4. Token scope is presumably org-wide; can revoke
-and re-paste into the secrets file + GH Actions secret without
-material downtime.
-**Fix:** quarterly rotation reminder in RUNBOOK + a QC check on
-the file age.
+#### F-3.5 — Sentry auth token has no rotation policy (Low)
+Same shape as F-3.4. **Fix:** quarterly rotation reminder + mtime QC.
 **Effort:** 15 minutes.
 
 ### 3.5 Quote-tracker shared password
 
-`scripts/sync_to_quote_tracker.py:89-96` accepts any non-empty password.
-Auth flow: POST `/api/auth/login` → cookie → POST `/api/intelligence/
-sync`. If the password is wrong, the sync step exits 0 with a notice
-and the pipeline continues — graceful degradation.
+`scripts/sync_to_quote_tracker.py:89-96` accepts any non-empty value.
+Sync step exits 0 on wrong-password — graceful.
 
-#### F-3.6 — Shared-password auth is the weakest link in the cross-project chain
-**Severity:** Medium
+#### F-3.6 — Shared-password is the weakest cross-project link (Medium)
 This is the credential most likely matching the in-chat leak (see §8).
-Long-lived shared secret used by both Hilmar tracker and Rate Blaster.
-No rotation policy; no per-caller distinguishability in the
-ol-quote-tracker logs.
-**Fix:** migrate to per-project API keys against the Turso DB so each
-caller has a distinct credential that can be rotated independently.
-**Effort:** ol-quote-tracker change — out of scope here but documented.
+Long-lived shared secret used by Hilmar tracker AND Rate Blaster. No
+per-caller distinguishability in ol-quote-tracker logs.
+**Fix:** per-project API keys against Turso (ol-quote-tracker change).
 
 ---
 
