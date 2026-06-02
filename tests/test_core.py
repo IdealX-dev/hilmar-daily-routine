@@ -427,10 +427,17 @@ def test_etd_fit_days_positive_when_offered_later_than_requested():
 
 def test_aggregate_summary_reproduces_fixture_win_rate(golden_day):
     s = core.aggregate_summary(golden_day["requests"])
-    # Decided = wins + quoted_lost + not_quoted = 2 + 1 + 1 = 4; wins=2 → 50%
-    assert abs(s["win_rate"] - 50.0) < 0.5, f"got {s['win_rate']}"
+    # win_rate_denom = wins + quoted_lost (NQ excluded per CLAUDE.md §6).
+    # Fixture: 2 wins + 1 Q&L + 1 NQ + 1 pending. Denom = 2+1 = 3.
+    # win_rate = 2/3 = 66.7%. Pre-2026-06-02 this test asserted 50%
+    # against the (wins / wins+ql+nq) bug — fixed in track 03 finding C-1.
+    assert abs(s["win_rate"] - 66.7) < 0.5, f"got {s['win_rate']}"
     assert s["wins"] == 2
     assert s["pending_hilmar"] == 1
+    # Lock the NEW denominator behavior directly so future regressions
+    # to "include NQ" surface as a clear failure on this assertion.
+    assert s["not_quoted"] == 1, "fixture must still have 1 NQ row"
+    # Sanity: if NQ were still in the denom, win_rate would be 50% not 66.7%.
 
 
 # ── M3.8 / coverage push ──────────────────────────────────────────────

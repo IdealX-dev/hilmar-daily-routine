@@ -176,15 +176,26 @@ def phase5_win_schema(data: dict, log: dict) -> None:
 
 
 def phase6_covered_honor(data: dict, log: dict) -> None:
-    """Any lonny_covered=True must be LOSS / OTHER."""
+    """Any lonny_covered=True must be LOSS / COVERED (or legacy OTHER) AND
+    quoted=True. The COVERED loss_reason was added 2026-04+; pre-existing
+    rows may still carry OTHER (kept as a valid honor target for back-
+    compat). The quoted=True requirement was added 2026-06-02 (track 03
+    finding C-2): a COVERED row without quoted=True bucketed as NQ and
+    silently dropped out of win-rate."""
+    _VALID_COVERED_REASONS = ("COVERED", "OTHER")
     issues = []
     for r in data.get("requests", []):
-        if r.get("lonny_covered") and (r.get("status") != "LOSS" or r.get("loss_reason") != "OTHER"):
+        if not r.get("lonny_covered"):
+            continue
+        if (r.get("status") != "LOSS"
+                or r.get("loss_reason") not in _VALID_COVERED_REASONS
+                or r.get("quoted") is not True):
             issues.append({
                 "request_id": r.get("request_id"),
                 "destination": r.get("destination"),
                 "current_status": r.get("status"),
                 "current_loss_reason": r.get("loss_reason"),
+                "current_quoted": r.get("quoted"),
             })
     log["phase6"] = {"covered_honor_issues": issues}
 

@@ -81,7 +81,7 @@
         "mdolx_refs_all": {"type": "array", "items": {"type": "string"}, "description": "All MDOLX refs seen across the conversation; mdolx_ref is the canonical/first."},
         "mdolx_date": {"type": ["string", "null"]},
 
-        "loss_reason": {"enum": ["NO_RESPONSE", "RESPONSE_NO_RATE", "QUOTED_NOT_BOOKED", "PRICE", "ETD_MISS", "OTHER", "AWAITING_MDOLX", "MDOLX_NO_SEND", "SEND_NO_BOOKING", null]},
+        "loss_reason": {"enum": ["NO_RESPONSE", "RESPONSE_NO_RATE", "QUOTED_NOT_BOOKED", "PRICE", "ETD_MISS", "UNDIFFERENTIATED", "OTHER", "COVERED", "DRAFT_ONLY", "AWAITING_MDOLX", "MDOLX_NO_SEND", "SEND_NO_BOOKING", null]},
         "reason_detail": {"type": ["string", "null"], "description": "Human-readable reason narrative — e.g. 'Lonny replied Send 2026-04-24 | MBD MDOLX260420 2026-04-25'."},
         "etd_fit_days": {"type": ["integer", "null"], "description": "Days between Lonny's requested date and OL offered ETD/ETA. Negative = earlier than asked."},
 

@@ -829,7 +829,14 @@ def aggregate_summary(requests: list[dict]) -> dict:
     nq = [r for r in requests if r.get("status") == STATUS_NQ]
     pending = [r for r in requests if r.get("status") == STATUS_PENDING]
 
-    total_decided = len(wins) + len(ql) + len(nq)
+    # win_rate per CLAUDE.md §6 = Wins / (Wins + Q&L). NQ is "no contest
+    # happened" (NO_RESPONSE / RESPONSE_NO_RATE) and must be EXCLUDED from
+    # the denominator — otherwise a busy day with OL silent on many quotes
+    # silently suppresses the win-rate number on the daily client email.
+    # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
+    # NQ rate is reported as its own separate metric ("not_quoted").
+    win_rate_denom = len(wins) + len(ql)
+    total_decided = win_rate_denom + len(nq)   # legacy alias retained
     total = len(requests)
     total_quoted = len(wins) + len(ql) + len(pending)
 
@@ -847,7 +854,7 @@ def aggregate_summary(requests: list[dict]) -> dict:
         "quoted_lost": len(ql),
         "not_quoted": len(nq),
         "pending_hilmar": len(pending),
-        "win_rate": round(len(wins) / total_decided * 100, 1) if total_decided else 0.0,
+        "win_rate": round(len(wins) / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
         "quote_rate": round(total_quoted / total * 100, 1) if total else 0.0,
         "teu_requested": _sum(r.get("teu_requested", 0) for r in requests),
         "teu_won": _sum(r.get("teu_won", 0) or r.get("teu_requested", 0) for r in wins),
