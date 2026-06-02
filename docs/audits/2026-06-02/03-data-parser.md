@@ -11,7 +11,7 @@ This report calls out each finding with severity (Critical / High / Medium / Low
 
 ## 1. State-machine soundness (`decide_status`)
 
-Both `src/hilmar/core.py:570-746` and `scripts/core.py:679-814` implement the same decision tree but with one structural difference: in `scripts/core.py:733-735` the MDOLX-without-send branch returns `PENDING / MDOLX_NO_SEND` **unconditionally**, while `src/hilmar/core.py:673-675` does the same but is reached AFTER the `has_send AND !has_mdolx` branch — a Send signal masks an MDOLX_NO_SEND anomaly if both ever fire on the same row. The src tree explicitly orders WIN → AWAITING_MDOLX → MDOLX_NO_SEND; the scripts tree orders WIN → MDOLX_NO_SEND → AWAITING_MDOLX. **Result: a row that has both a stale send (>48h) AND a fresh MDOLX, but the matcher failed to pair them, gets classified as SEND_NO_BOOKING in src/hilmar and PENDING/MDOLX_NO_SEND in scripts/.** This is a real divergence; the parity test (`tests/test_core_parity.py`, referenced throughout) does not test all input combinations.
+Both `src/hilmar/core.py:570-746` and `scripts/core.py:679-814` implement the same decision tree but with one structural difference: `scripts/core.py:733-735` returns `PENDING / MDOLX_NO_SEND` BEFORE the send-aging branch, while `src/hilmar/core.py:649-675` reaches MDOLX_NO_SEND AFTER the `has_send AND !has_mdolx` branch. **Result: a row with both a stale send (>48h) AND a fresh MDOLX, where the matcher failed to pair them, classifies as SEND_NO_BOOKING in src/hilmar but PENDING/MDOLX_NO_SEND in scripts/.** The parity test (`tests/test_core_parity.py`) does not cover this input combination.
 
 | Transition | Reachable? | Notes |
 |---|---|---|
@@ -29,27 +29,25 @@ Both `src/hilmar/core.py:570-746` and `scripts/core.py:679-814` implement the sa
 | Q&L / COVERED | **unreachable from `decide_status`** | only set via `qc_selfheal._reclassify_covered` (scripts/qc_selfheal.py:256) or the explicit `lonny_covered` honor path (scripts/qc_selfheal.py:594) |
 | Q&L / DRAFT_ONLY | **unreachable from `decide_status`** | listed in `scripts/core.LOSS_REASONS` (line 84) and `src/hilmar/core.LOSS_REASONS` (line 105) but nothing in either tree ever sets it |
 
-**Finding 1.1 — DRAFT_ONLY is dead** (Medium, `scripts/core.py:84`, `src/hilmar/core.py:105`). Listed in the taxonomy but never written by any path I can find. Either wire it up (the original intent was MDOLX confirmations of `DRAFT RATED` quotes with no full rate) or drop the enum so QC-040 stops permitting it.
+**Finding 1.1 — DRAFT_ONLY is dead** (Medium, `scripts/core.py:84`, `src/hilmar/core.py:105`). Listed in `LOSS_REASONS` but never written. Either wire it up (original intent: MDOLX confirmations of `DRAFT RATED` quotes with no full rate) or drop the enum so QC-040 stops permitting it.
 
-**Finding 1.2 — MDOLX_NO_SEND ordering drift** (Medium, `src/hilmar/core.py:649-675` vs `scripts/core.py:733-753`). The branch order between the two trees is inverted. The parity test should cover the (has_send=True, has_mdolx=True at a later timestamp, send_signal stale) matrix. Add a fixture row and either canonicalize the ordering or document the intentional split.
+**Finding 1.2 — MDOLX_NO_SEND ordering drift** (Medium). See above — canonicalize ordering across both trees, add fixture.
 
-**Finding 1.3 — `record_transition` only fires when status changes** (Low, `src/hilmar/core.py:749-762`, `scripts/core.py:817-830`). When `loss_reason` changes but `status` stays the same (e.g., PRICE → UNDIFFERENTIATED on the same Q&L row), no audit-trail row is written. PR #21 will quietly retag a lot of rows on first run; there's no transition history of "PRICE → UNDIFFERENTIATED 2026-06-02". Consider an aux `loss_reason_history`.
+**Finding 1.3 — `record_transition` only fires on status change** (Low, `src/hilmar/core.py:749-762`). When `loss_reason` changes but `status` is the same (e.g., PRICE → UNDIFFERENTIATED), no audit-trail row is written. PR #21 will quietly retag many rows on first run with no history. Consider an aux `loss_reason_history`.
 
 ---
 
 ## 2. Loss-reason taxonomy — heuristic-as-determination patterns
 
-PR #21 fixed PRICE-as-catch-all. Two other reasons still over-classify:
+PR #21 fixed PRICE-as-catch-all. Other reasons still over-classify:
 
-**Finding 2.1 — RESPONSE_NO_RATE collapses two failure modes** (High, `src/hilmar/core.py:683-687`, `scripts/core.py:756-757`). A row where MBD acknowledged but didn't quote (e.g., "checking with carrier…") is classified NQ/RESPONSE_NO_RATE and therefore excluded from the win-rate denominator. But many of these are actually **competitive losses** — MBD was working the quote, didn't get a competitive rate, and a competitor booked it. There is no distinction between "no rate yet, please wait" (legitimate NQ) and "we ran the rate desk, couldn't compete, so we ghosted" (real Q&L). At Hilmar's current volumes this is a small bucket but it suppresses the visible loss count. Recommend: introduce a sub-flag (e.g., `ol_acknowledged_at` + `ol_declined_to_quote`), or downgrade rows where Lonny went on to book a competitor (`lonny_covered=True` cross-check, see finding 4.1).
+**Finding 2.1 — RESPONSE_NO_RATE collapses two failure modes** (High, `src/hilmar/core.py:683-687`). MBD-acknowledged-but-didn't-quote is NQ/RESPONSE_NO_RATE → excluded from win-rate denominator. Many of these are real competitive losses (MBD couldn't get a competitive rate, ghosted, competitor booked). No distinction between "wait, checking" (legit NQ) and "we ran the desk and ghosted" (real Q&L). Add a `ol_declined_to_quote` sub-flag, or cross-reference `lonny_covered=True` (see finding 4.1).
 
-**Finding 2.2 — `aggregate_loss_reasons` "other" bucket hides UNDIFFERENTIATED, COVERED, DRAFT_ONLY, QUOTED_NOT_BOOKED together** (Medium, `src/hilmar/core.py:1029-1043`). The actionable_mix dictionary lumps everything that isn't PRICE/ETD_MISS/OL_SILENT into "other" — including COVERED (which IS a competitor-won-the-rate signal, fundamentally rate-driven from Lonny's perspective). The daily email banner therefore under-reports rate pressure when Lonny was explicit about being covered. Consider promoting COVERED into either `rate_driven` (most COVEREDs are rate losses) or its own `covered_by_competitor` bucket so the operator sees it.
+**Finding 2.2 — `aggregate_loss_reasons` "other" bucket hides COVERED + UNDIFFERENTIATED together** (Medium, `src/hilmar/core.py:1029-1043`). The actionable_mix lumps COVERED (a competitor-won-the-rate signal, fundamentally rate-driven from Lonny's perspective) into "other" alongside UNDIFFERENTIATED. Daily email banner under-reports rate pressure. Promote COVERED to `rate_driven` or its own bucket.
 
-**Finding 2.3 — ETD_MISS threshold is hard-coded magic 5** (Medium, `src/hilmar/core.py:709`, `scripts/core.py:778`). The ≥5d cutoff has no constant — unlike `PRICE_GAP_THRESHOLD_MULT` and `PRICE_GAP_MIN_LANE_WINS`. Promote to `ETD_MISS_DAYS = 5`, mirror in both trees, add to the parity test.
+**Finding 2.3 — ETD_MISS threshold is magic 5** (Medium, `src/hilmar/core.py:709`, `scripts/core.py:778`). Unlike `PRICE_GAP_THRESHOLD_MULT`, the ≥5d cutoff has no constant. Promote to `ETD_MISS_DAYS = 5`, mirror, add to parity test.
 
-**Finding 2.4 — `gen_rate_intelligence.analyze_lane_regression` treats `loss_reason == "NO_RESPONSE"` as "doesn't count" but does not exclude `RESPONSE_NO_RATE`** (Medium, `scripts/gen_rate_intelligence.py:160-161`). The regression detector excludes one NQ sub-state but not the other, so a lane that's repeatedly hitting RESPONSE_NO_RATE looks like a "losing streak" when in fact OL never quoted. Add `RESPONSE_NO_RATE` and `SEND_NO_BOOKING` to the same exclusion (or invert the test to "must have ol_rate").
-
-**Finding 2.5 — `analyze_lane_regression` is hard-coded to LEGACY classifier** (High, `scripts/gen_rate_intelligence.py:158`). Filter `if q.get("status") not in ("WIN", "LOSS")` — never matches STRICT form's Q&L/NQ. In STRICT form, this analysis returns ZERO rows. Use `display_status` / `is_quoted_and_lost` from core. This is silently breaking today if the shared store is on STRICT.
+**Finding 2.4 — `analyze_lane_regression` LEGACY-only filter + missing RESPONSE_NO_RATE exclusion** (High, `scripts/gen_rate_intelligence.py:158-161`). Filter `q.get("status") not in ("WIN", "LOSS")` — never matches STRICT form's Q&L/NQ; in STRICT form this analysis returns ZERO rows. Separately, it excludes `NO_RESPONSE` but not `RESPONSE_NO_RATE` or `SEND_NO_BOOKING` — a lane repeatedly hitting RESPONSE_NO_RATE looks like a "losing streak" when OL just never quoted. Fix to STRICT-aware (`display_status` / `is_quoted_and_lost`) AND broaden the NQ exclusion (or invert to "must have ol_rate").
 
 ---
 
@@ -66,19 +64,7 @@ The 66% concentration QC-017 surfaced today has **three contributing biases**:
 
 Corporate truth: APL operates ships under its own brand and quotes through a separate sales channel; ANL is a niche reefer line. Collapsing them inflates CMA CGM's count without reflecting how Lonny actually negotiates. **If 5–8 of the 103 CMA CGM quotes are actually APL or ANL, the real CMA CGM share is 60–63%, not 66% — and QC-017 would shift from WARN to OK.** Recommend: split APL/ANL out of the alias map (keep them aliased to themselves with case-canonical "APL", "ANL") and add per-line scorecards. The "CMA CGM family" rollup is fine as a derived view but should not be the canonical bucketing.
 
-**Finding 3.2 — `src/hilmar/body_parser._find_carrier` is naked substring match** (High, `src/hilmar/body_parser.py:616-625`):
-
-```python
-_CARRIER_TOKENS = ["MSC", "CMA CGM", "CMA", "EVERGREEN", "ONE", ...]
-def _find_carrier(text):
-    up = text.upper()
-    for tok in _CARRIER_TOKENS:
-        if tok in up:
-            return tok.title() if tok not in ("MSC", "ONE", ...) else tok
-    return None
-```
-
-`"ONE" in up` matches "DONE", "PHONE", "STANDALONE", "NONE". `"CMA" in up` matches inside any string containing those letters (incl. "CMAU…" container prefixes — APL/ANL container number families). **Production protection: scripts/body_parser.py does not have this function; production calls scripts/body_parser.parse_rate_table → _find_table_rows, which is column-based and safe.** The bug is dormant for production but bites the test suite + any future code that wires `src/hilmar/body_parser` into the pipeline (the migration target per CLAUDE.md §2). Replace with `re.search(rf"\b{re.escape(tok)}\b", up)`.
+**Finding 3.2 — `src/hilmar/body_parser._find_carrier` is naked substring match** (High, `src/hilmar/body_parser.py:616-625`). `for tok in _CARRIER_TOKENS: if tok in up`. `"ONE" in up` matches "DONE"/"PHONE"/"STANDALONE"; `"CMA" in up` matches inside CMAU… container number prefixes. Production is safe — scripts/body_parser uses column extraction — but this is the migration target per CLAUDE.md §2 and the test suite touches it. Replace with `re.search(rf"\b{re.escape(tok)}\b", up)`.
 
 **Finding 3.3 — QC-017 silently undercounts in STRICT classifier** (Critical, `scripts/qc_selfheal.py:2576`):
 
@@ -86,7 +72,7 @@ def _find_carrier(text):
 if c and (r.get("status") in ("WIN", "LOSS")) and (r.get("quoted") or r.get("status") == "WIN"):
 ```
 
-In STRICT form (current schema.json line 76 enforces `"status": {"enum": ["WIN", "Q&L", "PENDING", "NQ"]}`), `status == "LOSS"` is impossible. **QC-017 then only counts WIN rows.** If Hilmar's tracking-data is currently STRICT, the "66%" denominator is purely WINs — much more concentrated than the prose suggests. This is a wrong number on the audit email TODAY. Replace with `display_status(r) in ("WIN", "Q&L")` or `not is_not_quoted(r)`.
+In STRICT form (current schema.json line 76 enforces `"status": enum WIN/Q&L/PENDING/NQ`), `status == "LOSS"` is impossible. **QC-017 then only counts WIN rows.** If Hilmar's tracking-data is currently STRICT, the "66%" denominator is purely WINs — much more concentrated than the prose implies. This is a wrong number on the audit email TODAY. Replace with `display_status(r) in ("WIN", "Q&L")` or `not is_not_quoted(r)`.
 
 ---
 
@@ -110,7 +96,7 @@ The honor path sets `status=LOSS, loss_reason=COVERED` but **never sets `quoted=
 
 **Finding 4.3 — `drift_check.phase6_covered_honor` is keyed to LEGACY-only** (Medium, `scripts/drift_check.py:182`): `if r.get("lonny_covered") and (r.get("status") != "LOSS" or r.get("loss_reason") != "OTHER")`. The check requires `loss_reason == "OTHER"` but the canonical post-honor value is `COVERED`. So this check fires WARN even after the honor path successfully ran. False-positive in the audit. Should be `not in ("OTHER", "COVERED", None)`.
 
-**Finding 4.4 — `aggregate_summary` `win_rate` includes NQ in the denominator** (Critical, `src/hilmar/core.py:832,850`, `scripts/core.py:896,914`):
+**Finding 4.3 — `aggregate_summary` `win_rate` includes NQ in the denominator** (Critical, `src/hilmar/core.py:832,850`, `scripts/core.py:896,914`):
 
 ```python
 total_decided = len(wins) + len(ql) + len(nq)
@@ -177,9 +163,9 @@ olusa_et = resp_dt.astimezone(core.ET).strftime("%-I:%M %p ET")
 
 CLAUDE.md §3 hard rule #8: "Never use `%-d` / `%-I`". This file is not currently called by `run_pipeline.py` (I checked) so the breakage is latent — but the moment merge_ingest.py is re-introduced (it's still in the tree), it crashes on Cloud PC. Either delete merge_ingest.py if dead, or fix to `%I` + `.lstrip("0")`.
 
-**Finding 6.4 — `scripts/render.py` (and `src/hilmar/render.py:85`) uses `datetime.now().strftime("%b %d, %Y")` without a tz** (Low, `src/hilmar/render.py:85`). The result is local time. On the Cloud PC that's ET = fine for user-facing rendering. But this is internal "generated_at" surface — should be ET-explicit so logs match.
+**Finding 6.4 — `render.py:85` naive `datetime.now().strftime(...)`** (Low). Result is local time; should be ET-explicit so internal "generated_at" matches logs.
 
-**Finding 6.5 — `auto_chase_pending.py` uses naive `datetime.now()` for flag filenames** (Low, `scripts/auto_chase_pending.py:120,157`). The flag `chase-sent-YYYY-MM-DD.flag` is named in local time; midnight-ET race where the same chase fires twice or skips. Use `datetime.now(core.ET)`.
+**Finding 6.5 — `auto_chase_pending.py:120,157` naive `datetime.now()` in flag filenames** (Low). Midnight-ET race; `chase-sent-YYYY-MM-DD.flag` could double-fire or skip. Use `datetime.now(core.ET)`.
 
 ---
 
@@ -199,22 +185,9 @@ CLAUDE.md §3 hard rule #8: "Never use `%-d` / `%-I`". This file is not currentl
 
 `scripts/ingest.py:1297-1386` carries forward prior WINs the fresh stage didn't reproduce. QC-010 (`scripts/qc_selfheal.py:902-919`) warns when `len(preserved) > 10`. Today's 9 is one below the threshold.
 
-**Finding 8.1 — QC-010 threshold is static and doesn't trend** (High, `scripts/qc_selfheal.py:909`):
+**Finding 8.1 — QC-010 threshold is static, no trend detection** (High, `scripts/qc_selfheal.py:909`). `PRESERVED_THRESHOLD = 10`. CLAUDE.md says "small steady set is fine; growing means refresh_stage is missing legitimate emails." Today's 9 is one below threshold — tomorrow's 10 fires WARN once, then 11/12/13 are identical noise. Add a 7-day rolling mean: WARN when today's count >1.5σ above the mean regardless of absolute. Persist `preserved_count` in `daily_snapshots/{date}.json` summary.
 
-```python
-PRESERVED_THRESHOLD = 10
-```
-
-CLAUDE.md says "small steady set is fine; growing means refresh_stage is missing legitimate emails." There is no growth detection — the threshold is a single hard cutoff. With 9 preserved today, tomorrow's 10 fires the alert ONCE, then 11/12/13 are all the same WARN. **Add a trend check:** compare `len(preserved)` to the rolling 7-day mean. If today's value is >1.5σ above the mean, fire WARN regardless of the absolute count. Or store `daily_snapshots/{date}.json` summary['preserved_count'] (it isn't there now) and surface a 7-day series in the audit.
-
-**Finding 8.2 — QC-010 does not distinguish WHY a row was preserved** (Medium, `scripts/qc_selfheal.py:902-919`). The check counts `preserved_from_prior` flag but doesn't sub-bucket by:
-- MDOLX matched but the search-window missed the email (refresh_stage gap)
-- Lane+date match with renormalized request_id (parser drift)
-- No MDOLX, no lane+date match — pure prior carry-forward
-
-A growing count from the first cause is bad (search window broken). Growing from the second is parser regression. Growing from the third is potential stale data. The audit can't tell them apart today. Add a `preserved_reason` field on the carried row and break QC-010 into 010a/b/c.
-
-**Finding 8.3 — `out_of_scope_reason` exclusion on preserved rows uses subject only** (Medium, see Finding 5.5 — same root cause).
+**Finding 8.2 — QC-010 does not distinguish preservation REASON** (Medium, `scripts/qc_selfheal.py:902-919`). Counts the flag but doesn't sub-bucket by (a) MDOLX matched but search-window missed (refresh_stage gap — BAD), (b) lane+date match with renormalized request_id (parser drift), (c) pure prior carry-forward (stale data). Audit can't tell them apart. Add `preserved_reason` on the carried row.
 
 ---
 
@@ -234,23 +207,21 @@ I cannot run the harness against live `tracking-data-v2.json` (file is empty in 
 | `port_cutoff` | 0.90 | 93.9% |
 | `dest_free_time` | 0.85 | 93.4% quoted |
 
-**Finding 9.1 — Multiple fields are sitting at 93-95%; the gate is borderline** (High, `src/hilmar/parser_accuracy.py:63-86`). The comments document that fields like `erd`, `doc_cutoff`, `port_cutoff` each currently settle at 93.9% — within 1 percentage point of their per-field threshold. Three PDFs that pdfplumber can't OCR drive ~1% of misses each. One more image-only PDF this week and any of these flips below threshold → QC-039 ERROR → pipeline gates. **Plan a buffer: either (a) lower these thresholds to 0.88 if 93.9% is genuinely "the data ceiling," or (b) wire an OCR fallback (Tesseract via pytesseract — already in deps?) for the image-only PDFs.** The current 0.90 threshold is one bad PDF away from breaking the daily fire.
+**Finding 9.1 — `erd` / `doc_cutoff` / `port_cutoff` sit at 93.9%, one bad PDF away from breakage** (High, `src/hilmar/parser_accuracy.py:63-86`). Per-field threshold 0.90, real rate 93.9%, three image-only PDFs drive most of the misses. One more image-only PDF and any of these flips below threshold → QC-039 ERROR → pipeline gates. Either lower thresholds to 0.88 (if 93.9% is the data ceiling) or wire a Tesseract/OCR fallback.
 
-**Finding 9.2 — Standalone WINs excluded from rate/ETD accuracy is correct, but excluded from `product`/`lonny_notes` may hide real misses** (Medium, `src/hilmar/parser_accuracy.py:183-184`). Predicate: `not _is_standalone(r)`. A standalone WIN that DOES have a body (rare but possible — booking confirmation with a "Cheese 2x40RF" subject) is excluded from `product` accuracy. Net effect: the harness over-reports the rate.
+**Finding 9.2 — Standalone WIN exclusion may hide `product`/`lonny_notes` misses** (Medium, `src/hilmar/parser_accuracy.py:183-184`). `not _is_standalone(r)` excludes ALL standalones — but a standalone with a body (e.g., subject `"… Cheese 2x40RF …"`) could and should be measured for `product`. Net: over-reports rate.
 
-**Finding 9.3 — `weighted_accuracy` is reported (line 220-222) but `pass` only checks `overall_rate >= threshold AND no critical_failing`** (Low, `src/hilmar/parser_accuracy.py:274`). The weighted-by-applicable-rows rate is computed and shown in the audit email but does not gate. If 14 rare fields each at 99% drag the equal-weight mean up while 3 critical fields with 100s of applicable rows each sit at 92%, overall passes. Critical-fields gate catches that. But adding a `weighted_rate >= 0.95` gate would be defensive.
-
-**Finding 9.4 — `etd_offered` and `eta_offered` accuracy measurement does not see the column-parser output stored under `etd` / `eta`** (Medium, `src/hilmar/parser_accuracy.py:174-175` vs `src/hilmar/body_parser.py:760-764`). `parse_mbd_rate_columns` returns `out["etd"]` and `out["eta"]`. The `parse_rate_table` wrapper at `body_parser.py:786-851` then conditionally only sets `out["etd"]` if `"etd" not in out` after the column pass — but the merge in `scripts/ingest.py` and `src/hilmar/ingest.py:351-352` reads `rt.get("etd")` and writes `out["etd_offered"]`. So the storage field is `etd_offered`. Parser accuracy checks `etd_offered`. OK actually safe — flagging only to confirm. The column parser does NOT independently set `etd_offered`, so the wrapper's hand-off is the only path. If that ever changes, parser_accuracy would silently start reporting 0%.
+**Finding 9.3 — `weighted_accuracy` is reported but not gated** (Low, `src/hilmar/parser_accuracy.py:274`). If 14 rare fields at 99% drag the equal-weight mean up while 3 critical fields with 100s of rows each sit at 92%, overall passes; critical-fields gate catches the worst case but not all. Adding `weighted_rate >= 0.95` would be defensive.
 
 ---
 
 ## 10. Other findings
 
-**Finding 10.1 — `aggregate_carriers` calculates `win_rate = wins / quotes`** (High, `src/hilmar/core.py:1101`). That includes losses (Q&L) AND pending in the denominator, but excludes NQ from `quotes` (NQ has no carrier_quoted). The per-carrier win rate is therefore Wins / (Wins + Q&L + Pending). The daily email row Win Rate excludes Pending: `_decided_comp = b['won'] + ql_count`. Two different denominators between aggregate_carriers and the row renderer. Pick one — CLAUDE.md spec is Wins / (Wins + Q&L).
+**Finding 10.1 — `aggregate_carriers.win_rate = wins / quotes` includes Pending** (High, `src/hilmar/core.py:1101`). Per-carrier denominator = Wins + Q&L + Pending; per-lane email denominator = Wins + Q&L. Two different formulas between aggregate_carriers and the row renderer. CLAUDE.md spec is Wins / (Wins + Q&L) — fix aggregate_carriers.
 
-**Finding 10.2 — `is_quoted_and_lost` and `is_not_quoted` are defined but not used in `aggregate_lanes` / `aggregate_carriers`** (Medium, `src/hilmar/core.py:145-162` vs `863-967`). The aggregators hard-code `s == STATUS_WIN` / `STATUS_Q_AND_L` / `STATUS_NQ`. If any caller passes LEGACY data, the legacy LOSS rows are silently lost from per-lane buckets. Defensive: route all status comparisons through the storage-agnostic helpers.
+**Finding 10.2 — `aggregate_lanes` / `aggregate_carriers` hard-code STRICT status checks** (Medium, `src/hilmar/core.py:863-967`). Helpers `is_quoted_and_lost` and `is_not_quoted` (lines 145-162) exist but are unused — the aggregators compare against `STATUS_Q_AND_L` / `STATUS_NQ`. LEGACY LOSS rows silently drop out of per-lane buckets. Route through the storage-agnostic helpers.
 
-**Finding 10.3 — `compute_dod` uses local naive ET for the `cutoff_iso` comparison** (Low, `src/hilmar/core.py:1869`). The cutoff is constructed as `as_of.isoformat() + "T23:59:59+00:00"` — that's UTC even though `as_of` was derived as ET. A row with `at: "2026-06-02T22:00:00-04:00"` (= 2026-06-03T02:00 UTC) might be on the wrong day. Use `as_of` in ET consistently or convert.
+**Finding 10.3 — `compute_dod.cutoff_iso` mixes ET and UTC** (Low, `src/hilmar/core.py:1869`). `as_of.isoformat() + "T23:59:59+00:00"` — that's UTC even though `as_of` was derived ET. A row at 2026-06-02T22:00 ET (= 2026-06-03T02:00 UTC) lands on the wrong day. Convert consistently.
 
 ---
 
@@ -266,4 +237,4 @@ I cannot run the harness against live `tracking-data-v2.json` (file is empty in 
 
 5. **Decouple APL / ANL from CMA CGM bucketing AND tighten `src/hilmar/body_parser._find_carrier` (Findings 3.1 + 3.2, High).** The 66% CMA CGM concentration is partially inflated by APL/ANL fold-in and at risk from naked-substring carrier matching in src/. Production today is protected (scripts/body_parser uses column extraction), but the src/ migration will surface the bug. Split APL and ANL out of `CARRIER_ALIASES` to standalone canonical names; replace `_find_carrier`'s `if tok in up` with word-boundary regex. Effort: ~10 lines + tests + add an APL/ANL family-rollup helper for analytics that genuinely want the parent-company view.
 
-**Honorable mentions (next-up):** Finding 2.5 (gen_rate_intelligence's LEGACY-only filter — silently zero in STRICT mode); Finding 6.3 (merge_ingest.py Unix-only strftime — latent crash if revived); Finding 9.1 (three fields sitting at 93.9% threshold with no headroom — one OCR-failed PDF away from gating the pipeline).
+**Honorable mentions:** Finding 2.4 (LEGACY-only filter in gen_rate_intelligence — zero rows in STRICT); Finding 6.3 (merge_ingest.py Unix-only strftime — latent crash); Finding 9.1 (three fields at 93.9%, one OCR miss from gating).

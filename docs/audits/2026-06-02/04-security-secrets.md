@@ -290,51 +290,32 @@ Findings rolled into F-2.5 and F-2.6 above.
 
 ### 5.2 Findings — dispatch correctness
 
-#### F-5.1 — QC-022 distribution guard is not bypass-proof
-**Severity:** Medium
-**Files:** `scripts/qc_selfheal.py` (QC-022 implementation),
-`scripts/outlook_send.py:114-205`
-QC-022 enforces 10-recipient invariants BEFORE the pipeline runs. But
-`send_mail()` itself takes any `to: list[str]` and POSTs to Graph
-unguarded. A future caller (script that bypasses `cmd_daily`) could
-pass an arbitrary list. The idempotency flag prevents *duplicate*
-sends to the full distribution but does not protect against *wrong*
-recipients in a fresh send.
-**Fix:** in `send_mail()`, if `len(to) >= 5` (the
-"full_distribution" heuristic at line 182), assert against
-`config.distribution.full_list` set-equality. Refuse to send otherwise.
-**Effort:** 30 minutes.
+#### F-5.1 — QC-022 doesn't gate `send_mail()` (Medium)
+**Files:** `scripts/qc_selfheal.py` (QC-022), `scripts/outlook_send.py:114-205`
+QC-022 runs BEFORE the pipeline. `send_mail()` takes any `to: list[str]`
+and POSTs to Graph unguarded. A future caller bypassing `cmd_daily`
+could send to an arbitrary list. Idempotency flag prevents duplicate
+sends, not wrong-recipient sends.
+**Fix:** in `send_mail()`, if `len(to) >= 5`, assert set-equality
+against `config.distribution.full_list`. **Effort:** 30 minutes.
 
-#### F-5.2 — `_recipient_type` heuristic for Sentry metrics misclassifies multi-cc audits
-**Severity:** Low
+#### F-5.2 — `_recipient_type` heuristic misclassifies (Low)
 **File:** `scripts/outlook_send.py:182-184`
-`"full" if len(to) >= 5 else ("audit" if (len(to)==1 and to[0].endswith
-("@idealx.us")) else "test")` — a CC'd audit (e.g. when adding a
-second internal viewer) gets classified as "test", and a send with 4
-recipients (one fewer than 5) hides in "test" bucket. Metric noise
-only.
-**Fix:** classify by matching `to` against the configured distribution
-sets directly.
+`len(to)>=5` → "full", `len(to)==1 and endswith @idealx.us` → "audit",
+else "test". A 4-recipient send hides in "test"; a CC'd audit misses
+"audit". Metric noise only. **Fix:** match against configured lists.
 **Effort:** 10 minutes.
 
-#### F-5.3 — `auto_chase_pending.py` hard-codes Lonny fallback
-**Severity:** Low
+#### F-5.3 — `auto_chase_pending.py` hard-codes Lonny fallback (Low)
 **File:** `scripts/auto_chase_pending.py:138`
-`chase_cfg.get("recipient", "lupfold@hilmaringredients.com")` — if
-`config.auto_chase.recipient` is removed or typo'd, the fallback
-silently emails Lonny anyway. The intent of removing the recipient is
-presumably to disable chases.
-**Fix:** make the fallback `None` and refuse to send if missing.
-**Effort:** 5 minutes.
+`chase_cfg.get("recipient", "lupfold@hilmaringredients.com")` — removing
+config key silently still emails Lonny.
+**Fix:** fallback `None`, refuse if missing. **Effort:** 5 minutes.
 
-#### F-5.4 — `cmd_nudge` has no idempotency flag
-**Severity:** Low
+#### F-5.4 — `cmd_nudge` lacks idempotency (Low)
 **File:** `scripts/outlook_send.py:269-279`
-Manual `nudge` subcommand could be re-run accidentally. Not in the
-scheduled daily fire, so risk is bounded to manual use.
-**Fix:** optional — add a per-thread dedup via Outlook reply-to
-header check.
-**Effort:** 1 hour.
+Manual subcommand, bounded blast radius. **Fix:** optional per-thread
+dedup via reply-to header. **Effort:** 1 hour.
 
 ---
 
@@ -350,27 +331,19 @@ header check.
 
 ### 6.1 Findings — external boundaries
 
-#### F-6.1 — Anthropic diagnostic prompts contain unredacted Sentry titles
-**Severity:** Medium
+#### F-6.1 — Anthropic diagnose prompt trusts pre-scrubbed Sentry fields (Medium)
 **File:** `scripts/qc_actions_from_sentry.py:453-464`
-The prompt sent to Claude includes `title`, `culprit`, `level`,
-`platform`, `permalink`. Sentry already scrubs PII before the event
-arrives at sentry.io. But `permalink` is `https://sentry.io/.../issues/
-{id}/` — opaque. `title` and `culprit` are PRE-scrubbed by the
-`_before_send` hook, so they should be safe. **However**, this assumes
-the scrubber regexes are complete; F-2.1/F-2.2/F-2.3 show known gaps.
-**Fix:** apply a second-pass scrub on `title`/`culprit` right before
-the Anthropic call.
-**Effort:** 10 minutes.
+Prompt includes `title`, `culprit`, `level`, `permalink`. `title` /
+`culprit` are pre-scrubbed by `_before_send` — but only if the regexes
+are complete; F-2.1/F-2.2/F-2.3 show known gaps.
+**Fix:** second-pass `_scrub_string` on `title`/`culprit` before the
+Anthropic call. **Effort:** 10 minutes.
 
-#### F-6.2 — `share_intel.py` writes to a path that may broaden if OneDrive renames
-**Severity:** Low
+#### F-6.2 — `share_intel.py` fallback path can write outside OneDrive (Low)
 **File:** `scripts/share_intel.py:60-67`
-The script probes `OneDrive - IdealX`, then `OneDrive`, then a
-parent-of-Hilmar fallback. The third fallback writes outside
-`OneDrive - IdealX` into whatever `HILMAR_ROOT.parent` resolves to.
-On a non-OneDrive machine this could land in a public path.
-**Fix:** refuse to write if none of the OneDrive-shaped paths resolve.
+Probes `OneDrive - IdealX` → `OneDrive` → parent-of-Hilmar. On a
+non-OneDrive machine the third fallback lands somewhere arbitrary.
+**Fix:** refuse to write if no OneDrive-shaped path resolves.
 **Effort:** 10 minutes.
 
 ---
@@ -389,95 +362,68 @@ On a non-OneDrive machine this could land in a public path.
 
 ### 7.1 Findings — public exposure
 
-#### F-7.1 — Test MDOLX values likely include real shipment refs
-**Severity:** Medium
-**File:** `tests/test_ingest.py:781,799,825,858,876,921,943,971,992,
-1025,1041,1059,1080,1191,1209,1277`
-The values `MDOLX260317`, `MDOLX260420`, `MDOLX260460`, `MDOLX260999`,
-`MDOLX260062` follow Hilmar's actual booking-number format (`MDOLX26
-NNNN` where 26 is the year-2026 prefix). At least some of these
-appear to be real booking refs lifted from production threads. Carrier
-refs `RICGE7217600`, `NAM8400958`, `EBKG14800694` are similarly
-authentic-shaped. Committed into a public-shaped GitHub repo (per
-CLAUDE.md the repo is `IdealX-dev/hilmar-daily-routine`).
-**Fix:** confirm visibility (private vs public on GitHub). If public,
-rotate the test MDOLX values to obviously-fake placeholders
-(`MDOLX999001`, `MDOLX999002`, `NAM0000001`) and force-push a rewrite
-of `tests/test_ingest.py` history.
-**Effort:** 1 hour for replacement; history rewrite is more involved.
+#### F-7.1 — Test MDOLX values likely real (Medium)
+**File:** `tests/test_ingest.py` (multiple lines under 781-1277)
+`MDOLX260317/260420/260460/260999/260062` follow Hilmar's real
+`MDOLX26NNNN` format (26 = year-2026). Carrier refs `RICGE7217600`,
+`NAM8400958`, `EBKG14800694` are authentic-shaped. Committed to
+`IdealX-dev/hilmar-daily-routine`.
+**Fix:** confirm repo visibility. If public, rotate to obviously-fake
+placeholders (`MDOLX999001`, `NAM0000001`) and rewrite history.
+**Effort:** 1h replacement; +1-2h for filter-repo.
 
-#### F-7.2 — Real Outlook conversation ID committed
-**Severity:** High
+#### F-7.2 — Real Outlook conversation ID committed (High)
 **File:** `scripts/build_real_sample.py:31`
-`manila_conv_id = "AAQkAGQ3MjcwNWZhLTk3M2YtNDYzOS1hMWZlLWQwMmYzODE0
-MTU5NQAQAKhptuZ9dXlJsvDHRW2ubYA="` — this is a valid base64 Outlook
-conversation ID. It is the exact pattern the Sentry scrubber goes to
-lengths to redact. Committed in plaintext. The ID maps to a specific
-thread in Michael's mailbox; possession lets someone with Graph
-access query that thread.
-**Fix:** replace with a fake placeholder, rotate the production
-conversation reference, then `git filter-repo` (or BFG) to scrub from
-history if the repo is public.
-**Effort:** 30 minutes for the file; 1-2 hours for history rewrite.
+`AAQkAGQ3MjcwNWZhLTk3M2YtNDYzOS1hMWZlLWQwMmYzODE0MTU5NQAQAKhptuZ9dXlJsvDHRW2ubYA=`
+is a valid Outlook conv ID — the exact pattern the Sentry scrubber
+redacts. Maps to a specific thread in the operator's mailbox;
+possession + Graph access = thread query.
+**Fix:** replace with fake placeholder; `git filter-repo`/BFG if the
+repo is public. **Effort:** 30min file; 1-2h history rewrite.
 
-#### F-7.3 — `golden_day.json` fixture content not verified for PII
-**Severity:** Low (uncertain)
+#### F-7.3 — `golden_day.json` provenance not documented (Low)
 **File:** `tests/fixtures/golden_day.json`
-Audit grep did not find lupfold/MDOLX strings inside, but the file
-was not fully read (size unknown). Risk is low if it was prepared as
-a synthetic fixture; non-trivial if it was sampled from a real day.
-**Fix:** spot-read the file and document its provenance in the
-fixture header.
-**Effort:** 10 minutes.
+Spot-grep did not surface PII, but the file was not fully read.
+**Fix:** document provenance in a fixture header. **Effort:** 10 min.
 
 ---
 
 ## 8. Mitigation for the in-chat credential leak ("the leaked credential in chat")
 
-Earlier today, the operator pasted what looked like a credential
-(format: a name + year + symbol) into a chat session. Even though it
-was not stored or echoed by the assistant, it lives in the chat
-transcript. The most likely targets, in order of probability:
+Earlier today the operator pasted what looked like a credential into
+chat. It was not echoed or stored by the assistant, but it lives in the
+session transcript. Likely targets, in order of probability:
 
-1. **`quote-tracker-pwd.txt` (the ol-quote-tracker shared password)** —
-   Highest probability match because (a) it is the only credential in
-   the project stored as a *human-typeable string* rather than a
-   provider-issued token, and (b) `scripts/sync_to_quote_tracker.py:91`
-   only validates non-empty. A "name + year + #" shape fits a
-   user-chosen password.
-2. **The OneDrive / Microsoft account password** — Used to log into
-   the Cloud PC, OneDrive, Outlook. Higher blast radius if compromised.
-3. **An OL-USA system password** — VPN / SSO / Conditional Access
-   bypass. Highest blast radius. (Operator should confirm.)
-4. Anything else (Teams, Sentry web login, GitHub web login).
+1. **ol-quote-tracker shared password** (`quote-tracker-pwd.txt`) —
+   highest probability: only project credential stored as a
+   human-typeable string rather than a provider token, and
+   `sync_to_quote_tracker.py:91` only validates non-empty.
+2. **Microsoft / OneDrive account password** — broader blast radius
+   (Cloud PC, OneDrive, Outlook).
+3. **OL-USA SSO / VPN password** — highest blast radius. Confirm.
+4. Other (Teams, Sentry web login, GitHub web login).
 
-### Recommended operator action — quick-action checklist
+### Quick-action checklist
 
-1. **Identify which credential it actually is.** Visually compare the
-   leaked string against the candidates above.
-2. **Rotate it immediately** — do this before any other follow-up.
-   - If ol-quote-tracker pwd → change `APP_PASSWORD` env on
-     `ol-quote-tracker-prod.azurewebsites.net`, update
-     `secrets/quote-tracker-pwd.txt` on the Cloud PC, update
-     `QT_APP_PASSWORD` GH Actions secret if used, run
-     `python scripts/sync_to_quote_tracker.py --dry` to verify.
-   - If Microsoft account → reset at account.microsoft.com, re-run
+1. **Identify** which credential it is.
+2. **Rotate now**, before any other follow-up:
+   - **quote-tracker pwd** → change `APP_PASSWORD` env on
+     `ol-quote-tracker-prod.azurewebsites.net`; update
+     `secrets/quote-tracker-pwd.txt`; update `QT_APP_PASSWORD` GH
+     Actions secret if set; `python scripts/sync_to_quote_tracker.py
+     --dry` to verify.
+   - **Microsoft account** → reset at account.microsoft.com; rerun
      `python scripts/outlook_send.py auth` on the Cloud PC.
-   - If OL-USA SSO → file with OL IT.
-3. **Audit recent activity** on the affected service for the last 24h
-   (Microsoft sign-in logs, Azure App Insights for ol-quote-tracker,
-   Sentry audit log).
-4. **Add a QC check** (`QC-051: secrets-rotation`): track the mtime of
-   each `secrets/*.txt` and surface "credentials older than 90d" in
-   the daily audit. Makes future rotations cheap.
-5. **For future sessions**: when you need to share a credential with
-   the assistant, paste it once and immediately ask for it to be
-   referenced as a placeholder (`<PWD>`) the rest of the session — and
-   plan to rotate as a routine practice when a session ends.
+   - **OL-USA SSO** → file with OL IT.
+3. **Audit last 24h** of activity on the affected service (MS sign-in
+   logs, Azure App Insights, Sentry audit log).
+4. **Add QC-051 (secrets-rotation)**: track each `secrets/*.txt` mtime,
+   surface "older than 90d" in the daily audit.
+5. **Future sessions**: paste credentials with a `<PWD>` placeholder
+   substitution and rotate after each session as practice.
 
-The leak is **Critical** if it is #2 or #3 (broad system access). It
-is **High** if it is #1 (one downstream service). Treating it as
-Critical until rotated is the conservative play.
+The leak is **Critical** if it is #2 or #3; **High** if #1. Treat as
+Critical until rotated.
 
 ---
 
@@ -485,33 +431,28 @@ Critical until rotated is the conservative play.
 
 In order of expected risk-reduction per hour of work:
 
-1. **Rotate the in-chat-leaked credential NOW** (§8). Estimated risk:
-   Critical if the credential is an MS account or OL SSO password.
-   Effort: 15-60 minutes depending on which credential.
+1. **Rotate the in-chat-leaked credential NOW** (§8). Critical if MS
+   account or OL SSO. Effort: 15-60 min depending on credential.
 
 2. **Replace the real Outlook conversation ID in
-   `scripts/build_real_sample.py:31`** (F-7.2). Treat as High.
-   If the repo is public, rewrite history. Effort: 30 minutes + rewrite.
+   `scripts/build_real_sample.py:31`** (F-7.2). High. Effort: 30 min
+   + history rewrite if repo is public.
 
-3. **Fix CI secret materialization in `.github/workflows/sentry-tools.yml`**
-   (F-1.3). Set `umask 077` before the printf writes, add
-   `if: always()` cleanup. High because GH Actions secrets touching
-   the runner filesystem is the path of least resistance for a
-   compromised workflow. Effort: 10 minutes.
+3. **Harden CI secret materialization in
+   `.github/workflows/sentry-tools.yml`** (F-1.3). Set `umask 077`
+   before `printf` writes, add `if: always()` cleanup. High —
+   shortest path for any compromised workflow to escalate.
+   Effort: 10 minutes.
 
 4. **Close the PII-scrubber gaps in `scripts/sentry_setup.py`**
-   (F-2.1, F-2.2, F-2.3) so Sentry events match the CLAUDE.md
-   contract. Medium severity but lowest-effort high-leverage fix
-   in the codebase; reduces both Sentry-side and downstream
-   (Claude-diagnose F-6.1) leak surface. Effort: 30 minutes total.
+   (F-2.1, F-2.2, F-2.3) so Sentry behaviour matches the CLAUDE.md
+   contract. Also cuts the F-6.1 downstream leak surface to Claude.
+   Effort: 30 minutes total.
 
-5. **Add a `send_mail()`-level distribution allowlist
-   assertion** (F-5.1). QC-022 is run BEFORE the send; this would
-   be a defense-in-depth gate AT the send, so a future buggy caller
-   that bypasses cmd_daily cannot reach the full distribution with
-   the wrong list. Effort: 30 minutes.
+5. **Add a `send_mail()`-level distribution allowlist assertion**
+   (F-5.1) so future callers that bypass `cmd_daily` can't reach the
+   10-recipient distribution with the wrong list. Effort: 30 minutes.
 
-Honourable mentions (next tier): F-2.5 (`run-log.txt` scrubbing before
-it lands in the audit email), F-3.1 (remote MSAL re-auth path),
-F-7.1 (rotate test MDOLX values), and F-3.4 (Anthropic-key rotation
-QC).
+Next tier: F-2.5 (`run-log.txt` scrubbing in audit emails), F-3.1
+(remote MSAL re-auth path), F-7.1 (rotate test MDOLX values), F-3.4
+(Anthropic-key rotation QC).

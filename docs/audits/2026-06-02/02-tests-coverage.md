@@ -73,59 +73,39 @@ The 0% list spans **42 of 60** `scripts/*.py` files.
 ## 2. Untested critical paths into the client deliverable
 
 ### Finding T-001 — `gen_email.py` has 13% coverage; `build_subject` + `build_body` have **zero** direct tests
-**Severity: Critical** · `scripts/gen_email.py` (1638 LOC, 36 top-level fns)
-The only direct tests are the 14 in `test_loss_reason_mix_html.py` against
-`_loss_reason_mix_html()` — one helper out of 36. The two entry points
-**`build_subject()` and `build_body()`** that produce the daily email sent
-to the 10-recipient distribution have NO direct tests. A typo in
-`_kpi_block_html`, `_pending_html`, `_carrier_block_html`, or
-`_winning_lanes_html` ships green to all 10 recipients.
-**What to add:** golden-output tests of `build_subject(golden_day, cfg)`
-and a structural test of `build_body(...)` that locks (a) subject ≤ 78 chars,
-(b) presence of "Daily Tracker", week-of-date, KPI block, pending table; (c)
-QC-042 + QC-044 + QC-045 invariants (no `data:`, no `&amp;amp;`, no
-`linear-gradient`).
-**Effort: M** (4-6 tests, lean on `tests/fixtures/golden_day.json`).
+**Severity: Critical** · 1638 LOC, 36 top-level fns. Only `test_loss_reason_mix_html.py`
+exercises `_loss_reason_mix_html()` — one helper out of 36. The two entry
+points **`build_subject()` and `build_body()`** that produce the daily email
+to 10 recipients have NO direct tests. A typo in `_kpi_block_html`,
+`_pending_html`, `_carrier_block_html`, or `_winning_lanes_html` ships
+green. **What to add:** golden-output tests for `build_subject(golden_day,
+cfg)` + structural test on `build_body(...)` asserting subject ≤ 78 chars,
+KPI block + pending table present, and QC-042/044/045 invariants (no
+`data:`, no `&amp;amp;`, no `linear-gradient`). **Effort: M.**
 
-### Finding T-002 — `gen_dashboard.py` has 0% direct coverage; only the `hilmar.render` SIBLING is exercised
-**Severity: Critical** · `scripts/gen_dashboard.py` (1026 LOC, ~10 fns)
-`tests/test_pipeline.py::test_render_dashboard_produces_nonempty_html`
-calls `hilmar.render.render_dashboard` (src tree) — the test name suggests
-dashboard coverage but the actual production renderer (the one the Cloud
-PC runs) is `scripts/gen_dashboard.py` and it's untouched. Same drift risk
-as QC-040's `core.py` pair, with no QC check enforcing it.
-**What to add:** a single smoke test that imports `scripts/gen_dashboard.py`
-via `importlib.util.spec_from_file_location`, calls `render(cfg, golden_day)`,
-and asserts (a) HTML > 5 KB, (b) contains the 4 KPI tile values from the
-fixture, (c) no `linear-gradient` in `<style>` blocks (QC-045), (d) no
-`data:` URIs (QC-042).
-**Effort: S** (one test, golden fixture already in tree).
+### Finding T-002 — `gen_dashboard.py` 0% coverage; only the `hilmar.render` SIBLING is exercised
+**Severity: Critical** · 1026 LOC. `test_pipeline.py::test_render_dashboard_produces_nonempty_html`
+calls `hilmar.render.render_dashboard` (src tree), not the production
+`scripts/gen_dashboard.py`. Same drift risk as QC-040's `core.py` pair, with
+no QC enforcing it. **What to add:** smoke test via `importlib.util`
+calling `render(cfg, golden_day)`; assert HTML > 5 KB, KPI values present,
+QC-045 + QC-042 invariants hold. **Effort: S.**
 
-### Finding T-003 — `gen_pdf.py` has 0% coverage; PDF generation untested for `scripts/` tree
-**Severity: Critical** · `scripts/gen_pdf.py` (599 LOC, 14 fns)
-Same pattern as T-002. `test_pipeline.py::test_render_pdf_produces_nonempty_pdf`
-covers `hilmar.render.render_pdf` (src tree) not the production PDF.
-**What to add:** smoke test that builds the 6-page PDF from `golden_day`
-and asserts `out.stat().st_size > 30_000` + magic bytes `%PDF-` at start.
-Also lock the 6-page count via `len(PdfReader(out).pages) == 6` (using
-reportlab's own reader or `pypdf`).
-**Effort: S** (one test).
+### Finding T-003 — `gen_pdf.py` 0% coverage; PDF generation untested in `scripts/` tree
+**Severity: Critical** · 599 LOC. Same pattern as T-002 — only `hilmar.render`
+is exercised. **What to add:** smoke test building the 6-page PDF from
+`golden_day`, asserting `%PDF-` magic + size > 30 KB + 6 pages.
+**Effort: S.**
 
-### Finding T-004 — `outlook_send.py` has 0% coverage; QC-022 distribution-list invariant has no DIRECT script test
-**Severity: Critical** · `scripts/outlook_send.py` (383 LOC, 11 fns)
-This is the module that sends the daily email. `_load_distribution_from_config`
-+ `cmd_daily` orchestrate the send. CLAUDE.md §3 rule #1 says NEVER send a
-test email to `full_list`; the only thing guarding this is QC-022 + a sent
-flag file. There is NO test of `_load_distribution_from_config()` ever
-returning `test_list` when an iteration-lock is set, no test of the
-sent-flag idempotency (`reports/sent-YYYY-MM-DD.flag`), no test that
-`cmd_nudge` cannot accidentally hit `full_list`.
-**What to add:** (a) test that `_load_distribution_from_config()` honors
-an iteration-locked `full_list` (single mailbox = michael@idealx.us);
-(b) test that `cmd_daily` skips when the sent flag exists; (c) test that
-attachments larger than the Graph limit raise (mirror
-`test_graph_client.py::test_send_attachment_too_large_raises`).
-**Effort: M** (3-4 tests, monkeypatch the MSAL + `requests` calls).
+### Finding T-004 — `outlook_send.py` 0% coverage; the QC-022 distribution invariant has no direct test
+**Severity: Critical** · 383 LOC. The module that actually sends the daily
+email. CLAUDE.md §3 rule #1 says NEVER test-fire to `full_list`; the only
+guard is QC-022 + a sent-flag file. No test of
+`_load_distribution_from_config()` honoring iteration-lock, no test of
+`cmd_daily` sent-flag idempotency, no test that `cmd_nudge` cannot hit
+`full_list`. **What to add:** 3-4 tests with `requests`/MSAL monkeypatched
+covering the iteration-lock, the sent-flag short-circuit, and the
+attachment-too-large path. **Effort: M.**
 
 ### Finding T-005 — `patch_carriers.py` (Step 5, 4-pass enrichment) has 0% coverage
 **Severity: Critical** · 799 LOC. Backfills carrier/rate/ETD/ERD from email
@@ -170,23 +150,14 @@ tractable. **Effort: M.**
 ## 3. Flaky test risks
 
 ### Finding F-001 — 24 call sites of `datetime.now(...)` without `freezegun`
-**Severity: Medium** · `tests/test_qc.py:598,754`, `test_teams_alert_qc049.py:38..108` (×6),
+**Severity: Medium** · `test_qc.py:598,754`, `test_teams_alert_qc049.py:38..108` (×6),
 `test_sentry_stale_auto_resolve.py:38..86` (×5), `test_auto_chase_pending.py:37,49,70`,
-`test_loss_reason_mix_html.py:43`, `test_ingest.py:861..1334` (×8)
-The pattern is `datetime.now(UTC) - timedelta(days=N)` to fabricate aged
-rows. These pass today but will silently misclassify the moment the
-system clock crosses a midnight/weekend boundary mid-run. Specifically:
-- `test_teams_alert_qc049.py::test_old_unconfirmed_win_alerts` uses
-  `days=14` against an aging threshold that's currently `>10 days` — a
-  4-day cushion is plenty, but `test_alert_dedup_within_same_week` uses
-  `days=3` against a 1-week dedup window. If a fire happens on a Sunday
-  at 23:59 UTC, the 3-day-ago row crosses week boundaries differently.
-- `test_qc.py::test_..._aged_ts` uses `hours=120` (5 days) — same risk.
-- `test_loss_reason_mix_html.py::_ts(40)` is fine; `_ts(2)` is at risk if
-  the 30-day window boundary shifts.
-**What to add:** install `freezegun` (it's not a dep yet), add a session
-fixture in `conftest.py` that freezes to `2026-06-02T15:00:00Z` for tests
-that opt in via a marker. Migrate the 24 call sites.
+`test_loss_reason_mix_html.py:43`, `test_ingest.py:861..1334` (×8). Pattern
+is `now - timedelta(days=N)` to fabricate aged rows. Pass today but at
+risk near window boundaries — e.g. `test_alert_dedup_within_same_week`
+uses `days=3` against a 1-week dedup window; a Sunday 23:59 UTC fire
+crosses week boundaries differently. `freezegun` is not yet a dep — add
+it, freeze to a fixed `2026-06-02T15:00:00Z` in `conftest.py` via marker.
 **Effort: M.**
 
 ### Finding F-002 — `tests/test_run_audit_tests.py` does NOT monkeypatch `PYTEST_OUTPUT`
@@ -379,20 +350,13 @@ fix today (removal of the stale dir + the `_test_root()` Cloud-PC layout
 detector in `run_audit_tests.py`) addresses the immediate failure.
 
 ### Finding C-001 — `pyproject.toml` has NO `norecursedirs` and NO `collect_ignore`
-**Severity: High** · `pyproject.toml:54-78`
-Current `[tool.pytest.ini_options]` block is:
-```toml
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-pythonpath = ["."]
-addopts = "-ra --strict-markers --cov=hilmar --cov-report=term-missing --cov-fail-under=90"
-```
-`testpaths = ["tests"]` is a hint, not a hard restriction — pytest can
-still collect from `rootdir` if invoked with a different cwd (which is
-exactly what happened on the Cloud PC). **What to add:** explicit
-`norecursedirs = ["plugin-build", "deploy", "deploy_legacy", "reports", "data-backups", "secrets", "src", "scripts", "docs", "assets", ".github", ".devcontainer", "*hilmar-tracker*"]`.
-**Effort: XS.** This is a 3-line change and would have prevented the
-2026-05-30→06-01 fire entirely.
+**Severity: High** · `pyproject.toml:54-78`. `testpaths = ["tests"]` is
+a hint not a hard restriction — pytest can still collect from `rootdir`
+if invoked with a different cwd (which is exactly what happened on the
+Cloud PC). **What to add:** explicit `norecursedirs = ["plugin-build",
+"deploy", "deploy_legacy", "reports", "data-backups", "secrets", "docs",
+"assets", ".github", ".devcontainer", "*hilmar-tracker*"]`. **Effort: XS.**
+A 1-line change that would have prevented the 22-collection-error fire.
 
 ### Finding C-002 — No `conftest.py` near root to anchor pytest's rootdir
 **Severity: Medium**
