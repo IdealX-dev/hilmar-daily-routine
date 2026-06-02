@@ -733,6 +733,105 @@ def phase_5_summaries(log: Log, data: dict):
     log.fix("Summary, lane_summary, carrier_summary rebuilt from raw data" + (" (drift detected)" if drift else ""))
 
 
+def _expected_report_date(now_et_date):
+    """Mirror of gen_email._report_date: previous business day from
+    ``now_et_date``. Mon → Fri (3 days back), Sat → Fri (1 day),
+    Sun → Fri (2 days), Tue–Fri → yesterday (1 day)."""
+    from datetime import timedelta
+    wd = now_et_date.weekday()    # Mon=0..Sun=6
+    if wd == 0:    delta = 3
+    elif wd == 5:  delta = 1
+    elif wd == 6:  delta = 2
+    else:          delta = 1
+    return now_et_date - timedelta(days=delta)
+
+
+def _check_email_subject_date(log, subj_path, now_et=None):
+    """QC-011 helper, extracted 2026-06-02 for testability.
+
+    Distinguishes four failure modes of the email-subject vs expected
+    business-day check:
+
+      1. File absent → WARN (skip; no signal either way)
+      2. File present, date matches expected → OK
+      3. File present, date == today (regression — should be yesterday) → ERROR
+      4. File present, date != expected AND file mtime > 26h old →
+         WARN (stale subject from prior fire — gen_email didn't run today;
+         pair with QC-021's wrapper-incomplete signal)
+      5. File present, date != expected AND file mtime ≤ 26h →
+         WARN (real gen_email._report_date logic bug)
+
+    The 2026-06-02 fix split (4) out from the original behavior where
+    every mismatch was reported the same way as a logic bug, hiding
+    the actual root cause (the wrapper aborted before gen_email).
+
+    Args:
+        log: the qc.Log instance to write findings to.
+        subj_path: pathlib.Path to reports/email-subject.txt.
+        now_et: an optional aware datetime in ET for testability;
+            defaults to wall-clock now.
+    """
+    try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        import re as _re
+        if now_et is None:
+            now_et = _dt.now(core.ET)
+        _now_et = now_et.date()
+        _expected = _expected_report_date(_now_et)
+        if not subj_path.exists():
+            log.warn("QC-011: reports/email-subject.txt not present — skip date check")
+            return
+        # Freshness check is paired with the date-mismatch check below.
+        # 26h covers normal weekday fire-to-fire gap + small grace.
+        _subj_mtime = _dt.fromtimestamp(subj_path.stat().st_mtime, tz=_tz.utc)
+        _ref_now_utc = now_et.astimezone(_tz.utc)
+        _subj_age_h = (_ref_now_utc - _subj_mtime).total_seconds() / 3600
+        _subj = subj_path.read_text(encoding="utf-8").strip()
+        # Parse subject like 'Hilmar Ingredients — Daily Shipment Tracker Update (May 6, 2026)'
+        _m = _re.search(r"\(([A-Za-z]+)\s+(\d+),\s+(\d{4})\)", _subj)
+        if not _m:
+            log.warn(f"QC-011: could not parse date from subject: {_subj!r}")
+            return
+        _mo, _day, _yr = _m.group(1), int(_m.group(2)), int(_m.group(3))
+        try:
+            _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%b %d %Y").date()
+        except ValueError:
+            try:
+                _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%B %d %Y").date()
+            except ValueError:
+                _parsed = None
+        if _parsed is None:
+            log.warn(f"QC-011: subject month not recognized: {_mo!r}")
+        elif _parsed == _expected:
+            log.ok(f"QC-011: email subject date {_parsed.isoformat()} == expected previous biz day")
+        elif _parsed == _now_et:
+            log.error(
+                f"QC-011: email subject date is TODAY ({_parsed.isoformat()}) but should be "
+                f"previous biz day ({_expected.isoformat()}). gen_email.py regressed — "
+                f"Lonny's PT office isn't open at 10 AM ET fire."
+            )
+        elif _subj_age_h > 26:
+            # File predates today's fire window — gen_email didn't run today.
+            # Real root cause: pipeline didn't complete (likely paired with QC-021).
+            log.warn(
+                f"QC-011: email-subject.txt is {_subj_age_h:.1f}h stale "
+                f"(mtime {_subj_mtime.date().isoformat()}). subject date "
+                f"{_parsed.isoformat()} matches a PRIOR fire's report-day, not today's "
+                f"expected {_expected.isoformat()}. Today's gen_email likely never ran "
+                f"— check QC-021 + the run log for the wrapper-incomplete cause."
+            )
+        else:
+            # File is fresh but date is wrong — real logic bug.
+            log.warn(
+                f"QC-011: email subject date {_parsed.isoformat()} != expected "
+                f"{_expected.isoformat()} (off by {(_parsed - _expected).days} days) — "
+                f"subject file is fresh ({_subj_age_h:.1f}h old) so this is a real "
+                f"gen_email._report_date logic bug, not a stale-file artifact."
+            )
+    except Exception as _e:
+        log.warn(f"QC-011: check failed with exception: {_e}")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Phase 6 — cross-check rules
 # ─────────────────────────────────────────────────────────────────────
@@ -907,60 +1006,14 @@ def phase_6_rules(log: Log, data: dict):
     else:
         log.ok("QC-010: No preserved-from-prior WINs (fresh stage covers everything)")
 
-    # QC-011: email subject date == previous business day
-    # Per Michael 2026-05-07 'yesterday kpi run' — the daily email fires at
-    # 10 AM ET, before Lonny's California (PT) office opens. The subject
-    # line and KPIs MUST report on the previous full business day, not
-    # literal today. This QC parses email-subject.txt and confirms the
-    # date in the subject matches the expected report date. Catches
-    # regressions if gen_email.py drifts back to using today's date.
-    try:
-        from datetime import datetime as _dt, timedelta as _td
-        import re as _re
-        # Compute expected report date (mirror of _report_date in gen_email.py)
-        _now_et = _dt.now(core.ET).date()
-        _wd = _now_et.weekday()  # Mon=0..Sun=6
-        if _wd == 0:    _delta = 3   # Mon → Fri
-        elif _wd == 5:  _delta = 1   # Sat → Fri
-        elif _wd == 6:  _delta = 2   # Sun → Fri
-        else:           _delta = 1   # Tue–Fri → yesterday
-        _expected = _now_et - _td(days=_delta)
-        # Parse subject like 'Hilmar Ingredients — Daily Shipment Tracker Update (May 6, 2026)'
-        _subj_path = Path(__file__).resolve().parent.parent / "reports" / "email-subject.txt"
-        if not _subj_path.exists():
-            log.warn("QC-011: reports/email-subject.txt not present — skip date check")
-        else:
-            _subj = _subj_path.read_text(encoding="utf-8").strip()
-            _m = _re.search(r"\(([A-Za-z]+)\s+(\d+),\s+(\d{4})\)", _subj)
-            if not _m:
-                log.warn(f"QC-011: could not parse date from subject: {_subj!r}")
-            else:
-                _mo, _day, _yr = _m.group(1), int(_m.group(2)), int(_m.group(3))
-                # Parse month name to number
-                try:
-                    _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%b %d %Y").date()
-                except ValueError:
-                    try:
-                        _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%B %d %Y").date()
-                    except ValueError:
-                        _parsed = None
-                if _parsed is None:
-                    log.warn(f"QC-011: subject month not recognized: {_mo!r}")
-                elif _parsed == _expected:
-                    log.ok(f"QC-011: email subject date {_parsed.isoformat()} == expected previous biz day")
-                elif _parsed == _now_et:
-                    log.error(
-                        f"QC-011: email subject date is TODAY ({_parsed.isoformat()}) but should be "
-                        f"previous biz day ({_expected.isoformat()}). gen_email.py regressed — "
-                        f"Lonny's PT office isn't open at 10 AM ET fire."
-                    )
-                else:
-                    log.warn(
-                        f"QC-011: email subject date {_parsed.isoformat()} != expected "
-                        f"{_expected.isoformat()} (off by {(_parsed - _expected).days} days)"
-                    )
-    except Exception as _e:
-        log.warn(f"QC-011: check failed with exception: {_e}")
+    # QC-011: email subject date == previous business day.
+    # Logic extracted to _check_email_subject_date for testability — see
+    # the helper's docstring for the failure-mode taxonomy.
+    _check_email_subject_date(
+        log,
+        Path(__file__).resolve().parent.parent / "reports" / "email-subject.txt",
+        now_et=None,
+    )
 
     # QC-012: weekly bucket labels are Mon–Fri (5 weekdays), not Mon–Sun
     # Per Michael 2026-05-07: 'the dating on the weekly should be based on
