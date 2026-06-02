@@ -1268,7 +1268,11 @@ def finalize_status(
     which greps the source for the forbidden pattern.
     """
     now = now or C.now_utc()
-    for r in requests:
+    # Materialize so we can pre-compute lane winning medians for the
+    # PRICE-vs-UNDIFFERENTIATED determination (decide_status 2026-06-02).
+    rows = list(requests)
+    lane_winning_median = C.compute_lane_winning_medians(rows)
+    for r in rows:
         decision = C.decide_status(
             has_send=r.get("has_send", False),
             mdolx_ref=r.get("mdolx_ref"),
@@ -1278,6 +1282,9 @@ def finalize_status(
             send_signal_events=r.get("send_signal_events"),
             mdolx_refs_all=r.get("mdolx_refs_all"),
             now=now,
+            ol_rate=r.get("ol_rate"),
+            lane=r.get("lane"),
+            lane_winning_median=lane_winning_median,
         )
         # record_transition only mutates if status actually changed; the
         # assignment inside record_transition uses a variable, not a literal,

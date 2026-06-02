@@ -1378,13 +1378,20 @@ def _loss_reason_mix_html(data) -> str:
         return ""
 
     # Reason → display label + category color (Hilmar palette).
+    # UNDIFFERENTIATED gets a neutral slate color (NOT Hilmar navy) — by
+    # design those losses don't have a concrete signal to blame, so the
+    # bar shouldn't look "actionable" in the same visual register as
+    # PRICE or ETD_MISS. The label explicitly names this as the gap
+    # ("needs investigation") so Michael's eye lands on it as a research
+    # signal rather than a tag to push carriers on.
     _REASON_META = {
         "PRICE":             ("Price (rate-driven)",      "#0a2350"),   # Hilmar navy
         "ETD_MISS":          ("ETD missed",               "#1e40af"),   # blue
         "NO_RESPONSE":       ("OL didn't respond",        "#7c2d12"),   # rust
         "RESPONSE_NO_RATE":  ("OL acked but no rate",     "#9a3412"),
         "SEND_NO_BOOKING":   ("Send w/o MDOLX booking",   "#b45309"),   # amber-deep
-        "QUOTED_NOT_BOOKED": ("Quoted, generic no-fit",   "#475569"),   # slate
+        "UNDIFFERENTIATED":  ("Undifferentiated — needs investigation", "#64748b"),  # slate-500
+        "QUOTED_NOT_BOOKED": ("Quoted, generic no-fit",   "#475569"),   # slate-600
         "COVERED":           ("Lonny covered w/ competitor", "#5b21b6"),
         "DRAFT_ONLY":        ("Booking draft-only",       "#475569"),
         "OTHER":             ("Other",                    "#94a3b8"),

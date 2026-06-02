@@ -480,6 +480,14 @@ def phase_3_entries(log: Log, data: dict):
     # Load source bodies once for healers that need them (containers cleanup,
     # rate backfill). Safe if file is missing — healers gracefully skip.
     bodies_idx = _load_bodies_index()
+
+    # Compute lane winning medians ONCE before the per-row decide loop.
+    # decide_status uses this to determine PRICE vs UNDIFFERENTIATED on
+    # Q&L rows — see core.decide_status docstring (2026-06-02 rewrite).
+    # Computed BEFORE the loop because each row's decision is per-row pure
+    # but needs book-wide WIN-rate context for the gap calc.
+    lane_winning_median = core.compute_lane_winning_medians(requests)
+
     for i, r in enumerate(requests):
         rid_label = f"[{i}] {r.get('request_date') or r.get('date','?')} {r.get('destination','?')}"
         # Hygiene healers — run on every record regardless of status/lock.
@@ -597,6 +605,9 @@ def phase_3_entries(log: Log, data: dict):
             response_timestamp=r.get("response_timestamp"),
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
+            ol_rate=r.get("ol_rate"),
+            lane=r.get("lane"),
+            lane_winning_median=lane_winning_median,
         )
         if prior_status != decision.status:
             core.record_transition(r, decision.status, decision.reason_detail)

@@ -364,8 +364,30 @@ def test_decide_status_q_and_l_etd_miss_when_etd_fit_large():
     assert d.loss_reason == "ETD_MISS"
 
 
-def test_decide_status_q_and_l_price_when_etd_fit_ok():
-    """Quoted past 24h, no booking, ETD fit OK → Q&L PRICE."""
+def test_decide_status_q_and_l_price_when_rate_above_lane_median():
+    """Quoted past 48h, ETD OK, ol_rate clearly above lane winning median
+    → Q&L PRICE (2026-06-02 smarter-PRICE rewrite: PRICE now requires a
+    concrete rate gap rather than firing as the catch-all fallback)."""
+    now = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
+    d = core.decide_status(
+        has_send=False,
+        mdolx_ref=None,
+        response_timestamp="2026-04-13T05:00:00Z",
+        quoted=True,
+        etd_fit_days=1,
+        ol_rate=4000,
+        lane="Oakland → Yokohama",
+        lane_winning_median={"Oakland → Yokohama": 3500.0},
+        now=now,
+    )
+    assert d.status == "Q&L"
+    assert d.loss_reason == "PRICE"
+
+
+def test_decide_status_q_and_l_undifferentiated_when_etd_ok_but_no_rate_signal():
+    """Quoted past 48h, ETD OK, but no lane median / no ol_rate to
+    benchmark against → Q&L UNDIFFERENTIATED. Pre-2026-06-02 this used
+    to be a false-positive PRICE that drove the 94%-rate-driven readout."""
     now = datetime(2026, 4, 15, 12, 0, tzinfo=timezone.utc)
     d = core.decide_status(
         has_send=False,
@@ -376,7 +398,7 @@ def test_decide_status_q_and_l_price_when_etd_fit_ok():
         now=now,
     )
     assert d.status == "Q&L"
-    assert d.loss_reason == "PRICE"
+    assert d.loss_reason == "UNDIFFERENTIATED"
 
 
 def test_decide_status_q_and_l_quoted_not_booked_when_no_etd_signal():
