@@ -591,12 +591,20 @@ def phase_3_entries(log: Log, data: dict):
                 _reclassify_covered(log, rid_label, r)
             continue
         # Honor explicit lonny_covered flag (Lonny replied "Covered" = lost to competitor)
+        # 2026-06-02 (track 03 finding C-2): also set quoted=True. COVERED
+        # is the canonical signal of a real lost contest — without
+        # quoted=True the row bucketed as NQ by is_not_quoted() and got
+        # excluded from win-rate (denominator AND distorted by C-1 NQ-in-
+        # denom bug). Win rate was double-distorted on every email.
         if r.get("lonny_covered"):
             prior_status = r.get("status")
-            if prior_status != "LOSS" or r.get("loss_reason") != "COVERED":
+            prior_quoted = r.get("quoted")
+            if (prior_status != "LOSS" or r.get("loss_reason") != "COVERED"
+                    or prior_quoted is not True):
                 r["status"] = "LOSS"
                 r["loss_reason"] = "COVERED"
-                log.fix(f"{rid_label}: lonny_covered → LOSS/COVERED")
+                r["quoted"] = True
+                log.fix(f"{rid_label}: lonny_covered → LOSS/COVERED + quoted=True")
             continue
         prior_status = r.get("status")
         decision = core.decide_status(
@@ -2626,7 +2634,14 @@ def phase_6_rules(log: Log, data: dict):
         _q = _Counter()
         for r in requests:
             c = r.get("carrier_quoted") or r.get("carrier_won")
-            if c and (r.get("status") in ("WIN", "LOSS")) and (r.get("quoted") or r.get("status") == "WIN"):
+            # Count only rows where a carrier actually quoted (WINs +
+            # quoted-and-lost). 2026-06-02 (track 03 finding C-5): the
+            # prior check was `status in ("WIN", "LOSS") and (quoted or
+            # status==WIN)` — that EXCLUDED STRICT-form Q&L entirely
+            # (status=="Q&L" not "LOSS"), so today's 66% concentration
+            # was computed from WIN rows only. Now uses the storage-
+            # agnostic display_status / is_quoted_and_lost helpers.
+            if c and (r.get("status") == "WIN" or core.is_quoted_and_lost(r)):
                 _q[c] += 1
         _tot = sum(_q.values())
         if _tot > 20:

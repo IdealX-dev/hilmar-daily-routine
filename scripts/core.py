@@ -209,8 +209,11 @@ def aggregate_trade_regions(requests: list[dict]) -> dict[str, dict]:
             m["pending"] += 1
     for m in out.values():
         m["destinations"] = sorted(m["destinations"])
-        decided = m["wins"] + m["quoted_lost"] + m["not_quoted"]
-        m["win_rate"] = round(m["wins"] / decided * 100, 1) if decided else 0.0
+        # Per-trade-region win_rate also excludes NQ from the denominator
+        # (CLAUDE.md §6 — NQ is "no contest happened"). Same bug fix as
+        # aggregate_summary's headline KPI (track 03 finding C-1).
+        win_rate_denom = m["wins"] + m["quoted_lost"]
+        m["win_rate"] = round(m["wins"] / win_rate_denom * 100, 1) if win_rate_denom else 0.0
     return out
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
@@ -455,6 +458,57 @@ def to_pt(dt: datetime | None) -> datetime | None:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Status-form helpers — work against EITHER LEGACY (WIN/LOSS/PENDING
+# with `quoted` disambiguator) OR STRICT (WIN/Q&L/NQ/PENDING) storage.
+# Ported from src/hilmar/core.py 2026-06-02 so QC-017 (and any other
+# cross-form check) doesn't have to inline the same logic with subtle
+# drift risk. tests/test_core_parity.py locks parity.
+# ─────────────────────────────────────────────────────────────────────
+
+def display_status(r: dict) -> str:
+    """Return the 4-state DISPLAY label regardless of storage form.
+
+    A row written by scripts/ingest.py (3-state LEGACY) and a row
+    written by src/hilmar/ingest.py (4-state STRICT) both return the
+    same label after this normalization:
+      WIN   → WIN
+      LOSS + quoted=True  → Q&L      (storage was LEGACY)
+      LOSS + quoted=False → NQ       (storage was LEGACY)
+      Q&L   → Q&L                    (storage was STRICT)
+      NQ    → NQ                     (storage was STRICT)
+      PENDING → PENDING
+    """
+    s = (r or {}).get("status")
+    if s == "LOSS":
+        return "Q&L" if (r or {}).get("quoted") else "NQ"
+    return s
+
+
+def is_quoted_and_lost(r: dict) -> bool:
+    """True if row is quoted-and-lost in EITHER classifier form."""
+    s = (r or {}).get("status")
+    if s == "Q&L":
+        return True
+    return s == "LOSS" and bool((r or {}).get("quoted"))
+
+
+def is_not_quoted(r: dict) -> bool:
+    """True if row is not-quoted in EITHER classifier form."""
+    s = (r or {}).get("status")
+    if s == "NQ":
+        return True
+    return s == "LOSS" and not (r or {}).get("quoted")
+
+
+def is_loss(r: dict) -> bool:
+    """True if row is any kind of loss (quoted-and-lost OR not-quoted).
+    Covers both LEGACY LOSS and STRICT Q&L/NQ rows.
+    """
+    s = (r or {}).get("status")
+    return s == "LOSS" or s == "Q&L" or s == "NQ"
 
 
 def fmt_pt(dt: datetime | None, with_date: bool = True) -> str:
@@ -893,7 +947,14 @@ def aggregate_summary(requests: list[dict]) -> dict:
     nq = [r for r in losses if not r.get("quoted")]
     pending = [r for r in requests if r.get("status") == "PENDING"]
 
-    total_decided = len(wins) + len(ql) + len(nq)
+    # win_rate per CLAUDE.md §6 = Wins / (Wins + Q&L). NQ is "no contest
+    # happened" (NO_RESPONSE / RESPONSE_NO_RATE) and must be EXCLUDED from
+    # the denominator — otherwise a busy day with OL silent on many quotes
+    # silently suppresses the win-rate number on the daily client email.
+    # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
+    # NQ rate is reported as its own separate metric ("not_quoted").
+    win_rate_denom = len(wins) + len(ql)
+    total_decided = win_rate_denom + len(nq)   # legacy alias retained
     total = len(requests)
     total_quoted = len(wins) + len(ql) + len(pending)
 
@@ -911,7 +972,7 @@ def aggregate_summary(requests: list[dict]) -> dict:
         "quoted_lost": len(ql),
         "not_quoted": len(nq),
         "pending_hilmar": len(pending),
-        "win_rate": round(len(wins) / total_decided * 100, 1) if total_decided else 0.0,
+        "win_rate": round(len(wins) / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
         "quote_rate": round(total_quoted / total * 100, 1) if total else 0.0,
         "teu_requested": _sum(r.get("teu_requested", 0) for r in requests),
         "teu_won": _sum(r.get("teu_won", 0) or r.get("teu_requested", 0) for r in wins),
