@@ -402,10 +402,33 @@ def _build_lane_summary(rows: list[dict]) -> dict:
     return out
 
 
+def _ensure_schema_doc(root: Path) -> bool:
+    """Bootstrap SHARED/client_intelligence/SCHEMA.md from the in-repo source.
+
+    QC-031 watches for this file. It's the contract cross-project integrators
+    read to consume the shared store. The canonical copy lives at
+    docs/SHARED_CLIENT_INTELLIGENCE_SCHEMA.md in this repo; we mirror it into
+    the shared folder so any project pointed at the shared folder finds it
+    without a separate repo clone.
+
+    Returns True if the file was created or refreshed, False if unchanged.
+    """
+    src = HILMAR_ROOT / "docs" / "SHARED_CLIENT_INTELLIGENCE_SCHEMA.md"
+    dst = root / "SCHEMA.md"
+    if not src.exists():
+        return False
+    src_bytes = src.read_bytes()
+    if dst.exists() and dst.read_bytes() == src_bytes:
+        return False
+    dst.write_bytes(src_bytes)
+    return True
+
+
 def _update_global_meta():
     """Update SHARED/client_intelligence/_meta.json with the registry of
     known clients and their freshness."""
     root = _shared_root()
+    _ensure_schema_doc(root)
     clients = {}
     for cdir in root.iterdir():
         if not cdir.is_dir() or cdir.name.startswith("_"):

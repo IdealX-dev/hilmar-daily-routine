@@ -189,6 +189,54 @@ def test_append_jsonl_returns_count_of_appended():
         assert n2 == 1  # 'a' deduped
 
 
+# ─────────────────────────────────────────────────────────────────────
+# _ensure_schema_doc — QC-031 bootstrap
+# ─────────────────────────────────────────────────────────────────────
+
+def test_ensure_schema_doc_creates_missing_file():
+    """First export into an empty SHARED dir must drop SCHEMA.md alongside
+    _meta.json so QC-031 stops warning."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        created = SI._ensure_schema_doc(root)
+        assert created is True
+        assert (root / "SCHEMA.md").exists()
+        # And it's the same bytes as the in-repo source — not a stub
+        src = SI.HILMAR_ROOT / "docs" / "SHARED_CLIENT_INTELLIGENCE_SCHEMA.md"
+        assert (root / "SCHEMA.md").read_bytes() == src.read_bytes()
+
+
+def test_ensure_schema_doc_is_idempotent_when_unchanged():
+    """Re-running with identical content must report no-op so we don't churn
+    file mtimes on the OneDrive sync target every fire."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        assert SI._ensure_schema_doc(root) is True
+        assert SI._ensure_schema_doc(root) is False
+        assert SI._ensure_schema_doc(root) is False
+
+
+def test_ensure_schema_doc_refreshes_when_source_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "SCHEMA.md").write_bytes(b"# stale content from older bootstrap\n")
+        # Source differs; refresh must overwrite
+        assert SI._ensure_schema_doc(root) is True
+        src = SI.HILMAR_ROOT / "docs" / "SHARED_CLIENT_INTELLIGENCE_SCHEMA.md"
+        assert (root / "SCHEMA.md").read_bytes() == src.read_bytes()
+
+
+def test_ensure_schema_doc_silent_when_source_missing(monkeypatch):
+    """If the in-repo source ever disappears (renamed / deleted), don't
+    crash the export — just return False so QC-031 will keep warning."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fake_root = Path(tmp) / "no-repo-here"
+        monkeypatch.setattr(SI, "HILMAR_ROOT", fake_root)
+        assert SI._ensure_schema_doc(root) is False
+        assert not (root / "SCHEMA.md").exists()
+
+
 if __name__ == "__main__":
     import inspect
     mod = sys.modules[__name__]
