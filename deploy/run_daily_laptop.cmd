@@ -30,6 +30,18 @@ set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 set LOG=%ROOT%\reports\run-log.txt
 
+REM Never let git block the daily fire on an interactive credential prompt.
+REM Root cause of the 2026-06-03 dead fire (QC-021 "wrapper started but
+REM pipeline never completed — died before the refresh_stage echo"): the
+REM Step 0 `git pull` hit an auth/credential prompt and hung until Task
+REM Scheduler killed the wrapper — so NO email shipped. These env vars
+REM convert a credential prompt into an immediate non-zero exit, which the
+REM unguarded pull tolerates (control flow falls through to refresh_stage).
+REM Deploy must never be able to take down the customer email.
+set GIT_TERMINAL_PROMPT=0
+set GCM_INTERACTIVE=Never
+set GIT_ASKPASS=echo
+
 REM Python discovery: try several candidate paths, pick the first that exists.
 REM Required because each Windows machine installs Python in different paths
 REM (per-user vs system, py launcher vs explicit). Cloud PC fire 2026-05-07
@@ -75,6 +87,14 @@ echo --- git_pull --- >> "%LOG%"
 if exist "%ROOT%\hilmar-daily-routine\.git" (
   pushd "%ROOT%\hilmar-daily-routine"
   git pull --quiet origin main >> "%LOG%" 2>&1
+  REM Surface a pull failure loudly but DON'T bail — a stale checkout still
+  REM produces a (slightly old) email, which beats no email at all. The
+  REM deployment-sha.txt below + QC-053 will report BEHIND>0 so the audit
+  REM flags the staleness. With GIT_TERMINAL_PROMPT=0 set above, an auth
+  REM failure returns here in ~1s instead of hanging the whole fire.
+  if errorlevel 1 (
+    echo GIT_PULL FAILED rc=!ERRORLEVEL! — running on existing checkout ^(see QC-053 BEHIND^) >> "%LOG%"
+  )
   REM Deployment marker for QC-053 (added 2026-05-28 after a feature
   REM branch sat unmerged for 5 days while the daily audit reported the
   REM SAME issues every morning). Captures HEAD SHA + how many commits

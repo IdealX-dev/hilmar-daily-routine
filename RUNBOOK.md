@@ -205,6 +205,18 @@ deploy\run_daily_laptop.cmd
 
 ## Routine tasks
 
+### Push freshly-merged code to production NOW (don't wait for 10 AM)
+The daily wrapper auto-pulls `main` at the start of each 10 AM ET fire
+(Step 0), so production self-updates every morning — you normally never
+need to sync by hand. To go live *immediately* after a PR merges, run:
+```
+deploy\sync_now.cmd
+```
+Double-click it or run from a shell. It does git pull + xcopy scripts to
+the live PROJECT HILMAR folder — **no pipeline, no email**. Exit 0 =
+synced, 3 = git pull failed (auth/network, production left on prior code).
+Replaces the old manual `cd … & git pull & xcopy …` dance.
+
 ### Re-auth MSAL (every ~80 days, before QC-023 errors)
 ```
 python scripts/outlook_send.py auth
