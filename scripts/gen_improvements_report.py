@@ -216,19 +216,30 @@ def collect_red_flags(data, qc, drift):
             ),
         })
 
-    # 3. Pending past 24h
+    # 3. Pending past the business-stale window. Uses core.is_business_stale
+    # — the SAME predicate the state machine uses to age PENDING → Q&L — so
+    # the audit and the data agree. A wall-clock >24h check (the prior
+    # implementation) was firing on rows the state machine had correctly
+    # left in PENDING (Friday quote, still within the Friday→Tuesday EOD
+    # carve-out per Michael 2026-06-04). If the state machine says PENDING,
+    # the audit must not contradict it.
     pending = [r for r in requests if r.get("status") == "PENDING"]
+    now = datetime.now(timezone.utc)
     overdue = []
     for r in pending:
-        h = _hours_since(r.get("response_timestamp"))
-        if h is not None and h > 24:
+        resp_dt = core.parse_iso(r.get("response_timestamp"))
+        if resp_dt is None:
+            continue
+        if core.is_business_stale(resp_dt, now, hours=core.PENDING_WINDOW_HOURS):
+            h = (now - resp_dt).total_seconds() / 3600.0
             overdue.append((r, h))
     for r, h in overdue:
         flags.append({
             "level": "🔴",
-            "title": f"Pending past 24h: {r.get('request_id', '?')}",
+            "title": f"Pending past stale window: {r.get('request_id', '?')}",
             "detail": f"Lane {r.get('lane', '?')} | quoted {h:.1f}h ago | "
-                      f"Lonny hasn't responded — escalate or chase.",
+                      f"past the {core.PENDING_WINDOW_HOURS}h biz window "
+                      f"(weekend-aware) — Lonny hasn't responded.",
         })
 
     # 4. Drift FAIL
@@ -375,10 +386,25 @@ def collect_red_flags(data, qc, drift):
                 ),
             })
         else:
+            # Avoid duplicating QC checks that ALREADY have their own
+            # dedicated red flag earlier in this collector — the audit was
+            # rendering "Daily test/coverage routine FAILED" (step 4b above)
+            # AND a separate "QC-052 ERROR" row carrying the same string.
+            # The dedicated red flags carry richer detail (per-test excerpts,
+            # bucket counts) so prefer those; suppress the generic QC-line.
+            QC_DEDUPLICATED_BY_DEDICATED_FLAG = {
+                # QC-052 is the daily test/coverage check. Its dedicated
+                # red flag (step 4b) is much richer than the generic
+                # "QC-052 ERROR: <message>" expansion. Drop the generic
+                # one when the dedicated flag fired.
+                "QC-052": (test_res.get("status") == "FAIL"),
+            }
             shown = 0
             for check_id, msgs in grouped:
                 if shown >= 8:
                     break
+                if QC_DEDUPLICATED_BY_DEDICATED_FLAG.get(check_id):
+                    continue
                 count = len(msgs)
                 title = f"{check_id} ERROR" + (f" × {count}" if count > 1 else "")
                 preview = msgs[:3]

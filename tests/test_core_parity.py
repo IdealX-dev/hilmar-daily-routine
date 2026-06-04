@@ -120,7 +120,12 @@ ALLOWED_CROSS_FOLDER_DRIFT = {
 
 
 @pytest.mark.parametrize("name,expected", [
-    ("PENDING_WINDOW_HOURS", 48),
+    # 2026-06-04 — corrected from 48 back to 24 per Michael's restated rule
+    # ("if hilmar doesn't reply after 24 hours during biz week the deal is
+    # lost"). The 48 was a previous stabilization that drifted from the
+    # client-stated policy. Friday/weekend carve-out extended from Monday
+    # 18:00 ET to Tuesday 18:00 ET to match the "by Tuesday" half of the rule.
+    ("PENDING_WINDOW_HOURS", 24),
     ("RATE_TREND_THRESHOLD_PCT", 10),
     # 2026-06-02 — smarter PRICE classifier knobs. Locks the threshold
     # and minimum-wins requirement across trees.

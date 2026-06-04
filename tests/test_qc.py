@@ -652,16 +652,17 @@ def test_qc_007_does_not_fire_inside_business_window(monkeypatch, workspace):
     qc007_errors = [e for e in log.errors if "QC-007" in e]
     assert not qc007_errors, (
         f"QC-007 must NOT fire on Friday-quoted rows still inside the "
-        f"weekend-aware 48h biz window. Fired: {qc007_errors}"
+        f"weekend-aware window (deadline Tuesday 18:00 ET). "
+        f"Fired: {qc007_errors}"
     )
 
 
-def test_qc_007_fires_when_friday_window_expires_monday_evening(monkeypatch, workspace):
+def test_qc_007_fires_when_friday_window_expires_tuesday_evening(monkeypatch, workspace):
     """Defensive complement: a Friday-quoted row IS stale once we're past
-    Monday 18:00 ET. The Friday rule extends the window — it doesn't
-    eliminate it. QC-007 must fire here."""
+    Tuesday 18:00 ET. Per Michael 2026-06-04 — 'by Tuesday' deadline.
+    The Friday rule extends the window — it doesn't eliminate it."""
     from datetime import datetime, timedelta, timezone
-    fixed_now = datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)   # Mon 19:00 ET
+    fixed_now = datetime(2026, 6, 2, 23, 0, tzinfo=timezone.utc)   # Tue 19:00 ET
     fri_quote = datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc)  # Fri ~16:00 ET
     monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
 
@@ -685,22 +686,25 @@ def test_qc_007_fires_when_friday_window_expires_monday_evening(monkeypatch, wor
     qc.phase_6_rules(log, test_data)
     qc007_errors = [e for e in log.errors if "QC-007" in e]
     assert qc007_errors, (
-        "QC-007 must fire on Friday-quoted rows past Monday 18:00 ET "
+        "QC-007 must fire on Friday-quoted rows past Tuesday 18:00 ET "
         "(weekend-aware window has elapsed)."
     )
 
 
 @pytest.mark.parametrize("quote_iso,now_iso,should_fire", [
-    # Normal weekday: quoted Tue 8 AM ET, viewed Thu 9 AM (49h biz → STALE)
+    # Normal weekday: quoted Tue 8 AM ET, viewed Thu 9 AM (49h → STALE @ 24h)
     ("2026-04-21T12:00:00Z", "2026-04-23T13:00:00Z", True),
-    # Normal weekday: quoted Tue 8 AM, viewed Wed 11 AM (27h → INSIDE 48h)
-    ("2026-04-21T12:00:00Z", "2026-04-22T15:00:00Z", False),
-    # Friday/weekend rule: Fri 4 PM ET, viewed Mon 10 AM (66h wall) → INSIDE
-    ("2026-04-24T20:00:00Z", "2026-04-27T14:00:00Z", False),
-    # Friday/weekend rule: Fri 4 PM ET, viewed Mon 7 PM (75h wall) → STALE
-    ("2026-04-24T20:00:00Z", "2026-04-27T23:00:00Z", True),
-    # Saturday quote: Sat 10 AM ET → Mon 18 ET deadline; viewed Mon 17 ET → INSIDE
-    ("2026-04-25T14:00:00Z", "2026-04-27T21:00:00Z", False),
+    # Normal weekday: quoted Tue 8 AM, viewed Wed 11 AM (27h → STALE @ 24h)
+    ("2026-04-21T12:00:00Z", "2026-04-22T15:00:00Z", True),
+    # Normal weekday: quoted Tue 8 AM, viewed Tue 11 AM (3h → INSIDE)
+    ("2026-04-21T12:00:00Z", "2026-04-21T15:00:00Z", False),
+    # Friday/weekend rule: Fri 4 PM ET, viewed Mon 7 PM (75h wall) → INSIDE
+    # because new deadline is Tuesday 18:00 ET (Michael 2026-06-04)
+    ("2026-04-24T20:00:00Z", "2026-04-27T23:00:00Z", False),
+    # Friday/weekend rule: Fri 4 PM ET, viewed Tue 7 PM (99h wall) → STALE
+    ("2026-04-24T20:00:00Z", "2026-04-28T23:00:00Z", True),
+    # Saturday quote: Sat 10 AM ET → Tue 18 ET deadline; viewed Tue 17 ET → INSIDE
+    ("2026-04-25T14:00:00Z", "2026-04-28T21:00:00Z", False),
 ])
 def test_qc_007_matches_decide_status_business_stale(
     monkeypatch, workspace, quote_iso, now_iso, should_fire,
