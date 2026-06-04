@@ -217,14 +217,29 @@ def test_decide_status_friday_send_not_stale_monday_morning():
     assert d.loss_reason == "AWAITING_MDOLX"
 
 
-def test_decide_status_friday_send_stale_monday_evening():
-    """Same Friday send IS stale after Monday 18:00 ET."""
+def test_decide_status_friday_send_not_stale_monday_evening():
+    """Per Michael 2026-06-04 — Friday send is still PENDING Monday evening.
+    Lonny gets BOTH Mon and Tue to reply; deadline is Tuesday 18:00 ET."""
     fri_send = "2026-04-24T20:00:00Z"
     mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=timezone.utc)  # Mon 19:00 ET
     d = core.decide_status(
         has_send=True, mdolx_ref=None, response_timestamp=fri_send,
         quoted=True, etd_fit_days=0,
         send_signal_events=[{"at": fri_send}], now=mon_evening,
+    )
+    assert d.status == "PENDING", "Friday send still alive Monday evening"
+    assert d.loss_reason == "AWAITING_MDOLX"
+
+
+def test_decide_status_friday_send_stale_tuesday_evening():
+    """Friday send IS stale after Tuesday 18:00 ET ('by Tuesday' deadline
+    Michael restated 2026-06-04)."""
+    fri_send = "2026-04-24T20:00:00Z"
+    tue_evening = datetime(2026, 4, 28, 23, 0, tzinfo=timezone.utc)  # Tue 19:00 ET
+    d = core.decide_status(
+        has_send=True, mdolx_ref=None, response_timestamp=fri_send,
+        quoted=True, etd_fit_days=0,
+        send_signal_events=[{"at": fri_send}], now=tue_evening,
     )
     assert d.status == "Q&L"
     assert d.loss_reason == "SEND_NO_BOOKING"
@@ -233,9 +248,8 @@ def test_decide_status_friday_send_stale_monday_evening():
 def test_decide_status_quoted_friday_not_stale_monday_morning():
     """Quote-aging branch: a Friday-afternoon quote with no Send by
     Monday morning must STAY PENDING (Lonny's workday hasn't started
-    yet). Same weekend carve-out as send-signal aging — added 2026-05-30
-    to fix the production drift where scripts/ used 24h flat-clock and
-    flipped premature Q&L on Friday quotes."""
+    yet). Friday/weekend carve-out extends through Tuesday EOD per
+    Michael 2026-06-04."""
     fri_quote = "2026-04-24T20:00:00Z"   # Fri ~16:00 ET
     mon_morning = datetime(2026, 4, 27, 18, 0, tzinfo=timezone.utc)  # Mon 14:00 ET
     d = core.decide_status(
@@ -245,22 +259,22 @@ def test_decide_status_quoted_friday_not_stale_monday_morning():
     assert d.status == "PENDING", "Friday quote must survive the weekend"
 
 
-def test_decide_status_quoted_friday_stale_monday_evening():
-    """Same Friday quote IS stale after Monday 18:00 ET — falls through
-    to Q&L (or LEGACY LOSS in scripts/)."""
+def test_decide_status_quoted_friday_stale_tuesday_evening():
+    """Same Friday quote IS stale only after Tuesday 18:00 ET — falls
+    through to Q&L. Per Michael 2026-06-04 ('by Tuesday')."""
     fri_quote = "2026-04-24T20:00:00Z"
-    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=timezone.utc)  # Mon 19:00 ET
+    tue_evening = datetime(2026, 4, 28, 23, 0, tzinfo=timezone.utc)  # Tue 19:00 ET
     d = core.decide_status(
         has_send=False, mdolx_ref=None, response_timestamp=fri_quote,
-        quoted=True, etd_fit_days=0, now=mon_evening,
+        quoted=True, etd_fit_days=0, now=tue_evening,
     )
     # src/hilmar uses STRICT vocab Q&L; scripts uses LEGACY LOSS. This
     # test runs under src/hilmar so STRICT.
     assert d.status == "Q&L"
 
 
-def test_decide_status_quoted_wednesday_within_48h():
-    """Inside the 48h biz window on a normal weekday — stays PENDING."""
+def test_decide_status_quoted_wednesday_within_24h():
+    """Inside the 24h biz window on a normal weekday — stays PENDING."""
     wed_quote = "2026-04-22T13:00:00Z"   # Wed
     thu_check = datetime(2026, 4, 23, 12, 0, tzinfo=timezone.utc)  # ~23h later
     d = core.decide_status(
@@ -270,13 +284,15 @@ def test_decide_status_quoted_wednesday_within_48h():
     assert d.status == "PENDING"
 
 
-def test_decide_status_quoted_wednesday_past_48h():
-    """Past 48h biz on a normal weekday — flips to Q&L."""
+def test_decide_status_quoted_wednesday_past_24h():
+    """Past 24h on a normal weekday — flips to Q&L. Per Michael 2026-06-04
+    ('if hilmar doesn't reply after 24 hours during biz week the deal is
+    lost'). Was 48h prior to this rule restatement."""
     wed_quote = "2026-04-22T13:00:00Z"
-    fri_check = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)  # ~49h later
+    thu_check = datetime(2026, 4, 23, 14, 0, tzinfo=timezone.utc)  # ~25h later
     d = core.decide_status(
         has_send=False, mdolx_ref=None, response_timestamp=wed_quote,
-        quoted=True, etd_fit_days=0, now=fri_check,
+        quoted=True, etd_fit_days=0, now=thu_check,
     )
     assert d.status == "Q&L"
 

@@ -36,16 +36,17 @@ BIZ_END   = time(17, 30)  # 5:30 PM ET
 BIZ_DAY_HOURS = 9.0
 
 #: Window before a QUOTED-but-not-booked PENDING row ages out to Q&L.
-#: 48h biz-hours (Michael 2026-05-01 / 2026-05-30) with the Friday
-#: weekend carve-out applied via is_business_stale (Fri/Sat/Sun → Monday
-#: 18:00 ET). Real client decision cycles span a business day + an
-#: overnight; 24h was producing premature Q&L flips on rows Lonny went
-#: on to win. tests/test_core_parity.py asserts this matches scripts/.
-PENDING_WINDOW_HOURS = 48
+#: Per Michael 2026-06-04 (restated rule, "i've said this fifty times"):
+#:   - Normal biz week: 24 wall-hours from OL response → LOSS if no reply.
+#:   - Friday quote (or weekend): not LOSS until Tuesday 18:00 ET, applied
+#:     via is_business_stale's weekend carve-out.
+#: Mirrored in scripts/core.py — tests/test_core_parity.py + QC-040
+#: enforce parity.
+PENDING_WINDOW_HOURS = 24
 # AWAITING_MDOLX_AGING_HOURS (was 72) was removed 2026-05-30 — the
-# send-aging branch now uses is_business_stale(send_at, now, hours=48)
-# for symmetry with PENDING_WINDOW_HOURS and to pick up the same Friday
-# weekend carve-out. The audit confirmed zero callers existed.
+# send-aging branch now uses is_business_stale(send_at, now) with the
+# default hours=PENDING_WINDOW_HOURS for symmetry, picking up the same
+# Friday weekend carve-out. The audit confirmed zero callers existed.
 RATE_TREND_THRESHOLD_PCT = 10
 
 #: Status enum — TWO classifiers coexist intentionally during the
@@ -530,20 +531,19 @@ class StatusDecision:
 def is_business_stale(
     dt: datetime | None,
     now: datetime | None = None,
-    hours: int = 48,
+    hours: int = 24,
 ) -> bool:
-    """True when ``dt`` is older than ``hours`` business-hours, with the
-    weekend carve-out: a Friday/Saturday/Sunday timestamp isn't stale
-    until the following Monday 18:00 ET ("the 48h clock must not run out
-    across the weekend — OL doesn't book Sat/Sun").
+    """True when ``dt`` is older than ``hours`` wall-hours, with the
+    weekend carve-out per Michael's stated rule (2026-06-04 restated):
+    a Friday/Saturday/Sunday timestamp isn't stale until the following
+    **Tuesday 18:00 ET** — gives Lonny Monday + Tuesday to reply.
 
     Used for BOTH staleness windows in decide_status:
       - send-signal aging (PENDING(AWAITING_MDOLX) → Q&L(SEND_NO_BOOKING))
       - quote-window aging (PENDING(quoted) → Q&L)
 
-    Both run on the same 48h policy (Michael 2026-05-01 / 2026-05-30).
-    Real Lonny decision cycles span a business day + an overnight; 48h
-    biz captures that without flipping rows Lonny still wins.
+    Default `hours=24` matches PENDING_WINDOW_HOURS. Callers that need a
+    different window must pass it explicitly.
 
     Kept byte-for-byte identical to scripts/core.is_business_stale —
     tests/test_core_parity.py fails if they drift.
@@ -552,9 +552,11 @@ def is_business_stale(
         return False
     now = now or now_utc()
     dt_et = dt.astimezone(ET)
-    if dt_et.weekday() >= 4:                         # Fri=4, Sat=5, Sun=6
-        days_to_mon = (7 - dt_et.weekday()) % 7 or 7   # Fri→3, Sat→2, Sun→1
-        deadline = (dt_et + timedelta(days=days_to_mon)).replace(
+    if dt_et.weekday() >= 4:                          # Fri=4, Sat=5, Sun=6
+        # Land on the upcoming Tuesday 18:00 ET. Friday → +4 days, Saturday
+        # → +3, Sunday → +2. (weekday(Tue) == 1.)
+        days_to_tue = (1 - dt_et.weekday()) % 7       # Fri=4→4, Sat=5→3, Sun=6→2
+        deadline = (dt_et + timedelta(days=days_to_tue)).replace(
             hour=18, minute=0, second=0, microsecond=0)
     else:
         deadline = dt_et + timedelta(hours=hours)
