@@ -70,6 +70,20 @@ if exist "%REPO%\config.json" (
   xcopy /Y /Q "%REPO%\config.json" "%ROOT%\" >> "%LOG%" 2>&1
 )
 
+REM Also copy the deploy wrappers (*.cmd) to the production deploy folder.
+REM CRITICAL: the daily wrapper run_daily_laptop.cmd's own Step 0 git-pull
+REM only copies scripts\*.py — it deliberately does NOT copy itself (a .cmd
+REM can't safely overwrite the file it's executing). So a change to the
+REM wrapper, run_chase_evening, or this script never reaches the
+REM Task-Scheduler-invoked copy under %ROOT%\deploy unless something does it.
+REM That gap silently shipped a stale wrapper for weeks and caused the
+REM 2026-06-08 dead fire (the scheduled task ran a pre-GIT_TERMINAL_PROMPT
+REM wrapper that hung on a git credential prompt). sync_now runs as its own
+REM process, NOT as the daily wrapper, so it CAN overwrite the production
+REM .cmd files safely. This is the supported way to deploy a wrapper change.
+echo --- sync_now: xcopy deploy wrappers --- >> "%LOG%"
+xcopy /Y /Q "%REPO%\deploy\*.cmd" "%ROOT%\deploy\" >> "%LOG%" 2>&1
+
 echo SYNC_NOW: done — HEAD=!HEAD_SHA! BEHIND=!BEHIND! >> "%LOG%"
 echo SYNC_NOW: done. Production now at HEAD=!HEAD_SHA! ^(BEHIND=!BEHIND!^).
 echo The next 10 AM ET fire will use this code. No email was sent.

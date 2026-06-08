@@ -137,6 +137,45 @@ deploy\run_daily_laptop.cmd
 
 ---
 
+## Failure mode: wrapper started but pipeline never completed (QC-021)
+
+**Symptom**: the audit (which runs as its own scheduled task) shows
+QC-021 "wrapper started but pipeline never completed — died before the
+refresh_stage echo", plus everything 48-72h stale (stage, email-subject,
+shared store, backups). No customer email shipped.
+
+**Root cause — the wrapper-drift trap (hit twice: 2026-06-03, 2026-06-08)**:
+the Task Scheduler runs `%ROOT%\deploy\run_daily_laptop.cmd` — a copy
+**outside** the git repo. The daily wrapper's own Step 0 git-pull copies
+`scripts\*.py` to production but deliberately **does NOT copy itself** (a
+.cmd can't overwrite the file it's executing). So a fix committed to the
+wrapper sits in `hilmar-daily-routine\deploy\` and never reaches the copy
+the scheduler runs. The June 2026 dead fires were a stale wrapper hanging
+on a git credential prompt (fixed by `GIT_TERMINAL_PROMPT=0`, but the fix
+couldn't deploy itself).
+
+**Fix**: deploy the current wrappers, then verify the mtime advanced:
+```
+deploy\sync_now.cmd
+(Get-Item "$env:USERPROFILE\OneDrive - IdealX\claude\PROJECT HILMAR\deploy\run_daily_laptop.cmd").LastWriteTime
+```
+`sync_now.cmd` runs as its own process (not the daily wrapper), so it CAN
+overwrite the production `deploy\*.cmd`. This is the supported way to ship
+a wrapper change. If `sync_now.cmd` itself isn't on disk yet, bootstrap once:
+```
+cd "$env:USERPROFILE\OneDrive - IdealX\claude\PROJECT HILMAR\hilmar-daily-routine"
+git pull
+xcopy /Y "deploy\*.cmd" "..\deploy\"
+xcopy /Y "scripts\*.py" "..\scripts\"
+```
+
+**Verify the right Python**: the wrapper logs `PY: <path>` near the top of
+each fire. It must be a real install with pytest+pytest-cov (the daily test
+routine / QC-052 needs them). Confirm with `py -0p` and
+`<PY> -m pip show pytest-cov`; install into that interpreter if missing.
+
+---
+
 ## Failure mode: QC drift (status != CLEAN)
 
 **Symptom**: `reports/qc-result.json` shows status WARN or ERROR. `qc_alert_if_needed.py` emails Michael.

@@ -47,8 +47,19 @@ REM Required because each Windows machine installs Python in different paths
 REM (per-user vs system, py launcher vs explicit). Cloud PC fire 2026-05-07
 REM 10:00 ET failed rc=3 because the hardcoded MBD-TRAVEL path didn't exist
 REM on Cloud PC. This loop fixes that.
+REM
+REM 2026-06-08: added the bare C:\PythonNNN system-install paths to the TOP.
+REM The pythoncore-3.14-64 embeddable that the loop used to find was deleted
+REM off the Cloud PC, so discovery fell through to C:\Windows\py.exe. py.exe
+REM DOES resolve to C:\Python314 — but only the bare-path interpreter has
+REM pytest + pytest-cov installed, and routing through py.exe obscured which
+REM interpreter actually ran (the cause of the recurring QC-052 false-fail).
+REM Pin the real system install first so the daily test routine sees its deps.
 set PY=
 for %%P in (
+  "C:\Python314\python.exe"
+  "C:\Python313\python.exe"
+  "C:\Python312\python.exe"
   "%USERPROFILE%\AppData\Local\Python\pythoncore-3.14-64\python.exe"
   "%LOCALAPPDATA%\Python\pythoncore-3.14-64\python.exe"
   "%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
