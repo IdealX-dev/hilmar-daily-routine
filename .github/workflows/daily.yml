@@ -1,23 +1,26 @@
 name: Daily
 
-# Scheduled daily run. Today this is the OBSERVABILITY trigger only —
-# runs the test+coverage routine + the audit-pipeline dry-run, captures
-# artifacts, and reports green/red as a GitHub check. Real production
-# email-send still fires from the Cloud PC at 10 AM ET because three
-# prerequisites are not yet met (see docs/MOVE-OFF-CLOUDPC.md):
-#   1. App-only Graph auth — scaffolding shipped (src/hilmar/app_auth.py),
-#      requires OL IT to register the app + grant Mail.Read.Shared scoped
-#      to MBD_OceanExportBookingShared.
-#   2. State location — tracking-data-v2.json + MSAL cache + stage emails
-#      live on OneDrive. GH runners can't reach OneDrive. Need migration
-#      to Azure Blob (versioned) or GitHub release artifacts.
-#   3. Secret distribution — sentry DSN/auth, ANTHROPIC_API_KEY, QT_APP_PASSWORD
-#      need to be in GH Actions secrets (matching what's in secrets/*.txt
-#      on the Cloud PC).
+# Two jobs:
+#   - `audit` (scheduled + manual): runs the test+coverage routine, captures
+#     artifacts, reports green/red. Always on.
+#   - `production-fire` (manual dispatch with mode=production-fire): the REAL
+#     daily fire, fully wired — pulls state from blob, runs the 16-step
+#     pipeline with app-only Graph auth, sends to the full distribution as
+#     the shared mailbox, pushes state back. Moving the fire here kills the
+#     git-pull + xcopy silent-failure chain that the Cloud PC depends on.
 #
-# Once those three land, flip RUN_PRODUCTION_FIRE below to `true` and the
-# daily fire moves here — kills the silent-non-deploy class entirely
-# because there's no `git pull` + `xcopy` chain to break.
+# To cut over from the Cloud PC to GH Actions:
+#   1. Add these repo secrets (Settings → Secrets and variables → Actions):
+#        GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_ID, GRAPH_APP_CLIENT_SECRET
+#        SENTRY_DSN, SENTRY_AUTH_TOKEN, ANTHROPIC_API_KEY, QT_APP_PASSWORD
+#        AZURE_STORAGE_CONNECTION_STRING
+#      (the GRAPH_APP_* app is registered with Mail.Read.Shared +
+#      Mail.Send.Shared, admin-consented, scoped to MBD_OceanExportBookingShared
+#      via an Application Access Policy.)
+#   2. Dispatch once manually (mode=production-fire) to verify a real fire.
+#   3. Flip the schedule trigger onto production-fire (or disable the Cloud
+#      PC task) once a manual run is confirmed clean.
+# See docs/MOVE-OFF-CLOUDPC.md for the full sequence.
 
 on:
   schedule:
@@ -104,19 +107,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     needs: audit
+    # All Graph + service secrets are exposed to every step that needs them.
+    # App-only Graph (GRAPH_APP_*) is consumed by GraphClient.authenticate()
+    # and outlook_send._app_only_send_context(); state sync uses the blob
+    # connection string. The pipeline reads the rest from env via the same
+    # paths the Cloud PC reads secrets/*.txt.
+    env:
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      QT_APP_PASSWORD: ${{ secrets.QT_APP_PASSWORD }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
     steps:
       - name: Verify prerequisites — refuse to fire if anything's missing
         # The pipeline silently degrades on missing secrets, so we hard-fail
         # here BEFORE the fire to make a misconfiguration loud.
-        env:
-          GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
-          GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
-          GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           missing=0
-          for v in GRAPH_APP_TENANT_ID GRAPH_APP_CLIENT_ID GRAPH_APP_CLIENT_SECRET SENTRY_DSN ANTHROPIC_API_KEY; do
+          for v in GRAPH_APP_TENANT_ID GRAPH_APP_CLIENT_ID GRAPH_APP_CLIENT_SECRET \
+                   SENTRY_DSN ANTHROPIC_API_KEY AZURE_STORAGE_CONNECTION_STRING; do
             if [ -z "${!v}" ]; then
               echo "::error::Secret $v is not set — production-fire blocked"
               missing=$((missing+1))
@@ -126,6 +138,76 @@ jobs:
             echo "::error::Refusing to fire — set the secrets in repo Settings → Secrets and variables → Actions."
             exit 1
           fi
-          echo "All secrets present. Production fire would proceed here."
-          echo "TODO: invoke scripts/run_pipeline.py with app-only auth env vars"
-          echo "(blocked on docs/MOVE-OFF-CLOUDPC.md prerequisites)"
+          echo "All required secrets present."
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            reportlab msal requests tzdata pdfplumber \
+            sentry-sdk jsonschema python-dateutil jinja2 anthropic \
+            azure-storage-blob
+
+      - name: Materialize secret files the pipeline reads from secrets/*.txt
+        # Several modules read secrets/<name>.txt directly (sentry_setup,
+        # model_router, sync_to_quote_tracker). Write them from env so the
+        # GH Actions run matches the Cloud PC's on-disk layout. The dir is
+        # gitignored; these files live only for this job's lifetime.
+        run: |
+          mkdir -p secrets
+          printf '%s' "$SENTRY_DSN"        > secrets/sentry-dsn.txt
+          printf '%s' "$SENTRY_AUTH_TOKEN" > secrets/sentry-auth-token.txt
+          printf '%s' "$ANTHROPIC_API_KEY" > secrets/anthropic-api-key.txt
+          printf '%s' "$QT_APP_PASSWORD"   > secrets/quote-tracker-pwd.txt
+
+      - name: Pull pipeline state from blob store
+        # tracking-data-v2.json + staged email cache from the prior fire.
+        run: python3 scripts/state_store.py pull
+
+      - name: Run the daily pipeline (app-only Graph auth)
+        # refresh_stage reads the OL/Lonny thread via app-only Graph; the
+        # 16-step pipeline ingests → QC → renders. GRAPH_APP_* in env routes
+        # GraphClient to the app-only path automatically.
+        run: |
+          python3 scripts/refresh_stage.py --days-back 14
+          python3 scripts/run_pipeline.py
+
+      - name: Send the daily email (full distribution) + audit
+        # outlook_send picks /users/{SEND_MAILBOX}/sendMail because GRAPH_APP_*
+        # is set. Idempotent via reports/sent-YYYY-MM-DD.flag.
+        run: |
+          python3 scripts/outlook_send.py daily --to-from-config \
+            --subject-from-file reports/email-subject.txt \
+            --body-from-file reports/email-body.html \
+            --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
+          python3 scripts/gen_improvements_report.py
+          python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+            --subject-from-file reports/improvements-subject.txt \
+            --body-from-file reports/improvements-report.html
+
+      - name: Push pipeline state back to blob store
+        # ALWAYS — even on a failed fire we persist whatever state advanced,
+        # so the next run doesn't re-ingest from a stale snapshot.
+        if: always()
+        run: python3 scripts/state_store.py push
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-fire-${{ github.run_id }}
+          path: |
+            reports/run-log.txt
+            reports/qc-result.json
+            reports/email-body.html
+            reports/improvements-report.html
+          retention-days: 14
+          if-no-files-found: warn
