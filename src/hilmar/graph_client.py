@@ -49,6 +49,8 @@ from typing import Any
 import msal
 import requests
 
+from .app_auth import acquire_app_only_token, app_only_credentials_from_env
+
 log = logging.getLogger(__name__)
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -276,9 +278,34 @@ class GraphClient:
     def authenticate(self, *, interactive_ok: bool = False) -> str:
         """Acquire a Graph access token.
 
-        Tries silent (refresh-token) first. Falls back to device flow only when
-        ``interactive_ok=True``; otherwise raises :class:`GraphAuthError`.
+        Precedence:
+          1. App-only (client credentials) when the GRAPH_APP_* env vars are
+             all set — the unattended path for GH Actions / off-Cloud-PC.
+             No token cache, no device-code, never expires (rotate the
+             secret). See src/hilmar/app_auth.py + docs/MOVE-OFF-CLOUDPC.md.
+          2. Silent (refresh-token) from the on-disk MSAL cache.
+          3. Device-code flow — only when ``interactive_ok=True``.
+
+        App-only is INERT until OL IT registers the Entra app and the three
+        env vars are provided, so on the Cloud PC (no env vars) this falls
+        straight through to the existing device-code path.
         """
+        # ── Path 1: app-only client credentials (env-gated) ──────────────
+        creds = app_only_credentials_from_env()
+        if creds is not None:
+            log.info("Graph auth: using app-only client credentials (GRAPH_APP_* set)")
+            try:
+                # App-only MUST use the .default scope (the granted
+                # Application permissions are implicit) — acquire_app_only_token
+                # defaults to it, so do NOT pass self.scopes (those are the
+                # delegated scopes for device-code).
+                token = acquire_app_only_token(creds)
+            except Exception as e:  # RuntimeError from MSAL / network
+                raise GraphAuthError(f"App-only auth failed: {e}") from e
+            self._access_token = token
+            return self._access_token
+
+        # ── Paths 2-3: existing delegated device-code flow ───────────────
         if self._app is None:
             self._app = self._build_msal_app()
         app = self._app
