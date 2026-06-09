@@ -2623,6 +2623,85 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-018: check failed with exception: {_e}")
 
+    # QC-054: RUNTIME-DEPS IMPORTABLE — every module the wrapper's Python
+    # actually IMPORTS must resolve, in the SAME interpreter that runs the
+    # pipeline. Added 2026-06-09 after HILMAR-DAILY-TRACKER-9 fired daily
+    # for weeks: the cron heartbeat code called `import sentry_sdk` but
+    # sentry-sdk was not installed in the wrapper's Python, so it logged
+    # "Sentry cron start failed (pipeline continues)" every fire and the
+    # cron monitor alerted on the missed check-in. The PRIOR audit didn't
+    # catch it because no QC asserted the modules the pipeline depends on
+    # actually import. Now it does — this is the root-fix, not a patch.
+    #
+    # AT FUNCTION-BODY INDENT — must run regardless of any sibling check's
+    # outcome (an earlier session put it inside the QC-043 outer try and
+    # silent-skipped on Sentry auth failures, which is exactly the failure
+    # mode this check exists to surface).
+    try:
+        import importlib as _imp54
+        _required = [
+            # Observability — silent absence here is what produced
+            # HILMAR-DAILY-TRACKER-9.
+            "sentry_sdk",
+            # Auth + Graph
+            "msal", "requests",
+            # Pipeline core deps
+            "jsonschema", "dateutil",
+            # Rendering
+            "reportlab", "jinja2",
+            # PDF parsing
+            "pdfplumber",
+        ]
+        _missing = []
+        for _mod in _required:
+            try:
+                _imp54.import_module(_mod)
+            except Exception as _ie:
+                _missing.append(f"{_mod} ({type(_ie).__name__})")
+        if _missing:
+            log.error(
+                f"QC-054: {len(_missing)} runtime dep(s) NOT importable in the "
+                f"wrapper's Python — pipeline observability and/or render WILL "
+                f"silently degrade. Missing: {', '.join(_missing)}. Install: "
+                f"`<wrapper-python> -m pip install "
+                f"{' '.join(m.split()[0] for m in _missing)}`"
+            )
+        else:
+            log.ok(f"QC-054: all {len(_required)} wrapper-runtime imports resolve")
+    except Exception as _e:
+        log.warn(f"QC-054: check failed with exception: {_e}")
+
+    # QC-055: SENTRY CRON HEARTBEAT REGISTERED — assert the pipeline's
+    # cron check-in actually fired. sentry_setup.py wraps the start in a
+    # try/except that prints "⚠️  Sentry cron start failed (pipeline
+    # continues): <reason>" when it can't reach Sentry — historically
+    # because sentry_sdk wasn't installed (QC-054 is the root) but also
+    # when the DSN is wrong or the network is blocked. When the heartbeat
+    # fails to register, Sentry's cron monitor alerts on a missed check-in
+    # (HILMAR-DAILY-TRACKER-9) — a misleading "the pipeline didn't run"
+    # when actually it did. Added 2026-06-09.
+    try:
+        from pathlib import Path as _Path55
+        _log_path = _Path55(__file__).resolve().parent.parent / "reports" / "run-log.txt"
+        if _log_path.exists():
+            # Look only at the recent tail so we don't keep flagging an old
+            # failure once the operator has fixed the root.
+            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-50000:]
+            if "Sentry cron start failed (pipeline continues)" in _tail:
+                _last = _tail.rfind("Sentry cron start failed (pipeline continues)")
+                _excerpt = _tail[_last:_last + 200].splitlines()[0]
+                log.error(
+                    f"QC-055: Sentry cron heartbeat is NOT registering — alerts "
+                    f"in HILMAR-DAILY-TRACKER-9 are false positives. Excerpt: "
+                    f"{_excerpt}"
+                )
+            else:
+                log.ok("QC-055: Sentry cron heartbeat registered on the recent fire")
+        else:
+            log.warn("QC-055: reports/run-log.txt absent — can't verify cron heartbeat")
+    except Exception as _e:
+        log.warn(f"QC-055: check failed with exception: {_e}")
+
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
     # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate
