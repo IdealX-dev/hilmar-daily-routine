@@ -61,10 +61,27 @@ accuracy is computed from `src/hilmar/parser_accuracy.py`.
    accuracy or any critical field drops below threshold. **Never lower the
    gate to make a red check pass — fix the parser.**
 
-3. **Every new code pattern ships with its QC check + self-heal in the SAME
-   commit.** Standing project-wide rule. New mailbox/folder pattern → walk
-   it. New scheduled job → staleness check. New API integration → freshness
-   check. New email path → bounce check.
+3. **Every QC is checked, self-healed, and root-fixed — this is a constant
+   (Michael, 2026-06-09: "all qc's must be checked and self healed; all root
+   issues must be solved and not patched; this is a constant").** The
+   non-negotiable contract for every QC check, enforced — not just asked:
+   - **Solve root causes, never patch symptoms.** If a check fires, fix the
+     thing that made it fire (parser, ingest, renderer, deploy chain). Do not
+     suppress the check, widen a threshold, or paper over the data. Lowering a
+     gate to make a red check green is a fireable move here.
+   - **Every new code pattern ships with its QC check + self-heal in the SAME
+     commit.** New mailbox/folder pattern → walk it. New scheduled job →
+     staleness check. New API integration → freshness check. New email path →
+     bounce check.
+   - **Every QC check ships with: (a) a row in `reports/QC-INDEX.md`, (b) a
+     remediation route in `qc_actions_from_sentry.ACTIONS` (or the documented
+     default fallback), and (c) a regression test in `tests/`.** This is not
+     optional and not deferred — the prose version of this rule silently
+     rotted for a month (by 2026-06-09 seven live checks were undocumented and
+     three had no routing). It is now MECHANICALLY ENFORCED by
+     `tests/test_qc_governance.py`: adding a QC check without its docs / route
+     / test FAILS CI. The untested backlog is a shrink-only ratchet — it may
+     never grow, so a new check cannot be added without a test.
 
 4. **Never greenfield.** The Hilmar project was once bifurcated (the old
    `hilmar-tracker` greenfielded as `hilmar-daily-routine`). Refactor the

@@ -104,13 +104,18 @@ email) that you must not skip.
    or any critical field drops below threshold. Never lower the gate to make a
    red check pass — fix the parser.
 
-4. **Every new code pattern ships with its QC check + self-heal AND its
-   tests in the SAME commit.** This is a standing rule. New mailbox/folder
-   pattern → walk it. New scheduled job → staleness check. New API
-   integration → freshness check. New email path → bounce check. New
-   function → a test that exercises it (the daily routine in rule #7 will
-   red-flag you if coverage drops below the gate). See the `qc-and-self-heal`
-   skill.
+4. **Every QC is checked, self-healed, and ROOT-fixed — a constant**
+   (Michael 2026-06-09: "all qc's must be checked and self healed; all root
+   issues must be solved and not patched; this is a constant"). When a check
+   fires, fix the cause — never suppress the check, widen a threshold, or
+   paper over the data. Every QC check ships in the SAME commit with: a row in
+   `reports/QC-INDEX.md`, a route in `qc_actions_from_sentry.ACTIONS` (or the
+   documented default), AND a regression test in `tests/`. This is
+   **mechanically enforced** by `tests/test_qc_governance.py` — a new check
+   without docs/route/test fails CI, and the untested backlog is a shrink-only
+   ratchet (it can never grow). New mailbox/folder → walk it; new scheduled
+   job → staleness check; new API → freshness check; new email path → bounce
+   check.
 
 7. **The code is audited daily, same as the data.** `scripts/run_audit_tests.py`
    runs the full pytest suite under coverage on every fire (a step in
