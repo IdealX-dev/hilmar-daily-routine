@@ -158,6 +158,24 @@ ACTIONS: dict[str, dict] = {
         "comment": "Daily backup not written in expected window OR data-backups/ directory missing. Pipeline Step 1 (backup.py) should create a tracking-data-v2_<timestamp>.json snapshot every fire. If wedged: rules.backup_retention_count config, disk write perms, scripts/backup.py logic.",
         "auto_resolve_safe": False,
     },
+    "QC-051": {
+        "name": "Phantom-duplicate WIN survived dedup",
+        "action": "resolve_if_post_fix",
+        "comment": "phase_4 content-dedup left two WIN rows for the same booking. Collapse fix shipped (commit eac597f). If recurring, check the dedup key in qc_selfheal.phase_4_duplicates against the new row shape.",
+        "auto_resolve_safe": True,
+    },
+    "QC-052": {
+        "name": "Daily test/coverage routine failed",
+        "action": "flag_for_operator",
+        "comment": "A test broke OR coverage fell below the pyproject gate OR pytest/pytest-cov isn't importable on the Cloud PC. Run scripts/run_audit_tests.py; if collection failed on missing deps, install into the wrapper's Python (see RUNBOOK 'wrapper started but pipeline never completed'). Real failures are root bugs — fix, don't lower the gate.",
+        "auto_resolve_safe": False,
+    },
+    "QC-053": {
+        "name": "Deployment drift — local HEAD behind origin/main",
+        "action": "flag_for_operator",
+        "comment": "Cloud PC is running stale code (a merged fix didn't deploy). Run deploy\\sync_now.cmd on the Cloud PC, or git pull + xcopy. See RUNBOOK 'wrapper started but pipeline never completed'.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",

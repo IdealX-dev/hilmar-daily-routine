@@ -71,6 +71,16 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
 | QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
+| QC-042 | **ERROR** | Email body contains a `data:` URI (`<img src="data:image/...">`) — Outlook blocks these so the logo renders broken | None — `branding.py` uses `cid:` attachments (commit `fa337b2`) | 2026-05-17 |
+| QC-043 | WARN | Sentry self-improvement loop — surfaces unresolved-issue count + hot issues (≥5×/24h) into the audit | None — informational meta-check | 2026-05-17 |
+| QC-044 | **ERROR** | Double-escaped HTML entities (`&amp;amp;`) in email body — a helper ran `_esc()` on already-escaped text | None — Seer-routed; fix the double-escaping call site | 2026-05-17 |
+| QC-045 | **ERROR** | Table-header invisible in Outlook — header row uses `background:linear-gradient` with no solid `background-color` fallback (Outlook strips gradients → white-on-white) | None — Seer-routed; add `background-color:` fallback | 2026-05-17 |
+| QC-046 | **ERROR**/WARN | Pending-timestamp population / Windows strftime safety — guards the `%-d`/`%-I` Unix-only formats that `ValueError` on the Cloud PC | None — use `%d`/`%I` + `.replace(" 0", " ")` | 2026-05-17 |
+| QC-047 | **ERROR** | Win Rate KPI tile disagrees with the explainer banner — the headline number and its Wins/(Wins+Q&L) explanation must reconcile | None — gates ship; fix the renderer | 2026-05-17 |
+| QC-048 | WARN | Turnaround sanity — flags any row with business-hours turnaround >40h as an implausible mis-paired timestamp | Auto-clamp implausible turnaround to None (commit `c36524e`) | 2026-05-17 |
+| QC-049 | WARN | WIN rows missing an MDOLX booking ref (unconfirmed wins) past 7 days — honest cross-check against phantom wins | None — booking-team auto-notify (see automations below); operator links MDOLX or demotes to Q&L | 2026-05-17 (`ad9ecbf`) |
+| QC-050 | **ERROR**/WARN | Backup freshness + retention — newest snapshot stale (ERROR) or retention count drifted | Auto-prune in `backup.py`; offline rerun in wrapper Step 4.9 | 2026-05-17 (`5b50aa7`) |
+| QC-051 | **ERROR** | Phantom-duplicate WIN guard — verifies `phase_4`'s content-dedup didn't leave two WIN rows for the same booking | Collapse phantom duplicate wins in `phase_4` (commit `eac597f`) | 2026-05-17 |
 | QC-052 | **ERROR** | Daily test/coverage routine failed — a test broke OR coverage fell below the `pyproject` gate; also WARNs on modules below the per-module floor (learning worklist for "every line tested") | None — reads `reports/test-result.json` from `run_audit_tests.py`; surfaces in audit red-flags | 2026-05-28 |
 | QC-053 | **ERROR** | Local repo HEAD is behind `origin/main` — Cloud PC is running stale code, so pushed fixes aren't actually deployed. Catches the failure mode where a PR with production fixes sits unmerged or `git pull` silently failed at wrapper Step 0. | None — operator must merge / re-pull. Audit also raises a dedicated red flag with the explicit `git pull` instruction. | 2026-05-28 (after a 4-commit branch sat unmerged 5 days) |
 
@@ -85,12 +95,10 @@ never get followed up on.
 | Stale Sentry auto-resolve | Any UNMAPPED Sentry issue silent ≥ `STALE_AUTO_RESOLVE_DAYS` (default 7) routes to `resolve_if_stale` with an explanatory comment. Closes the loop that left HILMAR-DAILY-TRACKER-5 (NameError 'os' not defined) unresolved for 11 days after the bug was fixed in code. Mapped issues retain their explicit `ACTIONS` route. | `scripts/qc_actions_from_sentry._action_lookup` | Daily pipeline step "Sentry-driven QC actions" |
 | QC-049 booking-team auto-notify | Each unconfirmed WIN (status=WIN, no `mdolx_ref`, request_date ≥ 7d ago) generates ONE Teams/Slack alert per ISO week with the lane, age, and explicit "review and either link the MDOLX booking or demote to Q&L" instruction. De-duped by `_was_alerted`. | `scripts/teams_alert.detect_events` event `qc049_unconfirmed_win` | Daily pipeline step "teams_alerts" (Step 4.5 in wrapper); requires `"qc049_unconfirmed_win"` in `config.json.alerts.events` |
 
-> **Index backlog (2026-05-28):** QC-042 through QC-051 exist in
-> `scripts/qc_selfheal.py` but predate this row and are not yet listed above
-> (data-URI guard, Sentry loop, double-escape guard, table-header, pending
-> timestamp, win-rate consistency, turnaround sanity, unconfirmed wins, backup
-> freshness, phantom-dup guard). Backfill from the code comments when next
-> editing this file — see `git grep "QC-04" scripts/qc_selfheal.py`.
+> **Index backlog — RESOLVED 2026-06-09.** QC-042 through QC-051 now have
+> full rows in the matrix above. `tests/test_qc_governance.py` (INV-1) now
+> fails CI if any check emitted by `qc_selfheal.py` is missing from this
+> index, so the backlog can't silently reopen.
 
 ## Newest checks (QC-027 through QC-037) — what each was added for
 
