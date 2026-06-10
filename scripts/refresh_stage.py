@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -96,8 +97,54 @@ RATE_RESPONSE_SUBJECT = re.compile(r"^\s*re\s*:\s*oakland\s+to\s+", re.I)
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Auth — reuse outlook_send's token cache
+# Auth — app-only (GH Actions) first, else outlook_send's token cache
 # ─────────────────────────────────────────────────────────────────────
+
+#: Mailbox app-only reads target. App-only tokens have no /me, so every
+#: read goes to /users/{READ_MAILBOX}/... — it must be a mailbox the Entra
+#: app's Application Access Policy covers. Defaults to the OL responder
+#: shared mailbox (the thread endpoint: Lonny's RFQs are addressed to it
+#: and OL replies from it; same mailbox outlook_send sends as). Override
+#: via HILMAR_READ_MAILBOX if the thread lives elsewhere.
+READ_MAILBOX = os.environ.get("HILMAR_READ_MAILBOX", OS.SEND_MAILBOX)
+
+#: Graph mailbox root for every read in this module. Delegated (device-code,
+#: Cloud PC) uses /me; get_token() flips this to /users/{READ_MAILBOX} when
+#: app-only credentials are configured.
+_mailbox_base = f"{GRAPH}/me"
+
+
+def _app_only_token() -> str | None:
+    """App-only (client credentials) token when GRAPH_APP_* is configured,
+    else None. This is what lets the GH Actions fire read the mailbox with
+    no signed-in user. On the Cloud PC (env vars unset) this returns None
+    and the device-code cache path below is used unchanged."""
+    try:
+        sys.path.insert(0, str(ROOT / "src"))
+        from hilmar.app_auth import (
+            acquire_app_only_token,
+            app_only_credentials_from_env,
+        )
+    except Exception:
+        return None
+    creds = app_only_credentials_from_env()
+    if creds is None:
+        return None
+    return acquire_app_only_token(creds)
+
+
+def get_token() -> str:
+    """Acquire a Graph token: app-only when GRAPH_APP_* is set, else silent
+    refresh from the device-code cache. Sets the mailbox base to match —
+    the token type dictates whether /me exists."""
+    global _mailbox_base
+    token = _app_only_token()
+    if token is not None:
+        _mailbox_base = f"{GRAPH}/users/{READ_MAILBOX}"
+        print(f"refresh_stage: app-only Graph auth (GRAPH_APP_*) — reading {READ_MAILBOX}")
+        return token
+    return get_token_silent()
+
 
 def get_token_silent() -> str:
     """Acquire a Graph token via silent refresh. Bail if cache is missing/expired."""
@@ -247,7 +294,7 @@ def _rotate_stage(days_to_keep: int, dry: bool = False) -> dict:
 
 def search_messages(token: str, kql: str, max_results: int = 250) -> list[dict]:
     """Run a $search query against /me/messages, paginate through nextLink."""
-    url: str | None = f"{GRAPH}/me/messages"
+    url: str | None = f"{_mailbox_base}/messages"
     # Graph requires the $search value to be a quoted string.
     params: dict | None = {
         "$top": "50",
@@ -268,7 +315,7 @@ def search_messages(token: str, kql: str, max_results: int = 250) -> list[dict]:
 
 def get_message_body(token: str, message_id: str) -> dict:
     """Fetch a single message including body."""
-    url = f"{GRAPH}/me/messages/{message_id}"
+    url = f"{_mailbox_base}/messages/{message_id}"
     params = {
         "$select": (
             "id,conversationId,subject,from,toRecipients,ccRecipients,"
@@ -296,7 +343,7 @@ def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path
     if target_pdf.exists():
         return [target_pdf.name]  # already cached
     # List attachments
-    list_url = f"{GRAPH}/me/messages/{message_id}/attachments?$select=id,name,contentType,size"
+    list_url = f"{_mailbox_base}/messages/{message_id}/attachments?$select=id,name,contentType,size"
     try:
         listing = graph_get(token, list_url)
     except Exception:
@@ -310,7 +357,7 @@ def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path
         if not att_id:
             continue
         # Fetch content
-        content_url = f"{GRAPH}/me/messages/{message_id}/attachments/{att_id}"
+        content_url = f"{_mailbox_base}/messages/{message_id}/attachments/{att_id}"
         try:
             data = graph_get(token, content_url)
         except Exception:
@@ -498,8 +545,8 @@ def main() -> int:
         cutoff = datetime.now(timezone.utc) - timedelta(days=args.days_back)
     print(f"refresh_stage: cutoff = {cutoff.isoformat()}")
 
-    print("refresh_stage: acquiring Graph token (silent refresh)…")
-    token = get_token_silent()
+    print("refresh_stage: acquiring Graph token…")
+    token = get_token()
     print("refresh_stage: token OK")
 
     existing_ids, existing_stage_imids = load_existing_stage_keys()
