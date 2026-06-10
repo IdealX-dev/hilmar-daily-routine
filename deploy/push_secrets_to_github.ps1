@@ -1,10 +1,10 @@
-# push_secrets_to_github.ps1 — one-shot: load the GH Actions repo secrets
+# push_secrets_to_github.ps1 -- one-shot: load the GH Actions repo secrets
 # for the off-Cloud-PC daily fire (PR #33 cutover).
 #
 # RUN THIS ON THE CLOUD PC (it's the machine that has secrets\*.txt):
 #   & "$env:USERPROFILE\OneDrive - IdealX\claude\PROJECT HILMAR\hilmar-daily-routine\deploy\push_secrets_to_github.ps1"
 #
-# Prerequisites: gh CLI authenticated (gh auth status) — already true on the
+# Prerequisites: gh CLI authenticated (gh auth status) -- already true on the
 # Cloud PC (the wrapper uses gh for heartbeats).
 #
 # What it does:
@@ -14,13 +14,15 @@
 #      Where to find each value is printed at the prompt. Leave one blank
 #      to skip it (e.g. if it's already set).
 #
-# Secret values never touch disk or the shell history beyond the existing
-# secrets\*.txt files; they go straight to GitHub via gh's stdin.
+# ASCII ONLY in this file -- Windows PowerShell 5.1 reads BOM-less files as
+# ANSI, and UTF-8 em-dash bytes decode to cp1252 curly quotes, which PS
+# treats as string delimiters (the 2026-06-09 "Missing closing '}'" parse
+# failure). Plain hyphens and arrows only.
 
 $ErrorActionPreference = "Stop"
 $repo = "IdealX-dev/hilmar-daily-routine"
 
-# Locate secrets\ — production layout keeps it in PROJECT HILMAR (repo
+# Locate secrets\ -- production layout keeps it in PROJECT HILMAR (repo
 # parent); a bare clone may have it inside the repo.
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $candidates = @(
@@ -29,7 +31,7 @@ $candidates = @(
 )
 $secretsDir = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $secretsDir) {
-    Write-Error "No secrets\ folder found at: $($candidates -join ' OR ')"
+    Write-Error "No secrets folder found at: $($candidates -join ' OR ')"
 }
 Write-Host "Using secrets folder: $secretsDir"
 
@@ -38,12 +40,13 @@ function Set-RepoSecret([string]$Name, [string]$Value) {
         Write-Host "  SKIPPED $Name (empty)" -ForegroundColor Yellow
         return
     }
-    $Value | gh secret set $Name -R $repo
+    gh secret set $Name -R $repo --body $Value
     if ($LASTEXITCODE -ne 0) { Write-Error "gh secret set $Name failed (rc=$LASTEXITCODE)" }
     Write-Host "  OK $Name" -ForegroundColor Green
 }
 
-Write-Host "`n[1/2] File-based secrets from $secretsDir"
+Write-Host ""
+Write-Host "[1/2] File-based secrets from $secretsDir"
 $fileMap = [ordered]@{
     "SENTRY_DSN"        = "sentry-dsn.txt"
     "SENTRY_AUTH_TOKEN" = "sentry-auth-token.txt"
@@ -53,13 +56,14 @@ $fileMap = [ordered]@{
 foreach ($entry in $fileMap.GetEnumerator()) {
     $path = Join-Path $secretsDir $entry.Value
     if (-not (Test-Path $path)) {
-        Write-Host "  MISSING $($entry.Key) — $path not found" -ForegroundColor Yellow
+        Write-Host "  MISSING $($entry.Key) - $path not found" -ForegroundColor Yellow
         continue
     }
     Set-RepoSecret $entry.Key ((Get-Content -Raw $path).Trim())
 }
 
-Write-Host "`n[2/2] Azure values (Entra app + storage) — paste each, or Enter to skip"
+Write-Host ""
+Write-Host "[2/2] Azure values (Entra app + storage) - paste each, or Enter to skip"
 $azurePrompts = [ordered]@{
     "GRAPH_APP_TENANT_ID"             = "Azure Portal > App registrations > Hilmar app > Overview > 'Directory (tenant) ID'"
     "GRAPH_APP_CLIENT_ID"             = "same Overview page > 'Application (client) ID'"
@@ -67,7 +71,8 @@ $azurePrompts = [ordered]@{
     "AZURE_STORAGE_CONNECTION_STRING" = "Storage account > Access keys > Connection string (create a Standard/LRS account if none exists)"
 }
 foreach ($entry in $azurePrompts.GetEnumerator()) {
-    Write-Host "`n  $($entry.Key)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  $($entry.Key)" -ForegroundColor Cyan
     Write-Host "    where: $($entry.Value)"
     $secure = Read-Host "    value (hidden, Enter to skip)" -AsSecureString
     $plain = [System.Runtime.InteropServices.Marshal]::PtrToStringUni(
@@ -75,7 +80,8 @@ foreach ($entry in $azurePrompts.GetEnumerator()) {
     Set-RepoSecret $entry.Key $plain
 }
 
-Write-Host "`nDone. Verify the list (values stay hidden):"
+Write-Host ""
+Write-Host "Done. Verify the list (values stay hidden):"
 gh secret list -R $repo
 Write-Host @"
 

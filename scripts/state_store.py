@@ -98,7 +98,18 @@ def _container_client():
             "pip install azure-storage-blob"
         ) from e
     name = os.environ.get(ENV_CONTAINER, DEFAULT_CONTAINER)
-    svc = BlobServiceClient.from_connection_string(conn)
+    try:
+        svc = BlobServiceClient.from_connection_string(conn)
+    except ValueError as e:
+        # The 2026-06-10 verification-fire failure: the secret held the bare
+        # access KEY, not the connection string (adjacent fields in Azure
+        # Portal). Say exactly what to paste instead of the SDK's terse error.
+        raise StateStoreError(
+            f"{ENV_CONN} is not a valid connection string ({e}). It must be "
+            "the FULL 'Connection string' field from Azure Portal > Storage "
+            "account > Access keys (starts with "
+            "'DefaultEndpointsProtocol=https;AccountName='), not the bare Key."
+        ) from e
     cc = svc.get_container_client(name)
     with contextlib.suppress(Exception):
         cc.create_container()  # already exists — fine
