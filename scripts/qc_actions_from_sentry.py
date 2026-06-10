@@ -176,6 +176,18 @@ ACTIONS: dict[str, dict] = {
         "comment": "Cloud PC is running stale code (a merged fix didn't deploy). Run deploy\\sync_now.cmd on the Cloud PC, or git pull + xcopy. See RUNBOOK 'wrapper started but pipeline never completed'.",
         "auto_resolve_safe": False,
     },
+    "QC-054": {
+        "name": "Wrapper Python missing required runtime deps",
+        "action": "flag_for_operator",
+        "comment": "One or more import-required modules aren't installed in the interpreter the wrapper uses. The error message lists the exact pip command. Install into the SAME Python the wrapper resolves to (see reports/run-log.txt 'PY:' line). If sentry_sdk is the missing module, this is the root of QC-055 + HILMAR-DAILY-TRACKER-9 missed-check-in alerts.",
+        "auto_resolve_safe": False,
+    },
+    "QC-055": {
+        "name": "Sentry cron heartbeat not registering",
+        "action": "flag_for_operator",
+        "comment": "Pipeline ran but the cron check-in didn't reach Sentry — the missed-check-in alert (HILMAR-DAILY-TRACKER-9) is a false positive. Usually QC-054 root (missing sentry_sdk). If sentry_sdk is installed, verify secrets/sentry-dsn.txt and that the Cloud PC can reach sentry.io.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",

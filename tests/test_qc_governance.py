@@ -63,13 +63,17 @@ RETIRED: frozenset[str] = frozenset({
 #    test_known_untested_only_shrinks. Every NEW QC check must ship with a
 #    test (it cannot be added to this list). Work the backlog down over time.
 KNOWN_UNTESTED: frozenset[str] = frozenset({
-    "QC-009", "QC-010", "QC-012", "QC-013", "QC-016", "QC-018", "QC-019",
-    "QC-020", "QC-022", "QC-023", "QC-024", "QC-025", "QC-026", "QC-030",
-    "QC-032", "QC-033", "QC-034", "QC-035", "QC-036", "QC-043", "QC-044",
-    "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
+    # File/service-bound checks (read real repo files, Sentry, or git) — need
+    # a fixture harness before they're testable in-container. Worked down as
+    # harnesses land. QC-010/018/019/020/030/034 paid off 2026-06-09 in
+    # tests/test_qc_selfheal_checks.py.
+    "QC-009", "QC-012", "QC-013", "QC-016", "QC-022", "QC-023", "QC-024",
+    "QC-025", "QC-026", "QC-032", "QC-033", "QC-035", "QC-036", "QC-043",
+    "QC-044", "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
 })
-# Size at creation (2026-06-09): 26. The ratchet test asserts len never grows.
-_KNOWN_UNTESTED_CEILING = 26
+# Ceiling lowered 26 -> 20 (2026-06-09). The ratchet test asserts len never
+# grows; lower this again each time you remove entries.
+_KNOWN_UNTESTED_CEILING = 20
 
 
 def emitted_checks() -> set[str]:
