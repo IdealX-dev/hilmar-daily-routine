@@ -146,3 +146,34 @@ def test_stale_flags_do_not_sync(tmp_path, monkeypatch):
     pulled = ss.pull(tmp_path, container=cc)
     assert pulled == []
     assert not (tmp_path / "reports" / "sent-2026-06-09.flag").exists()
+
+
+def test_malformed_connection_string_gets_actionable_error(tmp_path, monkeypatch):
+    # The 2026-06-10 verification fire failed with the SDK's terse
+    # "Connection string is either blank or malformed" — because the secret
+    # held the bare access Key. The wrapper must say what to paste instead.
+    import sys
+    import types
+
+    fake_blob = types.ModuleType("azure.storage.blob")
+
+    class _FakeSvc:
+        @staticmethod
+        def from_connection_string(conn):
+            raise ValueError("Connection string is either blank or malformed.")
+
+    fake_blob.BlobServiceClient = _FakeSvc
+    fake_azure = types.ModuleType("azure")
+    fake_storage = types.ModuleType("azure.storage")
+    monkeypatch.setitem(sys.modules, "azure", fake_azure)
+    monkeypatch.setitem(sys.modules, "azure.storage", fake_storage)
+    monkeypatch.setitem(sys.modules, "azure.storage.blob", fake_blob)
+    monkeypatch.setenv(ss.ENV_CONN, "NOT-A-CONNECTION-STRING")
+
+    import pytest
+
+    with pytest.raises(ss.StateStoreError) as ei:
+        ss._container_client()
+    msg = str(ei.value)
+    assert "DefaultEndpointsProtocol=https;AccountName=" in msg
+    assert "not the bare Key" in msg
