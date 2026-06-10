@@ -10,6 +10,38 @@ now, but the underlying brittleness is unchanged.
 This doc is the cutover plan. **Each section is a prerequisite — not until
 all four are met can the Cloud PC be retired.**
 
+## CURRENT STATE (2026-06-10) — code-complete, operational steps only
+
+PR #33 merged: app-only Graph read AND send, Azure Blob state sync
+(`scripts/state_store.py`, including same-day send-flag sync so idempotency
+is machine-independent), and a fully wired `production-fire` job in
+`daily.yml`. The sections below are the original plan — kept for reference;
+the "blocked on OL IT" framing is obsolete (the Entra app exists).
+
+What remains is operational, in this exact order:
+
+1. **Load the 8 repo secrets** — on the Cloud PC run
+   `deploy\push_secrets_to_github.ps1` (pushes the 4 from `secrets\*.txt`,
+   prompts for the 4 Azure values).
+2. **Verification fire** — Actions → Daily → Run workflow →
+   `mode=production-fire`, `send_to=test`. Runs the complete real pipeline
+   (app-only read, blob state, app-only send) but emails ONLY
+   `michael.deitchman@idealx.us`. Safe to run any time of day; it uses
+   `--no-flag` so it can't disturb production idempotency state.
+3. **Flip** — disable the Windows scheduled task
+   (`Hilmar Daily Tracker - CloudPC`) **first**, then set the repo variable
+   `HILMAR_FIRE_FROM_ACTIONS=true` (Settings → Secrets and variables →
+   Actions → Variables). The variable is the whole switch: the `Daily`
+   workflow's schedule then runs the real fire at 10 AM ET (DST-proof dual
+   cron + gate). **Order matters:** send-flags are per-machine, so two live
+   schedules would each send the client email once.
+4. **Rollback** (if ever needed) — unset the variable, re-enable the task.
+
+Liveness continuity is wired: the GH fire dispatches the same
+`heartbeat.yml` the Cloud PC wrapper does (`host=github-actions`), so
+`liveness.yml` keeps alerting on a missed fire regardless of which machine
+owns the schedule.
+
 ## State today (2026-05-30)
 
 What runs where:

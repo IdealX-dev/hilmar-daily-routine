@@ -204,7 +204,7 @@ prior-window rollovers. Excluded from rate/ETD accuracy.
 Booking matching uses email `In-Reply-To` / `References` headers plus
 conversation_id, container count, and carrier — not just lane + date.
 
-## 7. QC + self-heal (~46 checks, QC-001 … QC-050)
+## 7. QC + self-heal (QC-001 … QC-055, contiguous)
 
 `scripts/qc_selfheal.py` is the QC engine. Each check returns PASS / WARN /
 ERROR. ERROR-severity findings gate the pipeline AND fire Sentry events.

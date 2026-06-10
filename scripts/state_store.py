@@ -26,9 +26,12 @@ real client is built lazily only when none is injected.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -40,6 +43,28 @@ STATE_FILES: list[str] = [
     "scripts/stage_emails.txt",
     "scripts/stage_emails_bodies.txt",
 ]
+
+
+def _today_et() -> str:
+    """Flag files are dated in ET — the operational day of the 10 AM ET fire.
+    Must match outlook_send.py's flag naming or the idempotency sync breaks."""
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+
+
+def state_paths(today: str | None = None) -> list[str]:
+    """STATE_FILES plus today's send-idempotency flags.
+
+    The flags ride along so idempotency is machine-independent: without them,
+    a second production-fire dispatch on the same day (or a re-run after a
+    partial failure) starts from a clean runner, sees no flag, and re-sends
+    to the full distribution. Only TODAY's flags sync — older ones are dead
+    state and pruning them out keeps the container from accreting.
+    """
+    today = today or _today_et()
+    return STATE_FILES + [
+        f"reports/sent-{today}.flag",
+        f"reports/improvements-sent-{today}.flag",
+    ]
 
 ENV_CONN = "AZURE_STORAGE_CONNECTION_STRING"
 ENV_CONTAINER = "HILMAR_STATE_CONTAINER"
@@ -75,10 +100,8 @@ def _container_client():
     name = os.environ.get(ENV_CONTAINER, DEFAULT_CONTAINER)
     svc = BlobServiceClient.from_connection_string(conn)
     cc = svc.get_container_client(name)
-    try:
-        cc.create_container()
-    except Exception:
-        pass  # already exists — fine
+    with contextlib.suppress(Exception):
+        cc.create_container()  # already exists — fine
     return cc
 
 
@@ -89,7 +112,7 @@ def pull(root: Path | None = None, *, container=None) -> list[str]:
     root = root or ROOT
     cc = container or _container_client()
     pulled: list[str] = []
-    for rel in STATE_FILES:
+    for rel in state_paths():
         bc = cc.get_blob_client(rel)
         if not bc.exists():
             continue
@@ -107,7 +130,7 @@ def push(root: Path | None = None, *, container=None) -> list[str]:
     root = root or ROOT
     cc = container or _container_client()
     pushed: list[str] = []
-    for rel in STATE_FILES:
+    for rel in state_paths():
         src = root / rel
         if not src.exists():
             continue

@@ -109,3 +109,40 @@ def test_is_configured_reflects_env(monkeypatch):
     assert ss.is_configured() is False
     monkeypatch.setenv(ss.ENV_CONN, "DefaultEndpointsProtocol=https;...")
     assert ss.is_configured() is True
+
+
+def test_state_paths_include_todays_et_flags():
+    paths = ss.state_paths("2026-06-10")
+    assert "reports/sent-2026-06-10.flag" in paths
+    assert "reports/improvements-sent-2026-06-10.flag" in paths
+    for core in ss.STATE_FILES:
+        assert core in paths
+
+
+def test_flags_round_trip_keeps_idempotency_across_runners(tmp_path, monkeypatch):
+    # The double-send guard: runner A fires + pushes its flag; runner B
+    # (fresh checkout, same day) pulls and must see the flag locally.
+    monkeypatch.setattr(ss, "_today_et", lambda: "2026-06-10")
+    runner_a = tmp_path / "a"
+    (runner_a / "reports").mkdir(parents=True)
+    (runner_a / "reports" / "sent-2026-06-10.flag").write_text(
+        "Sent 2026-06-10 10:04 ET req=r1 to=10 recipient(s)\n", encoding="utf-8")
+    cc = _FakeContainer()
+    pushed = ss.push(runner_a, container=cc)
+    assert "reports/sent-2026-06-10.flag" in pushed
+
+    runner_b = tmp_path / "b"
+    runner_b.mkdir()
+    pulled = ss.pull(runner_b, container=cc)
+    assert "reports/sent-2026-06-10.flag" in pulled
+    assert "10:04 ET" in (runner_b / "reports" / "sent-2026-06-10.flag").read_text(encoding="utf-8")
+
+
+def test_stale_flags_do_not_sync(tmp_path, monkeypatch):
+    # Yesterday's flag in the store must NOT appear on today's runner — a
+    # stale flag would wrongly block today's send.
+    monkeypatch.setattr(ss, "_today_et", lambda: "2026-06-10")
+    cc = _FakeContainer({"reports/sent-2026-06-09.flag": b"old"})
+    pulled = ss.pull(tmp_path, container=cc)
+    assert pulled == []
+    assert not (tmp_path / "reports" / "sent-2026-06-09.flag").exists()

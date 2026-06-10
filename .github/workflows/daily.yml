@@ -1,35 +1,47 @@
 name: Daily
 
-# Two jobs:
+# Two jobs (plus a schedule gate):
 #   - `audit` (scheduled + manual): runs the test+coverage routine, captures
 #     artifacts, reports green/red. Always on.
-#   - `production-fire` (manual dispatch with mode=production-fire): the REAL
-#     daily fire, fully wired — pulls state from blob, runs the 16-step
-#     pipeline with app-only Graph auth, sends to the full distribution as
-#     the shared mailbox, pushes state back. Moving the fire here kills the
-#     git-pull + xcopy silent-failure chain that the Cloud PC depends on.
+#   - `production-fire`: the REAL daily fire, fully wired — pulls state from
+#     blob, runs the 16-step pipeline with app-only Graph auth, sends to the
+#     full distribution as the shared mailbox, pushes state back, emits the
+#     liveness heartbeat. Moving the fire here kills the git-pull + xcopy
+#     silent-failure chain that the Cloud PC depends on.
+#
+# How production-fire triggers:
+#   - Manual dispatch with mode=production-fire. `send_to` defaults to `test`
+#     (Michael only) so a verification dispatch can NEVER hit the 10-recipient
+#     distribution by accident — pick send_to=full deliberately.
+#   - On schedule, ONLY when the repo variable HILMAR_FIRE_FROM_ACTIONS is
+#     set to 'true' (Settings → Secrets and variables → Actions → Variables).
+#     That variable IS the cutover switch: setting it moves the daily fire
+#     here; unsetting it rolls back to the Cloud PC. No YAML edit needed.
 #
 # To cut over from the Cloud PC to GH Actions:
-#   1. Add these repo secrets (Settings → Secrets and variables → Actions):
+#   1. Add the 8 repo secrets — run deploy/push_secrets_to_github.ps1 on the
+#      Cloud PC (it pushes the 4 from secrets/*.txt and prompts for the 4
+#      Azure values):
 #        GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_ID, GRAPH_APP_CLIENT_SECRET
 #        SENTRY_DSN, SENTRY_AUTH_TOKEN, ANTHROPIC_API_KEY, QT_APP_PASSWORD
 #        AZURE_STORAGE_CONNECTION_STRING
 #      (the GRAPH_APP_* app is registered with Mail.Read.Shared +
 #      Mail.Send.Shared, admin-consented, scoped to MBD_OceanExportBookingShared
 #      via an Application Access Policy.)
-#   2. Dispatch once manually (mode=production-fire) to verify a real fire.
-#   3. Flip the schedule trigger onto production-fire (or disable the Cloud
-#      PC task) once a manual run is confirmed clean.
-# See docs/MOVE-OFF-CLOUDPC.md for the full sequence.
+#   2. Dispatch once with mode=production-fire, send_to=test — a full real
+#      fire that emails ONLY michael.deitchman@idealx.us for verification.
+#   3. When clean: disable the Cloud PC's "Hilmar Daily Tracker - CloudPC"
+#      scheduled task FIRST, then set HILMAR_FIRE_FROM_ACTIONS=true. Order
+#      matters — sent-flags are per-machine, so two live schedules would
+#      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
 
 on:
   schedule:
-    # 14:00 UTC = 10:00 AM ET during EDT (Mar-Nov); 15:00 UTC during EST.
-    # Cron in GH Actions is UTC only and doesn't honor DST. The one-hour
-    # winter drift is an acceptable bridge during the migration period —
-    # the Cloud PC remains canonical until cutover. Cutover-time decision:
-    # either two cron entries (one each for EDT/EST) or accept the drift.
-    - cron: "0 14 * * 1-5"
+    # Two UTC crons so the fire is 10:00 AM ET year-round (GH cron is UTC
+    # and ignores DST). The `gate` job below picks whichever cron matches
+    # the current ET UTC-offset and skips the other.
+    - cron: "0 14 * * 1-5"   # 10:00 AM EDT (Mar-Nov)
+    - cron: "0 15 * * 1-5"   # 10:00 AM EST (Nov-Mar)
   workflow_dispatch:
     inputs:
       mode:
@@ -39,7 +51,15 @@ on:
         type: choice
         options:
           - audit-only        # Tests + coverage + dry-run (today's default)
-          - production-fire   # The real daily fire (gated on the 3 prerequisites above)
+          - production-fire   # The real daily fire
+      send_to:
+        description: "production-fire recipients (test = Michael only)"
+        required: false
+        default: "test"
+        type: choice
+        options:
+          - test              # michael.deitchman@idealx.us only — safe default
+          - full              # the 10-recipient client distribution
 
 env:
   PYTHONIOENCODING: utf-8
@@ -47,10 +67,38 @@ env:
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
 
 jobs:
+  gate:
+    name: 10 AM ET schedule gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      proceed: ${{ steps.decide.outputs.proceed }}
+    steps:
+      - id: decide
+        # Exactly one of the two crons corresponds to 10:00 AM ET on any
+        # given day. Match the firing cron against the current ET UTC-offset
+        # rather than wall-clock hour, so GitHub's cron jitter (sometimes
+        # >1h) can never skip a day or run a day twice.
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Manual dispatch — gate open."
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          offset=$(TZ=America/New_York date +%z)   # -0400 in EDT, -0500 in EST
+          cron="${{ github.event.schedule }}"
+          proceed=false
+          if [ "$cron" = "0 14 * * 1-5" ] && [ "$offset" = "-0400" ]; then proceed=true; fi
+          if [ "$cron" = "0 15 * * 1-5" ] && [ "$offset" = "-0500" ]; then proceed=true; fi
+          echo "cron='$cron' ET-offset=$offset → proceed=$proceed"
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+
   audit:
     name: Daily test + coverage audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: gate
+    if: needs.gate.outputs.proceed == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -97,16 +145,20 @@ jobs:
             python3 -c "import json; d=json.load(open('reports/test-result.json')); print(f\"status={d.get('status')} tests_ok={d.get('tests_ok')} coverage={d.get('total_coverage')}%\")"
           fi
 
-  # Gated job: actually runs the daily pipeline. Disabled until the three
-  # prerequisites in the file header are met. When enabled, the secrets
-  # listed below MUST be configured in repo Settings → Secrets and
-  # variables → Actions.
   production-fire:
-    name: Production fire (gated)
-    if: github.event.inputs.mode == 'production-fire'
+    name: Production fire
+    # Runs on manual dispatch (mode=production-fire), or on schedule once the
+    # HILMAR_FIRE_FROM_ACTIONS repo variable is 'true' (the cutover switch).
+    if: >-
+      needs.gate.outputs.proceed == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'production-fire') ||
+       (github.event_name == 'schedule' && vars.HILMAR_FIRE_FROM_ACTIONS == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    needs: audit
+    needs: [gate, audit]
+    permissions:
+      contents: read
+      actions: write     # to dispatch heartbeat.yml at end of a full fire
     # All Graph + service secrets are exposed to every step that needs them.
     # App-only Graph (GRAPH_APP_*) is consumed by GraphClient.authenticate()
     # and outlook_send._app_only_send_context(); state sync uses the blob
@@ -121,6 +173,9 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       QT_APP_PASSWORD: ${{ secrets.QT_APP_PASSWORD }}
       AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      # Scheduled fires are always the real thing; dispatches honor send_to
+      # (default test — Michael only).
+      SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
     steps:
       - name: Verify prerequisites — refuse to fire if anything's missing
         # The pipeline silently degrades on missing secrets, so we hard-fail
@@ -138,7 +193,7 @@ jobs:
             echo "::error::Refusing to fire — set the secrets in repo Settings → Secrets and variables → Actions."
             exit 1
           fi
-          echo "All required secrets present."
+          echo "All required secrets present. SEND_TO=$SEND_TO"
 
       - uses: actions/checkout@v4
 
@@ -169,7 +224,9 @@ jobs:
           printf '%s' "$QT_APP_PASSWORD"   > secrets/quote-tracker-pwd.txt
 
       - name: Pull pipeline state from blob store
-        # tracking-data-v2.json + staged email cache from the prior fire.
+        # tracking-data-v2.json + staged email cache + today's sent-flags
+        # from the prior fire. The flags make idempotency machine-independent:
+        # a second dispatch today sees the flag and refuses to double-send.
         run: python3 scripts/state_store.py pull
 
       - name: Run the daily pipeline (app-only Graph auth)
@@ -180,24 +237,58 @@ jobs:
           python3 scripts/refresh_stage.py --days-back 14
           python3 scripts/run_pipeline.py
 
-      - name: Send the daily email (full distribution) + audit
+      - name: Send the daily email + audit
         # outlook_send picks /users/{SEND_MAILBOX}/sendMail because GRAPH_APP_*
-        # is set. Idempotent via reports/sent-YYYY-MM-DD.flag.
+        # is set. Full sends are idempotent via reports/sent-YYYY-MM-DD.flag
+        # (synced through the blob store). Verification sends go to Michael
+        # only and use --no-flag so they never touch production idempotency
+        # state — a test must never block or unblock the real send.
         run: |
-          python3 scripts/outlook_send.py daily --to-from-config \
-            --subject-from-file reports/email-subject.txt \
-            --body-from-file reports/email-body.html \
-            --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
-          python3 scripts/gen_improvements_report.py
-          python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
-            --subject-from-file reports/improvements-subject.txt \
-            --body-from-file reports/improvements-report.html
+          if [ "$SEND_TO" = "full" ]; then
+            echo "FULL distribution send (config.json distribution.full_list)"
+            python3 scripts/outlook_send.py daily --to-from-config \
+              --subject-from-file reports/email-subject.txt \
+              --body-from-file reports/email-body.html \
+              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
+            python3 scripts/gen_improvements_report.py
+            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+              --subject-from-file reports/improvements-subject.txt \
+              --body-from-file reports/improvements-report.html
+          else
+            echo "VERIFICATION send — michael.deitchman@idealx.us only (send_to=test)"
+            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+              --force --no-flag \
+              --subject-from-file reports/email-subject.txt \
+              --body-from-file reports/email-body.html \
+              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
+            python3 scripts/gen_improvements_report.py
+            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+              --force --no-flag \
+              --subject-from-file reports/improvements-subject.txt \
+              --body-from-file reports/improvements-report.html
+          fi
 
       - name: Push pipeline state back to blob store
         # ALWAYS — even on a failed fire we persist whatever state advanced,
         # so the next run doesn't re-ingest from a stale snapshot.
         if: always()
         run: python3 scripts/state_store.py push
+
+      - name: Emit liveness heartbeat
+        # liveness.yml alerts when no successful heartbeat.yml run landed in
+        # 25h. The Cloud PC wrapper emits one after its fire; the GH fire
+        # must do the same or liveness false-alarms the day after cutover.
+        # Verification sends deliberately do NOT emit — a test fire must
+        # never mask a missed production fire.
+        if: success() && env.SEND_TO == 'full'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run heartbeat.yml --ref main -R "${{ github.repository }}" \
+            -f at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -f sha="${{ github.sha }}" \
+            -f status=success \
+            -f host=github-actions
 
       - name: Upload run artifacts
         if: always()

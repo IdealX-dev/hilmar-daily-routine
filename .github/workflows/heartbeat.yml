@@ -1,18 +1,15 @@
 name: Heartbeat — Cloud PC fired
 
-# Pure observability signal. The Cloud PC's daily wrapper triggers this
-# workflow at the END of a successful fire, via
-#   gh workflow run heartbeat.yml -f at=<iso> -f sha=<head> -f status=success
+# Pure observability signal. Whoever performed the daily fire triggers this
+# workflow at the END of a successful run, via
+#   gh workflow run heartbeat.yml -f at=<iso> -f sha=<head> -f status=success -f host=<who>
+# Two emitters exist: the Cloud PC's daily wrapper (host=cloud-pc) and the
+# GH Actions production-fire job in daily.yml (host=github-actions).
 # The workflow itself does nothing — its mere successful run history IS
 # the heartbeat. The liveness monitor (`liveness.yml`) reads
 #   gh run list --workflow=heartbeat.yml --branch=main --status=success
-# and alerts when the most recent run is older than 25h.
-#
-# This decouples liveness from `daily-fire.yml` (the planned self-hosted
-# runner trigger that isn't deployed yet) and lets the existing Cloud PC
-# wrapper + Windows Task Scheduler keep firing without changes — just
-# add a final `gh workflow run` call to the wrapper to emit the
-# heartbeat.
+# and alerts when the most recent run is older than 25h. Source-agnostic,
+# so the cutover (HILMAR_FIRE_FROM_ACTIONS) doesn't touch liveness.
 #
 # Failure mode: if the Cloud PC can't reach github.com or its PAT
 # expired, the wrapper's heartbeat call fails (but the daily email

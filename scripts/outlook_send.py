@@ -23,8 +23,10 @@ URL + code; user authenticates as michael.deitchman@ol-usa.com.
 Scopes: Mail.Send Mail.Read Files.ReadWrite (delegated; no admin consent).
 """
 from __future__ import annotations
+
 import argparse
 import base64
+import contextlib
 import json
 import os
 import sys
@@ -67,8 +69,8 @@ def _app_only_send_context():
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         from hilmar.app_auth import (
-            app_only_credentials_from_env,
             acquire_app_only_token,
+            app_only_credentials_from_env,
         )
     except Exception:
         return None
@@ -90,10 +92,8 @@ def _save_cache(cache: msal.SerializableTokenCache) -> None:
     if cache.has_state_changed:
         TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_CACHE_PATH.write_text(cache.serialize())
-        try:
-            os.chmod(TOKEN_CACHE_PATH, 0o600)
-        except OSError:
-            pass  # Windows / OneDrive — best-effort
+        with contextlib.suppress(OSError):
+            os.chmod(TOKEN_CACHE_PATH, 0o600)  # Windows / OneDrive — best-effort
 
 
 def get_token() -> str:
@@ -279,19 +279,29 @@ def cmd_daily(args) -> int:
     #   sent-YYYY-MM-DD.flag           = full distribution (10 recipients)
     #   improvements-sent-YYYY-MM-DD.flag = idealx.us audit (1 recipient)
     from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _zi
     is_full_distribution = bool(args.to_from_config) or (
         len(to) > 1 and any(addr.endswith("@ol-usa.com") for addr in (to or []))
     )
     is_audit = (len(to) == 1 and to and to[0].endswith("@idealx.us"))
-    today = _dt.now().strftime("%Y-%m-%d")
+    # Flag dates/timestamps are ET, explicitly — the operational day of the
+    # 10 AM ET fire. A GH Actions runner's clock is UTC; bare .now() there
+    # would date the flag wrong after 8 PM ET and stamp UTC times labeled
+    # "ET". state_store.py syncs today's flags by the same ET date.
+    _now_et = _dt.now(_zi("America/New_York"))
+    today = _now_et.strftime("%Y-%m-%d")
     flag_name = "sent" if is_full_distribution else ("improvements-sent" if is_audit else None)
+    if getattr(args, "no_flag", False):
+        # Verification/test sends must never touch production idempotency
+        # state: don't let a flag block the send, don't write one after.
+        flag_name = None
     flag_path = ROOT / "reports" / f"{flag_name}-{today}.flag" if flag_name else None
     if flag_path and flag_path.exists() and not getattr(args, "force", False):
         print(f"⛔ IDEMPOTENCY: {flag_path.name} already exists.")
         print(f"   Today's {flag_name} email already shipped:")
         for line in flag_path.read_text(encoding='utf-8').splitlines()[:6]:
             print(f"     {line}")
-        print(f"   Pass --force to send anyway (will append a new entry to flag).")
+        print("   Pass --force to send anyway (will append a new entry to flag).")
         return 0
 
     print(f"→ TO ({len(to)}): {to}")
@@ -307,7 +317,7 @@ def cmd_daily(args) -> int:
     if flag_path:
         flag_path.parent.mkdir(parents=True, exist_ok=True)
         existing = flag_path.read_text(encoding='utf-8') if flag_path.exists() else ""
-        new_line = f"Sent {_dt.now().strftime('%Y-%m-%d %H:%M ET')} req={req_id} to={len(to)} recipient(s)\n"
+        new_line = f"Sent {_dt.now(_zi('America/New_York')).strftime('%Y-%m-%d %H:%M ET')} req={req_id} to={len(to)} recipient(s)\n"
         flag_path.write_text(existing + new_line, encoding="utf-8")
     return 0
 
@@ -410,6 +420,9 @@ def main() -> int:
     pd.add_argument("--dry", action="store_true")
     pd.add_argument("--force", action="store_true",
                     help="Override idempotency flag (re-send even if today's flag exists)")
+    pd.add_argument("--no-flag", action="store_true",
+                    help="Don't read or write the idempotency flag (verification/test "
+                         "sends must never touch production send state)")
     pd.set_defaults(func=cmd_daily)
 
     pn = sub.add_parser("nudge", help="Send a one-off internal nudge")

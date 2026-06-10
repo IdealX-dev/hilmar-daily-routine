@@ -242,6 +242,45 @@ routine / QC-052 needs them). Confirm with `py -0p` and
 
 ---
 
+## Failure mode: GH Actions production-fire failed (post-cutover)
+
+Applies once `HILMAR_FIRE_FROM_ACTIONS=true` (the fire runs from the
+`Daily` workflow instead of the Cloud PC).
+
+**Symptom**: `cloud-pc-down` issue filed by liveness at 11:30 AM ET, or a
+red `production-fire` job in Actions → Daily.
+
+**Triage**:
+1. Open the failed run. The job is ordered so the failing step names the
+   subsystem: *Verify prerequisites* (a secret is missing/rotated) →
+   *Pull state* (Azure Blob unreachable / connection string expired) →
+   *pipeline* (same triage as a Cloud PC fire — read the run-log artifact)
+   → *Send* (Graph app-only auth: client secret expired? Application
+   Access Policy changed?) → *heartbeat* (cosmetic; fire already shipped).
+2. Artifacts on every run: `run-log.txt`, `qc-result.json`,
+   `email-body.html`, `improvements-report.html` (14-day retention).
+
+**Fix + re-fire**: Actions → Daily → Run workflow → `mode=production-fire`,
+`send_to=full`. Safe to re-dispatch: today's send-flags live in the blob
+store, so if the email already went out the send step refuses (idempotent).
+
+**Common roots**:
+- `GRAPH_APP_CLIENT_SECRET` expired (Entra client secrets have a max 24-mo
+  lifetime) → mint a new one, `gh secret set GRAPH_APP_CLIENT_SECRET`
+- `AZURE_STORAGE_CONNECTION_STRING` rotated → re-copy from Storage account
+  → Access keys
+- Schedule didn't trigger at all → check the repo variable
+  `HILMAR_FIRE_FROM_ACTIONS` is still `true`, and the `gate` job's log
+  (it skips the cron that doesn't match the current ET UTC-offset)
+
+**Rollback to the Cloud PC**: unset `HILMAR_FIRE_FROM_ACTIONS`, re-enable
+the `Hilmar Daily Tracker - CloudPC` scheduled task. State note: the Cloud
+PC's OneDrive copy of `tracking-data-v2.json` will be stale by however many
+days GH owned the fire — copy the latest from the blob container
+(`hilmar-state`) or accept re-ingest from staged emails.
+
+---
+
 ## Routine tasks
 
 ### Push freshly-merged code to production NOW (don't wait for 10 AM)
