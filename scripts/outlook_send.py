@@ -112,7 +112,14 @@ def get_token() -> str:
             _save_cache(cache)
             return result["access_token"]
 
-    # Device-code flow (interactive)
+    # Device-code flow (interactive). On a headless runner this would print
+    # a code and block until the job times out — fail loudly instead.
+    if os.environ.get("HILMAR_NONINTERACTIVE"):
+        raise RuntimeError(
+            "Silent token refresh failed and HILMAR_NONINTERACTIVE is set — "
+            "refusing to start device-code flow on a headless runner. Re-seed "
+            "the token cache from the Cloud PC (state_store.py push)."
+        )
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
         raise RuntimeError(f"Device flow failed: {flow}")

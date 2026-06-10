@@ -18,19 +18,26 @@ name: Daily
 #     That variable IS the cutover switch: setting it moves the daily fire
 #     here; unsetting it rolls back to the Cloud PC. No YAML edit needed.
 #
+# Graph auth (2026-06-10): OL IT declined to register an app-only Entra
+# app, so the default auth is DELEGATED — the same device-code token the
+# Cloud PC uses, synced through the blob store (state_store pulls it before
+# the fire, pushes the refreshed cache after; daily refresh keeps the
+# ~90-day refresh token alive indefinitely). The GRAPH_APP_* secrets remain
+# supported and take precedence if OL ever registers the app.
+#
 # To cut over from the Cloud PC to GH Actions:
-#   1. Add the 8 repo secrets — run deploy/push_secrets_to_github.ps1 on the
-#      Cloud PC (it pushes the 4 from secrets/*.txt and prompts for the 4
-#      Azure values):
-#        GRAPH_APP_TENANT_ID, GRAPH_APP_CLIENT_ID, GRAPH_APP_CLIENT_SECRET
-#        SENTRY_DSN, SENTRY_AUTH_TOKEN, ANTHROPIC_API_KEY, QT_APP_PASSWORD
-#        AZURE_STORAGE_CONNECTION_STRING
-#      (the GRAPH_APP_* app is registered with Mail.Read.Shared +
-#      Mail.Send.Shared, admin-consented, scoped to MBD_OceanExportBookingShared
-#      via an Application Access Policy.)
-#   2. Dispatch once with mode=production-fire, send_to=test — a full real
+#   1. Secrets needed: SENTRY_DSN, SENTRY_AUTH_TOKEN, ANTHROPIC_API_KEY,
+#      QT_APP_PASSWORD, AZURE_STORAGE_CONNECTION_STRING.
+#   2. Seed state ONCE from the Cloud PC (uploads tracking data, stage
+#      cache, and the token cache to the blob store):
+#        $env:AZURE_STORAGE_CONNECTION_STRING = "<the same value as the secret>"
+#        python scripts\state_store.py push
+#   3. Dispatch once with mode=production-fire, send_to=test — a full real
 #      fire that emails ONLY michael.deitchman@idealx.us for verification.
-#   3. When clean: disable the Cloud PC's "Hilmar Daily Tracker - CloudPC"
+#      The validator's silent-refresh check is also the Conditional Access
+#      verdict: if OL blocks token refresh from GitHub IPs, it fails THERE
+#      with a plain-English message, and off-Cloud-PC firing needs OL.
+#   4. When clean: disable the Cloud PC's "Hilmar Daily Tracker - CloudPC"
 #      scheduled task FIRST, then set HILMAR_FIRE_FROM_ACTIONS=true. Order
 #      matters — sent-flags are per-machine, so two live schedules would
 #      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
@@ -176,14 +183,20 @@ jobs:
       # Scheduled fires are always the real thing; dispatches honor send_to
       # (default test — Michael only).
       SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
+      # Never let a failed silent refresh fall into the interactive
+      # device-code prompt — on a headless runner that blocks until the
+      # job times out. Fail loudly instead.
+      HILMAR_NONINTERACTIVE: "1"
     steps:
       - name: Verify prerequisites — refuse to fire if anything's missing
         # The pipeline silently degrades on missing secrets, so we hard-fail
-        # here BEFORE the fire to make a misconfiguration loud.
+        # here BEFORE the fire to make a misconfiguration loud. GRAPH_APP_*
+        # is deliberately NOT required: OL declined to register the app-only
+        # Entra app (2026-06-10), so the default auth is the delegated token
+        # cache pulled from the blob store — validated for real below.
         run: |
           missing=0
-          for v in GRAPH_APP_TENANT_ID GRAPH_APP_CLIENT_ID GRAPH_APP_CLIENT_SECRET \
-                   SENTRY_DSN ANTHROPIC_API_KEY AZURE_STORAGE_CONNECTION_STRING; do
+          for v in SENTRY_DSN ANTHROPIC_API_KEY AZURE_STORAGE_CONNECTION_STRING; do
             if [ -z "${!v}" ]; then
               echo "::error::Secret $v is not set — production-fire blocked"
               missing=$((missing+1))
@@ -223,18 +236,22 @@ jobs:
           printf '%s' "$ANTHROPIC_API_KEY" > secrets/anthropic-api-key.txt
           printf '%s' "$QT_APP_PASSWORD"   > secrets/quote-tracker-pwd.txt
 
+      - name: Pull pipeline state from blob store
+        # tracking-data-v2.json + staged email cache + the delegated token
+        # cache + today's sent-flags from the prior fire. The flags make
+        # idempotency machine-independent: a second dispatch today sees the
+        # flag and refuses to double-send. Pulled BEFORE validation so the
+        # validator can test the token cache it just received.
+        run: python3 scripts/state_store.py pull
+
       - name: Validate prerequisites for real — name any wrong secret
         # The non-empty loop above can't catch a wrong-field paste (storage
         # Key instead of Connection string, a non-GUID tenant id) — those
         # died mid-run as SDK tracebacks on 2026-06-10. This does one cheap
-        # real check per secret and says exactly what to fix. Read-only.
+        # real check per item and says exactly what to fix, including a live
+        # silent-refresh of the delegated token (which is also the
+        # Conditional Access verdict for firing from GitHub's IPs). Read-only.
         run: python3 scripts/verify_fire_prereqs.py
-
-      - name: Pull pipeline state from blob store
-        # tracking-data-v2.json + staged email cache + today's sent-flags
-        # from the prior fire. The flags make idempotency machine-independent:
-        # a second dispatch today sees the flag and refuses to double-send.
-        run: python3 scripts/state_store.py pull
 
       - name: Run the daily pipeline (app-only Graph auth)
         # refresh_stage reads the OL/Lonny thread via app-only Graph; the

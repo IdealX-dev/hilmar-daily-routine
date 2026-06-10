@@ -42,6 +42,14 @@ STATE_FILES: list[str] = [
     "tracking-data-v2.json",
     "scripts/stage_emails.txt",
     "scripts/stage_emails_bodies.txt",
+    # The delegated MSAL token cache — added 2026-06-10 when OL IT declined
+    # to register an app-only Entra app, making device-code the only auth
+    # that works off the Cloud PC. The runner pulls this, silently refreshes
+    # (which keeps the ~90d refresh-token alive day after day), and pushes
+    # the rotated cache back. Same trust boundary as today: the cache
+    # already lives on OneDrive; the blob container is private and keyed by
+    # a repo secret. Seed once from the Cloud PC: state_store.py push.
+    "secrets/token-cache.json",
 ]
 
 

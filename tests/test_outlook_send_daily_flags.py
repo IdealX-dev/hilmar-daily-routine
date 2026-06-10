@@ -83,3 +83,22 @@ def test_single_idealx_recipient_writes_audit_flag(tmp_path, monkeypatch):
     _wire(tmp_path, monkeypatch)
     assert os_send.cmd_daily(_args(tmp_path, to=["michael.deitchman@idealx.us"])) == 0
     assert (tmp_path / "reports" / f"improvements-sent-{_today_et()}.flag").exists()
+
+
+def test_noninteractive_guard_blocks_device_code(monkeypatch, tmp_path):
+    # On a headless runner a failed silent refresh must raise, not print a
+    # device code and hang until the job times out.
+    monkeypatch.setenv("HILMAR_NONINTERACTIVE", "1")
+    monkeypatch.setattr(os_send, "TOKEN_CACHE_PATH", tmp_path / "absent.json")
+
+    class _App:
+        def __init__(self, *a, **k): pass
+        def get_accounts(self): return []
+        def acquire_token_silent(self, *a, **k): return None
+        def initiate_device_flow(self, **k):
+            raise AssertionError("device flow must not start when non-interactive")
+
+    monkeypatch.setattr(os_send.msal, "PublicClientApplication", _App)
+    import pytest
+    with pytest.raises(RuntimeError, match="HILMAR_NONINTERACTIVE"):
+        os_send.get_token()

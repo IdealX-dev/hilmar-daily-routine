@@ -94,6 +94,43 @@ def check_client_credentials() -> tuple[bool, str]:
     return True, "GRAPH_APP_* credentials acquire a token"
 
 
+def check_delegated_cache() -> tuple[bool, str]:
+    """The no-IT auth path (OL declined to register an app-only Entra app,
+    2026-06-10): the device-code token cache synced through the blob store.
+    A real acquire_token_silent here is also the Conditional Access verdict —
+    if OL's tenant blocks token refresh from non-corporate IPs, THIS is
+    where it shows up, in plain English, before anything fires."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import msal
+    import outlook_send as OS
+
+    if not OS.TOKEN_CACHE_PATH.exists():
+        return False, (
+            f"No delegated token cache at {OS.TOKEN_CACHE_PATH.name}. Seed it once "
+            "from the Cloud PC: set AZURE_STORAGE_CONNECTION_STRING and run "
+            "`python scripts/state_store.py push` (uploads the existing cache "
+            "+ pipeline state to the blob store)."
+        )
+    cache = OS._load_cache()
+    app = msal.PublicClientApplication(
+        OS.CLIENT_ID, authority=f"https://login.microsoftonline.com/{OS.TENANT}",
+        token_cache=cache)
+    accounts = app.get_accounts()
+    if not accounts:
+        return False, "Token cache present but holds no account — re-seed from the Cloud PC."
+    result = app.acquire_token_silent(OS.SCOPES, account=accounts[0])
+    if result and "access_token" in result:
+        OS._save_cache(cache)
+        return True, f"Delegated token refresh works (account: {accounts[0].get('username', '?')})"
+    return False, (
+        "Silent token refresh FAILED from this runner. If the same cache works "
+        "on the Cloud PC, OL's Conditional Access is likely rejecting sign-ins "
+        "from GitHub's IP ranges — off-Cloud-PC firing then needs OL to either "
+        "register the app-only Entra app or exempt this workload. "
+        f"MSAL detail: {result!r}"
+    )
+
+
 def check_storage(conn: str) -> tuple[bool, str]:
     """Parse + ping the storage account. Catches the Key-instead-of-
     Connection-string paste and a revoked/typo'd AccountKey."""
@@ -131,20 +168,27 @@ def main() -> int:
     if dsn and not (dsn.startswith("https://") and "@" in dsn):
         results.append((False, "SENTRY_DSN doesn't look like a DSN (expected https://<key>@<org>.ingest...)"))
 
+    # Graph auth — either mode works; exactly one must validate:
+    #   app-only (GRAPH_APP_* secrets)         — requires the OL Entra app
+    #   delegated (token cache via blob store) — the no-IT path
     tenant = os.environ.get("GRAPH_APP_TENANT_ID", "")
     client_id = os.environ.get("GRAPH_APP_CLIENT_ID", "")
-    if not tenant:
-        results.append((False, "GRAPH_APP_TENANT_ID is NOT set"))
+    secret = os.environ.get("GRAPH_APP_CLIENT_SECRET", "")
+    if tenant or client_id or secret:
+        if not tenant:
+            results.append((False, "GRAPH_APP_TENANT_ID is NOT set (other GRAPH_APP_* are)"))
+        else:
+            results.append(check_tenant(tenant))
+        if not client_id:
+            results.append((False, "GRAPH_APP_CLIENT_ID is NOT set (other GRAPH_APP_* are)"))
+        else:
+            results.append(check_client_id_shape(client_id))
+        # Only try a real token once tenant + client-id shape pass — otherwise
+        # MSAL throws the unhelpful errors this script exists to replace.
+        if tenant and client_id and all(ok for ok, _ in results[-2:]):
+            results.append(check_client_credentials())
     else:
-        results.append(check_tenant(tenant))
-    if not client_id:
-        results.append((False, "GRAPH_APP_CLIENT_ID is NOT set"))
-    else:
-        results.append(check_client_id_shape(client_id))
-    # Only try a real token once tenant + client-id shape pass — otherwise
-    # MSAL throws the unhelpful errors this script exists to replace.
-    if tenant and client_id and all(ok for ok, _ in results[-2:]):
-        results.append(check_client_credentials())
+        results.append(check_delegated_cache())
 
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
     if not conn:
