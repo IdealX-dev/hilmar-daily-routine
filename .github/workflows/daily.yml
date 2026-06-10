@@ -223,6 +223,13 @@ jobs:
           printf '%s' "$ANTHROPIC_API_KEY" > secrets/anthropic-api-key.txt
           printf '%s' "$QT_APP_PASSWORD"   > secrets/quote-tracker-pwd.txt
 
+      - name: Validate prerequisites for real — name any wrong secret
+        # The non-empty loop above can't catch a wrong-field paste (storage
+        # Key instead of Connection string, a non-GUID tenant id) — those
+        # died mid-run as SDK tracebacks on 2026-06-10. This does one cheap
+        # real check per secret and says exactly what to fix. Read-only.
+        run: python3 scripts/verify_fire_prereqs.py
+
       - name: Pull pipeline state from blob store
         # tracking-data-v2.json + staged email cache + today's sent-flags
         # from the prior fire. The flags make idempotency machine-independent:
