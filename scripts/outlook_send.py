@@ -46,6 +46,38 @@ SCOPES = ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
 GRAPH = "https://graph.microsoft.com/v1.0"
 INLINE_ATTACH_LIMIT = 3 * 1024 * 1024  # 3 MB safety under Graph's 4 MB hard cap
 
+#: Mailbox the app-only path sends AS. App-only auth has no /me context, so
+#: it must POST to /users/{mailbox}/sendMail. Defaults to the OL responder
+#: shared mailbox (the same one ingest reads); override via env on the
+#: Cloud PC if outbound should originate elsewhere. The app's Application
+#: Access Policy must grant Mail.Send.Shared scoped to this mailbox.
+SEND_MAILBOX = os.environ.get("HILMAR_SEND_MAILBOX", "MBD_OceanExportBookingShared@ol-usa.com")
+
+
+def _app_only_send_context():
+    """Return (token, send_url) when app-only Graph auth is configured via
+    the GRAPH_APP_* env vars, else None.
+
+    This is what makes outbound work off the Cloud PC (GH Actions): there's
+    no signed-in user, so /me/sendMail is unavailable — send as the shared
+    mailbox via /users/{mailbox}/sendMail using an app-only token. When the
+    env vars are unset (Cloud PC today), returns None and the caller uses
+    the existing device-code + /me path unchanged.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+        from hilmar.app_auth import (
+            app_only_credentials_from_env,
+            acquire_app_only_token,
+        )
+    except Exception:
+        return None
+    creds = app_only_credentials_from_env()
+    if creds is None:
+        return None
+    token = acquire_app_only_token(creds)
+    return token, f"{GRAPH}/users/{SEND_MAILBOX}/sendMail"
+
 
 def _load_cache() -> msal.SerializableTokenCache:
     cache = msal.SerializableTokenCache()
@@ -114,8 +146,22 @@ def _content_type_for(path: Path) -> str:
 def send_mail(*, to: list[str], subject: str, html_body: str,
               cc: list[str] | None = None, attachments: list[Path] | None = None,
               token: str | None = None) -> str:
-    """Send via Graph /me/sendMail. Returns the request-id header for log correlation."""
-    token = token or get_token()
+    """Send via Graph sendMail. Returns the request-id header for log correlation.
+
+    Endpoint selection:
+      - explicit token passed in        → /me/sendMail (caller owns auth)
+      - GRAPH_APP_* env set (app-only)   → /users/{SEND_MAILBOX}/sendMail
+      - otherwise (device-code, Cloud PC)→ /me/sendMail
+    """
+    if token is not None:
+        send_url = f"{GRAPH}/me/sendMail"
+    else:
+        _appctx = _app_only_send_context()
+        if _appctx is not None:
+            token, send_url = _appctx
+        else:
+            token = get_token()
+            send_url = f"{GRAPH}/me/sendMail"
     cc = cc or []
     attachments = attachments or []
 
@@ -174,7 +220,7 @@ def send_mail(*, to: list[str], subject: str, html_body: str,
 
     payload = {"message": message, "saveToSentItems": True}
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    r = requests.post(f"{GRAPH}/me/sendMail", headers=headers, json=payload, timeout=30)
+    r = requests.post(send_url, headers=headers, json=payload, timeout=30)
 
     # Sentry metric: success/failure counter tagged by recipient type
     # (full distribution / audit / test) so the dashboard shows which
