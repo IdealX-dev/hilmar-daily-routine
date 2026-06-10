@@ -16,10 +16,26 @@ Exit 0 = all good; exit 1 = at least one named failure.
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 OK = "OK  "
 BAD = "FAIL"
+
+GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def check_client_id_shape(client_id: str) -> tuple[bool, str]:
+    """AADSTS90013 ('Invalid input received from the user', live failure
+    2026-06-10 run 27313454382) is what Azure returns when the client_id in
+    the token request isn't a GUID at all — catch it before MSAL does."""
+    if GUID_RE.match(client_id.strip()):
+        return True, "GRAPH_APP_CLIENT_ID is a well-formed GUID"
+    return False, (
+        "GRAPH_APP_CLIENT_ID is not a GUID. Copy 'Application (client) ID' "
+        "from Azure Portal > App registrations > the Hilmar app > Overview "
+        "(NOT the app's display name, and not the 'Object ID')."
+    )
 
 
 def check_tenant(tenant: str, *, http_get=None) -> tuple[bool, str]:
@@ -71,6 +87,9 @@ def check_client_credentials() -> tuple[bool, str]:
                     "secrets > New client secret > copy the Value column, not the ID)")
         elif "AADSTS500011" in msg or "consent" in msg.lower():
             hint = " — the app's Application permissions may lack admin consent"
+        elif "AADSTS90013" in msg:
+            hint = (" — a malformed value in the request, usually a CLIENT_ID "
+                    "that isn't a GUID, or stray whitespace/newline in a secret")
         return False, f"App-only token acquisition failed: {msg}{hint}"
     return True, "GRAPH_APP_* credentials acquire a token"
 
@@ -113,14 +132,19 @@ def main() -> int:
         results.append((False, "SENTRY_DSN doesn't look like a DSN (expected https://<key>@<org>.ingest...)"))
 
     tenant = os.environ.get("GRAPH_APP_TENANT_ID", "")
+    client_id = os.environ.get("GRAPH_APP_CLIENT_ID", "")
     if not tenant:
         results.append((False, "GRAPH_APP_TENANT_ID is NOT set"))
     else:
         results.append(check_tenant(tenant))
-        # Only try the token if the tenant resolves — otherwise MSAL throws
-        # the unhelpful authority error this script exists to replace.
-        if results[-1][0]:
-            results.append(check_client_credentials())
+    if not client_id:
+        results.append((False, "GRAPH_APP_CLIENT_ID is NOT set"))
+    else:
+        results.append(check_client_id_shape(client_id))
+    # Only try a real token once tenant + client-id shape pass — otherwise
+    # MSAL throws the unhelpful errors this script exists to replace.
+    if tenant and client_id and all(ok for ok, _ in results[-2:]):
+        results.append(check_client_credentials())
 
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
     if not conn:

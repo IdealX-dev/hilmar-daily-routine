@@ -48,3 +48,11 @@ def test_storage_rejects_bare_key(monkeypatch):
     ok, msg = vp.check_storage("c29tZWJhc2U2NGtleQ==")
     assert not ok
     assert "not the bare Key" in msg
+
+
+def test_client_id_must_be_guid():
+    ok, msg = vp.check_client_id_shape("Hilmar Daily Tracker (app-only)")
+    assert not ok
+    assert "Application (client) ID" in msg
+    ok, _ = vp.check_client_id_shape("12345678-abcd-ef01-2345-67890abcdef0")
+    assert ok
