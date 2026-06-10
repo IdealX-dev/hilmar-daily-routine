@@ -4,7 +4,10 @@ parse_ol_table.py — extract structured booking fields from an OL response emai
 Input: path to a raw read_resource output file (JSON) OR JSON on stdin.
 Output: JSON with {request_id-ish fields}
 """
-import json, sys, re
+import contextlib
+import json
+import re
+import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -52,10 +55,8 @@ def clean(s):
 
 def extract_from_body(body_html: str):
     p = TableExtractor()
-    try:
+    with contextlib.suppress(Exception):
         p.feed(body_html)
-    except Exception:
-        pass
     # Find the first "booking" table: one that has a header row with POL/POD/Container
     candidates = []
     for idx, row in enumerate(p.rows):

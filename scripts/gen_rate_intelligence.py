@@ -34,6 +34,7 @@ Reads from:
   %USERPROFILE%\\OneDrive - IdealX\\SHARED\\client_intelligence\\hilmar\\
 """
 from __future__ import annotations
+
 import argparse
 import json
 import sys
@@ -229,7 +230,7 @@ def render_section_html(analysis: dict) -> str:
     regressing = analysis["lane_regression"]
     trends = analysis["winning_rate_trends"]
 
-    parts = [f"""
+    parts = ["""
 <h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;border-bottom:2px solid #76b82a;padding-bottom:6px">
   💰 Rate Negotiation Intelligence
 </h2>
@@ -311,7 +312,7 @@ def render_section_html(analysis: dict) -> str:
   <th style="padding:6px;text-align:left">Last Quote</th>
   <th style="padding:6px;text-align:center">Days Silent</th>
 </tr>""")
-        for i, c in enumerate(cooling):
+        for _i, c in enumerate(cooling):
             bg = "#fef3c7" if c["days_silent"] and c["days_silent"] > 21 else "#fffbeb"
             parts.append(f"""
 <tr style="background:{bg}">
@@ -442,7 +443,7 @@ def main():
     json_path.write_text(json.dumps(analysis, indent=2, default=str), encoding="utf-8")
 
     if not args.quiet:
-        print(f"✅ Rate intelligence:")
+        print("✅ Rate intelligence:")
         print(f"   Lanes analyzed: {len(analysis['lane_cheat_sheet'])}")
         print(f"   Cooling carriers: {len(analysis['carrier_cooling'])}")
         print(f"   Regressing lanes: {len(analysis['lane_regression'])}")

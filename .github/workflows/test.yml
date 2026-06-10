@@ -38,7 +38,13 @@ jobs:
           pip install \
             reportlab msal requests tzdata pdfplumber \
             sentry-sdk jsonschema python-dateutil jinja2 anthropic \
-            pytest pytest-cov responses
+            pytest pytest-cov responses ruff
+
+      - name: Lint (ruff — zeroed 2026-06-10, keep it at zero)
+        # The repo hit ruff-clean on 2026-06-10 (416 findings paid down).
+        # This gate keeps it there — same shrink-only philosophy as the QC
+        # test ratchet: new code can't reintroduce lint debt.
+        run: ruff check scripts/ src/ tests/ deploy/
 
       - name: Lint syntax (compile every module)
         run: |

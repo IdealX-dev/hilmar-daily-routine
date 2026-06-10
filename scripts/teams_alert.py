@@ -24,15 +24,18 @@ CLI:
   python scripts/teams_alert.py test        # send a hello-world alert
 """
 from __future__ import annotations
+
 import argparse
 import json
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import contextlib
+
 import core  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -68,10 +71,8 @@ def _queue_alert(alert: dict):
     queue_path = REPORTS / "alerts-queue.json"
     queue = []
     if queue_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             queue = json.loads(queue_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
     alert["queued_at"] = datetime.now(timezone.utc).isoformat()
     queue.append(alert)
     queue = queue[-100:]  # cap at 100 alerts
@@ -95,10 +96,8 @@ def _record_alert(event_key: str):
     flag = REPORTS / "alerts-sent.json"
     sent = []
     if flag.exists():
-        try:
+        with contextlib.suppress(Exception):
             sent = json.loads(flag.read_text(encoding="utf-8"))
-        except Exception:
-            pass
     sent.append(event_key)
     sent = sent[-500:]
     REPORTS.mkdir(parents=True, exist_ok=True)
@@ -287,11 +286,11 @@ def main():
                 queued += 1
                 print(f"  📋 queued {ev['type']}: {ev['title']}")
         if not webhook:
-            print(f"\n  No webhook configured. Add config.json:")
-            print(f'    "alerts": {{')
-            print(f'      "teams_webhook_url": "https://outlook.office.com/webhook/...",')
-            print(f'      "events": ["win", "pending_overdue", "qc_error", "big_day"]')
-            print(f'    }}')
+            print("\n  No webhook configured. Add config.json:")
+            print('    "alerts": {')
+            print('      "teams_webhook_url": "https://outlook.office.com/webhook/...",')
+            print('      "events": ["win", "pending_overdue", "qc_error", "big_day"]')
+            print('    }')
         print(f"\nteams_alert: {sent} sent live, {queued} queued")
         return 0
 

@@ -8,7 +8,6 @@ Verifies:
   - _build_lane_summary() rolls up lanes with all stats
   - _append_jsonl() de-dups by fingerprint (no duplicates)
 """
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -17,7 +16,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import share_intel as SI  # noqa: E402
-
 
 # ─────────────────────────────────────────────────────────────────────
 # _row_fingerprint

@@ -26,11 +26,14 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import core
+import contextlib
+
 import body_parser as BP
+import core
+
 # Single source of truth for "is this a Hilmar ocean RFQ" — shared with
 # ingest.py so the QC backstop and the intake filter never drift (QC-040).
-from ingest import out_of_scope_reason, apply_operator_corrections
+from ingest import apply_operator_corrections, out_of_scope_reason
 
 # ─────────────────────────────────────────────────────────────────────
 # COVERED-loss reason heuristics — promote OTHER → COVERED when we have
@@ -123,23 +126,19 @@ class Log:
         # Counter metric — track how often self-heal applies fixes.
         # If this trends upward, the upstream parser is degrading.
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment("qc.fixes", 1, phase=self._phase_tag)
-            except Exception:
-                pass
 
     def warn(self, msg):
         self.warnings.append(msg); print(f"  ⚠️  WARN: {msg}")
         # Counter metric tagged by check name + phase for dashboard slicing
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment(
                     "qc.warnings", 1,
                     check=_extract_check_name(msg),
                     phase=self._phase_tag,
                 )
-            except Exception:
-                pass
         # Pre-patch QC findings are EXPECTED incomplete — patch_carriers
         # backfills them next. Suppress Sentry alerts on pre-patch run
         # to avoid false-positive noise. (Findings still log locally +
@@ -150,23 +149,19 @@ class Log:
         if _sentry is not None and any(
             tag in msg for tag in ("QC-039", "QC-040", "QC-041", "PARSER ACCURACY")
         ):
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.capture_qc_warning(_extract_check_name(msg), msg)
-            except Exception:
-                pass
 
     def error(self, msg):
         self.errors.append(msg); print(f"  🔴 ERROR: {msg}")
         # Counter metric tagged by check name + phase for dashboard slicing
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment(
                     "qc.errors", 1,
                     check=_extract_check_name(msg),
                     phase=self._phase_tag,
                 )
-            except Exception:
-                pass
         # Same pre-patch suppression — patch_carriers will run next and
         # fix the data gaps that pre-patch QC is flagging. Only post-patch
         # ERRORs represent the real shipped state.
@@ -175,10 +170,8 @@ class Log:
         # Every ERROR-severity QC finding goes to Sentry — these gate the
         # daily pipeline ship and demand immediate operator attention.
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.capture_qc_error(_extract_check_name(msg), msg)
-            except Exception:
-                pass
 
     def ok(self, msg):
         print(f"  ✅ {msg}")
@@ -277,6 +270,7 @@ def _reclassify_covered(log: Log, rid_label: str, r: dict) -> None:
 # Added 2026-05-04 after parser bleed surfaced in CMA CGM scorecard.
 # ─────────────────────────────────────────────────────────────────────
 import re as _re
+
 _DIRTY_CONTAINERS_HINTS = (
     "caution", "outside of", "originated from", "i need ", "identical bookings",
     "i need two", "i need three", "i need four", "do not click",
@@ -403,7 +397,6 @@ def phase_3_entries(log: Log, data: dict):
     # fixed 2026-05-17). These bleed non-Hilmar customer bookings into
     # Hilmar's data and drag down parser accuracy.
     # Per Michael 2026-05-17 ("your qc and parsers have to improve").
-    before = len(data["requests"])
     cleaned = []
     removed_misclassified = []
     removed_oos = []  # (reason, id) — out-of-scope: numidia / trucking / recalled
@@ -429,19 +422,15 @@ def phase_3_entries(log: Log, data: dict):
     if removed_oos:
         _by_reason = Counter(reason for reason, _ in removed_oos)
         log.fix(
-            "PHASE 3 cleanup: removed %d out-of-scope row(s) [%s] — not Hilmar "
-            "ocean RFQs: %s" % (
-                len(removed_oos),
-                ", ".join(f"{n} {k}" for k, n in sorted(_by_reason.items())),
-                ", ".join(i for _, i in removed_oos[:5])
-                + (f" +{len(removed_oos) - 5} more" if len(removed_oos) > 5 else ""),
-            )
+            f"PHASE 3 cleanup: removed {len(removed_oos)} out-of-scope row(s) "
+            f"[{', '.join(f'{n} {k}' for k, n in sorted(_by_reason.items()))}] — not Hilmar "
+            f"ocean RFQs: "
+            + ", ".join(i for _, i in removed_oos[:5])
+            + (f" +{len(removed_oos) - 5} more" if len(removed_oos) > 5 else "")
         )
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment("qc.out_of_scope_rows_removed", len(removed_oos))
-            except Exception:
-                pass
     if removed_misclassified:
         log.fix(
             f"PHASE 3 cleanup: removed {len(removed_misclassified)} misclassified "
@@ -451,13 +440,11 @@ def phase_3_entries(log: Log, data: dict):
         )
         # Sentry metric so we can track how often the classifier rescues us
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment(
                     "qc.misclassified_stand_removed",
                     len(removed_misclassified),
                 )
-            except Exception:
-                pass
 
     # Operator corrections — authoritative human overrides (Linda Echevarria
     # audits etc.). Re-applied here as a self-heal backstop using the SAME
@@ -471,10 +458,8 @@ def phase_3_entries(log: Log, data: dict):
             f"from operator_corrections.json (authoritative human overrides)"
         )
         if _sentry is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _sentry.metric_increment("qc.operator_corrections_applied", _op_corrected)
-            except Exception:
-                pass
 
     requests = data["requests"]
     # Load source bodies once for healers that need them (containers cleanup,
@@ -514,11 +499,11 @@ def phase_3_entries(log: Log, data: dict):
             r["date"] = r["request_date"]
 
         c_count, teu = core.parse_teu(r.get("containers", ""))
-        if r.get("containers") and (not r.get("teu_requested") or r["teu_requested"] == 0):
-            if teu > 0:
-                r["teu_requested"] = teu
-                r.setdefault("container_count", c_count)
-                log.fix(f"{rid_label}: Recalculated teu_requested={teu}")
+        if (r.get("containers") and (not r.get("teu_requested") or r["teu_requested"] == 0)
+                and teu > 0):
+            r["teu_requested"] = teu
+            r.setdefault("container_count", c_count)
+            log.fix(f"{rid_label}: Recalculated teu_requested={teu}")
         if not r.get("container_count") and c_count:
             r["container_count"] = c_count
 
@@ -791,8 +776,9 @@ def _check_email_subject_date(log, subj_path, now_et=None):
             defaults to wall-clock now.
     """
     try:
-        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         import re as _re
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
         if now_et is None:
             now_et = _dt.now(core.ET)
         _now_et = now_et.date()
@@ -940,9 +926,8 @@ def phase_6_rules(log: Log, data: dict):
                     except json.JSONDecodeError:
                         continue
                     rcv = rec.get("received") or rec.get("sent")
-                    if rcv:
-                        if max_received is None or rcv > max_received:
-                            max_received = rcv
+                    if rcv and (max_received is None or rcv > max_received):
+                        max_received = rcv
         except OSError as e:
             log.warn(f"QC-008: stage file unreadable: {e}")
             max_received = None
@@ -971,13 +956,6 @@ def phase_6_rules(log: Log, data: dict):
     # is probably missing a sender pattern. WARN — no auto-heal (changes
     # to classification require human judgement).
     if stage_path.exists():
-        try:
-            cutoff7d = (now - core.parse_iso("1970-01-01T00:00:00Z").__class__(
-                year=now.year, month=now.month, day=now.day,
-                tzinfo=now.tzinfo
-            ).replace(day=now.day) - core.parse_iso("1970-01-01T00:00:00Z"))
-        except Exception:
-            cutoff7d = None
         # Simpler: compute cutoff inline
         from datetime import timedelta as _td
         cutoff = now - _td(days=7)
@@ -1042,8 +1020,8 @@ def phase_6_rules(log: Log, data: dict):
     # and confirms the start→end span is exactly 4 days (Mon to Fri),
     # never 6 (Mon to Sun).
     try:
-        from datetime import datetime as _dt
         import re as _re
+        from datetime import datetime as _dt
         _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
         if not _body_path.exists():
             log.warn("QC-012: reports/email-body.html not present — skip week label check")
@@ -1296,7 +1274,8 @@ def phase_6_rules(log: Log, data: dict):
         ]
         _found = next((p for p in _cache_paths if p.exists()), None)
         if _found:
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
             _age = (_dt.now(_tz.utc).timestamp() - _found.stat().st_mtime) / 86400.0
             if _age > 80:
                 log.error(
@@ -1333,7 +1312,7 @@ def phase_6_rules(log: Log, data: dict):
                     "have reverted to legacy format. Investigate."
                 )
             else:
-                log.ok(f"QC-024: stage path consistent (.txt is current source)")
+                log.ok("QC-024: stage path consistent (.txt is current source)")
         elif _txt.exists():
             log.ok("QC-024: stage_emails.txt is the sole source (no legacy .jsonl)")
         elif _jsonl.exists():
@@ -1580,11 +1559,12 @@ def phase_6_rules(log: Log, data: dict):
         # 26h (covers daily fire + slack). Also count total snapshots so
         # we see if retention pruning is wedged.
         try:
-            from datetime import datetime as _dt_bk, timedelta as _td_bk, timezone as _tz_bk
+            from datetime import datetime as _dt_bk
+            from datetime import timezone as _tz_bk
             _bk_dir = Path(__file__).resolve().parent.parent / "data-backups"
             if not _bk_dir.exists():
                 log.error(
-                    f"QC-050: data-backups/ directory missing. backup.py should "
+                    "QC-050: data-backups/ directory missing. backup.py should "
                     "create it on every pipeline fire (Step 1). Check scripts/backup.py "
                     "is on the pipeline + writable from the Cloud PC."
                 )
@@ -1633,7 +1613,9 @@ def phase_6_rules(log: Log, data: dict):
         # ERROR severity so it lands in the audit red-flags + fires Sentry —
         # this directly affects the headline win count, it must not be quiet.
         try:
-            from datetime import datetime as _dt49, timedelta as _td49, timezone as _tz49
+            from datetime import datetime as _dt49
+            from datetime import timedelta as _td49
+            from datetime import timezone as _tz49
             _data_path = Path(__file__).resolve().parent.parent / "tracking-data-v2.json"
             if _data_path.exists():
                 import json as _json_mdx
@@ -1953,7 +1935,7 @@ def phase_6_rules(log: Log, data: dict):
         _src_dir = Path(__file__).resolve().parent.parent / "src"
         if str(_src_dir) not in _sys.path:
             _sys.path.insert(0, str(_src_dir))
-        from hilmar.parser_accuracy import compute_accuracy, ACCURACY_THRESHOLD, CRITICAL_FIELDS
+        from hilmar.parser_accuracy import ACCURACY_THRESHOLD, CRITICAL_FIELDS, compute_accuracy
         _acc = compute_accuracy(data.get("requests", []))
         _pct = f"{_acc['overall_rate']:.1%}"
         _wpct = f"{_acc['weighted_rate']:.1%}"
@@ -2164,7 +2146,7 @@ def phase_6_rules(log: Log, data: dict):
     try:
         ok, issues = core.validate_data_shape(data, strict=False)
         if not ok:
-            log.error(f"QC-034: data shape invalid: " + "; ".join(issues[:3])
+            log.error("QC-034: data shape invalid: " + "; ".join(issues[:3])
                        + (f" + {len(issues)-3} more" if len(issues) > 3 else ""))
         else:
             log.ok("QC-034: tracking-data-v2.json shape valid (top-level keys + req fields)")
@@ -2229,8 +2211,8 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-033: brand logo (PNG raster) present "
                        f"({_png.stat().st_size:,} bytes)")
             else:
-                log.error(f"QC-033: assets/branding/hilmar-logo.png exists but "
-                          f"isn't a valid PNG (magic bytes wrong)")
+                log.error("QC-033: assets/branding/hilmar-logo.png exists but "
+                          "isn't a valid PNG (magic bytes wrong)")
         else:
             log.warn("QC-033: no logo file at assets/branding/hilmar-logo.{svg,png} "
                      "— artifacts will fall back to emoji + text header")
@@ -2242,9 +2224,10 @@ def phase_6_rules(log: Log, data: dict):
     # the most recent backup in EITHER target is >36h old, defense-in-depth
     # is broken. WARN at >36h, ERROR at >72h.
     try:
-        from datetime import datetime as _dt, timezone as _tz
-        import os as _os
         import json as _j
+        import os as _os
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz
         _cfg_path = Path(__file__).resolve().parent.parent / "config.json"
         _cfg_data = _j.loads(_cfg_path.read_text(encoding="utf-8")) if _cfg_path.exists() else {}
         _cfg = _cfg_data.get("backup", {}) or {}
@@ -2274,13 +2257,13 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-032: backup fresh at both targets ({targets[0][1]:.1f}h secondary, "
                    f"{targets[1][1]:.1f}h offline)")
         elif ok_count == 1:
-            log.warn(f"QC-032: backup fresh at only 1 of 2 targets — "
-                     + "; ".join(f"{l}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
-                                  for l, a, _p in targets))
+            log.warn("QC-032: backup fresh at only 1 of 2 targets — "
+                     + "; ".join(f"{lbl}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
+                                  for lbl, a, _p in targets))
         else:
-            log.error(f"QC-032: NO backup target is fresh — defense-in-depth broken: "
-                      + "; ".join(f"{l}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
-                                   for l, a, _p in targets))
+            log.error("QC-032: NO backup target is fresh — defense-in-depth broken: "
+                      + "; ".join(f"{lbl}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
+                                   for lbl, a, _p in targets))
     except Exception as _e:
         log.warn(f"QC-032: check failed with exception: {_e}")
 
@@ -2332,7 +2315,9 @@ def phase_6_rules(log: Log, data: dict):
     # writes reports/rate-intelligence.json. If this file is missing or
     # stale, the daily audit lost its negotiation section.
     try:
-        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+        from datetime import timezone as _tz
         _ri_path = Path(__file__).resolve().parent.parent / "reports" / "rate-intelligence.json"
         if not _ri_path.exists():
             log.warn("QC-028: reports/rate-intelligence.json missing — gen_rate_intelligence didn't run this fire")
@@ -2505,7 +2490,7 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 log.ok(f"QC-025: today's flag has {len(_lines)} send entries (healthy)")
         else:
-            log.ok(f"QC-025: today's flag not present (no send yet — normal pre-10AM)")
+            log.ok("QC-025: today's flag not present (no send yet — normal pre-10AM)")
     except Exception as _e:
         log.warn(f"QC-025: check failed with exception: {_e}")
 
@@ -2519,8 +2504,9 @@ def phase_6_rules(log: Log, data: dict):
     #   (b) summary.not_quoted + summary.teu_not_quoted still count ALL NQ
     #       rows regardless of age (volume tally preserved for rate-neg)
     try:
-        from datetime import datetime as _dt, timedelta as _td
         import re as _re
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
         NQ_WINDOW = 14
         _cutoff = (_dt.now(core.ET).date() - _td(days=NQ_WINDOW)).isoformat()
         # Aggregate check (b)
@@ -2563,7 +2549,8 @@ def phase_6_rules(log: Log, data: dict):
     # broken UX and broken negotiation depth. This QC catches the failure
     # at the data level so the email doesn't ship with empty cells.
     try:
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
         _now_et = _dt.now(core.ET).date()
         _wd = _now_et.weekday()
         if _wd == 0: _delta = 3
@@ -2596,7 +2583,8 @@ def phase_6_rules(log: Log, data: dict):
     # 2 Requests vs 0W+0QL+1NQ = 1, off-by-one. Now Pending is shown as a 5th
     # card and Total = W + QL + NQ + Pending. This QC enforces it.
     try:
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
         # Compute report date (mirror gen_email._report_date)
         _now_et = _dt.now(core.ET).date()
         _wd = _now_et.weekday()
@@ -2936,10 +2924,8 @@ def main() -> int:
     args = parser.parse_args()
     # Initialize Sentry early so any failure in subsequent setup is captured.
     if _sentry is not None:
-        try:
+        with contextlib.suppress(Exception):
             _sentry.init(component="qc_selfheal")
-        except Exception:
-            pass
     cfg = core.load_config(args.config)
     data_path = Path(cfg["paths"]["data"])
     schema_path = Path(cfg["paths"]["schema"])

@@ -16,13 +16,10 @@ failures → exit 1; mixed → exit 1 with both kinds reported).
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
-import subprocess
 import sys
 from pathlib import Path
-from unittest import mock
-
-import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
@@ -198,10 +195,8 @@ def test_best_effort_failure_does_not_stop_subsequent_steps(monkeypatch, capsys)
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
     monkeypatch.setattr(RP, "_sentry", None)
-    try:
+    with contextlib.suppress(SystemExit):
         RP.main()
-    except SystemExit:
-        pass
     # Email body HTML is after Sentry-driven QC actions in STEPS; it must
     # have run despite the earlier failure.
     assert "Email body HTML" in executed, (
@@ -220,10 +215,8 @@ def test_client_blocking_failure_stops_subsequent_steps(monkeypatch):
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
     monkeypatch.setattr(RP, "_sentry", None)
-    try:
+    with contextlib.suppress(SystemExit):
         RP.main()
-    except SystemExit:
-        pass
     assert "Email body HTML" not in executed, (
         f"After client-blocking failure, downstream steps STILL ran. "
         f"That would let a broken email reach the distribution. "

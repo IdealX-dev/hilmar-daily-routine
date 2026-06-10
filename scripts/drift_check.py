@@ -21,14 +21,16 @@ Usage:
     python3 scripts/drift_check.py [--config config.json] [--auto-heal] [--dry]
 """
 from __future__ import annotations
-import argparse, json, sys
-from pathlib import Path
+
+import argparse
+import json
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import core
-
 
 # Quote-rate threshold below which the pipeline should HALT (configurable)
 DEFAULT_QUOTE_RATE_FLOOR = 80.0
@@ -86,7 +88,6 @@ def phase2_matcher_quality(data: dict, log: dict, auto_heal: bool) -> None:
     # Index: imid → (current_record, current_delta_h)
     # We need response_timestamp for each attached OL reply
     drifted = []
-    requests_by_id = {r.get("request_id"): r for r in data.get("requests", [])}
 
     # Build an index of all NQ records by destination
     nq_by_dest: dict[str, list[dict]] = {}

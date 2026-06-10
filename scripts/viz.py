@@ -20,7 +20,8 @@ Used by:
   gen_improvements_report — audit
 """
 from __future__ import annotations
-from typing import Sequence
+
+from collections.abc import Sequence
 
 
 def _esc(s) -> str:
@@ -90,10 +91,7 @@ def trend_arrow(curr: float, prev: float, fmt: str = "d",
     is_good = (is_up and good_direction == "up") or ((not is_up) and good_direction == "down")
     color = "#16a34a" if is_good else "#dc2626"
     arrow = "▲" if is_up else "▼"
-    if fmt == "d":
-        label = f"{int(delta):+d}"
-    else:
-        label = f"{delta:+.1f}"
+    label = f"{int(delta):+d}" if fmt == "d" else f"{delta:+.1f}"
     return f'<span style="color:{color};font-size:11px;margin-left:4px">{arrow} {label}</span>'
 
 

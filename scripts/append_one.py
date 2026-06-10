@@ -13,6 +13,7 @@ Usage:
   python scripts/append_one.py --out scripts/_shards/a.jsonl < body.html
 """
 from __future__ import annotations
+
 import argparse
 import json
 import sys

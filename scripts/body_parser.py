@@ -31,10 +31,10 @@ Parser-gap fixes 2026-05-19 (per Michael "no field should be empty ever"):
 """
 from __future__ import annotations
 
+import contextlib
 import re
-from datetime import datetime, date
+from datetime import date, datetime
 from html.parser import HTMLParser
-from typing import Optional
 
 
 # HTML -> text
@@ -797,7 +797,7 @@ def parse_rate_table(text: str) -> dict:
         data = data + [""] * (len(header) - len(data))
     elif len(data) > len(header):
         data = data[:len(header)]
-    cells = dict(zip(header, [d.strip() for d in data]))
+    cells = dict(zip(header, [d.strip() for d in data], strict=False))
     out = {}
     car = cells.get("carrier") or ""
     if car:
@@ -813,10 +813,8 @@ def parse_rate_table(text: str) -> dict:
     if rate_raw:
         m = re.search(r"\$?\s*([\d,]+(?:\.\d+)?)", rate_raw.replace(",", ""))
         if m:
-            try:
+            with contextlib.suppress(ValueError):
                 out["ol_rate"] = float(m.group(1))
-            except ValueError:
-                pass
     vessel = cells.get("vessel") or ""
     voy = cells.get("voyage") or ""
     if vessel or voy:

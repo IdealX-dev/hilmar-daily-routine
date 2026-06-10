@@ -18,16 +18,15 @@ Tabs:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import branding as B  # noqa  Hilmar logo + brand colors
 import core
 import viz as V  # noqa  shared visual helpers
-import branding as B  # noqa  Hilmar logo + brand colors
 
 # ─────────────────────────────────────────────────────────────────────
 # HTML helpers
@@ -530,7 +529,9 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     # but keep it on the talley of volumes that hilmar moves for rate
     # negotiation'. Aggregates (len(nq), teu_nq) stay unchanged.
     NQ_DISPLAY_WINDOW_DAYS = 14
-    from datetime import datetime as _dt2, timezone as _tz, timedelta as _td2
+    from datetime import datetime as _dt2
+    from datetime import timedelta as _td2
+    from datetime import timezone as _tz
     _nq_cutoff = (_dt2.now(_tz.utc).date() - _td2(days=NQ_DISPLAY_WINDOW_DAYS)).isoformat()
     nq_recent = [r for r in nq if (r.get("request_date") or r.get("date") or "") >= _nq_cutoff]
     _older_hidden = len(nq) - len(nq_recent)
@@ -546,10 +547,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                  '<th>Aging</th><th>Source IMID</th></tr>\n')
         for r in sorted(nq_recent, key=lambda x: x.get("request_date") or x.get("date","")):
             hs = _hours_since(r.get("request_timestamp"))
-            if hs is not None:
-                aging = f"{hs//24}d" if hs >= 24 else f"{hs}h"
-            else:
-                aging = "—"
+            aging = (f"{hs // 24}d" if hs >= 24 else f"{hs}h") if hs is not None else "—"
             imid_first = (r.get("source_imids") or ["—"])[0]
             imid_short = (imid_first[:24] + "…") if imid_first and len(imid_first) > 24 else imid_first
             html += (
@@ -677,20 +675,20 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                  '<th title="Total TEU won on this lane">TEU Won</th>'
                  '<th title="Win Rate on this lane = Wins / (Wins + Q&amp;L + NQ). Same lane may also appear in Losing Lanes if it has high volume on both sides.">Win Rate</th>'
                  '<th title="Carriers that won bookings on this lane">Winning Carriers</th></tr>\n')
-        max_teu_won = max((l.get("teu_won", 0) for _, l in lane_wins), default=1) or 1
-        for lane, l in lane_wins:
-            decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
-            wr_pct = (l["wins"] / decided * 100) if decided else 0
+        max_teu_won = max((stats.get("teu_won", 0) for _, stats in lane_wins), default=1) or 1
+        for lane, stats in lane_wins:
+            decided = stats["wins"] + stats["quoted_lost"] + stats["not_quoted"]
+            wr_pct = (stats["wins"] / decided * 100) if decided else 0
             wr = f'{round(wr_pct, 1)}%' if decided else '—'
             wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
-            teu_won = l.get("teu_won", 0)
+            teu_won = stats.get("teu_won", 0)
             teu_bar = V.bar_cell(teu_won, max_teu_won, color="#059669", label=str(teu_won), width_px=80)
             html += (
                 f'<tr class="win-row"><td>{_esc(lane)}</td>'
-                f'<td>{l["wins"]}</td><td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td>'
+                f'<td>{stats["wins"]}</td><td>{stats["quoted_lost"]}</td><td>{stats["not_quoted"]}</td>'
                 f'<td>{teu_bar}</td>'
                 f'<td style="background:{wr_bg};font-weight:600">{wr}</td>'
-                f'<td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+                f'<td>{_safe(stats.get("winning_carriers"))}</td></tr>\n'
             )
         html += '</table>'
     else:
@@ -717,21 +715,21 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                  '<th title="Total TEU lost on this lane (Q&amp;L + NQ)">TEU Lost</th>'
                  '<th title="Win Rate on this lane = Wins / (Wins + Q&amp;L + NQ). NOT a parser metric.">Win Rate</th>'
                  '<th title="Carriers that won bookings on this lane (shown to identify who beat us)">Winning Carriers</th></tr>\n')
-        max_teu_lost = max((l.get("teu_quoted_lost", 0) + l.get("teu_not_quoted", 0) for _, l in lane_losses), default=1) or 1
-        for lane, l in lane_losses:
-            decided = l["wins"] + l["quoted_lost"] + l["not_quoted"]
-            wr_pct = (l["wins"] / decided * 100) if decided else 0
+        max_teu_lost = max((stats.get("teu_quoted_lost", 0) + stats.get("teu_not_quoted", 0) for _, stats in lane_losses), default=1) or 1
+        for lane, stats in lane_losses:
+            decided = stats["wins"] + stats["quoted_lost"] + stats["not_quoted"]
+            wr_pct = (stats["wins"] / decided * 100) if decided else 0
             wr = f'{round(wr_pct, 1)}%' if decided else '—'
             wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
-            teu_lost = l.get("teu_quoted_lost", 0) + l.get("teu_not_quoted", 0)
+            teu_lost = stats.get("teu_quoted_lost", 0) + stats.get("teu_not_quoted", 0)
             teu_bar = V.bar_cell(teu_lost, max_teu_lost, color="#dc2626", label=str(teu_lost), width_px=80)
             html += (
                 f'<tr class="loss-row"><td>{_esc(lane)}</td>'
-                f'<td>{l["quoted_lost"]}</td><td>{l["not_quoted"]}</td><td>{l.get("pending",0)}</td>'
-                f'<td>{l["wins"]}</td>'
+                f'<td>{stats["quoted_lost"]}</td><td>{stats["not_quoted"]}</td><td>{stats.get("pending",0)}</td>'
+                f'<td>{stats["wins"]}</td>'
                 f'<td>{teu_bar}</td>'
                 f'<td style="background:{wr_bg};font-weight:600">{wr}</td>'
-                f'<td>{_safe(l.get("winning_carriers"))}</td></tr>\n'
+                f'<td>{_safe(stats.get("winning_carriers"))}</td></tr>\n'
             )
         html += '</table>'
     else:
@@ -823,7 +821,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         elif wr > 0:
             verdict = f'<span class="badge badge-amber">{wr}% underperforming</span>'
         else:
-            verdict = f'<span class="badge badge-red">0% — no wins</span>'
+            verdict = '<span class="badge badge-red">0% — no wins</span>'
         html += f'<tr><td><strong>{_esc(c)}</strong></td><td>{cm["quotes"]}</td><td class="win">{cm["wins"]}</td><td class="loss">{cm["losses"]}</td><td class="pending">{cm.get("pending",0)}</td><td>{wr}%</td><td class="win">{cm["teu_won"]}</td><td class="loss">{cm["teu_lost"]}</td><td>{cm["lanes_quoted"]}</td><td>{f"{ta}h" if ta else "—"}</td><td>{f"+{ef}d" if ef and ef>0 else (f"{ef}d" if ef else "—")}</td><td>{verdict}</td></tr>\n'
     html += '</table></div>\n'
 
@@ -913,7 +911,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     if qc:
         status_cls = "green" if qc.get("errors", 0) == 0 else "red"
         html += f'<div class="callout {status_cls}"><p><strong>QC last run:</strong> {_safe(qc.get("last_run"))} . {qc.get("fixes_applied",0)} fixes . {qc.get("warnings",0)} warnings . {qc.get("errors",0)} errors</p></div>\n'
-    for kind, items, color in [
+    for kind, items, _color in [
         ("Errors", qc.get("error_log", []), "red"),
         ("Warnings", qc.get("warning_log", []), "amber"),
         ("Fixes Applied", qc.get("fix_log", []), "blue"),

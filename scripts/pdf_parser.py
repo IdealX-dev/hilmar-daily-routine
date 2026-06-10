@@ -27,14 +27,12 @@ Usage:
     data = parse_booking_pdf("scripts/stage_pdfs/<imid>.pdf")
 """
 from __future__ import annotations
+
+import importlib.util
 import re
 from pathlib import Path
 
-try:
-    import pdfplumber  # type: ignore
-    _PDFPLUMBER_OK = True
-except ImportError:
-    _PDFPLUMBER_OK = False
+_PDFPLUMBER_OK = importlib.util.find_spec("pdfplumber") is not None
 
 
 # Carrier names (matched in vessel column or anywhere in text)

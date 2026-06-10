@@ -14,31 +14,34 @@ Usage:
   python3 scripts/gen_carrier_scorecard_pdf.py --config config.json
 """
 from __future__ import annotations
-import sys, json, argparse, re
-from pathlib import Path
+
+import argparse
+import json
+import re
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import core  # noqa: E402
-
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
 import sys as _sys2
 from pathlib import Path as _Path2
+
+import core  # noqa: E402
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+
 _sys2.path.insert(0, str(_Path2(__file__).resolve().parent))
-import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 import branding as B  # noqa: E402  Hilmar logo
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-)
+import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 from reportlab.lib.enums import TA_CENTER
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # Register Inter — falls back to Helvetica if assets missing
 _FONTS_DIR = ROOT / "assets" / "fonts"
@@ -365,7 +368,8 @@ def main():
             title=f"{carrier} — Steamship Line Scorecard",
             author=provider,
         )
-        on_page = lambda c, d, car=carrier: _header_footer(c, d, car, client, provider, generated)
+        def on_page(c, d, car=carrier):
+            return _header_footer(c, d, car, client, provider, generated)
         doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
         print(f"  ✅ {carrier}: {out.stat().st_size:,} bytes → {out}")
         count += 1

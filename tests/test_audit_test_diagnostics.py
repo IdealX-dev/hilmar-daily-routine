@@ -37,7 +37,6 @@ if str(SCRIPTS) not in sys.path:
 import gen_improvements_report as g  # noqa: E402
 import run_audit_tests as RAT  # noqa: E402
 
-
 # ─────────────────────────────────────────────────────────────────────
 # run_audit_tests._parse_failures + _bucket_error_types + _detect_collection_error
 # ─────────────────────────────────────────────────────────────────────

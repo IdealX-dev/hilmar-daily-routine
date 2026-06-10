@@ -29,8 +29,10 @@ Run:
     python3 scripts/build_ops_flow_v2.py
 """
 from __future__ import annotations
-import json, re
-from datetime import datetime, timezone, timedelta
+
+import json
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -195,7 +197,8 @@ def parse_ol_options(body_text: str) -> list[dict]:
 
 def build():
     requests, responses = load_raw(RAW)
-    mdolx = json.load(open(MDOLX_PATH)).get("confirmations", [])
+    with open(MDOLX_PATH) as f:
+        mdolx = json.load(f).get("confirmations", [])
     now = datetime.now(timezone.utc)
 
     # -------- Group messages by conversationId --------

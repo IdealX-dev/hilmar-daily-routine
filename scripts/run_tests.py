@@ -12,9 +12,16 @@ Exits 0 on pass, 1 on any failure. Designed to run before every production cycle
   python3 scripts/run_tests.py --verbose
 """
 from __future__ import annotations
-import sys, json, argparse, tempfile, shutil, subprocess, traceback
-from pathlib import Path
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
@@ -344,7 +351,7 @@ def run_pipeline_smoke(verbose=False):
             out_dir = tmp / "reports" / "carrier-scorecards"
             assert out_dir.exists(), "scorecards dir missing"
             pdfs = list(out_dir.glob("*.pdf"))
-            assert len(pdfs) >= 1, f"no scorecards generated"
+            assert len(pdfs) >= 1, "no scorecards generated"
 
         @_test("gen_email produces non-empty HTML body")
         def t5():

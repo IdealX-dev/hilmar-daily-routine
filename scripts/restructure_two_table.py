@@ -78,8 +78,10 @@ def equipment_teu(qty, equipment):
 
 
 def main():
-    data = json.load(open(DATA_PATH))
-    bkg = json.load(open(BKG_PATH))
+    with open(DATA_PATH) as f:
+        data = json.load(f)
+    with open(BKG_PATH) as f:
+        bkg = json.load(f)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     ts_tag = now_iso.replace(":", "").replace(".", "").split("+")[0]

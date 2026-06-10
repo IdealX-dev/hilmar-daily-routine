@@ -13,6 +13,7 @@ Usage:
 Exit 0 = stored. Exit non-zero = stored nothing.
 """
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path

@@ -58,17 +58,19 @@ CLI:
   python3 scripts/fetch_bodies.py --priority        # rank for pilot fetch
 """
 from __future__ import annotations
+
+import argparse
 import json
 import sys
-import argparse
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import body_parser as BP  # noqa: E402
 import core as C  # noqa: E402  -- for parse_signer (added 2026-04-30)
+
 
 # 2026-05-06: stage files renamed to .txt for SharePoint indexing.
 # Fall back to legacy .jsonl during transition.

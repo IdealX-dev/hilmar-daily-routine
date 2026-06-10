@@ -121,10 +121,7 @@ def _carrier_match(win_carrier: str, subject: str) -> bool:
         return True
     # Tier 2: ref-prefix match
     prefixes = _CARRIER_REF_PREFIXES.get(canonical, ())
-    for p in prefixes:
-        if p.upper() in subj_up:
-            return True
-    return False
+    return any(p.upper() in subj_up for p in prefixes)
 
 
 def find_mdolx_for_win(win: dict, stage_rows: list[dict]) -> str | None:

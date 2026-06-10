@@ -83,7 +83,19 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
-ignore = ["E501"]  # line length handled by formatter
+# E501: line length handled by formatter.
+# E701/E702: compact one-liners (`if x: return`, `print(...); return 0`) are
+# this codebase's established style — hundreds of intentional sites.
+ignore = ["E501", "E701", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+# Pipeline scripts and tests bootstrap sys.path / env BEFORE imports
+# (scripts/ isn't a package; tests import the scripts tree directly), so
+# module-level imports legitimately follow code. src/hilmar/ is a real
+# package and gets NO exemption.
+"scripts/*" = ["E402"]
+"tests/*" = ["E402"]
+"deploy/*" = ["E402"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -14,9 +14,13 @@ Designed for batch pipeline in build_ops_flow_v2.py — extracts only the fields
 needed for pairing/classification, discards the heavyweight body HTML.
 """
 from __future__ import annotations
-import json, re, sys
-from pathlib import Path
+
+import contextlib
+import json
+import re
+import sys
 from html.parser import HTMLParser
+from pathlib import Path
 
 
 class TextStripper(HTMLParser):
@@ -31,10 +35,8 @@ def html_to_text(html: str) -> str:
     if not html:
         return ""
     p = TextStripper()
-    try:
+    with contextlib.suppress(Exception):
         p.feed(html)
-    except Exception:
-        pass
     txt = "".join(p.out)
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt

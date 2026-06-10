@@ -16,6 +16,7 @@ Two-stage strategy:
 Idempotent — only writes where carrier_won is currently missing/empty.
 """
 from __future__ import annotations
+
 import json
 import re
 import sys
@@ -23,8 +24,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-import core as C  # noqa: E402
+import contextlib
+
 import body_parser as BP  # noqa: E402
+import core as C  # noqa: E402
+
 try:
     import pdf_parser as PDF  # noqa: E402
     _PDF_OK = True
@@ -344,10 +348,8 @@ def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, st
                 best_canon = canonical
         if best_canon:
             rate_val = None
-            try:
+            with contextlib.suppress(ValueError):
                 rate_val = float(rate_m.group(1).replace(",", ""))
-            except ValueError:
-                pass
             return best_canon, rate_val
     return None, None
 
@@ -623,8 +625,8 @@ def main():
     patched_pass4 = 0
     pass4_skipped_ambig = 0
     try:
-        from pathlib import Path as _Path
         import re as _re
+        from pathlib import Path as _Path
 
         # Carrier name + booking-ref-prefix map (mirrored from
         # backfill_mdolx.py — single source of truth would be nicer
@@ -665,10 +667,8 @@ def main():
             for line in stage_path.read_text(encoding="utf-8", errors="ignore").splitlines():
                 if not line.strip():
                     continue
-                try:
+                with contextlib.suppress(Exception):
                     stage_rows.append(json.loads(line))
-                except Exception:
-                    pass
 
         # Pre-filter stage to HILMAR-tagged MDOLX subjects (way faster)
         mdolx_re = _re.compile(r"MDOL[XMFD][-\s_]*(\d{4,})", _re.IGNORECASE)

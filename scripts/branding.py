@@ -31,9 +31,9 @@ emoji + text header that was there before. No errors, no broken images —
 the logo just doesn't appear.
 """
 from __future__ import annotations
+
 import base64
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 BRAND_DIR = ROOT / "assets" / "branding"
@@ -132,7 +132,7 @@ def logo_html_cid(height: int = 36, alt: str = "Hilmar Ingredients") -> str:
     )
 
 
-def logo_png_path() -> Optional[Path]:
+def logo_png_path() -> Path | None:
     """Return the absolute path to the PNG logo file, or None.
 
     outlook_send uses this to attach the logo with content-disposition=inline
@@ -148,8 +148,8 @@ def logo_reportlab_image(width: float = 140):
     if not LOGO_PNG.exists():
         return None
     try:
-        from reportlab.platypus import Image
         from reportlab.lib.utils import ImageReader
+        from reportlab.platypus import Image
         # Read original dimensions to preserve aspect ratio
         ir = ImageReader(str(LOGO_PNG))
         ow, oh = ir.getSize()

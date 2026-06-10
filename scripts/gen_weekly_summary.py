@@ -20,17 +20,18 @@ Output:
 Fired by wrapper Step 6 on Fridays only (or any day via CLI --force).
 """
 from __future__ import annotations
+
 import argparse
 import json
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import branding as B  # noqa: E402
 import core  # noqa: E402
 import viz as V  # noqa: E402
-import branding as B  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"

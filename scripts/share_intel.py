@@ -28,7 +28,7 @@ The append-only logs let us reconstruct history. The rolled-up summaries
 are derived (rebuildable from logs) for fast consumption.
 
 LOCATION: %USERPROFILE%\\OneDrive - IdealX\\SHARED\\client_intelligence\\
-(falls back to %USERPROFILE%\OneDrive\SHARED if IdealX-renamed OneDrive
+(falls back to %USERPROFILE%\\OneDrive\\SHARED if IdealX-renamed OneDrive
 isn't present). OneDrive sync means Cloud PC, MBD-TRAVEL, and the rate-
 tracker machines all see the same data.
 
@@ -38,7 +38,9 @@ CLI:
     python scripts/share_intel.py read <client> # dump a client's summaries
 """
 from __future__ import annotations
+
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -46,7 +48,6 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 # Hilmar local tracker location (this project)
 HILMAR_ROOT = Path(__file__).resolve().parent.parent
@@ -108,10 +109,8 @@ def _load_jsonl(path: Path) -> list[dict]:
         line = line.strip()
         if not line:
             continue
-        try:
+        with contextlib.suppress(Exception):
             out.append(json.loads(line))
-        except Exception:
-            pass
     return out
 
 
@@ -435,10 +434,8 @@ def _update_global_meta():
             continue
         meta_file = cdir / "_client_meta.json"
         if meta_file.exists():
-            try:
+            with contextlib.suppress(Exception):
                 clients[cdir.name] = json.loads(meta_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
     global_meta = {
         "schema_version": SCHEMA_VERSION,
         "last_updated": _now_iso(),

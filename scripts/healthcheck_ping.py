@@ -34,8 +34,8 @@ try:
     import requests  # type: ignore
     _USE_REQUESTS = True
 except ImportError:
-    import urllib.request
     import urllib.error
+    import urllib.request
     _USE_REQUESTS = False
 
 

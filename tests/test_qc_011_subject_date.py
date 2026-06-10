@@ -22,7 +22,7 @@ import importlib.util
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -66,10 +66,7 @@ def _write_subject(path, when_label, age_hours, ref_now=None):
         encoding="utf-8",
     )
     if age_hours > 0:
-        if ref_now is not None:
-            ref_unix = ref_now.timestamp()
-        else:
-            ref_unix = time.time()
+        ref_unix = ref_now.timestamp() if ref_now is not None else time.time()
         old_ts = ref_unix - age_hours * 3600
         os.utime(path, (old_ts, old_ts))
 

@@ -23,8 +23,7 @@ Outcome logic per inquiry:
 import json
 import os
 import re
-import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(HERE)
@@ -128,7 +127,7 @@ def extract_pod_from_subject(subj):
     return None
 
 def load_json(p):
-    with open(p, "r") as f:
+    with open(p) as f:
         return json.load(f)
 
 def safe_write(p, obj):
@@ -401,11 +400,8 @@ def match_mdolx(rec, confirmations, used):
             elif c_eq.replace("'", "") == (inq_equip or "").replace("'", ""):
                 score += 20
         # qty
-        if c.get("qty") and inq_qty:
-            if int(c["qty"]) == int(inq_qty):
-                score += 20
-            elif abs(int(c["qty"]) - int(inq_qty)) == 0:
-                score += 20
+        if c.get("qty") and inq_qty and (int(c["qty"]) == int(inq_qty) or abs(int(c["qty"]) - int(inq_qty)) == 0):
+            score += 20
         # time proximity (confirmation closer to inquiry is better)
         hours = (c["_received_dt"] - rec["request_received"]).total_seconds() / 3600.0
         if 0 <= hours <= 48:
@@ -435,10 +431,7 @@ def detect_decline(text):
         r"\bno thank(?:s| you)\b",
         r"\bcancel(?:ling|ed)?\b",
     ]
-    for p in pats:
-        if re.search(p, t):
-            return True
-    return False
+    return any(re.search(p, t) for p in pats)
 
 def compute_outcome(rec, confirmations, used, cutoff):
     """Return (outcome, mdolx_ref, note)."""

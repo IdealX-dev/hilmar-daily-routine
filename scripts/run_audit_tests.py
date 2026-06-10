@@ -282,9 +282,7 @@ def _detect_collection_error(stdout: str, failures: list[dict]) -> bool:
     """
     if re.search(r"Interrupted:\s+\d+\s+error[s]?\s+during\s+collection", stdout):
         return True
-    if failures and sum(1 for f in failures if f.get("phase") == "collect") >= max(1, len(failures) // 2):
-        return True
-    return False
+    return bool(failures and sum(1 for f in failures if f.get("phase") == "collect") >= max(1, len(failures) // 2))
 
 
 def main() -> int:
@@ -330,7 +328,7 @@ def main() -> int:
             "gate": gate,
         }
         _write(artifact)
-        print(f"⏭️  test-result.json: SKIPPED — no tests/+src/hilmar/ found")
+        print("⏭️  test-result.json: SKIPPED — no tests/+src/hilmar/ found")
         return 0  # observer: never block the pipeline
 
     # Run the suite with a JSON coverage report we can parse for per-module %.
@@ -393,10 +391,7 @@ def main() -> int:
     coverage_ok = total_cov is not None and total_cov >= gate
 
     # Overall status: FAIL if a test failed OR coverage is below the gate.
-    if not tests_ok or not coverage_ok:
-        status = "FAIL"
-    else:
-        status = "PASS"
+    status = "FAIL" if not tests_ok or not coverage_ok else "PASS"
 
     # pytest_output_path: serialize as a repo-relative POSIX path when the
     # output landed under ROOT; otherwise fall back to the absolute path.

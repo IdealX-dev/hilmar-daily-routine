@@ -37,7 +37,9 @@ keeps running. Local SHARED/client_intelligence/hilmar/ JSONL files remain
 authoritative + audit-trail.
 """
 from __future__ import annotations
+
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -126,7 +128,6 @@ def build_entities() -> list[dict]:
     if (cdir / "carrier_summary.json").exists():
         carrier_summary = json.loads((cdir / "carrier_summary.json").read_text(encoding="utf-8"))
 
-    now = _now_iso()
     entities = []
 
     # 1. Hilmar Ingredients
@@ -290,7 +291,7 @@ def main():
     except Exception as e:
         msg = f"⚠️  build_entities failed ({type(e).__name__}: {e}); pipeline continues"
         print(msg)
-        try:
+        with contextlib.suppress(Exception):  # audit-log write is best-effort too
             write_audit({
                 "base_url": args.base_url,
                 "entity_count": 0,
@@ -298,8 +299,6 @@ def main():
                 "error": f"build_entities: {type(e).__name__}: {e}",
                 "response": None,
             })
-        except Exception:
-            pass    # audit-log write is best-effort too
         return 0
 
     print(f"sync_to_quote_tracker: built {len(entities)} entities")
@@ -324,10 +323,8 @@ def main():
 
     # Only audit-log REAL sends — dry-runs would pollute QC-037's freshness read
     if not args.dry:
-        try:
+        with contextlib.suppress(Exception):  # audit-log write is best-effort too
             write_audit(result)
-        except Exception:
-            pass    # audit-log write is best-effort too
     try:
         print(json.dumps({k: v for k, v in result.items() if k != "preview"},
                          indent=2, default=str))

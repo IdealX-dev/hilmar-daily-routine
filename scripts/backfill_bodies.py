@@ -15,6 +15,7 @@ Match keys (in priority order):
   2. Outlook resource id (only present in email_bodies/*)
 """
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

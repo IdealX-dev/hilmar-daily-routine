@@ -41,7 +41,7 @@ USAGE
 """
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 #: Overall accuracy threshold below which QC-039 blocks the pipeline ship.
 #: Set to 0.95 per Michael 2026-05-19 ("PARSER MUST REACH 95 PERCENT AT A
@@ -141,9 +141,8 @@ def _is_active(r: dict) -> bool:
     s = r.get("status")
     if s == "NQ":
         return False
-    if s == "LOSS" and not r.get("quoted"):
-        return False  # legacy NQ-equivalent
-    return True
+    legacy_nq = s == "LOSS" and not r.get("quoted")
+    return not legacy_nq
 
 
 # ─────────────────────────────────────────────────────────────────────
