@@ -10,18 +10,19 @@ name: Liveness monitor
 # Cloud PC fire is supposed to land — and posts a GitHub issue if no
 # successful heartbeat arrived.
 #
-# Heartbeat mechanism (2026-06-01 redesign — was: check daily-fire.yml
-# runs; that workflow isn't deployed since the self-hosted runner
-# migration is incomplete):
-#   The Cloud PC's wrapper (`deploy/run_daily_laptop.cmd`) makes a final
-#   call to `gh workflow run heartbeat.yml ...` after a successful fire.
-#   This workflow then reads
+# Heartbeat mechanism (2026-06-01 redesign):
+#   Whoever performed the daily fire dispatches `heartbeat.yml` at the end
+#   of a successful run — the Cloud PC's wrapper
+#   (`deploy/run_daily_laptop.cmd`, host=cloud-pc) or the GH Actions
+#   production-fire job in daily.yml (host=github-actions). This workflow
+#   then reads
 #     gh run list --workflow=heartbeat.yml --branch=main --status=success
-#   and checks the most-recent run's age. Decoupled from daily-fire.yml
-#   so the existing Cloud-PC-via-Task-Scheduler trigger keeps working
-#   while the self-hosted runner migration finishes.
+#   and checks the most-recent run's age. Source-agnostic on purpose: the
+#   cutover (HILMAR_FIRE_FROM_ACTIONS) moves the fire without touching
+#   liveness.
 #
-# Failure escalates to a GitHub issue tagged `cloud-pc-down`. Issue is
+# Failure escalates to a GitHub issue tagged `cloud-pc-down` (label kept
+# for history continuity — read it as "daily fire missed"). Issue is
 # auto-closed when the next successful heartbeat lands.
 
 on:
@@ -33,7 +34,7 @@ on:
 
 jobs:
   check-heartbeat:
-    name: Verify the Cloud PC fired today
+    name: Verify the daily fire happened today
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -146,6 +147,11 @@ jobs:
           - Failed: \`${{ steps.check.outputs.failed }}\`
 
           ## Likely causes
+          If the fire runs from GH Actions (HILMAR_FIRE_FROM_ACTIONS=true):
+          - The Daily workflow's production-fire job failed — check the
+            Actions tab for today's run + its artifacts
+          - The job succeeded but its heartbeat dispatch step failed
+          If the fire runs from the Cloud PC:
           - Cloud PC asleep / network down at 10 AM ET
           - Cloud PC wrapper completed fire but heartbeat dispatch failed
             (gh CLI auth, PAT expired, network glitch)
@@ -155,7 +161,10 @@ jobs:
             docs/CLOUD-PC-HEARTBEAT-SETUP.md)
 
           ## Recovery
-          - Log into the Cloud PC and run \`deploy\\\\run_daily_laptop.cmd\` manually
+          - GH Actions fire: re-dispatch Actions → Daily → Run workflow →
+            mode=production-fire, send_to=full (idempotency flags prevent a
+            double-send if the email actually went out)
+          - Cloud PC fire: log in and run \`deploy\\\\run_daily_laptop.cmd\` manually
           - Or manually trigger \`heartbeat.yml\` via Actions UI → Run workflow
             to clear today's alert (only do this if you've verified the
             fire actually completed)

@@ -624,7 +624,7 @@ def test_qc_007_does_not_fire_inside_business_window(monkeypatch, workspace):
     hardcoded 24h check fired anyway and surfaced 2 false-positive ERRORs
     in Monday's audit email. Fixed 2026-06-01.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     # Lock "now" so this test is deterministic regardless of when it runs.
     fixed_now = datetime(2026, 6, 1, 14, 0, tzinfo=timezone.utc)   # Mon 10:00 ET
     # Quote sent late Friday afternoon, ~30h before "now".
@@ -661,7 +661,7 @@ def test_qc_007_fires_when_friday_window_expires_tuesday_evening(monkeypatch, wo
     """Defensive complement: a Friday-quoted row IS stale once we're past
     Tuesday 18:00 ET. Per Michael 2026-06-04 — 'by Tuesday' deadline.
     The Friday rule extends the window — it doesn't eliminate it."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
     fixed_now = datetime(2026, 6, 2, 23, 0, tzinfo=timezone.utc)   # Tue 19:00 ET
     fri_quote = datetime(2026, 5, 29, 20, 0, tzinfo=timezone.utc)  # Fri ~16:00 ET
     monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
@@ -714,7 +714,7 @@ def test_qc_007_matches_decide_status_business_stale(
     row still PENDING or should it have aged to Q&L). The hardcoded 24h
     check was the original drift; this parametrized check is the lock
     against the next drift."""
-    from datetime import datetime, timezone
+    from datetime import datetime
     fixed_now = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
     monkeypatch.setattr(qc.core, "now_utc", lambda: fixed_now)
 

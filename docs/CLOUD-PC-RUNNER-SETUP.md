@@ -1,5 +1,12 @@
 # Cloud PC self-hosted GitHub Actions runner
 
+> **SUPERSEDED (2026-06-10).** The cutover went a different way: the daily
+> fire moved to GitHub-hosted runners with app-only Graph auth + Azure Blob
+> state (PR #33; see `docs/MOVE-OFF-CLOUDPC.md`). No self-hosted runner was
+> ever registered, and `daily-fire.yml` — the workflow this doc set up —
+> has been deleted (its schedule just queued a dead run every weekday).
+> Kept for historical reference only; do not follow these steps.
+
 One-time setup to make the Cloud PC a self-hosted GitHub Actions runner.
 Once installed, the runner replaces Windows Task Scheduler as the
 trigger for the daily Hilmar fire — same pipeline code, same MSAL

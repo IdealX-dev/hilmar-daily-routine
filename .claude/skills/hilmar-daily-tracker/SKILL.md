@@ -149,7 +149,7 @@ email) that you must not skip.
 - **Observability:** Sentry (org `idealx-llc`, project `hilmar-daily-tracker`)
   + Seer autofix + a Claude-API diagnosis fallback
 - **Parser gate:** 95% accuracy across 19 measured fields
-- **QC:** ~46 checks, QC-001 through QC-050 (some sub-variants)
+- **QC:** QC-001 through QC-055, contiguous (some sub-variants)
 - **Secrets** (gitignored, in `secrets/`): `sentry-dsn.txt`,
   `sentry-auth-token.txt`, `anthropic-api-key.txt`, `quote-tracker-pwd.txt`,
   `token-cache.json` (MSAL)

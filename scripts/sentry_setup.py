@@ -35,13 +35,13 @@ After init, all uncaught exceptions auto-capture. To send a custom event:
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -140,7 +140,7 @@ def _before_send(event, hint):
 # DSN loading
 # ─────────────────────────────────────────────────────────────────────
 
-def _load_dsn() -> Optional[str]:
+def _load_dsn() -> str | None:
     """Resolve DSN from secrets/sentry-dsn.txt or env var. None = no-op."""
     secrets_file = ROOT / "secrets" / "sentry-dsn.txt"
     if not secrets_file.exists():
@@ -363,10 +363,8 @@ def start_cron_checkin() -> str | None:
         return check_in_id
     except Exception as _e:
         # Don't let cron-checkin failure crash the pipeline
-        try:
+        with contextlib.suppress(Exception):
             print(f"⚠️  Sentry cron start failed (pipeline continues): {_e}")
-        except Exception:
-            pass
         return None
 
 
@@ -469,6 +467,6 @@ if __name__ == "__main__":
         level="info",
     )
     print(f"✅ Test event sent. event_id={event_id}")
-    print(f"   Check https://o4511407070904320.sentry.io/issues/ for the message.")
-    print(f"   The email + MDOLX in the message body should appear as [EMAIL_REDACTED] + [MDOLX_REDACTED].")
+    print("   Check https://o4511407070904320.sentry.io/issues/ for the message.")
+    print("   The email + MDOLX in the message body should appear as [EMAIL_REDACTED] + [MDOLX_REDACTED].")
     sentry_sdk.flush(timeout=5)

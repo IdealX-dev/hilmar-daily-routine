@@ -7,6 +7,7 @@ Usage:
   python scripts/merge_shards.py scripts/_shards/*.jsonl
 """
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

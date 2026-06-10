@@ -151,7 +151,7 @@ def merge_record(
     }
 
     # Look up existing by request_id
-    for i, r in enumerate(existing_requests):
+    for _i, r in enumerate(existing_requests):
         if r.get("request_id") == rid:
             # Idempotent update — fill missing only; never overwrite filled with None
             changed = False
@@ -163,18 +163,18 @@ def merge_record(
                     r[k] = v
                     changed = True
                 # For status, let decide_status rule
-                if k == "status" and v and v != old_v:
-                    # Only overwrite status if new decision is derived from richer inputs
-                    # (i.e., the existing record was missing response_timestamp but we now have one)
-                    if (not r.get("response_timestamp")) and new_entry.get("response_timestamp"):
-                        r["status"] = v
-                        r.setdefault("status_history", []).append({
-                            "at": datetime.now(timezone.utc).isoformat(),
-                            "from": old_v,
-                            "to": v,
-                            "reason": decision.reason_detail + " (from ingest update)",
-                        })
-                        changed = True
+                # Only overwrite status if new decision is derived from richer inputs
+                # (i.e., the existing record was missing response_timestamp but we now have one)
+                if (k == "status" and v and v != old_v
+                        and (not r.get("response_timestamp")) and new_entry.get("response_timestamp")):
+                    r["status"] = v
+                    r.setdefault("status_history", []).append({
+                        "at": datetime.now(timezone.utc).isoformat(),
+                        "from": old_v,
+                        "to": v,
+                        "reason": decision.reason_detail + " (from ingest update)",
+                    })
+                    changed = True
             return ("updated" if changed else "noop", r)
 
     # New entry
@@ -183,9 +183,9 @@ def merge_record(
 
 
 def main():
-    with open(EXTRACT_PATH, "r") as f:
+    with open(EXTRACT_PATH) as f:
         extract = json.load(f)
-    with open(DATA_PATH, "r") as f:
+    with open(DATA_PATH) as f:
         data = json.load(f)
 
     records = extract.get("records", [])

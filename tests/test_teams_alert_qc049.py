@@ -7,7 +7,6 @@ WIN >=7d old now generates ONE alert per week (de-duped) via the existing
 teams_alert framework."""
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

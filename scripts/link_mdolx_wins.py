@@ -23,8 +23,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -102,8 +101,10 @@ def equipment_teu(qty, equipment):
 
 
 def main():
-    data = json.load(open(DATA_PATH))
-    bkg = json.load(open(BKG_PATH))
+    with open(DATA_PATH) as f:
+        data = json.load(f)
+    with open(BKG_PATH) as f:
+        bkg = json.load(f)
     requests = data.get("requests", [])
     confirmations = bkg.get("confirmations", [])
 

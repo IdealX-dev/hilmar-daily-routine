@@ -12,9 +12,12 @@ Also supports rollback:
   python3 scripts/backup.py --prune           # just prune old (no new snap)
 """
 from __future__ import annotations
-import sys, json, argparse, shutil
-from pathlib import Path
+
+import argparse
+import shutil
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))

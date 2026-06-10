@@ -13,8 +13,9 @@ Per Michael 2026-05-14: "all of them as swell" — visual upgrade applies to
 client PDF + carrier scorecards too.
 """
 from __future__ import annotations
+
+from reportlab.graphics.shapes import Drawing, PolyLine, Rect
 from reportlab.lib import colors
-from reportlab.graphics.shapes import Drawing, Rect, Polygon, PolyLine, String
 
 
 def heatmap_color(value: float, vmin: float = 0, vmax: float = 100,

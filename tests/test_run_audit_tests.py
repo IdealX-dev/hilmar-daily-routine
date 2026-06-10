@@ -2,7 +2,6 @@
 added 2026-05-28. Standing rule: a new pattern ships with its own tests."""
 from __future__ import annotations
 
-import importlib.util
 import sys
 from pathlib import Path
 

@@ -838,7 +838,6 @@ def aggregate_summary(requests: list[dict]) -> dict:
     # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
     # NQ rate is reported as its own separate metric ("not_quoted").
     win_rate_denom = len(wins) + len(ql)
-    total_decided = win_rate_denom + len(nq)   # legacy alias retained
     total = len(requests)
     total_quoted = len(wins) + len(ql) + len(pending)
 

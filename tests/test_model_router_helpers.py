@@ -5,13 +5,7 @@ part of the 2026-05-28 push toward fuller coverage. They're stub-friendly
 by design (the SDK response shape varies), so the variants matter."""
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
 from hilmar import model_router as MR
-
 
 # ── _coerce_text ─────────────────────────────────────────────────────────────
 

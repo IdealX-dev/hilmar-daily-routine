@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Identify each overflow file by subject."""
-import json, sys, os
+import json
+import os
+import sys
+
 for p in sys.argv[1:]:
     try:
-        with open(p, "r") as f:
+        with open(p) as f:
             arr = json.load(f)
         obj = json.loads(arr[0]["text"])
         subj = obj.get("subject", "?")

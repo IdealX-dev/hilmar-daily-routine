@@ -7,13 +7,13 @@ client-credentials path with a mocked msal module so no real network
 call happens."""
 from __future__ import annotations
 
+import dataclasses
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hilmar import app_auth
-
 
 # ── env-var contract ────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ def test_credentials_immutable_frozen_dataclass():
     """AppOnlyCredentials is frozen — accidentally mutating an instance
     must raise rather than silently produce wrong-auth-token bugs."""
     creds = app_auth.AppOnlyCredentials("t", "c", "s")
-    with pytest.raises(Exception):  # frozen dataclasses raise FrozenInstanceError
+    with pytest.raises(dataclasses.FrozenInstanceError):
         creds.client_secret = "different"  # type: ignore[misc]
 
 
@@ -107,9 +107,9 @@ def test_acquire_token_raises_on_msal_error_response():
         "error": "invalid_client",
         "error_description": "Invalid client secret provided.",
     })
-    with patch.dict(sys.modules, {"msal": fake_msal}):
-        with pytest.raises(RuntimeError, match="invalid_client"):
-            app_auth.acquire_app_only_token(creds)
+    with patch.dict(sys.modules, {"msal": fake_msal}), \
+         pytest.raises(RuntimeError, match="invalid_client"):
+        app_auth.acquire_app_only_token(creds)
 
 
 def test_acquire_token_raises_on_non_dict_response():
@@ -117,6 +117,6 @@ def test_acquire_token_raises_on_non_dict_response():
     object), don't silently coerce — raise."""
     creds = app_auth.AppOnlyCredentials("t", "c", "s")
     fake_msal, _ = _fake_msal_module(response=None)
-    with patch.dict(sys.modules, {"msal": fake_msal}):
-        with pytest.raises(RuntimeError, match="non-dict response"):
-            app_auth.acquire_app_only_token(creds)
+    with patch.dict(sys.modules, {"msal": fake_msal}), \
+         pytest.raises(RuntimeError, match="non-dict response"):
+        app_auth.acquire_app_only_token(creds)

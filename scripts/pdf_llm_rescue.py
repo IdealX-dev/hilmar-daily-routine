@@ -48,7 +48,6 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +57,7 @@ DEFAULT_MODEL = "claude-haiku-4-5"
 PER_RUN_BUDGET = int(os.environ.get("HILMAR_PDF_LLM_BUDGET", "20"))
 
 
-def _load_api_key() -> Optional[str]:
+def _load_api_key() -> str | None:
     """Resolve ANTHROPIC_API_KEY. Returns None if neither source has it
     — caller treats that as "LLM rescue disabled" and silently no-ops."""
     f = ROOT / "secrets" / "anthropic-api-key.txt"
@@ -138,7 +137,7 @@ def _sha1_bytes(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()
 
 
-def extract_from_pdf(pdf_path: Path, *, model: Optional[str] = None) -> Optional[dict]:
+def extract_from_pdf(pdf_path: Path, *, model: str | None = None) -> dict | None:
     """Send PDF to Claude vision API and return the extracted dict.
 
     Returns None when:

@@ -19,28 +19,36 @@ Usage:
   python3 scripts/gen_pdf.py --config config.json
 """
 from __future__ import annotations
-import sys, json, argparse
-from pathlib import Path
+
+import argparse
+import json
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import core  # noqa: E402
-
-from reportlab.lib.pagesizes import LETTER
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
-)
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 import branding as B  # noqa: E402  Hilmar logo
+import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 
 # Register Inter — falls back to Helvetica if assets missing
 _FONTS_DIR = ROOT / "assets" / "fonts"
@@ -190,7 +198,7 @@ def build_cover(story, styles, data, cfg):
     # Narrative callout
     narrative = []
     if total == 0:
-        narrative.append(f"No requests ingested yet for this period. Pipeline is in dry-run mode — once Outlook ingestion runs, this section populates automatically.")
+        narrative.append("No requests ingested yet for this period. Pipeline is in dry-run mode — once Outlook ingestion runs, this section populates automatically.")
     else:
         ta_str = f"{ta_biz:.1f}h biz-hrs avg response" if ta_biz else "turnaround data pending"
         narrative.append(
@@ -589,7 +597,8 @@ def main():
         title=f"{client} x {provider} - Rate Desk Report",
         author=provider,
     )
-    on_page = lambda c, d: _header_footer(c, d, client, provider, generated)
+    def on_page(c, d):
+        return _header_footer(c, d, client, provider, generated)
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     size = out_path.stat().st_size
     print(f"PDF: {size:,} bytes -> {out_path}")

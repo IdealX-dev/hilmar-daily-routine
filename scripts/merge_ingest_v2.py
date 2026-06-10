@@ -7,9 +7,11 @@ Writes:
   - scripts/ingest_extract_v2.json : array of 40 records
   - prints summary to stdout
 """
-import json, re, sys
-from pathlib import Path
+import contextlib
+import json
+import re
 from html.parser import HTMLParser
+from pathlib import Path
 
 SCRIPTS = Path("/sessions/brave-sharp-davinci/mnt/PROJECT HILMAR/scripts")
 BODIES = SCRIPTS / "email_bodies"
@@ -108,10 +110,8 @@ def extract_table(body_html):
     if not body_html:
         return None, False
     p = TableExtractor()
-    try:
+    with contextlib.suppress(Exception):
         p.feed(body_html)
-    except Exception:
-        pass
     # Find first booking-style header
     for idx, row in enumerate(p.rows):
         row_norm = [clean(c).lower() for c in row]

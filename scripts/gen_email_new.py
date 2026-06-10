@@ -11,10 +11,14 @@ Usage:
   python3 scripts/gen_email.py
 """
 from __future__ import annotations
-import sys, json, argparse, html
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
+
+import argparse
+import html
+import json
+import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -73,12 +77,6 @@ def _week_bucket(d):
 
 
 def build_subject(data, cfg):
-    s = data.get("summary", {}) or {}
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    total = s.get("total_entries", 0)
-    wins = s.get("wins", 0)
-    pending = s.get("pending_hilmar", 0)
-    wr = s.get("win_rate", 0.0) or 0.0
     return f"Hilmar Ingredients — Daily Shipment Tracker Update ({_fmt_date(datetime.now(timezone.utc), '%b %-d, %Y')})"
 
 

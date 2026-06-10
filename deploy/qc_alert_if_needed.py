@@ -7,6 +7,7 @@ WARN/FAIL/anything-other-than-CLEAN.
 Designed to be quiet on the happy path (CLEAN → exit 0, no email).
 """
 from __future__ import annotations
+
 import json
 import sys
 from datetime import datetime, timezone

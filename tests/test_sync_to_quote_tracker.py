@@ -8,15 +8,12 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import sync_to_quote_tracker as ST  # noqa: E402
-
 
 # ── _carrier_notes ───────────────────────────────────────────────────────────
 
@@ -168,6 +165,7 @@ def test_build_entities_with_minimal_share_intel(monkeypatch, tmp_path):
 
 from unittest import mock as _mock  # noqa: E402
 
+
 def _patch_argv(*args):
     return _mock.patch.object(sys, "argv", ["sync_to_quote_tracker.py", *args])
 
@@ -234,7 +232,7 @@ def test_audit_log_write_failure_does_not_propagate(monkeypatch):
     monkeypatch.setattr(ST, "_load_password", lambda: "fake_pwd")
     monkeypatch.setattr(ST, "build_entities",
                         _mock.Mock(side_effect=ValueError("bad data")))
-    monkeypatch.setattr(ST, "write_audit", _mock.Mock(side_effect=IOError("disk full")))
+    monkeypatch.setattr(ST, "write_audit", _mock.Mock(side_effect=OSError("disk full")))
     with _patch_argv():
         rc = ST.main()
     assert rc == 0

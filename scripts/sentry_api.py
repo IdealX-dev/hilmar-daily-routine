@@ -37,11 +37,9 @@ Rate limit: 40 req/sec on paid tier — comfortably below for our use.
 """
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -57,7 +55,7 @@ DEFAULT_PROJECT = "hilmar-daily-tracker"
 BASE_URL = "https://sentry.io/api/0"
 
 
-def _load_token() -> Optional[str]:
+def _load_token() -> str | None:
     """Load auth token from secrets/sentry-auth-token.txt or env. None if missing."""
     f = ROOT / "secrets" / "sentry-auth-token.txt"
     if not f.exists():
@@ -132,7 +130,7 @@ class SentryAPI:
     def list_issues(
         self,
         *,
-        project: Optional[str] = None,
+        project: str | None = None,
         stats_period: str = "14d",
         query: str = "is:unresolved",
         limit: int = 50,
@@ -193,9 +191,9 @@ class SentryAPI:
         self,
         version: str,
         *,
-        projects: Optional[list[str]] = None,
-        commits: Optional[list[dict]] = None,
-        ref: Optional[str] = None,
+        projects: list[str] | None = None,
+        commits: list[dict] | None = None,
+        ref: str | None = None,
     ) -> bool:
         """Create a release in Sentry. When a commit message says
         "Fixes SENTRY-XYZ" or files in the commit match files in an
@@ -228,7 +226,7 @@ class SentryAPI:
     def list_dashboards(self) -> list[dict]:
         return self._request("GET", f"/organizations/{self.org}/dashboards/") or []
 
-    def create_dashboard(self, title: str, widgets: list[dict]) -> Optional[dict]:
+    def create_dashboard(self, title: str, widgets: list[dict]) -> dict | None:
         """Create a dashboard with the given widgets. widgets is a list
         of widget config dicts per Sentry's dashboard widget API."""
         return self._request(

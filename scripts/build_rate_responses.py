@@ -7,7 +7,11 @@ stage_emails.jsonl as bucket 'mbd_rate_response'.
 Idempotent: dedupes by id before appending.
 """
 from __future__ import annotations
-import json, re, glob, os, sys
+
+import contextlib
+import json
+import re
+import sys
 from pathlib import Path
 
 TOOL_RESULTS_DIR = Path(
@@ -98,10 +102,8 @@ def parse_rate_table(summary: str) -> dict:
     if prices:
         # Clean comma
         p = prices[0].replace(',', '')
-        try:
+        with contextlib.suppress(ValueError):
             out['ol_rate'] = float(p)
-        except ValueError:
-            pass
 
     # Dates — the rate row has ERD, Port Cut, ETD, ETA, Rate Expiry as sequential DD-Mon-YY
     dates = DATE_RX.findall(s)

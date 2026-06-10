@@ -51,7 +51,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = "https://sentry.io/api/0"
@@ -64,7 +63,7 @@ BASE_URL = "https://sentry.io/api/0"
 DEFAULT_ORG = "idealx-llc"
 
 
-def _load_token() -> Optional[str]:
+def _load_token() -> str | None:
     f = ROOT / "secrets" / "sentry-auth-token.txt"
     if not f.exists():
         f = ROOT.parent / "secrets" / "sentry-auth-token.txt"
@@ -137,23 +136,23 @@ class SentrySeer:
     def _org(self) -> str:
         return os.environ.get("SENTRY_ORG") or "idealx-llc"
 
-    def get_issue_summary(self, issue_id: str) -> Optional[dict]:
+    def get_issue_summary(self, issue_id: str) -> dict | None:
         """Get Seer's plain-English summary of an issue. Returns None if
         Seer not enabled OR no summary has been generated."""
         return self._req("GET", f"/organizations/{self._org}/issues/{issue_id}/summarize/")
 
-    def trigger_summary(self, issue_id: str) -> Optional[dict]:
+    def trigger_summary(self, issue_id: str) -> dict | None:
         """Ask Seer to generate a summary for this issue (POST). Returns
         the queued/in-progress response."""
         return self._req("POST", f"/organizations/{self._org}/issues/{issue_id}/summarize/")
 
-    def get_autofix_state(self, issue_id: str) -> Optional[dict]:
+    def get_autofix_state(self, issue_id: str) -> dict | None:
         """Check Seer's autofix state for this issue. Returns:
           { autofix: { status, steps, ... }, ... }
         None if autofix never triggered or Seer not enabled."""
         return self._req("GET", f"/organizations/{self._org}/issues/{issue_id}/autofix/")
 
-    def trigger_autofix(self, issue_id: str, instruction: str = "") -> Optional[dict]:
+    def trigger_autofix(self, issue_id: str, instruction: str = "") -> dict | None:
         """Ask Seer to attempt an autofix for this issue. instruction is
         an optional natural-language hint to focus the AI.
 

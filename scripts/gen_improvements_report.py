@@ -26,6 +26,7 @@ Created 2026-05-07 per Michael:
    michael.deitchman@idealx.us"
 """
 from __future__ import annotations
+
 import json
 import re
 import sys
@@ -34,8 +35,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import core  # noqa: E402
 import branding as B  # noqa: E402  Hilmar logo + brand colors
+import core  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
@@ -503,8 +504,7 @@ def collect_observations(data, qc, drift):
                 exception_groups.append((check_id, msgs))
             else:
                 finding_groups.append((check_id, non_exc))
-        shown = 0
-        for check_id, msgs in finding_groups:
+        for shown, (check_id, msgs) in enumerate(finding_groups):
             if shown >= 6:
                 break
             count = len(msgs)
@@ -514,7 +514,6 @@ def collect_observations(data, qc, drift):
             if count > len(preview):
                 detail += f" · +{count - len(preview)} more"
             obs.append({"level": "🟡", "title": title, "detail": detail})
-            shown += 1
         if exception_groups:
             ids = ", ".join(cid for cid, _ in exception_groups[:6])
             extra = "" if len(exception_groups) <= 6 else f" +{len(exception_groups) - 6} more"
@@ -684,7 +683,6 @@ def collect_suggestions(data, qc, drift):
     """Forward-looking improvements I'd suggest to the system."""
     sugg = []
     requests = data.get("requests", []) or []
-    summary = data.get("summary") or {}
 
     # 1. Q&L coverage suggestion
     cov_pct = (qc or {}).get("carrier_coverage", {}).get("ql_coverage_pct", 100)

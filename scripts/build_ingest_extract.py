@@ -24,9 +24,11 @@ Each record:
 """
 from __future__ import annotations
 
-import json, re, sys
-from pathlib import Path
+import json
+import re
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import core  # noqa: E402
@@ -396,7 +398,7 @@ def main():
     print(f"  mdolx_ref set: {sum(1 for r in records if r['mdolx_ref'])}")
     from collections import Counter
     carriers = Counter(r['carrier_quoted'] for r in records if r['carrier_quoted'])
-    print(f"  carriers quoted:")
+    print("  carriers quoted:")
     for c, n in carriers.most_common():
         print(f"    {c}: {n}")
 

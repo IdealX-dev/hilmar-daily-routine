@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Debug helper: dump every table (headers + first row) found in a recap overflow file."""
-import json
 import sys
+
 sys.path.insert(0, "/sessions/brave-sharp-davinci/mnt/PROJECT HILMAR/scripts")
-from extract_hilmar_recaps import load_email_body, TableParser, find_header_row
+from extract_hilmar_recaps import TableParser, find_header_row, load_email_body
 
 for path in sys.argv[1:]:
     msg_id, subj, html = load_email_body(path)

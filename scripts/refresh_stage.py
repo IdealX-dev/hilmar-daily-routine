@@ -47,6 +47,7 @@ Usage:
   python scripts/refresh_stage.py --no-bodies        # stage only, skip body fetch (debug)
 """
 from __future__ import annotations
+
 import argparse
 import json
 import re
@@ -54,7 +55,6 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 import msal
 import requests
@@ -63,8 +63,10 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import outlook_send as OS  # noqa: E402  reuse auth + token cache
+import contextlib
+
 import fetch_bodies as FB  # noqa: E402  reuse upsert_body / _parse_all
+import outlook_send as OS  # noqa: E402  reuse auth + token cache
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 # 2026-05-06: renamed from .jsonl to .txt so SharePoint indexes the files
@@ -141,10 +143,8 @@ def graph_get(token: str, url: str, params: dict | None = None) -> dict:
             wait = RETRY_BACKOFFS_S[attempt]
             ra = r.headers.get("Retry-After")
             if ra:
-                try:
+                with contextlib.suppress(ValueError):
                     wait = float(ra)
-                except ValueError:
-                    pass
             time.sleep(wait)
             continue
         if not (200 <= r.status_code < 300):
@@ -178,7 +178,9 @@ def _rotate_stage(days_to_keep: int, dry: bool = False) -> dict:
     catches anything we need re-pulled).
     """
     import json as _j
-    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from datetime import timezone as _tz
     scripts_dir = ROOT / "scripts"
     cutoff = (_dt.now(_tz.utc) - _td(days=days_to_keep)).isoformat()
 
@@ -286,7 +288,7 @@ def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path
     already downloaded.
     """
     import base64
-    import requests as _req
+
     dest_dir.mkdir(parents=True, exist_ok=True)
     saved = []
     safe_imid = re.sub(r"[^A-Za-z0-9._-]+", "_", imid.strip("<>"))[:100]
@@ -498,7 +500,7 @@ def main() -> int:
 
     print("refresh_stage: acquiring Graph token (silent refresh)…")
     token = get_token_silent()
-    print(f"refresh_stage: token OK")
+    print("refresh_stage: token OK")
 
     existing_ids, existing_stage_imids = load_existing_stage_keys()
     existing_body_imids = load_existing_body_imids()

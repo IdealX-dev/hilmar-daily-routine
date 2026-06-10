@@ -23,10 +23,10 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
-import core as C  # pure functions: parse_iso, parse_teu, decide_status, request_id, etc.
 import body_parser as BP  # subject + body parsing (Plan A, Day 1)
+import core as C  # pure functions: parse_iso, parse_teu, decide_status, request_id, etc.
+
 
 # 2026-05-06: stage files renamed to .txt so SharePoint indexes them
 # (M365 MCP cannot search-and-fetch .jsonl extension). Same JSON-Lines
@@ -148,10 +148,7 @@ def title_case_destination(destination: str | None) -> str:
     m = re.match(r"^([A-Za-z]+)(\s*\(.+\))?$", s)
     if m:
         head, tail = m.group(1), m.group(2) or ""
-        if len(head) <= 4 and head.isalpha():
-            head = head.upper()
-        else:
-            head = head.title()
+        head = head.upper() if len(head) <= 4 and head.isalpha() else head.title()
         return (head + tail).strip()
     return s.title()
 
@@ -391,13 +388,13 @@ def _merge_thread_dupes(requests: list[dict]) -> list[dict]:
         bucket.setdefault((cid, dest, d), []).append(i)
 
     drop: set[int] = set()
-    for key, idxs in bucket.items():
+    for _key, idxs in bucket.items():
         if len(idxs) < 2:
             continue
         # Sort by request_timestamp
         idxs.sort(key=lambda i: requests[i].get("request_timestamp") or "")
         # Walk pairs and merge if within 10 min and one has teu=0
-        for a, b in zip(idxs, idxs[1:]):
+        for a, b in zip(idxs, idxs[1:], strict=False):
             if a in drop or b in drop:
                 continue
             ra, rb = requests[a], requests[b]
@@ -1335,7 +1332,6 @@ def main() -> int:
             for r in new_wins:
                 for m in r.get("mdolx_refs_all", []) or []:
                     new_mdolx_all.add(m)
-            new_req_ids = {r.get("request_id") for r in new_wins if r.get("request_id")}
             new_lane_dates = {
                 ((r.get("destination") or "").lower(),
                  (r.get("request_timestamp") or "")[:10])
@@ -1363,9 +1359,7 @@ def main() -> int:
                 # any new WIN on the same destination + same calendar day
                 # likely represents the same logical win, even if it has a
                 # different request_id under a renormalized conversation key.
-                if wm and wm not in new_mdolx_all:
-                    captured = False
-                elif wma and not any(m in new_mdolx_all for m in wma):
+                if wm and wm not in new_mdolx_all or wma and not any(m in new_mdolx_all for m in wma):
                     captured = False
                 elif not wm and not wma:
                     captured = bool(wdest and (wdest, wdate) in new_lane_dates)

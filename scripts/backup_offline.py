@@ -38,11 +38,10 @@ CLI:
                                                  # snapshot to <dir>
 """
 from __future__ import annotations
+
 import argparse
-import gzip
 import json
 import os
-import shutil
 import sys
 import tarfile
 from datetime import datetime, timedelta, timezone
@@ -192,7 +191,7 @@ def restore(date_str: str, target_dir: Path) -> dict:
             return {"ok": True, "source": str(src), "target": str(target_dir),
                     "files_restored": len(tar.getnames()) if hasattr(tar, "getnames") else None}
     return {"error": f"No backup for {date_str} in any target",
-            "searched": [str(l) for l in locations]}
+            "searched": [str(loc) for loc in locations]}
 
 
 def main():

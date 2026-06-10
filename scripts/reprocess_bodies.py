@@ -9,6 +9,7 @@ benefit from the new logic without re-fetching.
 Idempotent — safe to re-run.
 """
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import body_parser as BP  # noqa: E402
 import fetch_bodies as FB  # noqa: E402
+
 
 # 2026-05-19: stage files renamed .jsonl → .txt 2026-05-06 (so SharePoint
 # indexes them). Resolve to the .txt file when present, fall back to the
@@ -72,8 +74,6 @@ def main() -> int:
 
     # Coverage report
     n = len(rows)
-    n_signer = sum(1 for r in rows if (r.get("parsed") or {}).get("ol_responder_signer"))
-    n_vessel = sum(1 for r in rows if (r.get("parsed") or {}).get("vessel_voyage"))
     n_rt_carrier = sum(1 for r in rows if ((r.get("parsed") or {}).get("rate_table") or {}).get("carrier_quoted"))
     n_rt_rate = sum(1 for r in rows if ((r.get("parsed") or {}).get("rate_table") or {}).get("ol_rate"))
     ol_only = [r for r in rows if r.get("bucket") in ("mbd_rate_response", "mbd_inbound")]
@@ -86,7 +86,7 @@ def main() -> int:
     print(f"  Newly populated rate.carrier: +{delta_carrier}")
     print(f"  Newly populated rate.rate:    +{delta_rate}")
     print()
-    print(f"Total coverage:")
+    print("Total coverage:")
     print(f"  ol_responder_signer (OL-only):  {n_signer_ol}/{len(ol_only)}")
     print(f"  vessel_voyage (OL-only):        {n_vessel_ol}/{len(ol_only)}")
     print(f"  rate_table.carrier_quoted:      {n_rt_carrier}/{n}")

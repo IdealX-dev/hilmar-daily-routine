@@ -134,10 +134,7 @@ class TableParser(HTMLParser):
     def handle_charref(self, name):
         if self._in_cell:
             try:
-                if name.startswith(("x", "X")):
-                    ch = chr(int(name[1:], 16))
-                else:
-                    ch = chr(int(name))
+                ch = chr(int(name[1:], 16)) if name.startswith(("x", "X")) else chr(int(name))
                 self._cell_text.append(ch)
             except Exception:
                 self._cell_text.append(" ")
@@ -148,7 +145,7 @@ MDOLX_RE = re.compile(r"MDOLX\d{5,8}", re.IGNORECASE)
 
 
 def load_email(overflow_path: str) -> tuple[str, str, str]:
-    with open(overflow_path, "r") as f:
+    with open(overflow_path) as f:
         arr = json.load(f)
     obj = json.loads(arr[0]["text"])
     return obj.get("id", ""), obj.get("subject", ""), obj.get("body", {}).get("content", "")
@@ -170,7 +167,7 @@ def _week_label_tokens(label: str) -> list[str]:
     """Return month/day tokens from a week label for fuzzy matching inside pivot row0."""
     out = []
     for m in re.finditer(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", label or ""):
-        mm, dd, yy = m.group(1), m.group(2), m.group(3)
+        mm, dd, _ = m.group(1), m.group(2), m.group(3)
         out.append(f"{int(mm):02d}/{int(dd):02d}")
         out.append(f"{int(mm):02d}-{int(dd):02d}")
     return out
@@ -240,7 +237,7 @@ def parse_weekly_teu_pivot(table: list[list[str]], week_label: str, msg_id: str)
 def parse_detail_rows(tables: list[list[list[str]]], week_label: str, msg_id: str) -> list[dict]:
     """Tables E: Detail rows (PENDING/ISSUES/DISPUTES). Accept only rows where Customer mentions HILMAR."""
     results = []
-    for ti, t in enumerate(tables):
+    for _ti, t in enumerate(tables):
         # find a row that is a header with File # or Customer + Origin + Destination
         hdr_idx = None
         for ri, r in enumerate(t):
@@ -289,7 +286,7 @@ def parse_detail_rows(tables: list[list[list[str]]], week_label: str, msg_id: st
             if not HILMAR_RE.search(cust):
                 continue
 
-            def getv(key):
+            def getv(key, col=col, r=r):
                 i = col.get(key)
                 if i is None or i >= len(r):
                     return ""
@@ -386,7 +383,7 @@ def parse_hilmar_quote_response_time(tables, week_label, msg_id):
                 if mq:
                     qty = int(mq.group(0))
 
-            def gv(k):
+            def gv(k, col=col, r=r):
                 i = col.get(k)
                 if i is None or i >= len(r):
                     return ""
@@ -438,7 +435,7 @@ def parse_war_affected(tables, week_label, msg_id):
                 elif "COMMENT" in h:
                     com_i = i
             for r in t[1:]:
-                def gv(i):
+                def gv(i, r=r):
                     return r[i].strip() if i is not None and i < len(r) else ""
                 results.append({
                     "recap_week": week_label,
@@ -495,7 +492,6 @@ def main():
     bookings = []  # per-booking rows that include Hilmar (from detail or quote tables)
     aggregates = []
     quote_responses = []
-    war_rows_hilmar_candidates = []  # war rows where POL/POD/booking# might match a Hilmar booking (flagged separately)
     recaps_processed = []
     warnings = []
 

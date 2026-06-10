@@ -4,23 +4,20 @@ routine (run_audit_tests.py, added 2026-05-28) surfaced it as the top
 untested module, and this closes that gap."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from hilmar.parser_accuracy import (
     ACCURACY_THRESHOLD,
     CRITICAL_FIELDS,
     PER_FIELD_THRESHOLDS,
     _is_active,
+    _is_chain_quoted,
     _is_populated,
     _is_quoted,
     _is_standalone,
-    _is_chain_quoted,
     _is_win,
     _threshold_for,
     compute_accuracy,
     format_report,
 )
-
 
 # ── _is_populated ──────────────────────────────────────────────────────────
 
@@ -170,6 +167,7 @@ def _isolated_cli(tmp_path, monkeypatch, requests):
     re-point parser_accuracy.__file__ at a fake src/hilmar/ inside it, then
     invoke cli_main() in-process. Captures stdout via capsys in the caller."""
     import json as _json
+
     import hilmar.parser_accuracy as PA
     fake_module_path = tmp_path / "src" / "hilmar" / "parser_accuracy.py"
     fake_module_path.parent.mkdir(parents=True)

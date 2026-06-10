@@ -11,16 +11,20 @@ Usage:
   python3 scripts/gen_email.py
 """
 from __future__ import annotations
-import sys, json, argparse, html
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
+
+import argparse
+import html
+import json
+import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+import branding as B  # noqa: E402  Hilmar logo + brand colors
 import core  # noqa: E402
 import viz as V  # noqa: E402  shared visual helpers (sparklines, pills, bars, heatmaps)
-import branding as B  # noqa: E402  Hilmar logo + brand colors
 
 
 def _esc(v):
@@ -340,7 +344,7 @@ def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
 
     `cutoff_days=None` returns all rows (used by aggregates / QC).
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     cutoff_iso = None
     if cutoff_days is not None:
         cutoff_iso = (datetime.now(timezone.utc).date() - timedelta(days=cutoff_days)).isoformat()
@@ -547,7 +551,6 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
             ttq_s, ttq_color = _ttq_cell(r)
             etd_off = r.get("etd_offered") or "—"
             eta_off = r.get("eta_offered") or "—"
-            vessel = r.get("vessel_voyage") or "—"
             resp_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
                 f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
@@ -783,7 +786,6 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     teu_nq = summary.get("teu_not_quoted", 0)
     pending = summary.get("pending_hilmar", 0)
     teu_pending = summary.get("teu_pending", 0)
-    qr = summary.get("quote_rate", 0.0) or 0.0
     biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
 
     # 2026-05-19 PM 6th pass (Michael "i don't think your win rate is accurate
@@ -1247,7 +1249,8 @@ def _pending_html(rows):
     """
     if not rows:
         return ""
-    from datetime import datetime as _dt2, timezone as _tz2
+    from datetime import datetime as _dt2
+    from datetime import timezone as _tz2
     now = _dt2.now(_tz2.utc)
 
     def _hours_since(iso):

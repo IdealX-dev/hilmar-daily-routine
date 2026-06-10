@@ -15,7 +15,7 @@ fails CI / the daily QC-052 routine instead of silently shipping.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -76,7 +76,7 @@ def test_send_signal_stale_parity(send_iso, now_iso):
 
 
 def test_send_signal_stale_none_parity():
-    assert scripts_core.send_signal_stale(None) == hilmar_core.send_signal_stale(None) == False
+    assert scripts_core.send_signal_stale(None) == hilmar_core.send_signal_stale(None) is False
 
 
 # ── is_business_stale: same function under canonical name ─────────────────
@@ -176,8 +176,8 @@ def test_no_undocumented_constants_drift():
     common = set(sc) & set(hc) - set(ALLOWED_CROSS_FOLDER_DRIFT)
     drifted = {n: (sc[n], hc[n]) for n in common if sc[n] != hc[n]}
     assert not drifted, (
-        f"Undocumented constant drift between scripts/core.py and "
-        f"src/hilmar/core.py:\n  " +
+        "Undocumented constant drift between scripts/core.py and "
+        "src/hilmar/core.py:\n  " +
         "\n  ".join(f"{n}: scripts={a!r} hilmar={b!r}" for n, (a, b) in drifted.items())
     )
 

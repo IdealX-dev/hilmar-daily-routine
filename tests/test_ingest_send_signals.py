@@ -33,14 +33,11 @@ best-effort backfill.
 """
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import timezone
 
 import pytest
 
 from hilmar import ingest
-
 
 UTC = timezone.utc
 

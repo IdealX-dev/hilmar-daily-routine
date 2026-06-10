@@ -117,13 +117,11 @@ the heartbeat lands.
 ## Why this design (not `daily-fire.yml` self-hosted)
 
 The original liveness design assumed a `daily-fire.yml` workflow running
-on the Cloud PC as a self-hosted Actions runner. That migration is
-in-flight (`claude/move-off-cloud-pc-gha-app-auth` branch) but not
-deployed. The heartbeat-via-wrapper approach decouples liveness
-observability from the runner migration — the existing Windows Task
-Scheduler trigger keeps working, and we get the "did it actually fire?"
-signal in GitHub.
-
-Once the self-hosted runner is fully deployed, the heartbeat dispatch
-can be kept (cheap belt-and-suspenders) or replaced with `gh run list
---workflow=daily-fire.yml` (one-line change in `liveness.yml`).
+on the Cloud PC as a self-hosted Actions runner. That runner was never
+registered, and the migration went a different way entirely (PR #33:
+GH-hosted runners + app-only Graph auth — see `docs/MOVE-OFF-CLOUDPC.md`);
+`daily-fire.yml` has been deleted. The heartbeat-via-dispatch approach
+turned out to be the durable design: it's source-agnostic, so both the
+Cloud PC wrapper (host=cloud-pc) and the GH Actions production-fire job
+(host=github-actions) emit the same signal and `liveness.yml` needs no
+change at cutover.

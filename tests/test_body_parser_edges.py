@@ -17,7 +17,6 @@ import pytest
 
 from hilmar import body_parser as BP
 
-
 # ── parse_subject_lane — junk-prefix rejection (lines 287-291) ──────────────
 
 @pytest.mark.parametrize("subject", [

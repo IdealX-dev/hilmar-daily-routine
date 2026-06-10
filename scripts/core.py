@@ -16,11 +16,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 # ─────────────────────────────────────────────────────────────────────
@@ -350,13 +349,13 @@ def load_config(path: Path | str | None = None) -> dict:
     See _heal_session_paths for the heal logic.
     """
     path = Path(path) if path else CONFIG_PATH
-    with open(path, "r") as f:
+    with open(path) as f:
         cfg = json.load(f)
     return _heal_session_paths(cfg, path)
 
 
 def load_data(path: Path | str) -> dict:
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
@@ -955,7 +954,6 @@ def aggregate_summary(requests: list[dict]) -> dict:
     # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
     # NQ rate is reported as its own separate metric ("not_quoted").
     win_rate_denom = len(wins) + len(ql)
-    total_decided = win_rate_denom + len(nq)   # legacy alias retained
     total = len(requests)
     total_quoted = len(wins) + len(ql) + len(pending)
 
@@ -1188,7 +1186,7 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
             elif r.get("status") == "PENDING" and r.get("carrier_quoted") == c:
                 cm["pending"] += 1
 
-    for c, cm in car.items():
+    for _c, cm in car.items():
         cm["lanes_quoted"] = len(cm.pop("_lanes"))
         ta = cm.pop("_turnaround_samples")
         ef = cm.pop("_etd_fit_samples")
@@ -1246,15 +1244,16 @@ def compute_dod(prev: dict[str, dict], curr_requests: list[dict], today_iso: str
             })
 
         # New response
-        if r.get("response_timestamp") and (not prior or r.get("response_timestamp") != prior.get("response_timestamp", None)):
-            if r.get("quoted"):
-                new_responses.append({
-                    "lane": lane,
-                    "carrier": r.get("carrier_quoted") or "—",
-                    "rate": r.get("ol_rate") or "—",
-                    "response_time_et": r.get("olusa_time_et") or "—",
-                    "turnaround_biz": f"{r.get('turnaround_biz_hours', 0)}h",
-                })
+        if (r.get("response_timestamp")
+                and (not prior or r.get("response_timestamp") != prior.get("response_timestamp", None))
+                and r.get("quoted")):
+            new_responses.append({
+                "lane": lane,
+                "carrier": r.get("carrier_quoted") or "—",
+                "rate": r.get("ol_rate") or "—",
+                "response_time_et": r.get("olusa_time_et") or "—",
+                "turnaround_biz": f"{r.get('turnaround_biz_hours', 0)}h",
+            })
 
         # Status transitions
         prior_status = prior["status"] if prior else None

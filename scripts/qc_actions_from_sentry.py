@@ -52,7 +52,6 @@ import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 REPORTS = ROOT / "reports"
@@ -78,12 +77,6 @@ ACTIONS: dict[str, dict] = {
         "name": "Parser accuracy below threshold",
         "action": "rerun_parser_acc",
         "comment": "Parser accuracy regression. Re-run computed accuracy below; if still <95% see docs/PARSER-GAPS.md.",
-        "auto_resolve_safe": False,
-    },
-    "QC-049": {
-        "name": "Unconfirmed wins (no MDOLX booking)",
-        "action": "flag_for_operator",
-        "comment": "Wins flipped on a send-signal with no booking confirmation linked. Review each: link the real booking confirmation, or demote the false win via the operator-corrections layer.",
         "auto_resolve_safe": False,
     },
     "QC-040": {
@@ -146,10 +139,13 @@ ACTIONS: dict[str, dict] = {
         "comment": "Rows have turnaround_biz_hours > 40h. Real OL response time is sub-day. Likely cause: link_bookings_to_requests leaked booking timestamp into turnaround calc when no prior rate response existed. Seer: confirm scripts/ingest.py link_bookings_to_requests leaves turnaround_biz_hours None when bk.get('sent') is the only response signal.",
         "auto_resolve_safe": False,
     },
+    # NOTE: this dict briefly carried TWO "QC-049" keys (the first silently
+    # shadowed — Python keeps the last). Merged 2026-06-10; keep one entry
+    # per check, the governance test can't see duplicate literals.
     "QC-049": {
-        "name": "WIN rows missing MDOLX (>15% of wins)",
+        "name": "Unconfirmed wins — WIN rows missing MDOLX booking ref",
         "action": "flag_for_operator",
-        "comment": "Send-signal promotions creating WIN rows that don't pick up the matching MDOLX booking confirmation. Fix landed: link_bookings_to_requests now matches via In-Reply-To / References headers. If still high after a few daily fires, check refresh_stage.py is fetching internetMessageHeaders and ingest is reading row['in_reply_to']/['references'].",
+        "comment": "Send-signal promotions creating WIN rows that don't pick up the matching MDOLX booking confirmation. Review each: link the real booking confirmation, or demote the false win via the operator-corrections layer. Fix landed: link_bookings_to_requests now matches via In-Reply-To / References headers. If still high after a few daily fires, check refresh_stage.py is fetching internetMessageHeaders and ingest is reading row['in_reply_to']/['references'].",
         "auto_resolve_safe": False,
     },
     "QC-050": {
@@ -231,7 +227,7 @@ ERROR_LEVEL_DEFAULT = {
 # Helpers
 # ─────────────────────────────────────────────────────────────────────
 
-def _git_head_timestamp() -> Optional[datetime]:
+def _git_head_timestamp() -> datetime | None:
     """UTC timestamp of HEAD commit, used by resolve_if_post_fix."""
     try:
         out = subprocess.run(
@@ -245,7 +241,7 @@ def _git_head_timestamp() -> Optional[datetime]:
     return None
 
 
-def _parse_iso_utc(s: str) -> Optional[datetime]:
+def _parse_iso_utc(s: str) -> datetime | None:
     if not s:
         return None
     try:
@@ -480,7 +476,6 @@ def _do_claude_diagnose(api, issue: dict, spec: dict, *, dry_run: bool, _via: st
         level = issue.get("level") or ""
         count = issue.get("count") or "?"
         platform = issue.get("platform") or ""
-        permalink = issue.get("permalink") or ""
         prompt = (
             f"You are diagnosing a Sentry issue from the Hilmar daily shipment "
             f"tracker pipeline. In 2-3 sentences: state the most likely root "
@@ -594,9 +589,7 @@ def run(*, dry_run: bool = False, lookback_hours: int = 26,
         actions_out.append(result)
         if result.get("resolved"):
             resolved += 1
-        if result.get("ok") and action_type != "log_only":
-            commented += 1
-        elif action_type == "log_only" and result.get("ok"):
+        if result.get("ok") and action_type != "log_only" or action_type == "log_only" and result.get("ok"):
             commented += 1
 
     summary = {

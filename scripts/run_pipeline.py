@@ -22,7 +22,9 @@ Usage:
   python3 scripts/run_pipeline.py --dry-run        # show what would run, don't execute
 """
 from __future__ import annotations
+
 import argparse
+import contextlib
 import subprocess
 import sys
 from datetime import datetime
@@ -228,21 +230,17 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
             label = f"TIMEOUT @ {timeout_s}s" if timed_out else f"exited {rc}"
             print(f"❌ FAIL — {name} {label}")
             if _sentry is not None:
-                try:
+                with contextlib.suppress(Exception):
                     _sentry.capture_qc_error(
                         "pipeline.step_failure",
                         f"{name} {label}",
                     )
-                except Exception:
-                    pass
             return False
         return True
     finally:
         if txn_cm is not None:
-            try:
+            with contextlib.suppress(Exception):
                 txn_cm.__exit__(None, None, None)
-            except Exception:
-                pass
 
 
 def main():
@@ -389,10 +387,8 @@ def main():
     # pairs with the start check-in above so Sentry knows the pipeline
     # completed (and how long it took).
     if _sentry is not None and cron_id is not None:
-        try:
+        with contextlib.suppress(Exception):
             _sentry.finish_cron_checkin(cron_id, success=not failures)
-        except Exception:
-            pass
 
     # Flush Sentry queue before exit so events aren't lost on quick pipeline runs
     if _sentry is not None:
