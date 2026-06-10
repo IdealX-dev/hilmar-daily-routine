@@ -2635,6 +2635,10 @@ def phase_6_rules(log: Log, data: dict):
             "msal", "requests",
             # Pipeline core deps
             "jsonschema", "dateutil",
+            # Timezone database — zoneinfo is stdlib but its DATA isn't on
+            # Windows; core.py builds ZoneInfo("America/New_York") at import
+            # time, so a missing tzdata bricks every pipeline step's import.
+            "tzdata",
             # Rendering
             "reportlab", "jinja2",
             # PDF parsing

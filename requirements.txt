@@ -8,6 +8,13 @@ reportlab>=4.0,<5.0
 # but requests is preferred if present for better timeout/retry handling)
 requests>=2.31,<3.0
 
+# Timezone database — the zoneinfo MODULE is stdlib, but on Windows there
+# is no system tz database, so ZoneInfo("America/New_York") raises
+# ZoneInfoNotFoundError without this package. core.py constructs ET/PT at
+# import time, so a fresh Cloud PC without tzdata can't even import the
+# pipeline. (QC-054 walks this.)
+tzdata>=2024.1
+
 # Everything else is Python 3.11+ stdlib (json, re, html.parser, datetime,
-# zoneinfo, pathlib, collections, dataclasses, hashlib, subprocess, etc.)
+# pathlib, collections, dataclasses, hashlib, subprocess, etc.)
 pdfplumber
