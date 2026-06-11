@@ -47,8 +47,12 @@ on:
     # Two UTC crons so the fire is 10:00 AM ET year-round (GH cron is UTC
     # and ignores DST). The `gate` job below picks whichever cron matches
     # the current ET UTC-offset and skips the other.
-    - cron: "0 14 * * 1-5"   # 10:00 AM EDT (Mar-Nov)
-    - cron: "0 15 * * 1-5"   # 10:00 AM EST (Nov-Mar)
+    # ODD MINUTE on purpose: GitHub deprioritizes on-the-hour crons —
+    # this repo's 14:00 cron ran 2.5-3.5h late all of early June 2026
+    # (e.g. 2026-06-10: created 17:20 UTC). Off-peak minutes are picked
+    # up near-promptly.
+    - cron: "7 14 * * 1-5"   # ~10:07 AM EDT (Mar-Nov)
+    - cron: "7 15 * * 1-5"   # ~10:07 AM EST (Nov-Mar)
   workflow_dispatch:
     inputs:
       mode:
@@ -95,8 +99,8 @@ jobs:
           offset=$(TZ=America/New_York date +%z)   # -0400 in EDT, -0500 in EST
           cron="${{ github.event.schedule }}"
           proceed=false
-          if [ "$cron" = "0 14 * * 1-5" ] && [ "$offset" = "-0400" ]; then proceed=true; fi
-          if [ "$cron" = "0 15 * * 1-5" ] && [ "$offset" = "-0500" ]; then proceed=true; fi
+          if [ "$cron" = "7 14 * * 1-5" ] && [ "$offset" = "-0400" ]; then proceed=true; fi
+          if [ "$cron" = "7 15 * * 1-5" ] && [ "$offset" = "-0500" ]; then proceed=true; fi
           echo "cron='$cron' ET-offset=$offset → proceed=$proceed"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 
