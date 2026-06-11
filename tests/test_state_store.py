@@ -177,3 +177,9 @@ def test_malformed_connection_string_gets_actionable_error(tmp_path, monkeypatch
     msg = str(ei.value)
     assert "DefaultEndpointsProtocol=https;AccountName=" in msg
     assert "not the bare Key" in msg
+
+
+def test_token_cache_is_synced_state():
+    # The no-IT auth path (OL declined the app-only registration) lives or
+    # dies on this file riding the store — pin it.
+    assert "secrets/token-cache.json" in ss.STATE_FILES

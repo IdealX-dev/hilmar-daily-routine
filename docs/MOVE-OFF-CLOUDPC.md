@@ -10,32 +10,56 @@ now, but the underlying brittleness is unchanged.
 This doc is the cutover plan. **Each section is a prerequisite — not until
 all four are met can the Cloud PC be retired.**
 
-## CURRENT STATE (2026-06-10) — code-complete, operational steps only
+## CURRENT STATE (2026-06-10 late) — delegated auth via blob store
 
-PR #33 merged: app-only Graph read AND send, Azure Blob state sync
-(`scripts/state_store.py`, including same-day send-flag sync so idempotency
-is machine-independent), and a fully wired `production-fire` job in
-`daily.yml`. The sections below are the original plan — kept for reference;
-the "blocked on OL IT" framing is obsolete (the Entra app exists).
+**Correction to the correction:** PR #33's claim that "the Entra app
+exists" was FALSE — verified 2026-06-10 by checking both the IdealX and
+OL-USA directories. No Hilmar app registration exists anywhere, Michael is
+not an admin in the ol-usa.com tenant, and **OL IT declined to create the
+app**. Three verification fires failed on improvised GRAPH_APP_* values
+before this was established. The app-only path is parked (the code stays —
+GRAPH_APP_* secrets take precedence if OL ever registers it).
 
-What remains is operational, in this exact order:
+**The live design is the no-IT path:** delegated device-code auth — the
+exact token the Cloud PC uses today — with `secrets/token-cache.json`
+synced through the Azure Blob state store. Each fire pulls the cache,
+silently refreshes (keeping the ~90d refresh token alive indefinitely),
+and pushes the rotated cache back. Sends go out as
+`michael.deitchman@ol-usa.com` via `/me/sendMail`, identical to every fire
+to date.
 
-1. **Load the 8 repo secrets** — on the Cloud PC run
-   `deploy\push_secrets_to_github.ps1` (pushes the 4 from `secrets\*.txt`,
-   prompts for the 4 Azure values).
-2. **Verification fire** — Actions → Daily → Run workflow →
-   `mode=production-fire`, `send_to=test`. Runs the complete real pipeline
-   (app-only read, blob state, app-only send) but emails ONLY
-   `michael.deitchman@idealx.us`. Safe to run any time of day; it uses
-   `--no-flag` so it can't disturb production idempotency state.
-3. **Flip** — disable the Windows scheduled task
+**Known risk, tested up-front:** if OL's Conditional Access restricts
+token refresh to corporate IPs, the validator's silent-refresh check fails
+on the runner with a plain-English message — that is the one scenario
+where off-Cloud-PC firing is impossible without OL involvement (register
+the app, or exempt this workload).
+
+What remains, in this exact order:
+
+1. **Secrets** (already loaded): `SENTRY_DSN`, `SENTRY_AUTH_TOKEN`,
+   `ANTHROPIC_API_KEY`, `QT_APP_PASSWORD`,
+   `AZURE_STORAGE_CONNECTION_STRING`. The three `GRAPH_APP_*` secrets are
+   unused — delete them (they hold improvised values).
+2. **Seed state once** — on the Cloud PC, in PowerShell from the repo dir:
+   ```powershell
+   $env:AZURE_STORAGE_CONNECTION_STRING = "<same value as the GH secret>"
+   python scripts\state_store.py push
+   ```
+   This uploads the real `tracking-data-v2.json`, the staged-email cache,
+   and the token cache — so the first GH fire starts from today's true
+   state instead of re-ingesting from scratch.
+3. **Verification fire** — Actions → Daily → Run workflow →
+   `mode=production-fire`, `send_to=test`. Full real pipeline, emails ONLY
+   `michael.deitchman@idealx.us`, `--no-flag` so production idempotency
+   state is untouched.
+4. **Flip** — disable the Windows scheduled task
    (`Hilmar Daily Tracker - CloudPC`) **first**, then set the repo variable
    `HILMAR_FIRE_FROM_ACTIONS=true` (Settings → Secrets and variables →
-   Actions → Variables). The variable is the whole switch: the `Daily`
-   workflow's schedule then runs the real fire at 10 AM ET (DST-proof dual
-   cron + gate). **Order matters:** send-flags are per-machine, so two live
-   schedules would each send the client email once.
-4. **Rollback** (if ever needed) — unset the variable, re-enable the task.
+   Actions → Variables). **Order matters:** send-flags are per-machine, so
+   two live schedules would each send the client email once.
+5. **Rollback** (if ever needed) — unset the variable, re-enable the task.
+   Post-flip, the Cloud PC's local token cache goes stale-but-unused; the
+   blob copy is canonical.
 
 Liveness continuity is wired: the GH fire dispatches the same
 `heartbeat.yml` the Cloud PC wrapper does (`host=github-actions`), so

@@ -56,3 +56,19 @@ def test_client_id_must_be_guid():
     assert "Application (client) ID" in msg
     ok, _ = vp.check_client_id_shape("12345678-abcd-ef01-2345-67890abcdef0")
     assert ok
+
+
+def test_delegated_cache_check_runs_when_no_app_env(monkeypatch):
+    # With no GRAPH_APP_* set, main() must consult the delegated cache,
+    # not demand app-only secrets.
+    for v in ("GRAPH_APP_TENANT_ID", "GRAPH_APP_CLIENT_ID", "GRAPH_APP_CLIENT_SECRET"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("SENTRY_DSN", "https://k@o.ingest.example/1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.delenv("AZURE_STORAGE_CONNECTION_STRING", raising=False)
+    called = {}
+    monkeypatch.setattr(vp, "check_delegated_cache",
+                        lambda: (called.setdefault("hit", True), "delegated ok"))
+    rc = vp.main()
+    assert called.get("hit") is True
+    assert rc == 1  # storage conn string absent → still fails overall, by design
