@@ -268,6 +268,49 @@ def _load_distribution_from_config() -> tuple[list[str], list[str]]:
     return full, cc
 
 
+def _sent_today_in_mailbox(subject: str) -> str | None:
+    """Return the sentDateTime if a message with this exact subject already
+    left this account today (ET midnight onward), else None.
+
+    Best-effort BY DESIGN: any failure returns None — a Graph hiccup must
+    never block the real client send. Subject comparison happens client-side
+    to dodge $filter string-escaping (the subject contains an em-dash).
+    """
+    try:
+        appctx = _app_only_send_context()
+        if appctx is not None:
+            token, base = appctx[0], f"{GRAPH}/users/{SEND_MAILBOX}"
+        else:
+            token, base = get_token(), f"{GRAPH}/me"
+        from datetime import datetime as _dt2
+        from datetime import time as _time
+        from zoneinfo import ZoneInfo as _zi2
+        _et = _zi2("America/New_York")
+        midnight_et = _dt2.combine(_dt2.now(_et).date(), _time.min, tzinfo=_et)
+        since = midnight_et.astimezone(_zi2("UTC")).strftime("%Y-%m-%dT%H:%M:%SZ")
+        r = requests.get(
+            f"{base}/mailFolders/sentitems/messages",
+            params={
+                "$filter": f"sentDateTime ge {since}",
+                "$orderby": "sentDateTime desc",
+                "$select": "subject,sentDateTime",
+                "$top": "100",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"⚠️  mailbox guard: Graph → {r.status_code}; proceeding unguarded")
+            return None
+        for m in r.json().get("value", []):
+            if (m.get("subject") or "").strip() == subject.strip():
+                return m.get("sentDateTime")
+        return None
+    except Exception as e:
+        print(f"⚠️  mailbox guard: check failed ({type(e).__name__}: {e}); proceeding unguarded")
+        return None
+
+
 def cmd_daily(args) -> int:
     subject = Path(args.subject_from_file).read_text(encoding="utf-8").strip()
     body = Path(args.body_from_file).read_text(encoding="utf-8")
@@ -310,6 +353,22 @@ def cmd_daily(args) -> int:
             print(f"     {line}")
         print("   Pass --force to send anyway (will append a new entry to flag).")
         return 0
+
+    # MACHINE-INDEPENDENT GUARD (2026-06-11): flag files only protect hosts
+    # that share a disk or the blob store. The day after the GH Actions
+    # cutover, a forgotten scheduler on MBD-TRAVEL fired at 10:02 ET — its
+    # flag synced to OneDrive, invisible to the GH runner, which would have
+    # sent the client email AGAIN at 10:07. The mailbox itself is the one
+    # shared source of truth: before any full-distribution send, ask Graph
+    # whether a message with this exact subject already left the account
+    # today. Best-effort — a Graph hiccup must never block the real send.
+    if is_full_distribution and not getattr(args, "force", False):
+        prior = _sent_today_in_mailbox(subject)
+        if prior:
+            print(f"⛔ MAILBOX GUARD: '{subject}' already sent today at {prior}")
+            print("   (sent by another machine — flags can't see across hosts).")
+            print("   Pass --force to send anyway.")
+            return 0
 
     print(f"→ TO ({len(to)}): {to}")
     print(f"→ CC ({len(cc)}): {cc}")

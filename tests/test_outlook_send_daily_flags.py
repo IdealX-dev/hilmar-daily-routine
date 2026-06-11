@@ -47,6 +47,7 @@ def _wire(tmp_path, monkeypatch):
                         lambda **kw: sends.append(kw["to"]) or "req-test")
     monkeypatch.setattr(os_send, "_load_distribution_from_config",
                         lambda: (["a@hilmar.com", "b@ol-usa.com"], []))
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox", lambda s: None)
     return sends
 
 
@@ -102,3 +103,42 @@ def test_noninteractive_guard_blocks_device_code(monkeypatch, tmp_path):
     import pytest
     with pytest.raises(RuntimeError, match="HILMAR_NONINTERACTIVE"):
         os_send.get_token()
+
+
+def test_mailbox_guard_blocks_cross_machine_double_send(tmp_path, monkeypatch):
+    # 2026-06-11: the Cloud PC's still-enabled task sent at 10:02 ET; the GH
+    # fire at 10:07 had no local/blob flag and would have sent the client
+    # email AGAIN. The mailbox is the one shared truth across machines.
+    sends = _wire(tmp_path, monkeypatch)
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox",
+                        lambda s: "2026-06-11T14:02:56Z")
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True)) == 0
+    assert sends == []  # refused — nothing sent
+
+
+def test_mailbox_guard_fails_open(tmp_path, monkeypatch):
+    # A Graph hiccup must never block the real send.
+    sends = _wire(tmp_path, monkeypatch)
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox", lambda s: None)
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True)) == 0
+    assert len(sends) == 1
+
+
+def test_mailbox_guard_skipped_for_test_and_audit_sends(tmp_path, monkeypatch):
+    sends = _wire(tmp_path, monkeypatch)
+
+    def _boom(s):
+        raise AssertionError("guard must not run for non-full sends")
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox", _boom)
+    assert os_send.cmd_daily(_args(tmp_path, to=["michael.deitchman@idealx.us"])) == 0
+    assert len(sends) == 1
+
+
+def test_mailbox_guard_bypassed_by_force(tmp_path, monkeypatch):
+    sends = _wire(tmp_path, monkeypatch)
+
+    def _boom(s):
+        raise AssertionError("guard must not run under --force")
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox", _boom)
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True, force=True)) == 0
+    assert len(sends) == 1
