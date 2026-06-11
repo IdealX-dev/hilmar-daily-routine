@@ -29,7 +29,7 @@ inspection of the 188-record corpus produced by the Cowork MCP):
     else                   → lonny_outbound
 
   sender = MBD_OceanExportBookingShared@ol-usa.com:
-    subject ^Re:\\s*Oakland to  → mbd_rate_response
+    subject ^Re: <known origin> to  → mbd_rate_response
     else                        → mbd_inbound
 
   any other sender → drop (excluded mailboxes, off-topic, etc.)
@@ -66,6 +66,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import contextlib
 
+import body_parser as BP  # noqa: E402  shared origin list + lane regexes
 import fetch_bodies as FB  # noqa: E402  reuse upsert_body / _parse_all
 import outlook_send as OS  # noqa: E402  reuse auth + token cache
 
@@ -93,7 +94,9 @@ EXCLUDED_SENDERS = {
 }
 
 REPLY_PREFIX = re.compile(r"^\s*(re|fw|fwd)\s*:", re.I)
-RATE_RESPONSE_SUBJECT = re.compile(r"^\s*re\s*:\s*oakland\s+to\s+", re.I)
+# Shared with ingest — built from body_parser.KNOWN_ORIGINS so a new Hilmar
+# site (Dalhart was the 2026-06-11 miss) extends ONE list, not N regexes.
+RATE_RESPONSE_SUBJECT = BP.RATE_RESPONSE_SUBJECT_RX
 
 
 # ─────────────────────────────────────────────────────────────────────
