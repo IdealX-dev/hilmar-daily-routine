@@ -62,7 +62,12 @@ def _is_shared_mailbox_label(name: str | None) -> bool:
         return True
     return n.replace("_", " ").replace("-", " ").startswith("mbd ocean export")
 
-DEST_RX = re.compile(r"^\s*oakland\s+to\s+(.+?)(?:\s*\(\d+\)\s*)?\s*$", re.IGNORECASE)
+# Origin-general (was hardcoded "oakland" until 2026-06-11 — the Dalhart
+# blind spot): any known Hilmar origin site, single source in body_parser.
+DEST_RX = re.compile(
+    rf"^\s*(?:{'|'.join(re.escape(o) for o in BP.KNOWN_ORIGINS)})(?:,?\s*[A-Z]{{2}})?"
+    rf"\s+to\s+(.+?)(?:\s*\(\d+\)\s*)?\s*$",
+    re.IGNORECASE)
 MDOLX_RX = re.compile(r"MDOLX\s*(\d{6,})", re.IGNORECASE)
 
 # Excluded senders / mailboxes. Lower-cased on compare.
@@ -974,6 +979,22 @@ def link_bookings_to_requests(
     return requests, standalones
 
 
+def counts_as_rate_response(row: dict) -> bool:
+    """Stage-time bucketing was origin-locked to Oakland until 2026-06-11,
+    so every Dalhart-lane quote from the MBD shared mailbox was stamped
+    mbd_inbound and its RFQ surfaced as Not Quoted. Re-derive here: an
+    mbd_* bucket implies sender = the MBD shared mailbox (refresh_stage
+    only assigns those buckets to that sender), so bucket + the
+    origin-general lane subject is sufficient — already-staged history is
+    honored without a stage-file migration."""
+    bucket = row.get("bucket")
+    if bucket == "mbd_rate_response":
+        return True
+    if bucket != "mbd_inbound":
+        return False
+    return bool(BP.RATE_RESPONSE_SUBJECT_RX.match(row.get("subject") or ""))
+
+
 def apply_rate_responses(
     requests: list[dict[str, Any]],
     rate_rsps: list[dict[str, Any]],
@@ -1420,7 +1441,7 @@ def _build_doc(
 
     lonny_out = [r for r in rows if r.get("bucket") == "lonny_outbound"]
     lonny_reply = [r for r in rows if r.get("bucket") == "lonny_reply"]
-    rate_rsps = [r for r in rows if r.get("bucket") == "mbd_rate_response"]
+    rate_rsps = [r for r in rows if counts_as_rate_response(r)]
 
     requests = build_requests(lonny_out)
     # Initialize the LLM-fallback context once per run (cache + miss log

@@ -830,6 +830,22 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
 # Apply MBD_OceanExportBookingShared rate responses  ("RE: Oakland to X")
 # ─────────────────────────────────────────────────────────────────────
 
+def counts_as_rate_response(row: dict) -> bool:
+    """Stage-time bucketing was origin-locked to Oakland until 2026-06-11,
+    so every Dalhart-lane quote from the MBD shared mailbox was stamped
+    mbd_inbound and its RFQ surfaced as Not Quoted. Re-derive here: an
+    mbd_* bucket implies sender = the MBD shared mailbox (refresh_stage
+    only assigns those buckets to that sender), so bucket + the
+    origin-general lane subject is sufficient — already-staged history is
+    honored without a stage-file migration."""
+    bucket = row.get("bucket")
+    if bucket == "mbd_rate_response":
+        return True
+    if bucket != "mbd_inbound":
+        return False
+    return bool(BP.RATE_RESPONSE_SUBJECT_RX.match(row.get("subject") or ""))
+
+
 def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
     """
     For each rate-response email, match it back to the most-recent Lonny outbound
@@ -1257,7 +1273,7 @@ def main() -> int:
 
     lonny_out   = [r for r in rows if r.get("bucket") == "lonny_outbound"]
     lonny_reply = [r for r in rows if r.get("bucket") == "lonny_reply"]
-    rate_rsps   = [r for r in rows if r.get("bucket") == "mbd_rate_response"]
+    rate_rsps   = [r for r in rows if counts_as_rate_response(r)]
     # mbd_inbound handled inside collect_bookings; lonny_reply MDOLX also feeds bookings
 
     requests = build_requests(lonny_out)

@@ -91,6 +91,19 @@ _KNOWN_ORIGINS = [
     "Long Beach",
 ]
 
+#: Public alias — the single source of truth for Hilmar origin sites.
+KNOWN_ORIGINS = tuple(_KNOWN_ORIGINS)
+
+#: Rate-response subject: "Re: <known origin> to <destination>". Built from
+#: the origins list above — NEVER hardcode a city here. Until 2026-06-11 this
+#: pattern (in refresh_stage + ingest) was literally "re: oakland to", so
+#: every Dalhart-lane quote from the MBD shared mailbox was filed as generic
+#: inbound and the requests showed as Not Quoted in the client email (live
+#: failure: 4 quoted Dalhart RFQs reported NQ on 2026-06-11).
+_ORIGIN_ALT = "|".join(re.escape(o) for o in _KNOWN_ORIGINS)
+RATE_RESPONSE_SUBJECT_RX = re.compile(
+    rf"^\s*re\s*:\s*(?:{_ORIGIN_ALT})(?:,?\s*[A-Z]{{2}})?\s+to\s+", re.IGNORECASE)
+
 _LANE_RX_B = re.compile(
     r"(?P<origin>HILMAR(?:,?\s*CA)?)\s*[-\u2013]+>\s*(?P<dest>[A-Z][A-Za-z\.\s,]+?)(?:\s*//|\s*\d|$)",
     re.IGNORECASE,
