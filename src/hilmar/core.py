@@ -247,6 +247,18 @@ CARRIER_ALIASES: dict[str, str] = {
 }
 
 
+def pending_substate(req: dict) -> str | None:
+    """Split PENDING into its two materially different waits — per Michael
+    2026-06-12 "on pending there should be several pending statuses to be
+    clear": PENDING_OL (RFQ sent, OL hasn't quoted — chase OL) vs
+    PENDING_HILMAR (OL quoted, Lonny hasn't decided — chase Lonny).
+    Derived from the existing `quoted` flag at render time; the 4-status
+    state machine, the data file, and the QC day-row math are untouched."""
+    if req.get("status") != "PENDING":
+        return None
+    return "PENDING_HILMAR" if req.get("quoted") else "PENDING_OL"
+
+
 def normalize_carrier(name: str | None) -> str | None:
     """Canonicalize a carrier string. Returns None on empty input; otherwise best-effort canonical.
 

@@ -230,7 +230,15 @@ def render(cfg: dict, data: dict) -> str:
     pending_watch = []
     warn_thresholds = cfg["rules"]["pending_warn_hours"]  # e.g. [16, 20, 23]
     for r in pending:
-        hs = _hours_since(r.get("response_timestamp"))
+        # Substate split (Michael 2026-06-12 "several pending statuses to be
+        # clear"): quoted rows age against OL's quote (chase Lonny); unquoted
+        # rows — previously DROPPED here entirely, invisible on the dashboard
+        # — age against the RFQ itself (chase OL).
+        substate = core.pending_substate(r)
+        if substate == "PENDING_OL":
+            hs = _hours_since(r.get("request_timestamp"))
+        else:
+            hs = _hours_since(r.get("response_timestamp"))
         if hs is None:
             continue
         if hs >= warn_thresholds[-1]:
@@ -241,7 +249,8 @@ def render(cfg: dict, data: dict) -> str:
             severity = "medium"
         else:
             severity = "low"
-        pending_watch.append({**r, "_hours_since": hs, "_severity": severity})
+        pending_watch.append({**r, "_hours_since": hs, "_severity": severity,
+                              "_substate": substate})
     pending_watch.sort(key=lambda x: -x["_hours_since"])
 
     # WoW
@@ -863,13 +872,16 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
 
     # TAB: PENDING
     html += '<div id="tab-pending" class="tab-content">\n'
-    html += f'<div class="callout purple"><p>Pending Hilmar response: OL quoted, Lonny still within 24h. Past {warn_thresholds[0]}h = yellow, {warn_thresholds[-2]}h = orange, {warn_thresholds[-1]}h+ = red (about to flip to Q&amp;L).</p></div>\n'
+    html += f'<div class="callout purple"><p>Two pending states: <strong>Waiting on OL</strong> (RFQ sent, no quote yet — hours age against the RFQ; chase the OL desk) and <strong>Waiting on Hilmar</strong> (OL quoted, Lonny deciding — hours age against the quote). Past {warn_thresholds[0]}h = yellow, {warn_thresholds[-2]}h = orange, {warn_thresholds[-1]}h+ = red (quoted rows about to flip to Q&amp;L).</p></div>\n'
     html += f'<div id="sec-pending" class="section"><h2>Pending Watchlist - {len(pending)} open</h2>\n'
     if pending_watch:
-        html += '<table><tr><th>Severity</th><th>Hours Since Quote</th><th>Date</th><th>Lane</th><th>Equip</th><th>Carrier</th><th>Rate</th><th>Lonny ETA Ask</th><th>OL ETA</th></tr>\n'
+        html += '<table><tr><th>Severity</th><th>Waiting On</th><th>Hours Waiting</th><th>Date</th><th>Lane</th><th>Equip</th><th>Carrier</th><th>Rate</th><th>Lonny ETA Ask</th><th>OL ETA</th></tr>\n'
         sev_label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
         for r in pending_watch:
-            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{r["_hours_since"]}h</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
+            wait_on = ('<span style="color:#b45309;font-weight:600">OL quote</span>'
+                       if r.get("_substate") == "PENDING_OL"
+                       else '<span style="color:#7c3aed;font-weight:600">Hilmar decision</span>')
+            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{r["_hours_since"]}h</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">Nothing pending right now.</p>'
