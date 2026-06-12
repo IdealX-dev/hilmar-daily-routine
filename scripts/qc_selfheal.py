@@ -31,6 +31,18 @@ import contextlib
 import body_parser as BP
 import core
 
+# Host shape: a set AZURE_STORAGE_CONNECTION_STRING means we're on an
+# ephemeral blob-store runner (GH Actions) — reports/ starts empty every
+# fire, so "yesterday's artifact missing" is physics, not a finding, and
+# the durable backup target is the blob store, not OneDrive dirs.
+# (2026-06-12: the first post-cutover audit warned on four such phantoms
+# and red-flagged backups that had simply moved.)
+_BLOB_HOST = bool(os.environ.get("AZURE_STORAGE_CONNECTION_STRING"))
+
+
+class _QC032Done(Exception):
+    """Control-flow sentinel: the blob branch of QC-032 already reported."""
+
 # Single source of truth for "is this a Hilmar ocean RFQ" — shared with
 # ingest.py so the QC backstop and the intake filter never drift (QC-040).
 from ingest import apply_operator_corrections, out_of_scope_reason
@@ -784,7 +796,10 @@ def _check_email_subject_date(log, subj_path, now_et=None):
         _now_et = now_et.date()
         _expected = _expected_report_date(_now_et)
         if not subj_path.exists():
-            log.warn("QC-011: reports/email-subject.txt not present — skip date check")
+            if _BLOB_HOST:
+                log.ok("QC-011: skipped — ephemeral runner, no stale subject can exist pre-render")
+            else:
+                log.warn("QC-011: reports/email-subject.txt not present — skip date check")
             return
         # Freshness check is paired with the date-mismatch check below.
         # 26h covers normal weekday fire-to-fire gap + small grace.
@@ -1024,7 +1039,10 @@ def phase_6_rules(log: Log, data: dict):
         from datetime import datetime as _dt
         _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
         if not _body_path.exists():
-            log.warn("QC-012: reports/email-body.html not present — skip week label check")
+            if _BLOB_HOST:
+                log.ok("QC-012: skipped — ephemeral runner, no stale body can exist pre-render")
+            else:
+                log.warn("QC-012: reports/email-body.html not present — skip week label check")
         else:
             _body = _body_path.read_text(encoding="utf-8")
             # Match labels like 'W15 (Apr 6–10)' or 'W14 (Mar 30–Apr 3)'
@@ -2252,6 +2270,22 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 targets.append((label, "missing", p))
 
+        if _BLOB_HOST:
+            import state_store as _sst
+            _age_d = _sst.latest_backup_age_days()
+            if _age_d is None:
+                log.error("QC-032: NO blob backup snapshots found — "
+                          "state_store.py backup has never run on this store")
+            elif _age_d <= 1.5:
+                log.ok(f"QC-032: blob backup snapshot fresh ({_age_d:.1f}d old, "
+                       f"retention {_sst.BACKUP_RETENTION_DAYS}d)")
+            elif _age_d <= 3:
+                log.warn(f"QC-032: newest blob backup is {_age_d:.1f}d old — "
+                         "a recent fire skipped its backup step")
+            else:
+                log.error(f"QC-032: newest blob backup is {_age_d:.1f}d old — "
+                          "backups have stopped")
+            raise _QC032Done
         ok_count = sum(1 for _, age, _p in targets if isinstance(age, (int, float)) and age <= 36)
         if ok_count == 2:
             log.ok(f"QC-032: backup fresh at both targets ({targets[0][1]:.1f}h secondary, "
@@ -2264,6 +2298,8 @@ def phase_6_rules(log: Log, data: dict):
             log.error("QC-032: NO backup target is fresh — defense-in-depth broken: "
                       + "; ".join(f"{lbl}={'missing' if a == 'missing' else 'no archives' if a is None else f'{a:.1f}h'}"
                                    for lbl, a, _p in targets))
+    except _QC032Done:
+        pass
     except Exception as _e:
         log.warn(f"QC-032: check failed with exception: {_e}")
 
@@ -2320,7 +2356,10 @@ def phase_6_rules(log: Log, data: dict):
         from datetime import timezone as _tz
         _ri_path = Path(__file__).resolve().parent.parent / "reports" / "rate-intelligence.json"
         if not _ri_path.exists():
-            log.warn("QC-028: reports/rate-intelligence.json missing — gen_rate_intelligence didn't run this fire")
+            if _BLOB_HOST:
+                log.ok("QC-028: skipped — ephemeral runner, artifact is generated later this fire")
+            else:
+                log.warn("QC-028: reports/rate-intelligence.json missing — gen_rate_intelligence didn't run this fire")
         else:
             _age_h = (_dt.now().timestamp() - _ri_path.stat().st_mtime) / 3600.0
             if _age_h > 26:  # daily fire + 2h slack
@@ -2462,7 +2501,10 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 log.ok("QC-026: scripts in OneDrive match git repo (no drift)")
         else:
-            log.warn("QC-026: hilmar-daily-routine/scripts not found — git remote sync disabled")
+            if _BLOB_HOST:
+                log.ok("QC-026: skipped — runner executes the git checkout directly, no OneDrive mirror to drift")
+            else:
+                log.warn("QC-026: hilmar-daily-routine/scripts not found — git remote sync disabled")
     except Exception as _e:
         log.warn(f"QC-026: check failed with exception: {_e}")
 

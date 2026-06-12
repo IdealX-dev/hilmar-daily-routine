@@ -226,7 +226,7 @@ jobs:
           pip install \
             reportlab msal requests tzdata pdfplumber \
             sentry-sdk jsonschema python-dateutil jinja2 anthropic \
-            azure-storage-blob
+            azure-storage-blob pytest pytest-cov responses
 
       - name: Materialize secret files the pipeline reads from secrets/*.txt
         # Several modules read secrets/<name>.txt directly (sentry_setup,
@@ -247,6 +247,12 @@ jobs:
         # flag and refuses to double-send. Pulled BEFORE validation so the
         # validator can test the token cache it just received.
         run: python3 scripts/state_store.py pull
+
+      - name: Snapshot backup to blob store
+        # Dated gzip of the just-pulled state — i.e. yesterday's end-state,
+        # before today's fire mutates it. QC-032's durable target on this
+        # host (the OneDrive/local backup dirs only exist on the Cloud PC).
+        run: python3 scripts/state_store.py backup
 
       - name: Validate prerequisites for real — name any wrong secret
         # The non-empty loop above can't catch a wrong-field paste (storage

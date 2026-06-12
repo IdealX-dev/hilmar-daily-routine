@@ -635,12 +635,45 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'</tr></thead><tbody>{sc_rows}</tbody></table>'
     )
 
-    # ── 4. PENDING HILMAR RESPONSE (10 columns — same shape as the big
-    # Pending table further down the email but rendered in the cover
-    # block for at-a-glance read).
+    # ── 4. PENDING — split into its two materially different waits (per
+    # Michael 2026-06-12 "several pending statuses to be clear"):
+    # PENDING OL QUOTE (chase OL) vs PENDING HILMAR RESPONSE (chase Lonny).
+    pending_ol = [r for r in pending if core.pending_substate(r) == "PENDING_OL"]
+    pending_hil = [r for r in pending if core.pending_substate(r) == "PENDING_HILMAR"]
+
+    pol_rows = ""
+    if pending_ol:
+        for r in pending_ol:
+            lane = r.get("lane") or "—"
+            cont = r.get("containers") or "—"
+            teu = _fmt_teu(r)
+            lonny_t = _fmt_short_pt(r.get("request_timestamp"))
+            req_dt = core.parse_iso(r.get("request_timestamp"))
+            wait_s = "—"
+            if req_dt:
+                wait_s = f"{(datetime.now(timezone.utc) - req_dt).total_seconds() / 3600.0:.1f}h"
+            pol_rows += (
+                f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600>{_esc(wait_s)}</td></tr>'
+            )
+    else:
+        pol_rows = _EMPTY_ROW
+    pol_table = (
+        f'{_TABLE_OPEN}<thead><tr>'
+        f'<th {_TH_STYLE}>Lane</th>'
+        f'<th {_TH_STYLE}>Equipment</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
+        f'<th {_TH_STYLE} title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Hours since the RFQ with no OL quote yet — chase OL">Waiting on OL</th>'
+        f'</tr></thead><tbody>{pol_rows}</tbody></table>'
+    )
+
     pend_rows = ""
-    if pending:
-        for r in pending:
+    if pending_hil:
+        for r in pending_hil:
             lane = r.get("lane") or "—"
             cont = r.get("containers") or "—"
             teu = _fmt_teu(r)
@@ -688,7 +721,8 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     wins_in_day = sum(1 for (r, h) in status_ch if h.get("to") == "WIN")
     summary_line = (
         f"📊 {len(new_req)} new requests · {len(ol_resp)} new quotes received · "
-        f"{wins_in_day} wins · {len(status_ch)} status changes · {len(pending)} pending Hilmar response"
+        f"{wins_in_day} wins · {len(status_ch)} status changes · "
+        f"{len(pending_ol)} pending OL quote · {len(pending_hil)} pending Hilmar response"
     )
 
     return f"""
@@ -705,7 +739,10 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
   <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}
 
-  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">⏳ PENDING HILMAR RESPONSE ({len(pending)})</h3>
+  <h3 style="margin:14px 0 4px;color:#b45309;font-size:13px">⏳ PENDING OL QUOTE ({len(pending_ol)})</h3>
+  {pol_table}
+
+  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">⏳ PENDING HILMAR RESPONSE ({len(pending_hil)})</h3>
   {pend_table}
 
   <p style="margin:14px 0 0;font-size:13px;color:#374151;font-weight:bold">{_esc(summary_line)}</p>
@@ -1232,6 +1269,75 @@ def _nq_html(rows, total_nq=None, teu_total=None):
 """
 
 
+def _pending_ol_html(rows):
+    """Pending OL Quote — RFQs Lonny sent that OL hasn't answered yet.
+
+    Split out of the old single Pending section per Michael 2026-06-12
+    ("several pending statuses to be clear"): a row with no quote is
+    waiting on OL, not on Hilmar — chasing Lonny about it would be
+    nonsense. Renders nothing when every pending row is quoted.
+    """
+    if not rows:
+        return ""
+    from datetime import datetime as _dt2
+    from datetime import timezone as _tz2
+    now = _dt2.now(_tz2.utc)
+    total_teu = sum(int(r.get("teu_requested") or 0) for r in rows)
+
+    def _fmt_pt(iso):
+        try:
+            dt = core.parse_iso(iso)
+            if not dt:
+                return "—"
+            s = dt.astimezone(core.PT).strftime("%b %d %I:%M %p")
+            s = s.replace(" 0", " ", 1).replace(" 0", " ", 1)
+            return s + " PT"
+        except Exception:
+            return (iso[:16] if iso else "—")
+
+    body = ""
+    for r in rows:
+        req_dt = core.parse_iso(r.get("request_timestamp"))
+        wait_s = "—"
+        wait_color = "#374151"
+        if req_dt:
+            wait_h = (now - req_dt).total_seconds() / 3600.0
+            wait_s = f"{wait_h:.1f}h"
+            wait_color = "#16a34a" if wait_h <= 8 else ("#d97706" if wait_h <= 24 else "#dc2626")
+        body += f"""
+<tr style="border-bottom:1px solid #e5e7eb">
+  <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
+  <td style="padding:6px 8px;text-align:center">{_esc(str(r.get('teu_requested') or '—'))}</td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('product') or '—')}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(_fmt_pt(r.get('request_timestamp')))}</td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600;color:{wait_color}">{_esc(wait_s)}</td>
+</tr>
+"""
+    body += f"""
+<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #b45309">
+  <td style="padding:8px" colspan="2">TOTAL ({len(rows)} awaiting OL)</td>
+  <td style="padding:8px;text-align:center">{total_teu}</td>
+  <td style="padding:8px" colspan="3">&nbsp;</td>
+</tr>
+"""
+    return f"""
+<h2 style="color:#b45309;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fcd34d;padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is wall-clock since the RFQ (green ≤8h, amber ≤24h, red &gt;24h — red rows are chase candidates with the OL desk).</p>
+<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+  <tr style="background:#b45309;color:white">
+    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Lane</th>
+    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Equipment</th>
+    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff">TEU</th>
+    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Product</th>
+    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff" title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>
+    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff" title="Wall-clock since the RFQ with no OL quote — chase OL when red">Waiting on OL</th>
+  </tr>
+  {body}
+</table>
+"""
+
+
 def _pending_html(rows):
     """Pending Hilmar Response — full per-row detail.
 
@@ -1613,7 +1719,10 @@ def build_body(data, cfg):
     html_body += _winning_lanes_html(winning_lanes)
     html_body += _losing_lanes_html(losing_lanes)
     html_body += _nq_html(nq_rows, total_nq=nq_total_count, teu_total=nq_total_teu)
-    html_body += _pending_html(pend_rows)
+    html_body += _pending_ol_html(
+        [r for r in pend_rows if core.pending_substate(r) == "PENDING_OL"])
+    html_body += _pending_html(
+        [r for r in pend_rows if core.pending_substate(r) == "PENDING_HILMAR"])
     html_body += FOOTER_HTML
     html_body += "</div></div>"
     return html_body

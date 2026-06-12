@@ -163,6 +163,18 @@ _TRADE_REGION_MAP = {
 }
 
 
+def pending_substate(req: dict) -> str | None:
+    """Split PENDING into its two materially different waits — per Michael
+    2026-06-12 "on pending there should be several pending statuses to be
+    clear": PENDING_OL (RFQ sent, OL hasn't quoted — chase OL) vs
+    PENDING_HILMAR (OL quoted, Lonny hasn't decided — chase Lonny).
+    Derived from the existing `quoted` flag at render time; the 4-status
+    state machine, the data file, and the QC day-row math are untouched."""
+    if req.get("status") != "PENDING":
+        return None
+    return "PENDING_HILMAR" if req.get("quoted") else "PENDING_OL"
+
+
 def trade_region_for(destination: str | None) -> str:
     """Map a destination name to a trade region. Returns 'Unmapped' (NOT 'OTHER')
     for anything not in the map — Unmapped is the signal to extend the map."""

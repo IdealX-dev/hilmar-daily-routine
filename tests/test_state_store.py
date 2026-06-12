@@ -183,3 +183,33 @@ def test_token_cache_is_synced_state():
     # The no-IT auth path (OL declined the app-only registration) lives or
     # dies on this file riding the store — pin it.
     assert "secrets/token-cache.json" in ss.STATE_FILES
+
+
+def test_backup_writes_dated_gzip_and_prunes(tmp_path, monkeypatch):
+    import gzip
+
+    monkeypatch.setattr(ss, "_today_et", lambda: "2026-06-12")
+    (tmp_path / "tracking-data-v2.json").write_text('{"requests": [1]}', encoding="utf-8")
+
+    class _ListingFake(_FakeContainer):
+        def list_blobs(self, name_starts_with=""):
+            return [n for n in sorted(self.store) if n.startswith(name_starts_with)]
+
+        def delete_blob(self, name):
+            del self.store[name]
+
+    cc = _ListingFake({
+        f"{ss.BACKUP_PREFIX}2026-05-01.json.gz": b"ancient",   # > 14d — pruned
+        f"{ss.BACKUP_PREFIX}2026-06-05.json.gz": b"recent",    # kept
+    })
+    name = ss.backup(tmp_path, container=cc)
+    assert name == f"{ss.BACKUP_PREFIX}2026-06-12.json.gz"
+    assert gzip.decompress(cc.store[name]) == b'{"requests": [1]}'
+    assert f"{ss.BACKUP_PREFIX}2026-05-01.json.gz" not in cc.store
+    assert f"{ss.BACKUP_PREFIX}2026-06-05.json.gz" in cc.store
+    # QC-032's blob-side freshness read
+    assert ss.latest_backup_age_days(container=cc) is not None
+
+
+def test_backup_noop_without_data_file(tmp_path):
+    assert ss.backup(tmp_path, container=_FakeContainer()) is None
