@@ -334,10 +334,16 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
-    "schedule": {"type": "crontab", "value": "0 10 * * 1-5"},
+    # 10:07 ET is the GH Actions cron (offset minute — see daily.yml). The
+    # margin must absorb BOTH GitHub's cron jitter (observed 30min-4h on
+    # this repo) AND the liveness auto-recovery dispatch at 11:30 ET — so
+    # this alert means "the cron AND the fallback both failed", not noise.
+    # (The old 30-min margin was built for Task Scheduler punctuality and
+    # false-alarmed the first GH-jitter morning, 2026-06-12.)
+    "schedule": {"type": "crontab", "value": "7 10 * * 1-5"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
-    "checkin_margin": 30,    # alert if no in_progress check-in within 30 min of scheduled fire
+    "checkin_margin": 95,    # alert ~11:42 ET — after the 11:30 recovery window
     "max_runtime": 60,       # alert if pipeline runs >60 min (typical = 30-60s, lots of headroom)
     "failure_issue_threshold": 1,   # 1 missed/failed run = create issue immediately
     "recovery_threshold": 1,        # 1 successful run = resolve the issue

@@ -40,6 +40,7 @@ jobs:
     permissions:
       issues: write      # to file the alert issue if check fails
       contents: read
+      actions: write     # to auto-dispatch the fire when today's is missing
 
     steps:
       - uses: actions/checkout@v4
@@ -120,6 +121,35 @@ jobs:
           else
             echo "no_fire=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Auto-recover — dispatch today's fire if it never happened
+        # GitHub's cron is unreliable for this repo (observed 30min-4.5h
+        # late; on 2026-06-12 the 10:07 ET tick simply hadn't arrived by
+        # 10:41). The staleness check above only catches a miss the NEXT
+        # day (25h threshold), so this step closes the same-day gap: if no
+        # heartbeat has landed TODAY (ET) by the time liveness runs
+        # (11:30 ET), dispatch the real fire ourselves. Racing the late
+        # cron is safe — outlook_send's mailbox guard refuses a second
+        # full-distribution send no matter which machine got there first.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          created="${{ steps.check.outputs.created }}"
+          today_et=$(TZ=America/New_York date +%F)
+          dow=$(TZ=America/New_York date +%u)
+          hour_et=$(TZ=America/New_York date +%-H)
+          if [ "$dow" -ge 6 ]; then
+            echo "Weekend — no fire expected."; exit 0
+          fi
+          if [ -n "$created" ] && [ "$(TZ=America/New_York date -d "$created" +%F)" = "$today_et" ]; then
+            echo "Today's heartbeat present ($created) — no recovery needed."; exit 0
+          fi
+          if [ "$hour_et" -lt 11 ]; then
+            echo "Before 11:00 ET — leaving room for the scheduled fire."; exit 0
+          fi
+          echo "::warning::No heartbeat today ($today_et) — auto-dispatching production-fire (send_to=full). Mailbox guard prevents any double-send."
+          gh workflow run daily.yml --ref main -R "${{ github.repository }}" \
+            -f mode=production-fire -f send_to=full
 
       - name: All good
         if: steps.check.outputs.no_fire != 'true'
