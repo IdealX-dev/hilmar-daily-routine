@@ -61,7 +61,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-029 | WARN | Shared cross-project store stale or row-count drift between local + shared | None — investigate | 2026-05-13 (`8c81341`) |
 | QC-030 | ERROR/WARN | Transit-time pair (ETD+ETA) coverage <85% on active rows | Auto via parse_rate_table extracting both dates | 2026-05-13 (`1c4f38f`) |
 | QC-031 | WARN | SHARED/client_intelligence/SCHEMA.md missing (cross-project integrators lack contract) | None — surface only | 2026-05-13 (`1c4f38f`) |
-| QC-032 | ERROR/WARN | Offline backup stale at one or both dual targets (>36h) | None — wrapper Step 4.9 reruns each fire | 2026-05-14 (`e2ed228`) |
+| QC-032 | ERROR/WARN | Backup stale: Cloud PC = dual OneDrive/local dirs (>36h); blob-store host (GH Actions) = dated snapshot blobs from `state_store.py backup` (>1.5d warn, >3d error) | None — wrapper Step 4.9 / workflow backup step rerun each fire | 2026-05-14 (`e2ed228`), blob shape 2026-06-12 |
 | QC-033 | ERROR/WARN | Hilmar brand logo missing or corrupted (assets/branding/hilmar-logo.{svg,png}) | None — graceful fallback to emoji+text in headers | 2026-05-14 (`862e2ec`/`072e569`) |
 | QC-034 | ERROR | tracking-data-v2.json shape invalid (missing keys / wrong types / invalid status/loss_reason enums) | None — gates ship; structural drift surfaced loudly | 2026-05-14 (best-practices batch) |
 | QC-035 | ERROR/WARN | stage_emails.txt >20MB (ERROR) / >5MB (WARN) — unbounded stage growth | None — run `refresh_stage.py --rotate-stage-older-than 90` | 2026-05-14 (best-practices batch) |

@@ -68,12 +68,12 @@ KNOWN_UNTESTED: frozenset[str] = frozenset({
     # harnesses land. QC-010/018/019/020/030/034 paid off 2026-06-09 in
     # tests/test_qc_selfheal_checks.py.
     "QC-009", "QC-012", "QC-013", "QC-016", "QC-022", "QC-023", "QC-024",
-    "QC-025", "QC-026", "QC-032", "QC-033", "QC-035", "QC-036", "QC-043",
+    "QC-025", "QC-026", "QC-033", "QC-035", "QC-036", "QC-043",
     "QC-044", "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
 })
 # Ceiling lowered 26 -> 20 (2026-06-09). The ratchet test asserts len never
 # grows; lower this again each time you remove entries.
-_KNOWN_UNTESTED_CEILING = 20
+_KNOWN_UNTESTED_CEILING = 19
 
 
 def emitted_checks() -> set[str]:

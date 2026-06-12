@@ -159,9 +159,70 @@ def push(root: Path | None = None, *, container=None) -> list[str]:
     return pushed
 
 
+BACKUP_PREFIX = "backups/tracking-data-v2."
+BACKUP_RETENTION_DAYS = 14
+
+
+def backup(root: Path | None = None, *, container=None) -> str | None:
+    """Snapshot tracking-data-v2.json to a dated, gzipped blob.
+
+    Post-cutover replacement for the OneDrive/local backup pair that an
+    ephemeral runner cannot reach (QC-032's red flag from the first
+    post-flip audit, 2026-06-12). One snapshot per ET day, taken right
+    after state pull — i.e. yesterday's end-state, before today's fire
+    mutates it. Prunes snapshots older than BACKUP_RETENTION_DAYS (by the
+    date embedded in the blob name, so no list-metadata support needed).
+    Returns the blob name written, or None if there was nothing to back up.
+    """
+    import gzip
+    from datetime import timedelta
+
+    root = root or ROOT
+    src = root / "tracking-data-v2.json"
+    if not src.exists():
+        return None
+    cc = container or _container_client()
+    today = _today_et()
+    name = f"{BACKUP_PREFIX}{today}.json.gz"
+    cc.get_blob_client(name).upload_blob(
+        gzip.compress(src.read_bytes()), overwrite=True)
+    # Prune: blob names carry their date — delete anything older than the
+    # retention window. list_blobs may be unsupported on exotic clients;
+    # pruning is best-effort.
+    with contextlib.suppress(Exception):
+        cutoff = (datetime.now(ZoneInfo("America/New_York"))
+                  - timedelta(days=BACKUP_RETENTION_DAYS)).strftime("%Y-%m-%d")
+        for b in cc.list_blobs(name_starts_with=BACKUP_PREFIX):
+            bname = getattr(b, "name", b)
+            day = bname[len(BACKUP_PREFIX):len(BACKUP_PREFIX) + 10]
+            if day < cutoff:
+                cc.delete_blob(bname)
+    return name
+
+
+def latest_backup_age_days(*, container=None) -> float | None:
+    """Days since the newest dated backup blob, by embedded date (ET).
+    None = no backups exist (or listing unsupported). Used by QC-032 on
+    blob-store hosts."""
+    cc = container or _container_client()
+    try:
+        days = sorted(
+            getattr(b, "name", b)[len(BACKUP_PREFIX):len(BACKUP_PREFIX) + 10]
+            for b in cc.list_blobs(name_starts_with=BACKUP_PREFIX)
+        )
+    except Exception:
+        return None
+    if not days:
+        return None
+    newest = datetime.strptime(days[-1], "%Y-%m-%d").replace(
+        tzinfo=ZoneInfo("America/New_York"))
+    now = datetime.now(ZoneInfo("America/New_York"))
+    return (now - newest).total_seconds() / 86400.0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("cmd", choices=["pull", "push"])
+    ap.add_argument("cmd", choices=["pull", "push", "backup"])
     args = ap.parse_args(argv)
 
     if not is_configured():
@@ -170,6 +231,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
+        if args.cmd == "backup":
+            written = backup()
+            print(f"state_store: backup {'-> ' + written if written else 'skipped (no data file)'}")
+            return 0
         done = pull() if args.cmd == "pull" else push()
     except StateStoreError as e:
         print(f"state_store: {e}", file=sys.stderr)
