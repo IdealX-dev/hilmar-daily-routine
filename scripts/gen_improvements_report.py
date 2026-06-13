@@ -825,10 +825,10 @@ def render_html(red, yellow, suggestions, report_date, qc):
 <html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:{EMAIL_FONT}">
 <div style="max-width:800px;margin:0 auto;background:white;padding:24px">
-  <div style="background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:12px 20px;border-radius:6px 6px 0 0;margin:-24px -24px 0">
-    {f'<div style="background:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:4px">{B.logo_html_cid(height=60)}</div>' if B.has_logo() else ''}
-    <h1 style="margin:0;font-size:20px">{'' if B.has_logo() else '🔍 '}Hilmar Tracker — Daily Systems Audit</h1>
-    <div style="margin-top:4px;font-size:13px;opacity:0.9">Reporting on {_esc(rd_label)} • Generated {_esc(stamp)}</div>
+  <div style="background-color:{B.THEME['ink']};background:{B.THEME['ink']};color:white;padding:12px 20px;border-top:4px solid {B.THEME['brand_green']};border-radius:6px 6px 0 0;margin:-24px -24px 0">
+    <div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:{B.THEME['brand_green']};margin-bottom:3px">🔒 Private · Internal Systems Audit · not the client report</div>
+    <h1 style="margin:0;font-size:20px">🔍 Hilmar Tracker — Daily Systems Audit</h1>
+    <div style="margin-top:4px;font-size:13px;opacity:0.85">Reporting on {_esc(rd_label)} • Generated {_esc(stamp)}</div>
   </div>
   <p style="margin:18px 0 0;color:#475569;font-size:13px;line-height:1.5">
     This is your private daily audit (idealx.us only — not the full distribution). It surfaces

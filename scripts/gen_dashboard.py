@@ -266,10 +266,14 @@ def render(cfg: dict, data: dict) -> str:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hilmar Ingredients — Shipment Tracker Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta name="color-scheme" content="light only">
+<!-- 2026-06-13: dropped the Google Fonts <link>. This dashboard ships as an
+     EMAIL ATTACHMENT — opened offline, the web font silently failed and
+     flashed unstyled text. The system stack (Segoe UI on Windows, -apple-
+     system on macOS/iOS) is the real, reliable design; Inter stays first in
+     the stack so a browser that happens to have it still uses it. -->
 <style>
+:root{{color-scheme:light only}}
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;background:#f5f7fa;color:#0f172a;padding:24px;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;font-variant-numeric:tabular-nums}}
 table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
@@ -300,6 +304,7 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .kpi.green{{border-top-color:#10b981}} .kpi.green .value{{color:#059669}}
 .kpi.red{{border-top-color:#ef4444}} .kpi.red .value{{color:#dc2626}}
 .kpi.amber{{border-top-color:#f59e0b}} .kpi.amber .value{{color:#d97706}}
+.kpi.nq{{border-top-color:#94a3b8}} .kpi.nq .value{{color:#64748b}}
 .kpi.purple{{border-top-color:#a855f7}} .kpi.purple .value{{color:#7c3aed}}
 .kpi.teal{{border-top-color:#14b8a6}} .kpi.teal .value{{color:#0d9488}}
 .kpi.slate{{border-top-color:#64748b}} .kpi.slate .value{{color:#475569}}
@@ -308,11 +313,11 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .section h2{{font-size:17px;margin-bottom:14px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;font-weight:700;letter-spacing:-0.3px}}
 .section h3{{font-size:14px;color:#1e293b;margin:14px 0 8px 0;font-weight:600;letter-spacing:-0.1px}}
 table{{width:100%;border-collapse:collapse;font-size:13.5px}}
-th{{background:#f1f5f9;padding:10px 8px;text-align:left;font-weight:700;color:#334155;border-bottom:2px solid #cbd5e1;font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px}}
+th{{background:#f1f5f9;padding:10px 8px;text-align:left;font-weight:700;color:#334155;border-bottom:2px solid #cbd5e1;font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;position:sticky;top:0;z-index:10}}
 td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
 tr:hover td{{background:#f8fafc}}
-.win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#d97706}} .pending{{color:#7c3aed}}
-.win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #f59e0b}} .pending-row{{border-left:3px solid #a855f7}}
+.win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#64748b}} .pending{{color:#7c3aed}}
+.win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #94a3b8}} .pending-row{{border-left:3px solid #a855f7}}
 .ta-fast{{color:#059669;font-weight:700}} .ta-medium{{color:#2563eb}} .ta-slow{{color:#dc2626;font-weight:700}}
 
 input[name="tabs"]{{display:none}}
@@ -341,7 +346,7 @@ input[name="tabs"]{{display:none}}
 .badge-purple{{background:#ede9fe;color:#7c3aed}} .badge-slate{{background:#f1f5f9;color:#475569}}
 
 .callout{{background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:14px}}
-.callout p{{font-size:12px;color:#1e3a5f;line-height:1.5}}
+.callout p{{font-size:12px;color:#0a2350;line-height:1.5}}
 .callout.green{{background:#ecfdf5;border-color:#10b981}}
 .callout.amber{{background:#fffbeb;border-color:#f59e0b}}
 .callout.red{{background:#fef2f2;border-color:#ef4444}}
@@ -353,7 +358,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 .wow-col{{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}}
 .wow-stack{{width:100%;display:flex;flex-direction:column-reverse;gap:0;height:60px}}
 .wow-seg{{width:100%}}
-.wow-seg.wins{{background:#10b981}} .wow-seg.ql{{background:#ef4444}} .wow-seg.nq{{background:#f59e0b}} .wow-seg.pending{{background:#a855f7}}
+.wow-seg.wins{{background:#10b981}} .wow-seg.ql{{background:#ef4444}} .wow-seg.nq{{background:#64748b}} .wow-seg.pending{{background:#a855f7}}
 .wow-label{{font-size:9px;color:#64748b;font-weight:600;text-align:center}}
 
 .dod-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}}
@@ -443,7 +448,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi nq" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
   <a class="kpi" style="background:#8b5cf6;color:white;border-top-color:#7c3aed" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
@@ -451,7 +456,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — PTD"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — PTD ({len(wins)} bookings)"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — PTD ({len(ql)} rows)"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — PTD ({len(nq)} rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi nq" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — PTD ({len(nq)} rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
   <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
   <a class="kpi green" href="#tab-carriers" data-tab="tb-carriers" data-target="sec-carriers" data-filter="all" data-filter-label="Per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">click → Carriers tab</div></a>
   <a class="kpi teal" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="quoted" data-filter-label="Quote Rate detail — {quote_rate}% of all RFQs got a quote"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">click → quoted rows</div></a>
@@ -645,7 +650,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                 '</tr>\n'
             )
         # Totals row
-        html += (f'<tr style="font-weight:bold;background:#f1f5f9;border-top:2px solid #1e3a5f">'
+        html += (f'<tr style="font-weight:bold;background:#f1f5f9;border-top:2px solid #0a2350">'
                  f'<td>TOTAL</td>'
                  f'<td style="text-align:center">{sum_req}</td>'
                  f'<td style="text-align:center">{sum_w}</td>'

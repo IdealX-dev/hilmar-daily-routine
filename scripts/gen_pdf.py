@@ -71,13 +71,19 @@ except Exception as _e:
     print(f"[gen_pdf] Inter registration failed ({_e}); falling back to Helvetica", file=sys.stderr)
 
 # ── Brand palette ─────────────────────────────────────────────────────────
-NAVY = colors.HexColor("#0f172a")
+# Body text stays near-black ink for legibility at 9.5px; structural chrome
+# (cover title, table header fills) uses the brand navy + green so the PDF
+# reads as a sibling of the email and dashboard (2026-06-13 token unify).
+NAVY = colors.HexColor("#0f172a")          # ink — body text
+BRAND_NAVY = colors.HexColor(B.HILMAR_NAVY)   # #0a2350 — chrome
+BRAND_GREEN = colors.HexColor(B.HILMAR_GREEN)  # #76b82a — accent rule
 SLATE = colors.HexColor("#475569")
 LIGHT = colors.HexColor("#f8fafc")
 BORDER = colors.HexColor("#e2e8f0")
 GREEN = colors.HexColor("#059669")
 RED = colors.HexColor("#dc2626")
-AMBER = colors.HexColor("#d97706")
+NQ_SLATE = colors.HexColor("#64748b")      # Not Quoted — neutral (was amber)
+AMBER = colors.HexColor("#d97706")         # pending-OL / slow turnaround
 BLUE = colors.HexColor("#2563eb")
 PURPLE = colors.HexColor("#7c3aed")
 
@@ -85,6 +91,7 @@ PURPLE = colors.HexColor("#7c3aed")
 def make_styles():
     ss = getSampleStyleSheet()
     ss.add(ParagraphStyle("H1", parent=ss["Heading1"], fontName=BODY_FONT_BOLD, fontSize=22, textColor=NAVY, spaceAfter=6, leading=26))
+    ss.add(ParagraphStyle("H1Brand", parent=ss["Heading1"], fontName=BODY_FONT_BOLD, fontSize=22, textColor=BRAND_NAVY, spaceAfter=6, leading=26))
     ss.add(ParagraphStyle("H2", parent=ss["Heading2"], fontName=BODY_FONT_BOLD, fontSize=14, textColor=NAVY, spaceBefore=10, spaceAfter=6, leading=18))
     ss.add(ParagraphStyle("H3", parent=ss["Heading3"], fontName=BODY_FONT_MED, fontSize=11, textColor=SLATE, spaceBefore=6, spaceAfter=4))
     ss.add(ParagraphStyle("Body", parent=ss["BodyText"], fontName=BODY_FONT, fontSize=9.5, textColor=NAVY, leading=13))
@@ -160,7 +167,14 @@ def build_cover(story, styles, data, cfg):
     if logo_img:
         story.append(logo_img)
         story.append(Spacer(1, 12))
-    story.append(Paragraph(f"{client} × {provider}", styles["H1"]))
+    story.append(Paragraph(f"{client} × {provider}", styles["H1Brand"]))
+    # brand-green accent rule under the title — the one place the brand
+    # green appears in the client PDF, tying it to email/dashboard chrome.
+    _rule = Table([[""]], colWidths=[170], rowHeights=[3])
+    _rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), BRAND_GREEN),
+                               ("LINEBELOW", (0, 0), (-1, -1), 0, BRAND_GREEN)]))
+    story.append(_rule)
+    story.append(Spacer(1, 6))
     story.append(Paragraph("Rate Desk Performance Report", styles["H2"]))
     story.append(Paragraph(f"Period: {date_range}  •  Last updated: {last_updated}", styles["BodyMuted"]))
     story.append(Spacer(1, 14))
@@ -241,7 +255,7 @@ def build_dod(story, styles, data):
 
     t = Table(rows, colWidths=[2.0*inch, 1.3*inch, 1.3*inch, 1.3*inch])
     t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),9),
         ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
@@ -295,7 +309,7 @@ def build_turnaround(story, styles, data):
             ])
         t = Table(rows, colWidths=[2.1*inch, 0.8*inch, 1.1*inch, 0.8*inch, 1.0*inch])
         t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8.5),
             ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
@@ -350,7 +364,7 @@ def build_carriers(story, styles, data):
         vmin=0, vmax=100, mode="good_high",
     )
     t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
@@ -408,7 +422,7 @@ def build_trade_regions(story, styles, data):
         vmin=0, vmax=100, mode="good_high",
     )
     t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),9),
         ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white, LIGHT]),
@@ -476,7 +490,7 @@ def build_lanes(story, styles, data):
     t = Table(rows, colWidths=[1.9*inch, 0.45*inch, 0.4*inch, 0.45*inch, 0.4*inch,
                                0.5*inch, 0.7*inch, 0.85*inch, 1.0*inch])
     t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(1,0),(-1,-2),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
@@ -508,7 +522,7 @@ def build_pending_trends_qc(story, styles, data):
             ])
         t = Table(rows, colWidths=[0.9*inch, 1.6*inch, 0.5*inch, 1.3*inch, 1.1*inch, 1.1*inch])
         t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
             ("GRID",(0,0),(-1,-1),0.3,BORDER),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
@@ -540,7 +554,7 @@ def build_pending_trends_qc(story, styles, data):
             ])
         tt = Table(rows, colWidths=[1.2*inch, 1.8*inch, 0.7*inch, 1.1*inch, 1.1*inch, 0.7*inch])
         tt.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("BACKGROUND",(0,0),(-1,0),BRAND_NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
             ("ALIGN",(2,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
             ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
