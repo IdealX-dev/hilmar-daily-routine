@@ -46,6 +46,81 @@ HILMAR_BLUE = "#1a3d9c"
 HILMAR_GREEN = "#76b82a"
 HILMAR_NAVY = "#0a2350"
 
+# ─────────────────────────────────────────────────────────────────────
+# THEME — the single design-token source of truth (added 2026-06-13 per
+# Michael "the entire visual design ... improvements for beauty style and
+# function"). Before this, three surfaces had drifted into three different
+# navies (#1e3a5f email, #0f172a PDF, brand #0a2350 declared-but-unused)
+# and the brand GREEN was never used at all. Every generator (gen_email,
+# gen_dashboard, gen_pdf, gen_carrier_scorecard_pdf, gen_improvements_report)
+# now reads from here, so the email, dashboard, and PDF look like siblings
+# and a palette change happens in ONE place.
+#
+# Two layers, deliberately separated:
+#   CHROME  = brand identity (headers, structural accents) — Hilmar navy/blue/green
+#   STATUS  = semantic state (win/loss/etc.) — kept on the well-known
+#             Tailwind hues operators already read fluently
+#
+# STATUS note (the amber un-overload): amber used to mean THREE things —
+# NQ, slow-turnaround, AND pending. With the 2026-06-12 pending split,
+# amber now means exactly "waiting on OL"; NQ moves to a neutral slate
+# ("no contest happened" reads as neutral, not warning), and slow
+# turnaround keeps red. One color, one meaning.
+THEME = {
+    # Chrome
+    "brand_navy":   HILMAR_NAVY,    # #0a2350 — primary header fill
+    "brand_blue":   HILMAR_BLUE,    # #1a3d9c — header gradient terminus, links
+    "brand_green":  HILMAR_GREEN,   # #76b82a — brand accent (rules, the "live" dot)
+    "header_grad_from": HILMAR_NAVY,
+    "header_grad_to":   HILMAR_BLUE,
+    # Status (semantic)
+    "win":          "#059669",
+    "win_border":   "#10b981",
+    "loss":         "#dc2626",
+    "loss_border":  "#ef4444",
+    "pending":      "#7c3aed",      # Pending Hilmar (chase Lonny)
+    "pending_border": "#a855f7",
+    "pending_ol":   "#d97706",      # Pending OL quote (chase OL) — amber, now unambiguous
+    "pending_ol_border": "#f59e0b",
+    "nq":           "#64748b",      # Not Quoted — neutral slate (no contest happened)
+    "nq_border":    "#94a3b8",
+    # Turnaround speed
+    "ta_fast":      "#059669",
+    "ta_medium":    "#2563eb",
+    "ta_slow":      "#dc2626",
+    # Neutrals (Tailwind slate scale — the connective tissue)
+    "ink":          "#0f172a",
+    "ink_soft":     "#1e293b",
+    "muted":        "#475569",
+    "muted_soft":   "#64748b",
+    "faint":        "#94a3b8",
+    "rule":         "#e2e8f0",
+    "rule_soft":    "#f1f5f9",
+    "surface":      "#ffffff",
+    "canvas":       "#f5f7fa",
+}
+
+#: Status enum → (text color, left-border accent). One lookup so email,
+#: dashboard, and PDF tag a WIN/LOSS/NQ/PENDING row identically.
+STATUS_COLORS = {
+    "WIN":          (THEME["win"], THEME["win_border"]),
+    "LOSS":         (THEME["loss"], THEME["loss_border"]),
+    "Q&L":          (THEME["loss"], THEME["loss_border"]),
+    "NQ":           (THEME["nq"], THEME["nq_border"]),
+    "PENDING":      (THEME["pending"], THEME["pending_border"]),
+    "PENDING_OL":   (THEME["pending_ol"], THEME["pending_ol_border"]),
+    "PENDING_HILMAR": (THEME["pending"], THEME["pending_border"]),
+}
+
+
+def header_gradient_css() -> str:
+    """The standard header fill: a solid brand-navy declaration FIRST (Outlook
+    strips linear-gradient — QC-045 enforces the fallback), then the gradient
+    for clients that honor it. Always emit both, in this order."""
+    return (f"background-color:{THEME['header_grad_from']};"
+            f"background:linear-gradient(135deg,{THEME['header_grad_from']} 0%,"
+            f"{THEME['header_grad_to']} 100%)")
+
 
 def has_logo() -> bool:
     """True if any logo file is available on disk."""
