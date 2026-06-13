@@ -275,27 +275,27 @@ def render(cfg: dict, data: dict) -> str:
 <style>
 :root{{color-scheme:light only}}
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;background:#f5f7fa;color:#0f172a;padding:24px;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;font-variant-numeric:tabular-nums}}
+body{{font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;background:#f5f7fa;color:#0f172a;padding:16px;font-size:13.5px;line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;font-variant-numeric:tabular-nums}}
 table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
 .kpi .value,td,th{{font-variant-numeric:tabular-nums}}
-.header{{background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:24px 28px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}}
-.header h1{{font-size:26px;margin-bottom:6px;font-weight:700;letter-spacing:-0.3px}}
+.header{{background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:16px 20px;border-radius:10px;margin-bottom:12px;box-shadow:0 3px 10px rgba(0,0,0,0.08)}}
+.header h1{{font-size:21px;margin-bottom:4px;font-weight:700;letter-spacing:-0.3px}}
 .header .subtitle{{opacity:0.92;font-size:15px;font-weight:500}}
 .header .tz-note{{opacity:0.7;font-size:12px;margin-top:10px}}
 .header .stamp{{opacity:0.72;font-size:12px;margin-top:4px}}
 
-.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}}
+.kpi-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:7px;margin-bottom:12px}}
 /* 2026-05-19 PM (Michael "all boxes should be clickable"): every KPI tile
    is an <a> anchor link to its detail section. Hover lifts the card and
    underlines the value for affordance. Cursor:pointer signals click. */
-a.kpi{{text-decoration:none;color:inherit;display:block;background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1;transition:transform 0.12s ease,box-shadow 0.12s ease;cursor:pointer}}
+a.kpi{{text-decoration:none;color:inherit;display:block;background:white;padding:9px 8px;border-radius:8px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1;transition:transform 0.12s ease,box-shadow 0.12s ease;cursor:pointer}}
 a.kpi:hover{{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,0.10)}}
 a.kpi:hover .value{{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}}
 a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
-.kpi{{background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1}}
-.kpi .value{{font-size:28px;font-weight:800;line-height:1.05;letter-spacing:-0.5px}}
-.kpi .label{{font-size:11.5px;color:#475569;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;font-weight:600}}
-.kpi .sub{{font-size:12px;color:#64748b;margin-top:3px;font-weight:500}}
+.kpi{{background:white;padding:9px 8px;border-radius:8px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1}}
+.kpi .value{{font-size:21px;font-weight:800;line-height:1.05;letter-spacing:-0.5px}}
+.kpi .label{{font-size:10px;color:#475569;text-transform:uppercase;letter-spacing:0.4px;margin-top:3px;font-weight:600}}
+.kpi .sub{{font-size:10.5px;color:#64748b;margin-top:2px;font-weight:500}}
 .kpi-hint{{font-size:9.5px;color:#94a3b8;margin-top:2px;font-weight:500}}
 /* Awaiting-MDOLX badge — for WIN rows where send-signal promoted PENDING
    to WIN but OL hasn't issued the booking confirmation yet. */
@@ -309,12 +309,12 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .kpi.teal{{border-top-color:#14b8a6}} .kpi.teal .value{{color:#0d9488}}
 .kpi.slate{{border-top-color:#64748b}} .kpi.slate .value{{color:#475569}}
 
-.section{{background:white;border-radius:10px;padding:18px 20px;margin-bottom:14px;box-shadow:0 2px 6px rgba(0,0,0,0.05)}}
-.section h2{{font-size:17px;margin-bottom:14px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;font-weight:700;letter-spacing:-0.3px}}
-.section h3{{font-size:14px;color:#1e293b;margin:14px 0 8px 0;font-weight:600;letter-spacing:-0.1px}}
-table{{width:100%;border-collapse:collapse;font-size:13.5px}}
-th{{background:#f1f5f9;padding:10px 8px;text-align:left;font-weight:700;color:#334155;border-bottom:2px solid #cbd5e1;font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px;position:sticky;top:0;z-index:10}}
-td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
+.section{{background:white;border-radius:9px;padding:11px 14px;margin-bottom:9px;box-shadow:0 1px 4px rgba(0,0,0,0.05)}}
+.section h2{{font-size:15px;margin-bottom:9px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:5px;font-weight:700;letter-spacing:-0.3px}}
+.section h3{{font-size:12.5px;color:#1e293b;margin:9px 0 5px 0;font-weight:600;letter-spacing:-0.1px}}
+table{{width:100%;border-collapse:collapse;font-size:12.5px}}
+th{{background:#f1f5f9;padding:6px 7px;text-align:left;font-weight:700;color:#334155;border-bottom:2px solid #cbd5e1;font-size:10.5px;text-transform:uppercase;letter-spacing:0.4px;position:sticky;top:0;z-index:10}}
+td{{padding:5px 7px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
 tr:hover td{{background:#f8fafc}}
 .win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#64748b}} .pending{{color:#7c3aed}}
 .win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #94a3b8}} .pending-row{{border-left:3px solid #a855f7}}

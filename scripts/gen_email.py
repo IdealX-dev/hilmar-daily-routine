@@ -416,7 +416,7 @@ def _header_html(today_label, range_label, updated_label):
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
   </div>
-  <div style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+  <div style="padding:14px 20px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
 
 
@@ -726,23 +726,23 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     )
 
     return f"""
-<div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:20px;margin-bottom:24px">
+<div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:13px 14px;margin-bottom:14px">
   <h2 style="margin:0 0 8px;color:#1e40af;font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
   <p style="margin:0 0 14px;font-size:11px;color:#64748b">Previous business day. Daily email runs at 10 AM ET — Lonny's California office (PT) opens ~3 hours later, so 'today' has no data yet at send time.</p>
 
-  <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
+  <h3 style="margin:9px 0 3px;color:#1e40af;font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
   {new_table}
 
-  <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
+  <h3 style="margin:9px 0 3px;color:#1e40af;font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
   {resp_table}
 
-  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
+  <h3 style="margin:9px 0 3px;color:#7c3aed;font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}
 
-  <h3 style="margin:14px 0 4px;color:#d97706;font-size:13px">⏳ PENDING OL QUOTE ({len(pending_ol)})</h3>
+  <h3 style="margin:9px 0 3px;color:#d97706;font-size:13px">⏳ PENDING OL QUOTE ({len(pending_ol)})</h3>
   {pol_table}
 
-  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">⏳ PENDING HILMAR RESPONSE ({len(pending_hil)})</h3>
+  <h3 style="margin:9px 0 3px;color:#7c3aed;font-size:13px">⏳ PENDING HILMAR RESPONSE ({len(pending_hil)})</h3>
   {pend_table}
 
   <p style="margin:14px 0 0;font-size:13px;color:#374151;font-weight:bold">{_esc(summary_line)}</p>
@@ -770,10 +770,10 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
         '<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">&nbsp;</div>'
     )
     return f"""
-<td style="padding:4px;width:{width};vertical-align:top">
-  <div style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
-    <div style="font-size:22px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
-    <div style="font-size:11px;opacity:0.94;margin-top:4px;line-height:1.25">{_esc(label)}</div>
+<td style="padding:3px;width:{width};vertical-align:top">
+  <div style="background:{bg};color:white;border-radius:8px;padding:9px 8px 10px;text-align:center;min-height:70px;height:70px;box-sizing:border-box">
+    <div style="font-size:19px;font-weight:bold;line-height:1.05">{_esc(value)}</div>
+    <div style="font-size:10px;opacity:0.94;margin-top:3px;line-height:1.2">{_esc(label)}</div>
     {sub_html}
   </div>
 </td>
@@ -872,7 +872,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color="#8b5cf6")
 
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
@@ -890,7 +890,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     <td style="padding:0 4px;text-align:center">{spark_pend}</td>
   </tr>
 </table>
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
   <tr>
@@ -973,7 +973,7 @@ def _week_block_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📅 This Week vs Last Week</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">📅 This Week vs Last Week</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
 <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr style="background:#0a2350;color:white">
@@ -1057,7 +1057,7 @@ def _carrier_block_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — All requests in current dataset</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">🚢 Carrier Performance — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#0a2350;color:white">
@@ -1126,7 +1126,7 @@ def _winning_lanes_html(rows):
     # background → white text on white = invisible header. Switched to
     # solid #059669 (winning) / #7f1d1d (losing) which Outlook honors.
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — All requests in current dataset</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">📈 Top Winning Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#059669;color:#ffffff">
@@ -1178,7 +1178,7 @@ def _losing_lanes_html(rows):
 """
     # 2026-05-19 PM 4th pass: solid bg for Outlook (was gradient → invisible).
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — All requests in current dataset</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #e5e7eb;padding-bottom:5px">📉 Top Losing Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#7f1d1d;color:#ffffff">
@@ -1249,7 +1249,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     older_note = (f" • {older_count} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden from listing "
                   f"but counted in volume tally for rate negotiation") if older_count > 0 else ""
     return f"""
-<h2 style="color:#64748b;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
+<h2 style="color:#64748b;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #cbd5e1;padding-bottom:5px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#64748b;color:white">
@@ -1322,7 +1322,7 @@ def _pending_ol_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#d97706;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fcd34d;padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
+<h2 style="color:#d97706;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #fcd34d;padding-bottom:5px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is wall-clock since the RFQ (green ≤8h, amber ≤24h, red &gt;24h — red rows are chase candidates with the OL desk).</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#d97706;color:white">
@@ -1445,7 +1445,7 @@ def _pending_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
+<h2 style="color:#7c3aed;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #c4b5fd;padding-bottom:5px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#7c3aed;color:white">
@@ -1647,7 +1647,7 @@ def _trade_region_html(data, summary):
     dates = sorted(r.get("request_date", "") for r in reqs if r.get("request_date"))
     period_str = f"{dates[0]} – {dates[-1]}" if dates else "all time"
     return f"""
-<h2 style="color:#0a2350;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
+<h2 style="color:#0a2350;font-size:15px;margin:14px 0 7px;border-bottom:2px solid #cbd5e1;padding-bottom:5px">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
 <p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">{_esc(recon)}</p>
 <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
@@ -1715,45 +1715,34 @@ def _preheader_html(new_req, ol_resp, wins_today, pending_ol, pending_hil):
 
 def _verdict_strip_html(report_label, new_req, ol_resp, wins_today,
                         pending_ol, pending_hil, summary):
-    """Top-of-email stat band — the 5-second glance (added 2026-06-13 per
-    Michael "the 5-second phone glance fails ... put the verdict at the
-    top"). The old layout buried the day's numbers at the bottom of the
-    cover block. This echoes the dashboard's KPI tiles so the two surfaces
-    rhyme. Built as an Outlook-safe presentation table (no grid/flex);
-    cells wrap on narrow screens because the table is width:100% with
-    min-width cells."""
+    """Top-of-email glance line — the day's verdict in ONE compact row
+    (2026-06-13). The first cut was a 6-cell card band; Michael found it
+    wasteful of space ("the older reports are better ... match the old
+    density"), so it's now a single slim inline strip — colored numbers +
+    tiny labels, ~28px tall instead of ~90px. The full KPI tiles still live
+    lower in the email; this is purely the at-a-glance line."""
     T = B.THEME
     win_rate = summary.get("win_rate")
     wr_s = f"{win_rate:.0f}%" if isinstance(win_rate, (int, float)) else "—"
-    cells = [
-        ("New RFQs", str(new_req), T["brand_blue"]),
-        ("Quotes", str(ol_resp), T["ink"]),
-        ("Wins", str(wins_today), T["win"]),
-        ("Pending OL", str(pending_ol), T["pending_ol"]),
-        ("Pending Hilmar", str(pending_hil), T["pending"]),
-        ("Win Rate · PTD", wr_s, T["brand_blue"]),
+    parts = [
+        (str(new_req), "RFQs", T["brand_blue"]),
+        (str(ol_resp), "quotes", T["ink"]),
+        (str(wins_today), "wins", T["win"]),
+        (str(pending_ol), "pend OL", T["pending_ol"]),
+        (str(pending_hil), "pend Hilmar", T["pending"]),
+        (wr_s, "win rate", T["brand_blue"]),
     ]
-    tds = ""
-    for label, value, color in cells:
-        tds += (
-            f'<td style="padding:10px 6px;text-align:center;vertical-align:top;'
-            f'border-right:1px solid {T["rule_soft"]}">'
-            f'<div style="font-size:24px;font-weight:800;line-height:1;'
-            f'letter-spacing:-0.5px;color:{color};{EMAIL_TNUM}">{_esc(value)}</div>'
-            f'<div style="font-size:9.5px;font-weight:600;text-transform:uppercase;'
-            f'letter-spacing:0.4px;color:{T["muted_soft"]};margin-top:5px">{_esc(label)}</div>'
-            f'</td>'
+    segs = []
+    for value, label, color in parts:
+        segs.append(
+            f'<span style="font-weight:800;color:{color};{EMAIL_TNUM}">{_esc(value)}</span>'
+            f'<span style="color:{T["muted_soft"]};font-size:11px"> {_esc(label)}</span>'
         )
+    inner = f'<span style="color:{T["faint"]}">&nbsp;&nbsp;·&nbsp;&nbsp;</span>'
     return (
-        f'<table role="presentation" cellpadding="0" cellspacing="0" '
-        f'style="width:100%;border-collapse:collapse;background:{T["surface"]};'
-        f'border:1px solid {T["rule"]};border-radius:10px;overflow:hidden;'
-        f'margin:0 0 18px 0;{EMAIL_TNUM}">'
-        f'<tr><td colspan="6" style="padding:7px 12px;background-color:{T["rule_soft"]};'
-        f'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;'
-        f'color:{T["muted"]};border-bottom:1px solid {T["rule"]}">'
-        f'At a glance — {_esc(report_label)}</td></tr>'
-        f'<tr>{tds}</tr></table>'
+        f'<div style="background-color:{T["rule_soft"]};border:1px solid {T["rule"]};'
+        f'border-radius:7px;padding:7px 12px;margin:0 0 12px 0;font-size:13px;'
+        f'{EMAIL_TNUM}">{inner.join(segs)}</div>'
     )
 
 

@@ -56,9 +56,10 @@ def test_brand_navy_unified_no_legacy_one_off():
 
 def test_verdict_strip_and_preheader_present():
     body = ge.build_body(_data(), core.load_config(str(ROOT / "config.json")))
-    assert "At a glance" in body                      # top verdict strip
     assert "mso-hide:all" in body                     # hidden preheader
-    assert "Pending OL" in body and "Pending Hilmar" in body  # both stats
+    # compact verdict strip — colored numbers with tiny labels
+    assert "pend OL" in body and "pend Hilmar" in body
+    assert "win rate" in body
 
 
 def test_nq_uses_neutral_slate_not_amber():
