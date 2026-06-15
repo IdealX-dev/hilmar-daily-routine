@@ -116,6 +116,30 @@ jobs:
             --tb=short \
             -q
 
+      - name: Test suite under the PRODUCTION-FIRE environment (env parity)
+        # WHY: the 2026-06-15 red flag — test_qc_011 passed here but failed
+        # inside the production-fire job, because that job sets
+        # AZURE_STORAGE_CONNECTION_STRING (which flips qc_selfheal._BLOB_HOST)
+        # and the plain CI run above does not. A test that reads ambient
+        # deploy env was green in CI and red in the live pipeline for days.
+        # This step re-runs the WHOLE suite with the same env vars the
+        # production-fire job exports (dummy values — no real services hit),
+        # so any "green in CI / red in pipeline" env-dependency is caught at
+        # PR time, automatically, before merge. The conftest hermetic fixture
+        # makes both runs agree; this step is what PROVES they agree.
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+          HILMAR_PARSER_FALLBACK_DISABLE: "1"
+          # Mirror scripts/.github production-fire job env (dummy values):
+          AZURE_STORAGE_CONNECTION_STRING: "DefaultEndpointsProtocol=https;AccountName=ci;AccountKey=Zm9v;EndpointSuffix=core.windows.net"
+          HILMAR_NONINTERACTIVE: "1"
+          QT_APP_PASSWORD: "ci-dummy"
+          SENTRY_DSN: ""
+          ANTHROPIC_API_KEY: "ci-dummy"
+        run: |
+          pytest tests/ --override-ini="addopts=" --tb=short -q
+
       - name: Integration tests (skip if fixtures missing)
         env:
           PYTHONIOENCODING: utf-8
