@@ -2736,6 +2736,55 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-055: check failed with exception: {_e}")
 
+    # QC-056: RATE-WITHOUT-CARRIER — OL quoted a rate but the row has no
+    # carrier. Surfaced 2026-06-15 (Michael, the Oakland→Manila $797 quote:
+    # "nothing should be blank"). The production parse_rate_table only read a
+    # column literally headed "Carrier", so when OL relabeled it the rate
+    # parsed and the carrier blanked — a broken email cell AND lost
+    # negotiation signal. The root fix is in body_parser (header aliases +
+    # data-cell + prose carrier scan); this QC is the guard against the
+    # failure class returning. SELF-HEAL: re-scan the row's own stored text
+    # (vessel/transshipment/pol/pod/reason) for a carrier token and backfill.
+    # WARN (not ERROR) on the remainder — OL does occasionally quote a bare
+    # rate with the carrier assigned only at booking, so a hard gate here
+    # would block the client email on a legitimately-blank row.
+    try:
+        _rate_no_carrier = [
+            r for r in requests
+            if r.get("ol_rate") and not r.get("carrier_quoted")
+            and (r.get("quoted") or r.get("status") in ("WIN", "LOSS", "Q&L"))
+        ]
+        _healed, _stuck = [], []
+        for r in _rate_no_carrier:
+            _scan = " | ".join(str(r.get(k) or "") for k in (
+                "vessel_voyage", "transshipment", "pol", "pod", "reason_detail"))
+            _car = BP.detect_carrier_token(_scan, allow_short=False)
+            if _car:
+                with contextlib.suppress(Exception):
+                    _car = core.normalize_carrier(_car) or _car
+                r["carrier_quoted"] = _car
+                # WINs inherit carrier_won from carrier_quoted (mirrors ingest).
+                if r.get("status") == "WIN" and not r.get("carrier_won"):
+                    r["carrier_won"] = _car
+                _healed.append(f"{r.get('lane','?')}={_car}")
+            else:
+                _stuck.append(r.get("lane", r.get("request_id", "?")))
+        for _h in _healed:
+            log.fix(f"QC-056: backfilled carrier from row text — {_h}")
+        if _stuck:
+            log.warn(
+                f"QC-056: {len(_stuck)} row(s) have an OL rate but no carrier "
+                f"(parser couldn't find one; re-ingest after a body_parser fix, "
+                f"or OL quoted a bare rate). Lanes: " + "; ".join(_stuck[:5])
+                + (f" + {len(_stuck)-5} more" if len(_stuck) > 5 else "")
+            )
+        elif not _rate_no_carrier:
+            log.ok("QC-056: every row with an OL rate also has a carrier")
+        else:
+            log.ok(f"QC-056: healed {len(_healed)} rate-without-carrier row(s); none stuck")
+    except Exception as _e:
+        log.warn(f"QC-056: check failed with exception: {_e}")
+
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
     # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate

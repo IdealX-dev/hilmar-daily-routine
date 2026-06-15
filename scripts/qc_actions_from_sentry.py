@@ -184,6 +184,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "Pipeline ran but the cron check-in didn't reach Sentry — the missed-check-in alert (HILMAR-DAILY-TRACKER-9) is a false positive. Usually QC-054 root (missing sentry_sdk). If sentry_sdk is installed, verify secrets/sentry-dsn.txt and that the Cloud PC can reach sentry.io.",
         "auto_resolve_safe": False,
     },
+    "QC-056": {
+        "name": "OL rate quoted but carrier missing",
+        "action": "flag_for_operator",
+        "comment": "A row has an OL rate but no carrier. Root cause is usually a rate-response whose carrier column OL relabeled (the body_parser carrier scan should now catch header aliases + data-cell + prose). If it persists: re-ingest (reprocess_bodies.py + ingest.py + patch_carriers.py) so the strengthened parser re-reads the body. If the carrier is genuinely absent from OL's quote (bare rate, carrier assigned at booking), it will fill from the booking confirmation on the WIN — no action needed.",
+        "auto_resolve_safe": False,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",

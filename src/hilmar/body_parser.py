@@ -205,6 +205,32 @@ _BOOKING_PREFIX_TO_CARRIER = {
     "MAEU": "Maersk",
 }
 
+# Carrier tokens that are also common English words or fragments of a longer
+# carrier name ("ONE", "CMA"/"CGM" inside "CMA CGM"). Safe to match inside a
+# cell KNOWN to be the carrier column, but matching them in free prose
+# mis-reads "ONE container" as the carrier ONE. detect_carrier_token() skips
+# these unless allow_short=True. Mirror of scripts/body_parser.py (2026-06-15).
+_AMBIGUOUS_CARRIER_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+
+
+def detect_carrier_token(text, *, allow_short: bool = False):
+    """Return the canonical carrier named anywhere in ``text``, or None.
+
+    Word-boundary scan over the known carrier tokens, multi-word first (so
+    "CMA CGM" wins over a bare "CMA"). Short/ambiguous tokens only match when
+    ``allow_short=True`` — pass that only for a dedicated carrier cell, never
+    free prose. Mirror of scripts/body_parser.py (2026-06-15 Manila fix).
+    """
+    if not text:
+        return None
+    up = str(text).upper()
+    for raw, canonical in _SUBJECT_CARRIER_TOKENS:
+        if raw in _AMBIGUOUS_CARRIER_TOKENS and not allow_short:
+            continue
+        if re.search(rf"\b{re.escape(raw)}\b", up):
+            return canonical
+    return None
+
 
 def parse_subject_carrier(subject: str | None) -> str | None:
     """Extract the winning carrier from an MDOLX confirmation subject.
@@ -668,6 +694,9 @@ _TABLE_LABELS = {
     "ERD": "erd", "DOC CUT": "doc_cut", "PORT CUT": "port_cut",
     "RAIL CUT": "rail_cut", "ETD": "etd", "ETA": "eta",
     "RATE": "rate", "DTHC": "dthc", "CARRIER": "carrier",
+    # Carrier-column aliases — OL relabels this across templates (2026-06-15).
+    "OCEAN CARRIER": "carrier", "OCEAN LINE": "carrier", "LINE": "carrier",
+    "CARRIER/LINE": "carrier", "STEAMSHIP LINE": "carrier", "SSL": "carrier",
     "TRANSSHIPMENT": "transshipment",
     "ORIGIN FREE TIME": "origin_free_time",
     "DESTINATION FREE TIME": "destination_free_time",
@@ -818,7 +847,7 @@ def parse_rate_table(text):
 
     # Prose fallback — only fill fields the column parser didn't catch.
     if "carrier_quoted" not in out:
-        car = _find_carrier(text)
+        car = _find_carrier(text) or detect_carrier_token(text, allow_short=False)
         if car:
             out["carrier_quoted"] = car
     if "ol_rate" not in out:

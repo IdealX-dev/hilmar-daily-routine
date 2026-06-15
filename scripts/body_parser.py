@@ -232,6 +232,72 @@ _BOOKING_PREFIX_TO_CARRIER = {
     "MAEU": "Maersk",
 }
 
+# Carrier tokens that are also common English words or fragments of a longer
+# carrier name ("ONE", "CMA"/"CGM" inside "CMA CGM"). They're safe to match
+# inside a cell that's KNOWN to be the carrier column, but matching them in
+# free prose mis-reads "ONE container" / "for ONE day" as the carrier ONE.
+# detect_carrier_token() skips these unless allow_short=True.
+_AMBIGUOUS_CARRIER_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+
+
+def detect_carrier_token(text, *, allow_short: bool = False):
+    """Return the canonical carrier named anywhere in ``text``, or None.
+
+    Word-boundary scan over the known carrier tokens, longest/multi-word
+    first (so "CMA CGM" wins over a bare "CMA"). Short/ambiguous tokens
+    (see ``_AMBIGUOUS_CARRIER_TOKENS``) only match when ``allow_short=True``
+    — pass that ONLY when ``text`` is a dedicated carrier cell, never for
+    free prose.
+
+    Added 2026-06-15: an Oakland→Manila OL quote parsed its $797 rate but
+    blanked the carrier because the production parse_rate_table only read a
+    column literally headed "Carrier". This shared detector lets the table
+    parser fall back to a data-cell / body-prose scan, and lets QC-056
+    self-heal a stored row from its vessel/transshipment text.
+    """
+    if not text:
+        return None
+    up = str(text).upper()
+    for raw, canonical in _SUBJECT_CARRIER_TOKENS:
+        if raw in _AMBIGUOUS_CARRIER_TOKENS and not allow_short:
+            continue
+        if re.search(rf"\b{re.escape(raw)}\b", up):
+            return canonical
+    return None
+
+
+# Alternate column headers OL has used for the ocean carrier across its
+# evolving rate-table templates. _norm_header() lowercases + underscores, so
+# "Ocean Carrier" -> "ocean_carrier", "SSL" -> "ssl", "Carrier/Line" ->
+# "carrier_line". parse_rate_table walks these before giving up on the column.
+_CARRIER_HEADER_ALIASES = (
+    "carrier", "ocean_carrier", "ocean_line", "line", "carrier_line",
+    "line_carrier", "steamship_line", "steamship", "ssl", "scac",
+    "vessel_operator", "operator", "co_carrier",
+)
+
+
+def _carrier_from_cells(cells: dict):
+    """Resolve the quoted carrier from a parsed rate-table row.
+
+    Order: (1) a column whose header is a known carrier alias; (2) failing
+    that, any data cell that contains a distinctive carrier token (covers
+    unlabeled / merged / mis-headed columns). Returns the raw carrier string
+    (canonicalization happens in the caller).
+    """
+    for key in _CARRIER_HEADER_ALIASES:
+        val = (cells.get(key) or "").strip()
+        if val:
+            val = re.sub(r"[\*\(].*$", "", val).strip()
+            if val:
+                # Trust the labeled column; map through tokens when possible.
+                return detect_carrier_token(val, allow_short=True) or val
+    for val in cells.values():
+        tok = detect_carrier_token(val or "", allow_short=False)
+        if tok:
+            return tok
+    return None
+
 def parse_subject_carrier(subject):
     """Extract the winning carrier from an MDOLX confirmation subject.
 
@@ -812,7 +878,15 @@ def parse_rate_table(text: str) -> dict:
         data = data[:len(header)]
     cells = dict(zip(header, [d.strip() for d in data], strict=False))
     out = {}
-    car = cells.get("carrier") or ""
+    # Carrier: a column headed "Carrier" is the common case, but OL relabels
+    # it ("Ocean Carrier", "Line", "SSL", ...) and sometimes drops it into an
+    # unlabeled cell or the surrounding prose. _carrier_from_cells walks the
+    # header aliases then scans the data cells; the body-prose scan is the
+    # last resort. (2026-06-15 Manila fix — was bare `cells.get("carrier")`,
+    # which blanked the carrier whenever the column wasn't literally "Carrier".)
+    car = _carrier_from_cells(cells)
+    if not car:
+        car = detect_carrier_token(text, allow_short=False)
     if car:
         car = re.sub(r"[\*\(].*$", "", car).strip()
         if car:
