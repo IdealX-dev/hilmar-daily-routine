@@ -200,3 +200,17 @@ def test_helper_is_robust_to_exceptions(tmp_path, monkeypatch):
     QSH._check_email_subject_date(log, subj, now_et=now_et)
     # Either it succeeds (now_et avoided core.ET) or it WARNs with the exception
     # The point: no traceback propagates. We just check no exception.
+
+
+def test_file_absent_skips_on_blob_host(tmp_path, monkeypatch):
+    """On a blob-store runner (production-fire), an absent subject file pre-
+    render is physics, not a finding — QC-011 skips with an OK, not a WARN.
+    This is the path that had NO coverage and let the 2026-06-15 regression
+    ship (the conftest autouse fixture forces _BLOB_HOST False by default, so
+    this test opts back into True explicitly)."""
+    monkeypatch.setattr(QSH, "_BLOB_HOST", True)
+    log = _Log()
+    QSH._check_email_subject_date(log, tmp_path / "no-such-file.txt")
+    assert not log.errors
+    assert not any("not present" in w for w in log.warns)   # no warn on blob host
+    assert any("skipped" in m for m in log.oks)              # OK skip instead
