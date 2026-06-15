@@ -44,15 +44,23 @@ name: Daily
 
 on:
   schedule:
-    # Two UTC crons so the fire is 10:00 AM ET year-round (GH cron is UTC
-    # and ignores DST). The `gate` job below picks whichever cron matches
-    # the current ET UTC-offset and skips the other.
-    # ODD MINUTE on purpose: GitHub deprioritizes on-the-hour crons —
-    # this repo's 14:00 cron ran 2.5-3.5h late all of early June 2026
-    # (e.g. 2026-06-10: created 17:20 UTC). Off-peak minutes are picked
-    # up near-promptly.
-    - cron: "7 14 * * 1-5"   # ~10:07 AM EDT (Mar-Nov)
-    - cron: "7 15 * * 1-5"   # ~10:07 AM EST (Nov-Mar)
+    # GitHub's scheduler is unreliable for this repo — observed 2-4.5h late,
+    # and on 2026-06-15 a 10:07 ET tick didn't land until ~2 PM ET. GH cron
+    # lateness is roughly independent per scheduled tick, so we fire SEVERAL
+    # off-peak morning ticks: whichever the scheduler delivers first wins,
+    # the rest no-op (mailbox guard + idempotency flag), and the workflow
+    # `concurrency` group below serializes them so two can't race the state
+    # push. This maximizes the odds of an on-time send using only GitHub;
+    # the guaranteed fix is an external punctual trigger (see
+    # docs/MOVE-OFF-CLOUDPC.md). The `gate` job accepts ANY tick whose HOUR
+    # matches 10 AM ET for the current DST offset (14:xx UTC in EDT, 15:xx
+    # in EST) and skips the rest, so DST never double-fires or skips a day.
+    - cron: "7 14 * * 1-5"    # ~10:07 AM EDT
+    - cron: "23 14 * * 1-5"   # ~10:23 AM EDT
+    - cron: "43 14 * * 1-5"   # ~10:43 AM EDT
+    - cron: "7 15 * * 1-5"    # ~10:07 AM EST (gated out in EDT)
+    - cron: "23 15 * * 1-5"   # ~10:23 AM EST
+    - cron: "43 15 * * 1-5"   # ~10:43 AM EST
   workflow_dispatch:
     inputs:
       mode:
@@ -72,6 +80,14 @@ on:
           - test              # michael.deitchman@idealx.us only — safe default
           - full              # the 10-recipient client distribution
 
+# Serialize Daily runs so the multiple morning ticks (and any manual
+# dispatch) can't run concurrently and race the blob state push/pull.
+# cancel-in-progress:false — NEVER cancel a fire mid-send; queue instead.
+# The first run sends; queued ones reach the mailbox guard and no-op.
+concurrency:
+  group: hilmar-daily-fire
+  cancel-in-progress: false
+
 env:
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
@@ -86,10 +102,11 @@ jobs:
       proceed: ${{ steps.decide.outputs.proceed }}
     steps:
       - id: decide
-        # Exactly one of the two crons corresponds to 10:00 AM ET on any
-        # given day. Match the firing cron against the current ET UTC-offset
-        # rather than wall-clock hour, so GitHub's cron jitter (sometimes
-        # >1h) can never skip a day or run a day twice.
+        # A tick proceeds iff its HOUR field is the UTC hour of 10 AM ET for
+        # the current DST offset (14 in EDT, 15 in EST) — minute-agnostic, so
+        # the several morning ticks all proceed in-season and the off-season
+        # set is skipped. Keying on offset (not wall-clock now) means GitHub's
+        # multi-hour cron lateness can never skip a day or run the wrong set.
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "Manual dispatch — gate open."
@@ -98,10 +115,11 @@ jobs:
           fi
           offset=$(TZ=America/New_York date +%z)   # -0400 in EDT, -0500 in EST
           cron="${{ github.event.schedule }}"
+          cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * 1-5"
           proceed=false
-          if [ "$cron" = "7 14 * * 1-5" ] && [ "$offset" = "-0400" ]; then proceed=true; fi
-          if [ "$cron" = "7 15 * * 1-5" ] && [ "$offset" = "-0500" ]; then proceed=true; fi
-          echo "cron='$cron' ET-offset=$offset → proceed=$proceed"
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "14" ]; then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "15" ]; then proceed=true; fi
+          echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 
   audit:

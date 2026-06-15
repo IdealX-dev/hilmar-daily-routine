@@ -27,10 +27,24 @@ name: Liveness monitor
 
 on:
   schedule:
-    # 15:30 UTC = 11:30 AM ET in EDT. Gives the Cloud PC fire (10 AM ET)
-    # + 60-min per-step timeout budget + small grace window to finish.
-    - cron: "30 15 * * 1-5"
+    # The backstop must not share the daily fire's single-point-of-failure:
+    # on 2026-06-15 this monitor's lone 15:30 tick was itself hours late on
+    # GitHub's scheduler, so the auto-recovery never ran. Fire SEVERAL ticks
+    # across late-morning/midday ET — each one re-checks "did a fire happen
+    # today?" and dispatches production-fire if not. Re-runs are safe: the
+    # check is idempotent (skips once a heartbeat exists) and the fire's
+    # mailbox guard blocks any duplicate send. ~15:30 UTC = 11:30 ET (EDT).
+    - cron: "30 15 * * 1-5"   # ~11:30 ET (EDT) / 10:30 ET (EST)
+    - cron: "15 16 * * 1-5"   # ~12:15 ET (EDT)
+    - cron: "0 17 * * 1-5"    # ~1:00 PM ET (EDT)
+    - cron: "0 18 * * 1-5"    # ~2:00 PM ET (EDT) — catches the 4h-late case
   workflow_dispatch:
+
+# Serialize so overlapping late ticks don't both dispatch; the heartbeat
+# check is idempotent anyway, this just avoids redundant runs.
+concurrency:
+  group: hilmar-liveness
+  cancel-in-progress: false
 
 jobs:
   check-heartbeat:
