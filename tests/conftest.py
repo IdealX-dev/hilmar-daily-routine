@@ -44,5 +44,37 @@ try:
     def schema() -> dict:
         return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
+    @pytest.fixture(autouse=True)
+    def _hermetic_blob_host(monkeypatch):
+        """Force qc_selfheal._BLOB_HOST = False for every test.
+
+        _BLOB_HOST is read from AZURE_STORAGE_CONNECTION_STRING at import.
+        That var is UNSET in CI (so the suite was green) but SET inside the
+        production-fire job — where the same suite also runs as the QC-052
+        in-pipeline audit. There it flips _BLOB_HOST True, turning
+        QC-011/012/026/028's "file not present" WARN into an "ephemeral
+        runner" skip, and test_qc_011's absent-file test went red in
+        production while CI stayed green (2026-06-15 audit red flag).
+
+        Tests must be hermetic — independent of the deploy env they run in.
+        This pins the dev/CI default; the dedicated blob-host tests set it
+        True explicitly. Best-effort no-op if qc_selfheal isn't importable
+        in a given minimal test context.
+        """
+        import contextlib
+        scripts_dir = REPO_ROOT / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        with contextlib.suppress(Exception):
+            import qc_selfheal  # noqa: F401  ensure the standard module is loaded
+        # Patch EVERY already-loaded module that carries a _BLOB_HOST flag —
+        # not just `qc_selfheal`. test_qc_011 loads it under a private name
+        # (`qc_sh_under_test`) via a bespoke loader, so a single-name patch
+        # would miss it. Iterating sys.modules makes the fixture import-style
+        # agnostic.
+        for mod in list(sys.modules.values()):
+            if mod is not None and getattr(mod, "_BLOB_HOST", None) is not None:
+                monkeypatch.setattr(mod, "_BLOB_HOST", False, raising=False)
+
 except ImportError:
     pytest = None  # type: ignore
