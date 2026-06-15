@@ -129,10 +129,10 @@ jobs:
     needs: gate
     if: needs.gate.outputs.proceed == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -156,7 +156,7 @@ jobs:
         # run actually see". On the Cloud PC they live in OneDrive; on GH
         # Actions they need explicit upload to be reviewable.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: daily-audit-${{ github.run_id }}
           path: |
@@ -230,10 +230,10 @@ jobs:
           fi
           echo "All required secrets present. SEND_TO=$SEND_TO"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -344,7 +344,7 @@ jobs:
 
       - name: Upload run artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: production-fire-${{ github.run_id }}
           path: |

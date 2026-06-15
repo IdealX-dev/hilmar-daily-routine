@@ -57,7 +57,7 @@ jobs:
       actions: write     # to auto-dispatch the fire when today's is missing
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # We need the most recent successful artifact, not the latest
           # commit — but checkout's enough to read scripts that might
