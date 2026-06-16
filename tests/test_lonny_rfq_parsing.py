@@ -99,6 +99,26 @@ def test_absolute_date_still_wins_over_relative(BP):
     assert BP.parse_etd_requested("ship by 7/1 next week", ref_date=REF) == "2026-07-01"
 
 
+@pytest.mark.parametrize("BP", _BOTH, ids=["scripts", "hilmar"])
+@pytest.mark.parametrize("text,expected", [
+    ("14 days demurrage requested", "14d demurrage"),
+    ("10 days detention please", "10d detention"),
+    ("7 days free time", "7d free time"),
+])
+def test_free_time_requested(BP, text, expected):
+    assert BP.parse_free_time_requested(text) == expected
+
+
+def test_free_time_none_when_absent():
+    assert SBP.parse_free_time_requested("Oakland to HCMC 2-40' HC") is None
+
+
+def test_fetch_bodies_captures_free_time_for_lonny():
+    p = FB._parse_all(LONNY_BODY, "Oakland to HCMC", "lonny_outbound",
+                      sent_ts="2026-06-15T20:42:00Z")
+    assert p["free_time_requested"] == "14d demurrage"
+
+
 def test_fetch_bodies_threads_send_date_for_relative_asks():
     sent = "2026-06-15T20:42:00Z"   # Mon Jun 15
     p = FB._parse_all(LONNY_BODY, "Oakland to HCMC", "lonny_outbound", sent_ts=sent)

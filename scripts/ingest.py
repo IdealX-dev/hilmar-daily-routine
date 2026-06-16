@@ -358,6 +358,7 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             "temperature":     parsed.get("temperature"),
             "requested_dates": parsed.get("requested_dates"),
             "lonny_notes":     parsed.get("lonny_notes"),
+            "free_time_requested": parsed.get("free_time_requested"),
         })
     return _merge_thread_dupes(requests)
 

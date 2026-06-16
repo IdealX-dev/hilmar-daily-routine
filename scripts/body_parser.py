@@ -530,8 +530,11 @@ _ETA_REQ_ANCHORS = re.compile(
     re.IGNORECASE,
 )
 
-_ETD_OFFER_ANCHORS = re.compile(r"(?:etd|ets|sailing\s+date|departure)\s*[:\-]?", re.IGNORECASE)
-_ETA_OFFER_ANCHORS = re.compile(r"(?:eta|arrival)\s*[:\-]?", re.IGNORECASE)
+_ETD_OFFER_ANCHORS = re.compile(
+    r"(?:etd(?:\s*pol)?|ets|sail(?:s|ing)?(?:\s+date)?|departs?|departure)\s*[:\-]?",
+    re.IGNORECASE)
+_ETA_OFFER_ANCHORS = re.compile(
+    r"(?:eta(?:\s*pod)?|arriv(?:es|ing|al)?)\s*[:\-]?", re.IGNORECASE)
 _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|door\s+cutoff)\s*[:\-]?", re.IGNORECASE)
 
 def parse_eta_requested(text, ref_date=None):
@@ -567,6 +570,31 @@ _ETD_REQ_ANCHORS = re.compile(
     r"|by\s+EOD)",
     re.IGNORECASE,
 )
+
+# Lonny's requested free time, e.g. "14 days demurrage requested",
+# "10 days detention", "7 days free time" (Michael 2026-06-16). This is his
+# ASK, distinct from origin_free_time/dest_free_time which OL quotes back.
+_FREE_TIME_REQ_RX = re.compile(
+    r"(\d{1,3})\s*(?:days?|dys?)\s*(?:of\s+)?"
+    r"(demurrage|detention|free\s*time|combined(?:\s+free)?|free|dem|det)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_free_time_requested(text):
+    """Lonny's requested free time as a short label, e.g.
+    "14 days demurrage requested" -> "14d demurrage". Returns None if absent."""
+    if not text:
+        return None
+    m = _FREE_TIME_REQ_RX.search(text)
+    if not m:
+        return None
+    days, raw = m.group(1), m.group(2).lower()
+    kind = ("demurrage" if raw.startswith("dem")
+            else "detention" if raw.startswith("det")
+            else "free time")
+    return f"{days}d {kind}"
+
 
 def parse_etd_requested(text, ref_date=None):
     """Lonny's departure-date ask. Captures explicit "ship by X" / "departure
@@ -822,7 +850,13 @@ _CARRIER_EXCLUDE = {"MSC", "CMA", "ONE", "HMM", "OOCL", "ZIM"}
 #   Oakland | Busan | 5x40'RF | HMM RUBY | 0012W | 17-Apr-26 | ...
 # So we locate the header row (case-insensitive scan for "Vessel" and "Voyage"
 # headers) and pull the aligned cells from the next row.
-_TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate")
+# Header tokens that mark a row as the OL rate/schedule table header. Includes
+# the relabeled schedule columns (sailing/departure/arrival) + pol/pod/carrier
+# so a schedule that never literally says "ETD"/"ETA"/"vessel" is still detected
+# (2026-06-16, "parse the schedules we send"). A header line still needs >=2 of
+# these AND >=4 pipe-delimited cells, so prose can't false-match.
+_TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate",
+                       "sailing", "departure", "arrival", "pol", "pod", "carrier")
 
 
 def _collapse_multiline_pipe_table(text: str) -> str:
@@ -964,9 +998,21 @@ def parse_rate_table(text: str) -> dict:
     voy = cells.get("voyage") or ""
     if vessel or voy:
         out["vessel_voyage"] = (vessel + (" " + voy if voy else "")).strip()
+    # ETD/ETA columns — OL relabels these across schedule templates
+    # ("Sailing", "Departure", "ETD POL", "Arrival", "ETA POD"). Pick the
+    # first populated alias so a relabeled schedule still fills the offered
+    # dates (2026-06-16, Michael "parse the schedules we send").
+    _etd_cell = next((cells[k] for k in
+        ("etd", "etd_pol", "pol_etd", "sailing", "departure", "departs", "sail", "ets")
+        if cells.get(k)), None)
+    if _etd_cell:
+        out["etd_offered"] = _etd_cell
+    _eta_cell = next((cells[k] for k in
+        ("eta", "eta_pod", "pod_eta", "arrival", "arrives", "arriving")
+        if cells.get(k)), None)
+    if _eta_cell:
+        out["eta_offered"] = _eta_cell
     for k_in, k_out in (
-        ("etd", "etd_offered"),
-        ("eta", "eta_offered"),
         # ERD column → both `erd` (schema field) and `origin_cutoff` (legacy
         # alias used by ingest/patch_carriers). Same value, two names.
         # Per docs/PARSER-GAPS.md 2026-05-19: `erd` was 155/155 empty because

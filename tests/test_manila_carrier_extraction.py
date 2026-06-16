@@ -94,3 +94,27 @@ def test_standard_carrier_header_unchanged():
     rt = SBP.parse_rate_table(text)
     assert rt.get("ol_rate") == 3500.0
     assert rt.get("carrier_quoted") == "CMA CGM"
+
+
+# ── relabeled OL SCHEDULE table fills ETD/ETA ("parse the schedules we send")
+import pytest  # noqa: E402
+
+_SCHEDULE = (
+    "POL | POD | Size | Ocean Carrier | RATE | Sailing | Arrival\n"
+    "Oakland | Manila | 2x20'ST | MSC | $797 | 7/8 | 8/5"
+)
+
+
+@pytest.mark.parametrize("BP", (SBP, HBP), ids=["scripts", "hilmar"])
+def test_relabeled_schedule_fills_etd_eta(BP):
+    rt = BP.parse_rate_table(_SCHEDULE)
+    assert rt.get("carrier_quoted") == "MSC"
+    assert (rt.get("etd_offered") or rt.get("etd"))   # Sailing column -> ETD
+    assert (rt.get("eta_offered") or rt.get("eta"))   # Arrival column -> ETA
+
+
+@pytest.mark.parametrize("BP", (SBP, HBP), ids=["scripts", "hilmar"])
+def test_prose_offered_dates(BP):
+    assert BP.parse_etd_offered("vessel departs 7/8") == "2026-07-08"
+    assert BP.parse_etd_offered("Sailing 7/8") == "2026-07-08"
+    assert BP.parse_eta_offered("Arriving 8/5") == "2026-08-05"

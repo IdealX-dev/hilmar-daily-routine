@@ -435,8 +435,11 @@ _ETA_REQ_ANCHORS = re.compile(
     re.IGNORECASE,
 )
 
-_ETD_OFFER_ANCHORS = re.compile(r"(?:etd|ets|sailing\s+date|departure)\s*[:\-]?", re.IGNORECASE)
-_ETA_OFFER_ANCHORS = re.compile(r"(?:eta|arrival)\s*[:\-]?", re.IGNORECASE)
+_ETD_OFFER_ANCHORS = re.compile(
+    r"(?:etd(?:\s*pol)?|ets|sail(?:s|ing)?(?:\s+date)?|departs?|departure)\s*[:\-]?",
+    re.IGNORECASE)
+_ETA_OFFER_ANCHORS = re.compile(
+    r"(?:eta(?:\s*pod)?|arriv(?:es|ing|al)?)\s*[:\-]?", re.IGNORECASE)
 _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|door\s+cutoff)\s*[:\-]?", re.IGNORECASE)
 
 def parse_eta_requested(text, ref_date=None):
@@ -464,6 +467,30 @@ _ETD_REQ_ANCHORS = re.compile(
     r"|by\s+EOD)",
     re.IGNORECASE,
 )
+
+# Lonny's requested free time, e.g. "14 days demurrage requested" (2026-06-16).
+# Mirror of scripts/body_parser.py.
+_FREE_TIME_REQ_RX = re.compile(
+    r"(\d{1,3})\s*(?:days?|dys?)\s*(?:of\s+)?"
+    r"(demurrage|detention|free\s*time|combined(?:\s+free)?|free|dem|det)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_free_time_requested(text):
+    """Lonny's requested free time, e.g. "14 days demurrage requested" ->
+    "14d demurrage". Returns None if absent."""
+    if not text:
+        return None
+    m = _FREE_TIME_REQ_RX.search(text)
+    if not m:
+        return None
+    days, raw = m.group(1), m.group(2).lower()
+    kind = ("demurrage" if raw.startswith("dem")
+            else "detention" if raw.startswith("det")
+            else "free time")
+    return f"{days}d {kind}"
+
 
 def parse_etd_requested(text, ref_date=None):
     """Lonny's departure-date ask. See scripts/body_parser.py for full docstring."""
@@ -743,6 +770,9 @@ _TABLE_LABELS = {
     "VESSEL": "vessel", "VOYAGE": "voyage",
     "ERD": "erd", "DOC CUT": "doc_cut", "PORT CUT": "port_cut",
     "RAIL CUT": "rail_cut", "ETD": "etd", "ETA": "eta",
+    # ETD/ETA column aliases — OL relabels these across schedule templates (2026-06-16).
+    "SAILING": "etd", "DEPARTURE": "etd", "DEPARTS": "etd", "ETD POL": "etd",
+    "ARRIVAL": "eta", "ARRIVES": "eta", "ETA POD": "eta",
     "RATE": "rate", "DTHC": "dthc", "CARRIER": "carrier",
     # Carrier-column aliases — OL relabels this across templates (2026-06-15).
     "OCEAN CARRIER": "carrier", "OCEAN LINE": "carrier", "LINE": "carrier",

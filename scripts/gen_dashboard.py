@@ -562,7 +562,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                 f'<td>{_safe(r.get("destination"))}</td>'
                 f'<td style="font-size:11px">{_safe(r.get("containers"))}</td>'
                 f'<td style="text-align:center">{r.get("teu_requested",0)}</td>'
-                f'<td style="font-size:11px">{_safe(r.get("eta_requested") or "no ETA on request")}</td>'
+                f'<td style="font-size:11px">{_safe((r.get("eta_requested") or "no ETA on request") + (" · " + r["free_time_requested"] if r.get("free_time_requested") else ""))}</td>'
                 f'<td style="font-size:11px">{_safe(r.get("ol_responder"))}</td>'
                 f'<td style="text-align:center;font-weight:bold;color:#b45309">{aging}</td>'
                 f'<td style="font-size:10px;color:#64748b;font-family:monospace">{_safe(imid_short)}</td>'

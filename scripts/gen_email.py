@@ -497,6 +497,9 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
             temp = r.get("temperature") or "—"
             time_pt = r.get("lonny_time_pt") or _fmt_short_pt(r.get("request_timestamp"))
             requested_eta = r.get("eta_requested") or r.get("etd_requested") or "—"
+            _ft_req = r.get("free_time_requested")
+            if _ft_req:
+                requested_eta = f"{requested_eta} · {_ft_req}" if requested_eta != "—" else _ft_req
             new_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
                 f'<td {_TD_STYLE}>{_esc(cont)}</td>'
@@ -515,7 +518,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
         f'<th {_TH_STYLE} title="Commodity from Lonny RFQ body">Product</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Reefer temperature when present (Hilmar dairy)">Temp</th>'
-        f'<th {_TH_STYLE} title="Lonny\'s requested ETA / ETD if stated in RFQ">Lonny Asked For (ETA)</th>'
+        f'<th {_TH_STYLE} title="Lonny\'s requested ETA / ETD + any free-time ask (e.g. 14d demurrage) stated in the RFQ">Lonny Asked For</th>'
         f'<th {_TH_STYLE}>Lonny Sent (PT)</th>'
         f'</tr></thead><tbody>{new_rows}</tbody></table>'
     )

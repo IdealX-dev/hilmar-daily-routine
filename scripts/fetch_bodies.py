@@ -150,6 +150,7 @@ def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = 
         "temperature": None,
         "requested_dates": None,
         "lonny_notes": None,
+        "free_time_requested": None,     # Lonny's "14 days demurrage" ask (2026-06-16)
     }
     if not text_body:
         text_body = ""
@@ -189,6 +190,7 @@ def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = 
     out["requested_dates"] = BP.parse_requested_dates(text_body)
     if bucket in ("lonny_outbound", "lonny_reply"):
         out["lonny_notes"] = BP.parse_lonny_notes(text_body)
+        out["free_time_requested"] = BP.parse_free_time_requested(scan_text)
 
     # Rate-expiry on rate responses + booking confirmations
     if bucket in ("mbd_rate_response", "mbd_inbound"):
