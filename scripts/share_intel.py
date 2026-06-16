@@ -282,8 +282,15 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
         b = by_carrier[c]
         b["quotes"] += 1
         b["lanes"].add(r.get("lane"))
-        if r.get("ol_rate"):
-            b["rates"].append(float(r["ol_rate"]))
+        _rate = r.get("ol_rate")
+        if isinstance(_rate, (int, float)):
+            b["rates"].append(float(_rate))
+        elif _rate:
+            # ol_rate is occasionally a non-numeric string ("Not Quoted") on
+            # rows where the rate never resolved — coerce when possible, skip
+            # otherwise (was crashing the best-effort share step, 2026-06-16).
+            with contextlib.suppress(ValueError, TypeError):
+                b["rates"].append(float(str(_rate).replace("$", "").replace(",", "").strip()))
         td = _transit_days(r)
         if td is not None:
             b["transit_days"].append(td)
