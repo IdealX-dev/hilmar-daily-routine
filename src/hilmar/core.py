@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -332,6 +333,37 @@ def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+# Reporting window. The daily fire moved to ~6 PM ET (2026-06-16, Michael
+# "move this to end of every day"), so it now reports the CURRENT, now-complete
+# Pacific business day instead of the previous one. Override to "previous" via
+# HILMAR_REPORT_WINDOW to roll back to the old 10 AM ET morning behavior.
+REPORT_WINDOW = os.environ.get("HILMAR_REPORT_WINDOW", "current").strip().lower()
+
+def report_business_day(now_et=None, window=None):
+    """The business day the daily email REPORTS ON, as a date.
+
+    window="current"  (evening fire): today if a weekday; Friday on Sat/Sun.
+    window="previous" (old 10 AM fire): the most recent COMPLETE business day
+                       before today (Mon->Fri, Tue->Mon, ... Sat/Sun->Fri).
+    `now_et` may be an aware datetime in ET or a date; defaults to wall-clock ET.
+    """
+    if now_et is None:
+        now_et = datetime.now(timezone.utc).astimezone(ET)
+    today = now_et.date() if hasattr(now_et, "date") else now_et
+    wd = today.weekday()  # Mon=0..Sun=6
+    win = (window or REPORT_WINDOW)
+    if win == "current":
+        if wd == 5:  return today - timedelta(days=1)   # Sat -> Fri
+        if wd == 6:  return today - timedelta(days=2)    # Sun -> Fri
+        return today                                     # Mon-Fri -> today
+    # "previous"
+    if wd == 0:   delta = 3
+    elif wd == 5: delta = 1
+    elif wd == 6: delta = 2
+    else:         delta = 1
+    return today - timedelta(days=delta)
+
+
 def fmt_pt(dt: datetime | None, with_date: bool = True) -> str:
     if not dt:
         return "—"
@@ -438,28 +470,53 @@ def parse_teu(containers: str | None) -> tuple[int, int]:
 # Send detection (regex — not body.startswith)
 # ─────────────────────────────────────────────────────────────────────
 
-# Match "send" or "SEND" as the first meaningful word — not inside a quoted reply
-# or inside a word like "Sending" / "sender".
+# Lonny's acceptance phrasings. Until 2026-06-16 this only matched a bare
+# "send" (+ a tiny whitelist) at the very start of the first line, so real
+# booking instructions were silently dropped and the row never flipped to
+# WIN: "Send Carter" (pick the President Carter sailing), "book it",
+# "go ahead", "proceed", "please send" all returned False (Michael
+# 2026-06-16: "why are you not showing these as wins"). Broadened to the
+# vocabulary Lonny actually uses, still anchored to the first line and still
+# guarded by NOT_SEND_HINTS so request-like "send me the rates" is excluded.
+# A false positive is self-limiting: a send with no MDOLX booking inside ~48
+# biz-hours ages to Q&L (SEND_NO_BOOKING) via decide_status. Mirror of
+# scripts/core.py — keep the two byte-identical (test_core_parity).
 SEND_RX = re.compile(
     r"""
-    ^                       # start of body
-    \s*                     # optional whitespace
-    (?:                     # optional courtesy openers
-        (?:hi|hey|hello)\W+
-    )?
-    \bsend\b                # the word "send" as a whole word
-    [\s.!,\-—]*             # optional trailing punctuation
-    (?:both|all|please|thanks|thank\s+you|it|this|that|the\s+quote)?
-    \s*
-    (?:\n|$|<)              # followed by newline, end, or tag
+    ^\s*
+    (?:                     # optional courtesy openers (repeatable)
+        (?:hi|hey|hello|ok|okay|yes|yep|yup|sure|great|perfect|
+           sounds\s+good|sg|thanks|thank\s+you)\W+
+    )*
+    (?:please\s+)?
+    (?:                     # the acceptance verb
+        send                #   send / send Carter / send the President Carter
+      | book                #   book / book it / book the Carter
+      | proceed
+      | go\s+ahead
+      | confirm(?:\s+(?:the\s+)?booking)?
+      | accept(?:ed)?
+      | let(?:'?s|\s+us)\s+(?:book|send|go|proceed)   # let's / lets / let us
+    )
+    \b
     """,
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Phrases that LOOK like "send" but mean something else
+# Phrases that LOOK like an acceptance but are actually a request for info
+# (or a non-acceptance word). Checked BEFORE SEND_RX in is_lonny_send_reply.
 NOT_SEND_HINTS = re.compile(
-    r"\b(send\s+both\s+cutoffs?|send\s+rates?|send\s+pricing|sending|sender|resend)\b",
-    re.IGNORECASE,
+    r"""
+    \b(?:
+        send\s+both\s+cutoffs?
+      | send\s+(?:me|us|over)\b
+      | send\s+(?:me\s+|us\s+|over\s+|the\s+|me\s+the\s+|us\s+the\s+)?
+        (?:rate|rates|pricing|price|quote|quotes|cutoff|cutoffs|schedule|
+           detail|details|info|breakdown|number|numbers)
+      | sending | sender | resend
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 

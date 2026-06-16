@@ -15,7 +15,7 @@ mark it tested.)
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,12 +26,10 @@ import qc_selfheal as q  # noqa: E402
 
 
 def _report_iso() -> str:
-    """Mirror the report-date math the date-dependent checks use:
-    previous business day in ET."""
-    now_et = datetime.now(core.ET).date()
-    wd = now_et.weekday()
-    delta = 3 if wd == 0 else 1 if wd == 5 else 2 if wd == 6 else 1
-    return (now_et - timedelta(days=delta)).isoformat()
+    """Mirror the report-date math the date-dependent checks use: the ~6 PM ET
+    evening fire reports on TODAY's now-complete business day (weekends roll
+    back to Friday). Single source of truth: core.report_business_day."""
+    return core.report_business_day(datetime.now(core.ET).date()).isoformat()
 
 
 def _base_data(requests=None, summary=None) -> dict:
@@ -147,3 +145,38 @@ def test_qc034_fires_on_invalid_status_enum():
 def test_qc034_silent_on_valid_shape():
     reqs = [{"request_id": "r1", "status": "WIN", "quoted": True}]
     assert not _has(_fired(_base_data(reqs)), "QC-034")
+
+
+# ── QC-056 — OL rate quoted but carrier missing (Manila $797, 2026-06-15) ──
+def test_qc056_heals_carrier_from_row_text():
+    # Rate present, carrier blank, but the vessel string names the carrier.
+    # The self-heal must backfill it from the row's own text — no WARN left.
+    reqs = [{"request_id": "r1", "status": "Q&L", "quoted": True,
+             "lane": "Oakland → Manila", "ol_rate": 797.0,
+             "vessel_voyage": "HMM RUBY 012W"}]
+    data = _base_data(reqs)
+    log = q.Log()
+    q.phase_6_rules(log, data)
+    assert data["requests"][0].get("carrier_quoted") == "HMM"
+    assert not _has(log.warnings + log.errors, "QC-056")
+
+
+def test_qc056_warns_when_no_carrier_anywhere():
+    # Rate present, carrier blank, and nothing on the row names a carrier →
+    # un-healable, so QC-056 must surface it (WARN) rather than ship a blank.
+    reqs = [{"request_id": "r1", "status": "Q&L", "quoted": True,
+             "lane": "Oakland → Manila", "ol_rate": 797.0}]
+    assert _has(_fired(_base_data(reqs)), "QC-056")
+
+
+def test_qc056_silent_when_carrier_present():
+    reqs = [{"request_id": "r1", "status": "Q&L", "quoted": True,
+             "lane": "Oakland → Manila", "ol_rate": 797.0,
+             "carrier_quoted": "MSC"}]
+    assert not _has(_fired(_base_data(reqs)), "QC-056")
+
+
+def test_qc056_silent_when_no_rate():
+    # No rate → no carrier expected yet; QC-056 must not fire.
+    reqs = [{"request_id": "r1", "status": "PENDING", "quoted": False}]
+    assert not _has(_fired(_base_data(reqs)), "QC-056")

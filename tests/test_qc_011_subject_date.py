@@ -1,14 +1,15 @@
-"""Tests for QC-011 (email subject date == previous business day).
+"""Tests for QC-011 (email subject date == TODAY's report business day).
 
-The 2026-06-02 audit's QC-011 fired off-by-3-days on Tuesday because
-the email-subject.txt file was stale from Monday's fire (Tuesday's
-wrapper aborted before gen_email regenerated it). The original WARN
-message read like a date-logic bug; the real cause was a stale file.
+The fire moved to ~6 PM ET (2026-06-16, Michael "move this to end of every
+day"), so the email now reports on TODAY's now-complete Pacific business day.
+The expected subject date FLIPPED from the previous business day to today —
+and the regression ERROR flipped with it: a fresh subject dated the PREVIOUS
+business day now means gen_email reverted to the old morning framing.
 
-These tests lock the new 5-state taxonomy in _check_email_subject_date:
+These tests lock the taxonomy in _check_email_subject_date:
   - file absent → WARN
-  - file fresh + date matches expected → OK
-  - file fresh + date == today (regression) → ERROR
+  - file fresh + date matches expected (== TODAY) → OK
+  - file fresh + date == previous business day (regression) → ERROR
   - file stale (>26h) + date mismatch → WARN with "stale" message
   - file fresh + date wrong → WARN with "logic bug" message
 
@@ -74,11 +75,11 @@ def _write_subject(path, when_label, age_hours, ref_now=None):
 # ── _expected_report_date sanity (mirrors gen_email._report_date) ───────
 
 @pytest.mark.parametrize("today_iso,expected_iso", [
-    ("2026-06-01", "2026-05-29"),    # Monday → Friday
-    ("2026-06-02", "2026-06-01"),    # Tuesday → Monday
-    ("2026-06-03", "2026-06-02"),    # Wednesday → Tuesday
-    ("2026-06-04", "2026-06-03"),    # Thursday → Wednesday
-    ("2026-06-05", "2026-06-04"),    # Friday → Thursday
+    ("2026-06-01", "2026-06-01"),    # Monday → Monday (today)
+    ("2026-06-02", "2026-06-02"),    # Tuesday → Tuesday (today)
+    ("2026-06-03", "2026-06-03"),    # Wednesday → Wednesday (today)
+    ("2026-06-04", "2026-06-04"),    # Thursday → Thursday (today)
+    ("2026-06-05", "2026-06-05"),    # Friday → Friday (today)
     ("2026-06-06", "2026-06-05"),    # Saturday → Friday
     ("2026-06-07", "2026-06-05"),    # Sunday → Friday
 ])
@@ -99,25 +100,27 @@ def test_file_absent_warns_and_skips(tmp_path):
 
 
 def test_file_fresh_correct_date_passes(tmp_path):
-    """Tuesday's fire, fresh subject says Monday → OK."""
+    """Tuesday's evening fire, fresh subject says Tuesday (today) → OK."""
     log = _Log()
     subj = tmp_path / "email-subject.txt"
-    now_et = datetime(2026, 6, 2, 10, 0, tzinfo=core.ET)   # Tue 10 AM ET
-    _write_subject(subj, "Jun 1, 2026", age_hours=0.5, ref_now=now_et)
+    now_et = datetime(2026, 6, 2, 18, 0, tzinfo=core.ET)   # Tue 6 PM ET
+    _write_subject(subj, "Jun 2, 2026", age_hours=0.5, ref_now=now_et)
     QSH._check_email_subject_date(log, subj, now_et=now_et)
     assert not log.warns and not log.errors
     assert any("== expected" in m for m in log.oks)
 
 
-def test_file_fresh_says_TODAY_is_error(tmp_path):
-    """gen_email regressed and used today's date instead of yesterday's.
-    This is the canonical bug the original QC-011 was built to catch."""
+def test_file_fresh_says_PREVIOUS_biz_day_is_error(tmp_path):
+    """gen_email regressed to the old morning framing and used the PREVIOUS
+    business day instead of TODAY. On a Tuesday evening fire that means a
+    fresh subject dated Monday (Jun 1) → ERROR. This is the flipped form of
+    the canonical regression QC-011 guards against."""
     log = _Log()
     subj = tmp_path / "email-subject.txt"
-    now_et = datetime(2026, 6, 2, 10, 0, tzinfo=core.ET)
-    _write_subject(subj, "Jun 2, 2026", age_hours=0.5, ref_now=now_et)
+    now_et = datetime(2026, 6, 2, 18, 0, tzinfo=core.ET)   # Tue 6 PM ET
+    _write_subject(subj, "Jun 1, 2026", age_hours=0.5, ref_now=now_et)   # Mon = prev biz day
     QSH._check_email_subject_date(log, subj, now_et=now_et)
-    assert any("is TODAY" in e and "regressed" in e for e in log.errors)
+    assert any("PREVIOUS business day" in e and "regressed" in e for e in log.errors)
 
 
 def test_stale_file_off_date_is_stale_warn_not_logic_warn(tmp_path):
@@ -126,9 +129,9 @@ def test_stale_file_off_date_is_stale_warn_not_logic_warn(tmp_path):
     the failure mode QC-021's wrapper-incomplete signal pairs with."""
     log = _Log()
     subj = tmp_path / "email-subject.txt"
-    # On Tue, subject still says May 29 (Friday) from Monday's fire.
-    # mtime ~28h old = Monday's fire.
-    now_et = datetime(2026, 6, 2, 10, 0, tzinfo=core.ET)
+    # On Tue, subject still says May 29 (Friday) from an old fire.
+    # mtime ~28h old (>26h) so it's the stale branch, not the regression ERROR.
+    now_et = datetime(2026, 6, 2, 18, 0, tzinfo=core.ET)
     _write_subject(subj, "May 29, 2026", age_hours=28, ref_now=now_et)
     QSH._check_email_subject_date(log, subj, now_et=now_et)
     assert not log.errors
@@ -146,7 +149,9 @@ def test_fresh_file_wrong_date_is_logic_bug_warn(tmp_path):
     _report_date logic bug — different from the stale-file case."""
     log = _Log()
     subj = tmp_path / "email-subject.txt"
-    now_et = datetime(2026, 6, 2, 10, 0, tzinfo=core.ET)
+    # Fresh (2h) but dated May 29 — neither today (Jun 2) nor the previous
+    # business day (Jun 1), so it's a genuine _report_date logic bug.
+    now_et = datetime(2026, 6, 2, 18, 0, tzinfo=core.ET)
     _write_subject(subj, "May 29, 2026", age_hours=2, ref_now=now_et)
     QSH._check_email_subject_date(log, subj, now_et=now_et)
     assert not log.errors
@@ -179,8 +184,8 @@ def test_full_month_name_accepted(tmp_path):
     """The parser handles both '%b' (Jun) and '%B' (June)."""
     log = _Log()
     subj = tmp_path / "email-subject.txt"
-    now_et = datetime(2026, 6, 2, 10, 0, tzinfo=core.ET)
-    _write_subject(subj, "June 1, 2026", age_hours=0.5, ref_now=now_et)
+    now_et = datetime(2026, 6, 2, 18, 0, tzinfo=core.ET)
+    _write_subject(subj, "June 2, 2026", age_hours=0.5, ref_now=now_et)
     QSH._check_email_subject_date(log, subj, now_et=now_et)
     assert any("== expected" in m for m in log.oks)
 

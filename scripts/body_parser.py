@@ -31,9 +31,10 @@ Parser-gap fixes 2026-05-19 (per Michael "no field should be empty ever"):
 """
 from __future__ import annotations
 
+import calendar
 import contextlib
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 
 
@@ -232,6 +233,72 @@ _BOOKING_PREFIX_TO_CARRIER = {
     "MAEU": "Maersk",
 }
 
+# Carrier tokens that are also common English words or fragments of a longer
+# carrier name ("ONE", "CMA"/"CGM" inside "CMA CGM"). They're safe to match
+# inside a cell that's KNOWN to be the carrier column, but matching them in
+# free prose mis-reads "ONE container" / "for ONE day" as the carrier ONE.
+# detect_carrier_token() skips these unless allow_short=True.
+_AMBIGUOUS_CARRIER_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+
+
+def detect_carrier_token(text, *, allow_short: bool = False):
+    """Return the canonical carrier named anywhere in ``text``, or None.
+
+    Word-boundary scan over the known carrier tokens, longest/multi-word
+    first (so "CMA CGM" wins over a bare "CMA"). Short/ambiguous tokens
+    (see ``_AMBIGUOUS_CARRIER_TOKENS``) only match when ``allow_short=True``
+    — pass that ONLY when ``text`` is a dedicated carrier cell, never for
+    free prose.
+
+    Added 2026-06-15: an Oakland→Manila OL quote parsed its $797 rate but
+    blanked the carrier because the production parse_rate_table only read a
+    column literally headed "Carrier". This shared detector lets the table
+    parser fall back to a data-cell / body-prose scan, and lets QC-056
+    self-heal a stored row from its vessel/transshipment text.
+    """
+    if not text:
+        return None
+    up = str(text).upper()
+    for raw, canonical in _SUBJECT_CARRIER_TOKENS:
+        if raw in _AMBIGUOUS_CARRIER_TOKENS and not allow_short:
+            continue
+        if re.search(rf"\b{re.escape(raw)}\b", up):
+            return canonical
+    return None
+
+
+# Alternate column headers OL has used for the ocean carrier across its
+# evolving rate-table templates. _norm_header() lowercases + underscores, so
+# "Ocean Carrier" -> "ocean_carrier", "SSL" -> "ssl", "Carrier/Line" ->
+# "carrier_line". parse_rate_table walks these before giving up on the column.
+_CARRIER_HEADER_ALIASES = (
+    "carrier", "ocean_carrier", "ocean_line", "line", "carrier_line",
+    "line_carrier", "steamship_line", "steamship", "ssl", "scac",
+    "vessel_operator", "operator", "co_carrier",
+)
+
+
+def _carrier_from_cells(cells: dict):
+    """Resolve the quoted carrier from a parsed rate-table row.
+
+    Order: (1) a column whose header is a known carrier alias; (2) failing
+    that, any data cell that contains a distinctive carrier token (covers
+    unlabeled / merged / mis-headed columns). Returns the raw carrier string
+    (canonicalization happens in the caller).
+    """
+    for key in _CARRIER_HEADER_ALIASES:
+        val = (cells.get(key) or "").strip()
+        if val:
+            val = re.sub(r"[\*\(].*$", "", val).strip()
+            if val:
+                # Trust the labeled column; map through tokens when possible.
+                return detect_carrier_token(val, allow_short=True) or val
+    for val in cells.values():
+        tok = detect_carrier_token(val or "", allow_short=False)
+        if tok:
+            return tok
+    return None
+
 def parse_subject_carrier(subject):
     """Extract the winning carrier from an MDOLX confirmation subject.
 
@@ -380,10 +447,51 @@ _NOT_A_DATE_TAIL = re.compile(
 _NOT_A_DATE_LEAD = re.compile(r"\d\s*[xX]\s*$")
 
 
-def _find_date_near(text, anchor_rx, window=120):
+# Relative date phrases Lonny uses instead of a calendar date (Michael
+# 2026-06-16: "sometime he says for etd next week"). Resolved against the
+# email's SEND date (ref_date), business reading: "next week" -> Monday of the
+# following calendar week; "next <weekday>" -> that weekday next week; "end of
+# month"/EOM -> last day of the send month; "end of week"/EOW -> that Friday.
+_REL_WEEKDAY = {
+    "monday": 0, "mon": 0, "tuesday": 1, "tues": 1, "tue": 1,
+    "wednesday": 2, "wed": 2, "thursday": 3, "thurs": 3, "thur": 3, "thu": 3,
+    "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+}
+_REL_NEXT_WEEKDAY_RX = re.compile(
+    r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|mon|tues|tue|wed|thurs|thur|thu|fri|sat|sun)\b", re.IGNORECASE)
+_REL_NEXT_WEEK_RX = re.compile(r"\bnext\s+week\b", re.IGNORECASE)
+_REL_EOM_RX = re.compile(r"\b(?:eom|end\s+of\s+(?:the\s+)?month)\b", re.IGNORECASE)
+_REL_EOW_RX = re.compile(r"\b(?:eow|end\s+of\s+(?:the\s+)?week)\b", re.IGNORECASE)
+
+
+def _relative_date_in(chunk, ref_date):
+    """Resolve a relative date phrase in `chunk` against `ref_date` (a date).
+    Returns ISO date string or None. See _REL_* above for the conventions."""
+    if not chunk or ref_date is None:
+        return None
+    if _REL_EOM_RX.search(chunk):
+        last = calendar.monthrange(ref_date.year, ref_date.month)[1]
+        return ref_date.replace(day=last).isoformat()
+    if _REL_EOW_RX.search(chunk):
+        return (ref_date + timedelta(days=(4 - ref_date.weekday()))).isoformat()
+    # Monday of the following calendar week (shared by next-week + next-weekday)
+    days_to_next_monday = (7 - ref_date.weekday()) % 7 or 7
+    next_monday = ref_date + timedelta(days=days_to_next_monday)
+    m = _REL_NEXT_WEEKDAY_RX.search(chunk)
+    if m:
+        return (next_monday + timedelta(days=_REL_WEEKDAY[m.group(1).lower()])).isoformat()
+    if _REL_NEXT_WEEK_RX.search(chunk):
+        return next_monday.isoformat()
+    return None
+
+
+def _find_date_near(text, anchor_rx, window=120, ref_date=None):
     """Find first plausible date after each anchor match. Reject candidates
     that look like demurrage/free-time ranges (e.g. '10-14 days free')
-    or container counts (e.g. '10x40HC')."""
+    or container counts (e.g. '10x40HC'). When `ref_date` is given and no
+    absolute date is found in an anchor's window, fall back to a relative
+    phrase ('next week', 'next Monday', 'end of month') resolved against it."""
     if not text:
         return None
     now_year = datetime.utcnow().year
@@ -401,22 +509,36 @@ def _find_date_near(text, anchor_rx, window=120):
                 iso = _date_from_match(dm, now_year)
                 if iso:
                     return iso
+        rel = _relative_date_in(chunk, ref_date)
+        if rel:
+            return rel
     return None
 
 
 _ETA_REQ_ANCHORS = re.compile(
-    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave)"
-    r"|target\s+etd|requested\s+etd|require(?:d)?\s+by"
+    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave|arrive|deliver)"
+    r"|target\s+et[ad]|requested\s+et[ad]|require(?:d)?\s+by"
     r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|cutoff"
-    r"|prefer(?:red)?\s+etd)",
+    r"|prefer(?:red)?\s+et[ad]"
+    # 2026-06-16 (Michael, Lonny's real RFQ "ETA 8/7"): Lonny states his
+    # target arrival as a BARE "ETA <date>" / "arrival" / "deliver by" — no
+    # "target"/"requested" prefix. On the request side that IS the requested
+    # ETA, so eta_requested was 100% blank on his quotes. OL-side ETAs are
+    # parsed separately by parse_eta_offered, so this doesn't conflate them.
+    r"|e\.?t\.?a\.?|arrival|arrive(?:\s+by)?|deliver(?:y|ed)?(?:\s+by)?"
+    r"|due(?:\s+(?:by|in\s+port))?|in\s+(?:your\s+)?port\s+by)",
     re.IGNORECASE,
 )
 
-_ETD_OFFER_ANCHORS = re.compile(r"(?:etd|ets|sailing\s+date|departure)\s*[:\-]?", re.IGNORECASE)
-_ETA_OFFER_ANCHORS = re.compile(r"(?:eta|arrival)\s*[:\-]?", re.IGNORECASE)
+_ETD_OFFER_ANCHORS = re.compile(
+    r"(?:etd(?:\s*pol)?|ets|sail(?:s|ing)?(?:\s+date)?|departs?|departure)\s*[:\-]?",
+    re.IGNORECASE)
+_ETA_OFFER_ANCHORS = re.compile(
+    r"(?:eta(?:\s*pod)?|arriv(?:es|ing|al)?)\s*[:\-]?", re.IGNORECASE)
 _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|door\s+cutoff)\s*[:\-]?", re.IGNORECASE)
 
-def parse_eta_requested(text):  return _find_date_near(text or "", _ETA_REQ_ANCHORS)
+def parse_eta_requested(text, ref_date=None):
+    return _find_date_near(text or "", _ETA_REQ_ANCHORS, ref_date=ref_date)
 def parse_etd_offered(text):    return _find_date_near(text or "", _ETD_OFFER_ANCHORS)
 def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_ANCHORS)
 def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
@@ -437,6 +559,10 @@ _ETD_REQ_ANCHORS = re.compile(
     r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|departure\s+by"
     r"|prefer(?:red)?\s+etd|preferred\s+departure"
     r"|etd\s+by|departure\s+date|sail\s+by"
+    # 2026-06-16: a BARE "ETD <date>" / "ETD next week" is Lonny's most common
+    # departure ask (no "by"/"target" prefix) — without this anchor the
+    # relative-date resolver had nothing to attach to.
+    r"|etd|ets"
     # 2026-05-19 broadening: Lonny's "cutoff" phrasing usually means ETD.
     # Catches "Cutoff week of 4/27" / "Cut off 5/1" / "cutoff by 5/15".
     r"|cut[-\s]?off"
@@ -445,11 +571,37 @@ _ETD_REQ_ANCHORS = re.compile(
     re.IGNORECASE,
 )
 
-def parse_etd_requested(text):
+# Lonny's requested free time, e.g. "14 days demurrage requested",
+# "10 days detention", "7 days free time" (Michael 2026-06-16). This is his
+# ASK, distinct from origin_free_time/dest_free_time which OL quotes back.
+_FREE_TIME_REQ_RX = re.compile(
+    r"(\d{1,3})\s*(?:days?|dys?)\s*(?:of\s+)?"
+    r"(demurrage|detention|free\s*time|combined(?:\s+free)?|free|dem|det)\b",
+    re.IGNORECASE,
+)
+
+
+def parse_free_time_requested(text):
+    """Lonny's requested free time as a short label, e.g.
+    "14 days demurrage requested" -> "14d demurrage". Returns None if absent."""
+    if not text:
+        return None
+    m = _FREE_TIME_REQ_RX.search(text)
+    if not m:
+        return None
+    days, raw = m.group(1), m.group(2).lower()
+    kind = ("demurrage" if raw.startswith("dem")
+            else "detention" if raw.startswith("det")
+            else "free time")
+    return f"{days}d {kind}"
+
+
+def parse_etd_requested(text, ref_date=None):
     """Lonny's departure-date ask. Captures explicit "ship by X" / "departure
     X" patterns AND the more common "cutoff X" phrasing (which functionally
-    means ETD in shipping vernacular). Returns ISO date or None."""
-    return _find_date_near(text or "", _ETD_REQ_ANCHORS)
+    means ETD in shipping vernacular). With ref_date set, also resolves
+    relative asks ("ETD next week"). Returns ISO date or None."""
+    return _find_date_near(text or "", _ETD_REQ_ANCHORS, ref_date=ref_date)
 
 
 # parse_temperature — reefer rows only. Recognises:
@@ -698,7 +850,13 @@ _CARRIER_EXCLUDE = {"MSC", "CMA", "ONE", "HMM", "OOCL", "ZIM"}
 #   Oakland | Busan | 5x40'RF | HMM RUBY | 0012W | 17-Apr-26 | ...
 # So we locate the header row (case-insensitive scan for "Vessel" and "Voyage"
 # headers) and pull the aligned cells from the next row.
-_TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate")
+# Header tokens that mark a row as the OL rate/schedule table header. Includes
+# the relabeled schedule columns (sailing/departure/arrival) + pol/pod/carrier
+# so a schedule that never literally says "ETD"/"ETA"/"vessel" is still detected
+# (2026-06-16, "parse the schedules we send"). A header line still needs >=2 of
+# these AND >=4 pipe-delimited cells, so prose can't false-match.
+_TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate",
+                       "sailing", "departure", "arrival", "pol", "pod", "carrier")
 
 
 def _collapse_multiline_pipe_table(text: str) -> str:
@@ -812,7 +970,15 @@ def parse_rate_table(text: str) -> dict:
         data = data[:len(header)]
     cells = dict(zip(header, [d.strip() for d in data], strict=False))
     out = {}
-    car = cells.get("carrier") or ""
+    # Carrier: a column headed "Carrier" is the common case, but OL relabels
+    # it ("Ocean Carrier", "Line", "SSL", ...) and sometimes drops it into an
+    # unlabeled cell or the surrounding prose. _carrier_from_cells walks the
+    # header aliases then scans the data cells; the body-prose scan is the
+    # last resort. (2026-06-15 Manila fix — was bare `cells.get("carrier")`,
+    # which blanked the carrier whenever the column wasn't literally "Carrier".)
+    car = _carrier_from_cells(cells)
+    if not car:
+        car = detect_carrier_token(text, allow_short=False)
     if car:
         car = re.sub(r"[\*\(].*$", "", car).strip()
         if car:
@@ -832,9 +998,21 @@ def parse_rate_table(text: str) -> dict:
     voy = cells.get("voyage") or ""
     if vessel or voy:
         out["vessel_voyage"] = (vessel + (" " + voy if voy else "")).strip()
+    # ETD/ETA columns — OL relabels these across schedule templates
+    # ("Sailing", "Departure", "ETD POL", "Arrival", "ETA POD"). Pick the
+    # first populated alias so a relabeled schedule still fills the offered
+    # dates (2026-06-16, Michael "parse the schedules we send").
+    _etd_cell = next((cells[k] for k in
+        ("etd", "etd_pol", "pol_etd", "sailing", "departure", "departs", "sail", "ets")
+        if cells.get(k)), None)
+    if _etd_cell:
+        out["etd_offered"] = _etd_cell
+    _eta_cell = next((cells[k] for k in
+        ("eta", "eta_pod", "pod_eta", "arrival", "arrives", "arriving")
+        if cells.get(k)), None)
+    if _eta_cell:
+        out["eta_offered"] = _eta_cell
     for k_in, k_out in (
-        ("etd", "etd_offered"),
-        ("eta", "eta_offered"),
         # ERD column → both `erd` (schema field) and `origin_cutoff` (legacy
         # alias used by ingest/patch_carriers). Same value, two names.
         # Per docs/PARSER-GAPS.md 2026-05-19: `erd` was 155/155 empty because

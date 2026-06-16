@@ -49,17 +49,31 @@ def test_unmapped_stale_error_routes_to_auto_resolve():
 
 
 def test_unmapped_recent_error_still_routes_to_seer():
-    """An error that fired in the last day stays on the SEER triage path —
-    don't resolve fresh issues."""
+    """A generic error that fired in the last day stays on the SEER triage
+    path — don't resolve fresh issues."""
     two_hours_ago = datetime.now(timezone.utc) - timedelta(hours=2)
     issue = _issue(
-        short_id="TRACKER-9",
-        title="Cron failure: hilmar-daily-pipeline",
+        short_id="TRACKER-42",
+        title="TypeError: unexpected NoneType in renderer",
         last_seen=two_hours_ago,
     )
     key, spec = QA._action_lookup(issue)
     assert key == "unmapped-error"
     assert spec["action"] == "trigger_seer"
+
+
+def test_cron_missed_checkin_routes_to_resolve_if_post_fix():
+    """HILMAR-DAILY-TRACKER-9 (cron monitor missed check-in) must NOT go to
+    Seer — Seer can't analyze a cron miss, so it never cleared. It routes to
+    resolve_if_post_fix so the deployed margin fix closes it (2026-06-16)."""
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    for title in ("Cron failure: hilmar-daily-pipeline",
+                  "Your monitor is failing: A missed check-in was detected."):
+        issue = _issue(short_id="TRACKER-9", title=title, last_seen=one_hour_ago)
+        key, spec = QA._action_lookup(issue)
+        assert key == "cron.missed_checkin", title
+        assert spec["action"] == "resolve_if_post_fix"
+        assert spec["auto_resolve_safe"] is True
 
 
 def test_unmapped_error_just_under_threshold_does_not_auto_resolve():

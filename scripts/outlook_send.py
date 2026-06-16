@@ -335,7 +335,7 @@ def cmd_daily(args) -> int:
     )
     is_audit = (len(to) == 1 and to and to[0].endswith("@idealx.us"))
     # Flag dates/timestamps are ET, explicitly — the operational day of the
-    # 10 AM ET fire. A GH Actions runner's clock is UTC; bare .now() there
+    # 6 PM ET fire. A GH Actions runner's clock is UTC; bare .now() there
     # would date the flag wrong after 8 PM ET and stamp UTC times labeled
     # "ET". state_store.py syncs today's flags by the same ET date.
     _now_et = _dt.now(_zi("America/New_York"))

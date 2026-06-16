@@ -38,7 +38,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-008 | WARN | Stage file > 36h old (refresh_stage stale) | None | 2026-05-05 |
 | QC-009 | WARN | Stage bucket distribution drift (one bucket silent 7d) | None | 2026-05-05 |
 | QC-010 | WARN | preserved_from_prior WIN count > 10 (refresh missing emails) | None | 2026-05-05 |
-| QC-011 | ERROR | Email subject date != previous business day (today regression) | None — gates ship | 2026-05-07 (`697e219`) |
+| QC-011 | ERROR | Email subject date != TODAY's report biz day (a fresh PREVIOUS-day subject = morning-framing regression) | None — gates ship | 2026-05-07 (`697e219`); evening-fire flip 2026-06-16 |
 | QC-012 | ERROR | Week labels not Mon-Fri (4-day span) — Mon-Sun regression | None | 2026-05-07 (`401ca08`) |
 | QC-013 | ERROR | Body header "What Happened Today" — today framing regression | None | 2026-05-07 (`401ca08`) |
 | QC-014a | ERROR/WARN | WIN carrier coverage <90% (ERROR) / <95% (WARN) | Auto via patch_carriers | 2026-05-07 (`c24255d`) |
@@ -85,6 +85,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-053 | **ERROR** | Local repo HEAD is behind `origin/main` — Cloud PC is running stale code, so pushed fixes aren't actually deployed. Catches the failure mode where a PR with production fixes sits unmerged or `git pull` silently failed at wrapper Step 0. | None — operator must merge / re-pull. Audit also raises a dedicated red flag with the explicit `git pull` instruction. | 2026-05-28 (after a 4-commit branch sat unmerged 5 days) |
 | QC-054 | **ERROR** | Required runtime modules (`sentry_sdk`, `msal`, `requests`, `jsonschema`, `dateutil`, `reportlab`, `jinja2`, `pdfplumber`) NOT importable in the wrapper's Python — pipeline observability and/or render silently degrades. | None — error message contains the exact `<wrapper-python> -m pip install …` command to run. | 2026-06-09 (after `sentry_sdk` missing for weeks silently fired HILMAR-DAILY-TRACKER-9 daily) |
 | QC-055 | **ERROR** | Sentry cron heartbeat is NOT registering — `run-log.txt` shows `Sentry cron start failed (pipeline continues)`. Sentry's cron monitor then alerts on a missed check-in even though the pipeline ran. | None — root cause is usually QC-054 (missing `sentry_sdk`); if the dep is present, check `secrets/sentry-dsn.txt` + network. | 2026-06-09 |
+| QC-056 | WARN | Row has an OL `ol_rate` but no `carrier_quoted` — OL quoted a price with no carrier attribution. Root cause: `parse_rate_table` only read a column literally headed "Carrier", so an OL-relabeled carrier column (e.g. "Ocean Carrier"/"Line"/"SSL") left the rate parsed and carrier blank (Oakland→Manila $797, "nothing should be blank"). | **Self-heal** — re-scan the row's stored text (vessel/transshipment/POL/POD/reason) for a carrier token and backfill; WARN on the remainder. Root fix in `body_parser` (header aliases + data-cell + prose carrier scan). | 2026-06-15 |
 
 ## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
 

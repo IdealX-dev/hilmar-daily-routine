@@ -54,7 +54,7 @@ STATE_FILES: list[str] = [
 
 
 def _today_et() -> str:
-    """Flag files are dated in ET — the operational day of the 10 AM ET fire.
+    """Flag files are dated in ET — the operational day of the 6 PM ET fire.
     Must match outlook_send.py's flag naming or the idempotency sync breaks."""
     return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 

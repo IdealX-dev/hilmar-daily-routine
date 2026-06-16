@@ -41,6 +41,14 @@ DEFAULT_QUOTE_RATE_FLOOR = 80.0
 # false positives on close ties.
 MATCHER_DRIFT_RATIO = 4.0
 MATCHER_DRIFT_MIN_GAP_HOURS = 2.0  # only flag if difference > 2h
+# Phase-2 matcher drift is a LOW-CONFIDENCE proximity heuristic flagged for
+# operator review (it can't auto-heal — reattaching on a guess could corrupt a
+# correct attachment). A handful of candidates is a WARN (surface + review);
+# only a systemic count HALTS the client send. Before 2026-06-16 ANY single
+# candidate blocked the whole daily email, which stranded the fire for days
+# (HILMAR-DAILY-TRACKER-6) with no way to auto-recover. Genuine data-corruption
+# gates (quote_rate, dup imids, NQ schema) still block on the first occurrence.
+MATCHER_DRIFT_FAIL_FLOOR = 3
 
 
 def norm_dest(s: str | None) -> str:
@@ -225,7 +233,9 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     # things that would corrupt the daily numbers if shipped:
     #   - quote_rate floor breach (data quality crash)
     #   - phase 1 dup imids without auto-heal (would double-count)
-    #   - phase 2 matcher drift (wrong rate-response→request attachment)
+    #   - phase 2 matcher drift ONLY when systemic (>= MATCHER_DRIFT_FAIL_FLOOR);
+    #     1–2 low-confidence candidates WARN + surface for operator reattach
+    #     (a single review-flag must not black out the whole daily send)
     #   - phase 4 NQ schema without auto-heal (status confusion)
     #
     # WARN reasons are surfaced + logged but DON'T halt the pipeline. These
@@ -241,8 +251,21 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
         fail_reasons.append(f"quote_rate {log['phase3']['quote_rate']}% < floor {log['phase3']['floor']}%")
     if log["phase1"]["duplicates_found"] > 0 and not auto_heal:
         fail_reasons.append(f"{log['phase1']['duplicates_found']} duplicate imid attachments")
-    if log["phase2"]["matcher_drift_count"] > 0:
-        fail_reasons.append(f"{log['phase2']['matcher_drift_count']} matcher drift candidates — review and reattach")
+    _drift = log["phase2"]["matcher_drift_count"]
+    if _drift >= MATCHER_DRIFT_FAIL_FLOOR:
+        # Systemic matcher breakage — block the send (numbers likely corrupted).
+        fail_reasons.append(
+            f"{_drift} matcher drift candidates (>= {MATCHER_DRIFT_FAIL_FLOOR}) — "
+            "systemic; review and reattach")
+    elif _drift > 0:
+        # 1–2 low-confidence candidates: surface for operator review (in
+        # drift-result.json + the audit) but DON'T black out the whole daily
+        # email. Phase 2 is report-only and can't auto-heal, so a hard block
+        # here is unrecoverable without manual intervention (HILMAR-DAILY-
+        # TRACKER-6: 4 fires blocked on a single candidate, 2026-06-16).
+        warn_reasons.append(
+            f"{_drift} matcher drift candidate(s) — review + reattach "
+            "(audit-only; see reports/drift-result.json)")
     if log["phase4"]["issues"] and not auto_heal:
         fail_reasons.append(f"{len(log['phase4']['issues'])} NQ schema issues")
     if log["phase5"]["wins_missing_carrier"] > 0:

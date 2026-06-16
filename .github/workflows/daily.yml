@@ -44,23 +44,24 @@ name: Daily
 
 on:
   schedule:
-    # GitHub's scheduler is unreliable for this repo — observed 2-4.5h late,
-    # and on 2026-06-15 a 10:07 ET tick didn't land until ~2 PM ET. GH cron
-    # lateness is roughly independent per scheduled tick, so we fire SEVERAL
-    # off-peak morning ticks: whichever the scheduler delivers first wins,
-    # the rest no-op (mailbox guard + idempotency flag), and the workflow
+    # GitHub's scheduler is unreliable for this repo — observed 2-4.5h late.
+    # GH cron lateness is roughly independent per scheduled tick, so we fire
+    # SEVERAL off-peak evening ticks: whichever the scheduler delivers first
+    # wins, the rest no-op (mailbox guard + idempotency flag), and the workflow
     # `concurrency` group below serializes them so two can't race the state
     # push. This maximizes the odds of an on-time send using only GitHub;
     # the guaranteed fix is an external punctual trigger (see
-    # docs/MOVE-OFF-CLOUDPC.md). The `gate` job accepts ANY tick whose HOUR
-    # matches 10 AM ET for the current DST offset (14:xx UTC in EDT, 15:xx
-    # in EST) and skips the rest, so DST never double-fires or skips a day.
-    - cron: "7 14 * * 1-5"    # ~10:07 AM EDT
-    - cron: "23 14 * * 1-5"   # ~10:23 AM EDT
-    - cron: "43 14 * * 1-5"   # ~10:43 AM EDT
-    - cron: "7 15 * * 1-5"    # ~10:07 AM EST (gated out in EDT)
-    - cron: "23 15 * * 1-5"   # ~10:23 AM EST
-    - cron: "43 15 * * 1-5"   # ~10:43 AM EST
+    # docs/MOVE-OFF-CLOUDPC.md). The fire moved to ~6 PM ET (2026-06-16) so it
+    # reports TODAY's now-complete Pacific business day. The `gate` job accepts
+    # ANY tick whose HOUR matches 6 PM ET for the current DST offset (22:xx UTC
+    # in EDT, 23:xx in EST) and skips the rest, so DST never double-fires or
+    # skips a day.
+    - cron: "7 22 * * 1-5"    # ~6:07 PM EDT
+    - cron: "23 22 * * 1-5"   # ~6:23 PM EDT
+    - cron: "43 22 * * 1-5"   # ~6:43 PM EDT
+    - cron: "7 23 * * 1-5"    # ~6:07 PM EST (gated out in EDT)
+    - cron: "23 23 * * 1-5"   # ~6:23 PM EST
+    - cron: "43 23 * * 1-5"   # ~6:43 PM EST
   workflow_dispatch:
     inputs:
       mode:
@@ -95,16 +96,16 @@ env:
 
 jobs:
   gate:
-    name: 10 AM ET schedule gate
+    name: 6 PM ET schedule gate
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       proceed: ${{ steps.decide.outputs.proceed }}
     steps:
       - id: decide
-        # A tick proceeds iff its HOUR field is the UTC hour of 10 AM ET for
-        # the current DST offset (14 in EDT, 15 in EST) — minute-agnostic, so
-        # the several morning ticks all proceed in-season and the off-season
+        # A tick proceeds iff its HOUR field is the UTC hour of 6 PM ET for
+        # the current DST offset (22 in EDT, 23 in EST) — minute-agnostic, so
+        # the several evening ticks all proceed in-season and the off-season
         # set is skipped. Keying on offset (not wall-clock now) means GitHub's
         # multi-hour cron lateness can never skip a day or run the wrong set.
         run: |
@@ -117,8 +118,8 @@ jobs:
           cron="${{ github.event.schedule }}"
           cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * 1-5"
           proceed=false
-          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "14" ]; then proceed=true; fi
-          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "15" ]; then proceed=true; fi
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "22" ]; then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "23" ]; then proceed=true; fi
           echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 
@@ -209,6 +210,9 @@ jobs:
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
       HILMAR_NONINTERACTIVE: "1"
+      # The ~6 PM ET evening fire reports on TODAY's now-complete Pacific
+      # business day (set explicitly; "current" is also core.py's default).
+      HILMAR_REPORT_WINDOW: "current"
     steps:
       - name: Verify prerequisites — refuse to fire if anything's missing
         # The pipeline silently degrades on missing secrets, so we hard-fail
