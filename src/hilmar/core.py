@@ -438,28 +438,53 @@ def parse_teu(containers: str | None) -> tuple[int, int]:
 # Send detection (regex — not body.startswith)
 # ─────────────────────────────────────────────────────────────────────
 
-# Match "send" or "SEND" as the first meaningful word — not inside a quoted reply
-# or inside a word like "Sending" / "sender".
+# Lonny's acceptance phrasings. Until 2026-06-16 this only matched a bare
+# "send" (+ a tiny whitelist) at the very start of the first line, so real
+# booking instructions were silently dropped and the row never flipped to
+# WIN: "Send Carter" (pick the President Carter sailing), "book it",
+# "go ahead", "proceed", "please send" all returned False (Michael
+# 2026-06-16: "why are you not showing these as wins"). Broadened to the
+# vocabulary Lonny actually uses, still anchored to the first line and still
+# guarded by NOT_SEND_HINTS so request-like "send me the rates" is excluded.
+# A false positive is self-limiting: a send with no MDOLX booking inside ~48
+# biz-hours ages to Q&L (SEND_NO_BOOKING) via decide_status. Mirror of
+# scripts/core.py — keep the two byte-identical (test_core_parity).
 SEND_RX = re.compile(
     r"""
-    ^                       # start of body
-    \s*                     # optional whitespace
-    (?:                     # optional courtesy openers
-        (?:hi|hey|hello)\W+
-    )?
-    \bsend\b                # the word "send" as a whole word
-    [\s.!,\-—]*             # optional trailing punctuation
-    (?:both|all|please|thanks|thank\s+you|it|this|that|the\s+quote)?
-    \s*
-    (?:\n|$|<)              # followed by newline, end, or tag
+    ^\s*
+    (?:                     # optional courtesy openers (repeatable)
+        (?:hi|hey|hello|ok|okay|yes|yep|yup|sure|great|perfect|
+           sounds\s+good|sg|thanks|thank\s+you)\W+
+    )*
+    (?:please\s+)?
+    (?:                     # the acceptance verb
+        send                #   send / send Carter / send the President Carter
+      | book                #   book / book it / book the Carter
+      | proceed
+      | go\s+ahead
+      | confirm(?:\s+(?:the\s+)?booking)?
+      | accept(?:ed)?
+      | let(?:'?s|\s+us)\s+(?:book|send|go|proceed)   # let's / lets / let us
+    )
+    \b
     """,
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Phrases that LOOK like "send" but mean something else
+# Phrases that LOOK like an acceptance but are actually a request for info
+# (or a non-acceptance word). Checked BEFORE SEND_RX in is_lonny_send_reply.
 NOT_SEND_HINTS = re.compile(
-    r"\b(send\s+both\s+cutoffs?|send\s+rates?|send\s+pricing|sending|sender|resend)\b",
-    re.IGNORECASE,
+    r"""
+    \b(?:
+        send\s+both\s+cutoffs?
+      | send\s+(?:me|us|over)\b
+      | send\s+(?:me\s+|us\s+|over\s+|the\s+|me\s+the\s+|us\s+the\s+)?
+        (?:rate|rates|pricing|price|quote|quotes|cutoff|cutoffs|schedule|
+           detail|details|info|breakdown|number|numbers)
+      | sending | sender | resend
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
 )
 
 
