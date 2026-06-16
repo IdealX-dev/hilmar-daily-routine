@@ -190,6 +190,21 @@ ACTIONS: dict[str, dict] = {
         "comment": "A row has an OL rate but no carrier. Root cause is usually a rate-response whose carrier column OL relabeled (the body_parser carrier scan should now catch header aliases + data-cell + prose). If it persists: re-ingest (reprocess_bodies.py + ingest.py + patch_carriers.py) so the strengthened parser re-reads the body. If the carrier is genuinely absent from OL's quote (bare rate, carrier assigned at booking), it will fill from the booking confirmation on the WIN — no action needed.",
         "auto_resolve_safe": False,
     },
+    "cron.missed_checkin": {
+        "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
+        "action": "resolve_if_post_fix",
+        "comment": (
+            "Cron 'missed check-in' for hilmar-daily-pipeline. Root cause is "
+            "GitHub cron lateness + the evening liveness backstop recovering a "
+            "fire past the old 95-min margin — NOT a real missed fire "
+            "(liveness.yml + heartbeat.yml confirm the run independently). "
+            "Margin widened to 290 min in sentry_setup.py so the monitor pages "
+            "only on a true all-evening miss; resolving now that the fix is "
+            "deployed. Sentry recovery_threshold=1 also auto-resolves on the "
+            "next in-window check-in."
+        ),
+        "auto_resolve_safe": True,
+    },
     "ingest.non_hilmar_filtered": {
         "name": "Non-HILMAR row filtered",
         "action": "log_only",
@@ -278,6 +293,18 @@ def _action_lookup(issue: dict) -> tuple[str, dict]:
                 qc_check = m.group(1)
     if qc_check and qc_check in ACTIONS:
         return qc_check, ACTIONS[qc_check]
+    # Sentry CRON-MONITOR "missed check-in" issue (HILMAR-DAILY-TRACKER-9).
+    # It carries no qc_check tag and no QC-NNN in the title, so without this it
+    # falls through to ERROR_LEVEL_DEFAULT and gets sent to Seer every fire —
+    # but Seer can't analyze a cron miss (no stack trace), so it never clears.
+    # Recognize it by the monitor slug / cron-failure title and route it to
+    # resolve_if_post_fix instead (clears once the margin fix is deployed and
+    # the misses have stopped; stays open while it's genuinely still missing).
+    _ct = ((issue.get("title") or "") + " "
+           + (issue.get("metadata", {}).get("value") or "")).lower()
+    if ("hilmar-daily-pipeline" in _ct or "cron failure" in _ct
+            or "missed check-in" in _ct or "missed checkin" in _ct):
+        return "cron.missed_checkin", ACTIONS["cron.missed_checkin"]
     # STALE AUTO-RESOLVE (added 2026-05-28). Per Michael "do all 7-9": close
     # the loop on unresolved errors that have stopped firing — e.g.
     # HILMAR-DAILY-TRACKER-5 (NameError 'os' not defined) hasn't fired since
