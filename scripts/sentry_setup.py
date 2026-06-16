@@ -7,7 +7,7 @@ other tools are needed... never to allow drift like this as standard."
 Sentry catches the kind of silent failure that lets parser regressions,
 pipeline crashes, and drift slip through the daily-email cycle. Where
 the QC checks (39 / 40 / 41) DETECT problems, Sentry SURFACES them
-in real time instead of waiting for the next 10 AM ET fire.
+in real time instead of waiting for the next 6 PM ET fire.
 
 INIT FLOW
 
@@ -312,7 +312,7 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Sentry Crons — heartbeat the daily 10 AM ET fire
+# Sentry Crons — heartbeat the daily 6 PM ET fire
 # ─────────────────────────────────────────────────────────────────────
 #
 # Sentry Crons solves the silent-failure mode where the SCHEDULER itself
@@ -324,7 +324,7 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 # the scheduled time, Sentry fires an "missed check-in" alert.
 #
 # Monitor slug: `hilmar-daily-pipeline`
-# Schedule:     Mon-Fri at 10:00 AM ET (per scheduled task on Cloud PC)
+# Schedule:     Mon-Fri at 6:00 PM ET (per scheduled task on Cloud PC)
 # Margin:       Check-in must arrive within 30 min of scheduled time
 # Max runtime:  60 min before declaring the run hung/missed
 #
@@ -334,16 +334,16 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
-    # 10:07 ET is the GH Actions cron (offset minute — see daily.yml). The
+    # 18:07 ET is the GH Actions cron (offset minute — see daily.yml). The
     # margin must absorb BOTH GitHub's cron jitter (observed 30min-4h on
-    # this repo) AND the liveness auto-recovery dispatch at 11:30 ET — so
-    # this alert means "the cron AND the fallback both failed", not noise.
+    # this repo) AND the evening liveness auto-recovery dispatch (~7:30 PM ET)
+    # — so this alert means "the cron AND the fallback both failed", not noise.
     # (The old 30-min margin was built for Task Scheduler punctuality and
     # false-alarmed the first GH-jitter morning, 2026-06-12.)
-    "schedule": {"type": "crontab", "value": "7 10 * * 1-5"},
+    "schedule": {"type": "crontab", "value": "7 18 * * 1-5"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
-    "checkin_margin": 95,    # alert ~11:42 ET — after the 11:30 recovery window
+    "checkin_margin": 95,    # alert ~7:42 PM ET — after the ~7:30 PM recovery window
     "max_runtime": 60,       # alert if pipeline runs >60 min (typical = 30-60s, lots of headroom)
     "failure_issue_threshold": 1,   # 1 missed/failed run = create issue immediately
     "recovery_threshold": 1,        # 1 successful run = resolve the issue

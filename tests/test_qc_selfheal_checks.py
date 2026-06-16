@@ -15,7 +15,7 @@ mark it tested.)
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,12 +26,10 @@ import qc_selfheal as q  # noqa: E402
 
 
 def _report_iso() -> str:
-    """Mirror the report-date math the date-dependent checks use:
-    previous business day in ET."""
-    now_et = datetime.now(core.ET).date()
-    wd = now_et.weekday()
-    delta = 3 if wd == 0 else 1 if wd == 5 else 2 if wd == 6 else 1
-    return (now_et - timedelta(days=delta)).isoformat()
+    """Mirror the report-date math the date-dependent checks use: the ~6 PM ET
+    evening fire reports on TODAY's now-complete business day (weekends roll
+    back to Friday). Single source of truth: core.report_business_day."""
+    return core.report_business_day(datetime.now(core.ET).date()).isoformat()
 
 
 def _base_data(requests=None, summary=None) -> dict:

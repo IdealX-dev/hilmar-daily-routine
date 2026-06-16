@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -330,6 +331,37 @@ def to_pt(dt: datetime | None) -> datetime | None:
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+# Reporting window. The daily fire moved to ~6 PM ET (2026-06-16, Michael
+# "move this to end of every day"), so it now reports the CURRENT, now-complete
+# Pacific business day instead of the previous one. Override to "previous" via
+# HILMAR_REPORT_WINDOW to roll back to the old 10 AM ET morning behavior.
+REPORT_WINDOW = os.environ.get("HILMAR_REPORT_WINDOW", "current").strip().lower()
+
+def report_business_day(now_et=None, window=None):
+    """The business day the daily email REPORTS ON, as a date.
+
+    window="current"  (evening fire): today if a weekday; Friday on Sat/Sun.
+    window="previous" (old 10 AM fire): the most recent COMPLETE business day
+                       before today (Mon->Fri, Tue->Mon, ... Sat/Sun->Fri).
+    `now_et` may be an aware datetime in ET or a date; defaults to wall-clock ET.
+    """
+    if now_et is None:
+        now_et = datetime.now(timezone.utc).astimezone(ET)
+    today = now_et.date() if hasattr(now_et, "date") else now_et
+    wd = today.weekday()  # Mon=0..Sun=6
+    win = (window or REPORT_WINDOW)
+    if win == "current":
+        if wd == 5:  return today - timedelta(days=1)   # Sat -> Fri
+        if wd == 6:  return today - timedelta(days=2)    # Sun -> Fri
+        return today                                     # Mon-Fri -> today
+    # "previous"
+    if wd == 0:   delta = 3
+    elif wd == 5: delta = 1
+    elif wd == 6: delta = 2
+    else:         delta = 1
+    return today - timedelta(days=delta)
 
 
 def fmt_pt(dt: datetime | None, with_date: bool = True) -> str:

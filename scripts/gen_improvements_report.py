@@ -170,14 +170,11 @@ def _format_test_excerpts(errors):
 
 
 def _report_date():
-    """Mirror gen_email._report_date — the previous business day in ET."""
-    now_et = datetime.now(timezone.utc).astimezone(core.ET).date()
-    wd = now_et.weekday()
-    if wd == 0:    delta = 3
-    elif wd == 5:  delta = 1
-    elif wd == 6:  delta = 2
-    else:          delta = 1
-    return now_et - timedelta(days=delta)
+    """Mirror gen_email._report_date — the business day this run reports on.
+    The ~6 PM ET evening fire reports on TODAY's now-complete Pacific business
+    day (Sat/Sun roll back to Friday). Single source of truth:
+    core.report_business_day (window="current")."""
+    return core.report_business_day()
 
 
 # ───────────────────────────────────────────────────────────────────────
@@ -426,13 +423,13 @@ def collect_red_flags(data, qc, drift):
     # .txt (refresh_stage's actual output). Now matches qc_selfheal.py QC-008
     # path resolution: .txt first, fallback .jsonl.
     #
-    # MONDAY-MORNING / OFF-HOURS SUPPRESSION (added 2026-05-18 per Michael
-    # "TWO TERRIBLE DAILY AUDITS CAME IN"). The scheduled task fires at
-    # 10 AM ET Mon-Fri. Before 10:30 AM ET on any weekday morning, the
-    # stage is naturally stale because refresh_stage hasn't run yet today.
-    # Flagging this as a RED FLAG is a Monday-morning artifact, not a
-    # genuine problem. Only fire if it's PAST the scheduled fire time AND
-    # the stage is still stale.
+    # PRE-FIRE / OFF-HOURS SUPPRESSION (added 2026-05-18 per Michael
+    # "TWO TERRIBLE DAILY AUDITS CAME IN"; updated 2026-06-16 for the fire
+    # move). The scheduled task now fires at ~6 PM ET Mon-Fri. Before
+    # 6:30 PM ET on any weekday, the stage is naturally stale because
+    # refresh_stage hasn't run yet today. Flagging this as a RED FLAG is a
+    # pre-fire artifact, not a genuine problem. Only fire if it's PAST the
+    # scheduled fire time AND the stage is still stale.
     try:
         scripts_dir = ROOT / "scripts"
         stage_path = scripts_dir / "stage_emails.txt"
@@ -440,12 +437,11 @@ def collect_red_flags(data, qc, drift):
             stage_path = scripts_dir / "stage_emails.jsonl"
         if stage_path.exists():
             now_et = datetime.now(core.ET)
-            # Business-hours window: Mon-Fri AND past 10:30 AM ET (after the
-            # 10:00 AM scheduled fire). Weekends + early-morning weekdays
-            # are suppressed.
+            # Post-fire window: Mon-Fri AND past 6:30 PM ET (after the ~6 PM ET
+            # scheduled fire). Weekends + pre-fire weekday hours are suppressed.
             is_business_hours = (
                 now_et.weekday() < 5
-                and (now_et.hour > 10 or (now_et.hour == 10 and now_et.minute >= 30))
+                and (now_et.hour > 18 or (now_et.hour == 18 and now_et.minute >= 30))
             )
             if is_business_hours:
                 latest = None
@@ -705,14 +701,16 @@ def collect_suggestions(data, qc, drift):
         try:
             tail = log_path.read_text(encoding="utf-8", errors="ignore")[-30000:]
             today_iso = datetime.now(core.ET).date().strftime("%m/%d/%Y")
-            ten_am = re.search(rf"{today_iso} 10:00:\d+\.\d+", tail)
+            # The fire moved to ~6 PM ET (2026-06-16), so the wrapper's start
+            # stamp in the run log is now 18:00, not 10:00.
+            fire_started = re.search(rf"{today_iso} 18:00:\d+\.\d+", tail)
             today_send = "Sent. request-id=" in tail and tail.find("Sent. request-id=") > tail.find(today_iso)
-            if ten_am and not today_send:
+            if fire_started and not today_send:
                 sugg.append({
                     "level": "💡",
                     "title": "Cloud PC scheduled task fired but didn't send today",
                     "detail": (
-                        "10 AM ET fire entered the wrapper but no 'Sent. request-id=' line "
+                        "6 PM ET fire entered the wrapper but no 'Sent. request-id=' line "
                         "follows it. Likely the idempotency flag triggered (manual MBD-TRAVEL "
                         "fire ran first), OR the pipeline failed before reaching the send. "
                         "Either case is fine for today, but if this happens 2 days running "

@@ -38,7 +38,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-008 | WARN | Stage file > 36h old (refresh_stage stale) | None | 2026-05-05 |
 | QC-009 | WARN | Stage bucket distribution drift (one bucket silent 7d) | None | 2026-05-05 |
 | QC-010 | WARN | preserved_from_prior WIN count > 10 (refresh missing emails) | None | 2026-05-05 |
-| QC-011 | ERROR | Email subject date != previous business day (today regression) | None — gates ship | 2026-05-07 (`697e219`) |
+| QC-011 | ERROR | Email subject date != TODAY's report biz day (a fresh PREVIOUS-day subject = morning-framing regression) | None — gates ship | 2026-05-07 (`697e219`); evening-fire flip 2026-06-16 |
 | QC-012 | ERROR | Week labels not Mon-Fri (4-day span) — Mon-Sun regression | None | 2026-05-07 (`401ca08`) |
 | QC-013 | ERROR | Body header "What Happened Today" — today framing regression | None | 2026-05-07 (`401ca08`) |
 | QC-014a | ERROR/WARN | WIN carrier coverage <90% (ERROR) / <95% (WARN) | Auto via patch_carriers | 2026-05-07 (`c24255d`) |

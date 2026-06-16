@@ -188,20 +188,15 @@ def render(cfg: dict, data: dict) -> str:
 
     # ── Report-day KPIs — added 2026-04-30 per Michael's feedback that the daily
     # email was showing cumulative wins under a "Won" card, reading as "today".
-    # Updated 2026-05-07 per Michael: 'yesterday kpi run' — at 10 AM ET fire
-    # time, today's data window is empty (Lonny's PT office isn't open yet),
-    # so report on the previous business day. Mon → last Friday; Tue–Fri →
-    # yesterday; Sat/Sun → last Friday.
+    # Updated 2026-06-16 per Michael ("move this to end of every day"): the fire
+    # moved to ~6 PM ET, AFTER Lonny's California (PT) business day closes, so
+    # today's window is now complete and we report on TODAY. Mon–Fri → today;
+    # Sat/Sun → last Friday. Single source of truth: core.report_business_day.
     _now_et = datetime.now(core.ET).date()
-    _wd = _now_et.weekday()  # Mon=0..Sun=6
-    if _wd == 0:    _delta = 3   # Mon → Fri
-    elif _wd == 5:  _delta = 1   # Sat → Fri
-    elif _wd == 6:  _delta = 2   # Sun → Fri
-    else:           _delta = 1   # Tue–Fri → yesterday
-    from datetime import timedelta as _td
-    report_date = _now_et - _td(days=_delta)
+    report_date = core.report_business_day(_now_et)
     report_iso  = report_date.isoformat()
-    report_label = report_date.strftime("%a %b %d (yesterday)" if _delta == 1 else "%a %b %d (last full biz day)")
+    _is_today = report_date == _now_et
+    report_label = report_date.strftime("%a %b %d (today)" if _is_today else "%a %b %d (last full biz day)")
     today_reqs = [r for r in requests
                   if (r.get("request_date") == report_iso) or (r.get("date") == report_iso)]
     tdy_total   = len(today_reqs)
@@ -438,7 +433,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <button class="clear-btn" type="button" id="kpi-filter-clear">Clear Filter ✕</button>
 </div>
 
-<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity on the previous business day. Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
+<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity today (through end of day). Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>

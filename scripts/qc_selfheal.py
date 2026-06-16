@@ -750,27 +750,24 @@ def phase_5_summaries(log: Log, data: dict):
 
 
 def _expected_report_date(now_et_date):
-    """Mirror of gen_email._report_date: previous business day from
-    ``now_et_date``. Mon → Fri (3 days back), Sat → Fri (1 day),
-    Sun → Fri (2 days), Tue–Fri → yesterday (1 day)."""
-    from datetime import timedelta
-    wd = now_et_date.weekday()    # Mon=0..Sun=6
-    if wd == 0:    delta = 3
-    elif wd == 5:  delta = 1
-    elif wd == 6:  delta = 2
-    else:          delta = 1
-    return now_et_date - timedelta(days=delta)
+    """Mirror of gen_email._report_date via the single source of truth
+    core.report_business_day. The ~6 PM ET evening fire reports on TODAY's
+    now-complete business day: Mon–Fri → today; Sat → Fri (1 day back);
+    Sun → Fri (2 days back)."""
+    return core.report_business_day(now_et_date)
 
 
 def _check_email_subject_date(log, subj_path, now_et=None):
     """QC-011 helper, extracted 2026-06-02 for testability.
 
-    Distinguishes four failure modes of the email-subject vs expected
-    business-day check:
+    Distinguishes the failure modes of the email-subject vs expected
+    business-day check. Under the ~6 PM ET evening fire (2026-06-16) the
+    expected report day is TODAY's now-complete business day, so:
 
       1. File absent → WARN (skip; no signal either way)
-      2. File present, date matches expected → OK
-      3. File present, date == today (regression — should be yesterday) → ERROR
+      2. File present, date matches expected (== TODAY) → OK
+      3. File present, date == the PREVIOUS business day AND file fresh
+         (≤26h) → ERROR (gen_email regressed to the old morning framing)
       4. File present, date != expected AND file mtime > 26h old →
          WARN (stale subject from prior fire — gen_email didn't run today;
          pair with QC-021's wrapper-incomplete signal)
@@ -779,7 +776,9 @@ def _check_email_subject_date(log, subj_path, now_et=None):
 
     The 2026-06-02 fix split (4) out from the original behavior where
     every mismatch was reported the same way as a logic bug, hiding
-    the actual root cause (the wrapper aborted before gen_email).
+    the actual root cause (the wrapper aborted before gen_email). The
+    2026-06-16 fire move FLIPPED (3): TODAY is now the correct report day,
+    and a fresh subject dated the PREVIOUS business day is the regression.
 
     Args:
         log: the qc.Log instance to write findings to.
@@ -820,15 +819,18 @@ def _check_email_subject_date(log, subj_path, now_et=None):
                 _parsed = _dt.strptime(f"{_mo} {_day} {_yr}", "%B %d %Y").date()
             except ValueError:
                 _parsed = None
+        # The PREVIOUS-business-day date — what the OLD 10 AM ET morning fire
+        # would have reported. A fresh subject dated this is the regression.
+        _wrong = core.report_business_day(_now_et, window="previous")
         if _parsed is None:
             log.warn(f"QC-011: subject month not recognized: {_mo!r}")
         elif _parsed == _expected:
-            log.ok(f"QC-011: email subject date {_parsed.isoformat()} == expected previous biz day")
-        elif _parsed == _now_et:
+            log.ok(f"QC-011: email subject date {_parsed.isoformat()} == expected report day")
+        elif _parsed == _wrong and _subj_age_h <= 26:
             log.error(
-                f"QC-011: email subject date is TODAY ({_parsed.isoformat()}) but should be "
-                f"previous biz day ({_expected.isoformat()}). gen_email.py regressed — "
-                f"Lonny's PT office isn't open at 10 AM ET fire."
+                f"QC-011: email subject is the PREVIOUS business day "
+                f"({_parsed.isoformat()}) but the evening fire should report TODAY "
+                f"({_expected.isoformat()}) — gen_email regressed to morning framing."
             )
         elif _subj_age_h > 26:
             # File predates today's fire window — gen_email didn't run today.
@@ -1018,7 +1020,8 @@ def phase_6_rules(log: Log, data: dict):
     else:
         log.ok("QC-010: No preserved-from-prior WINs (fresh stage covers everything)")
 
-    # QC-011: email subject date == previous business day.
+    # QC-011: email subject date == TODAY's report business day (the ~6 PM ET
+    # evening fire reports on today's now-complete day; weekends roll to Friday).
     # Logic extracted to _check_email_subject_date for testability — see
     # the helper's docstring for the failure-mode taxonomy.
     _check_email_subject_date(
@@ -1089,8 +1092,9 @@ def phase_6_rules(log: Log, data: dict):
 
     # QC-013: email body header reflects the report-date framing — must NOT
     # say literal 'What Happened Today' (the regression case where gen_email.py
-    # reverts to using today's date). The fixed framing reads e.g. 'What
-    # Happened — Wednesday May 6, 2026' — present tense day/date.
+    # uses an unlabeled 'today' header). The fixed framing reads e.g. 'What
+    # Happened — Wednesday May 6, 2026' — an explicit day/date so the report
+    # day is unambiguous regardless of when the fire runs.
     try:
         _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
         if _body_path.exists():
@@ -1098,8 +1102,8 @@ def phase_6_rules(log: Log, data: dict):
             if "What Happened Today" in _body:
                 log.error(
                     "QC-013: email body has 'What Happened Today' — gen_email.py "
-                    "regressed to today framing. Should be 'What Happened — <Day Date>' "
-                    "(previous business day, since 10 AM ET fire is before Lonny's PT office)."
+                    "regressed to unlabeled framing. Should be 'What Happened — <Day Date>' "
+                    "(the explicit report business day, so the date is never ambiguous)."
                 )
             elif "What Happened —" in _body:
                 log.ok("QC-013: email body uses report-date framing")
@@ -1228,12 +1232,14 @@ def phase_6_rules(log: Log, data: dict):
                             "died before the refresh_stage echo)."
                         )
             else:
-                # No fire today yet — only WARN on weekday afternoons
+                # No fire today yet — only WARN on weekday evenings, AFTER the
+                # ~6 PM ET fire is due (it moved there 2026-06-16). Before 7 PM
+                # ET the absence is expected, not a finding.
                 _now_et = _dt.now(core.ET)
-                if _now_et.weekday() < 5 and _now_et.hour >= 11:
+                if _now_et.weekday() < 5 and _now_et.hour >= 19:
                     log.warn(
                         f"QC-021: no wrapper fire for {_today_iso} in run-log "
-                        f"(past 11 AM ET on a weekday — Cloud PC should have fired by now)"
+                        f"(past 7 PM ET on a weekday — Cloud PC should have fired by now)"
                     )
                 else:
                     log.ok(f"QC-021: no wrapper fire yet for {_today_iso} (off-hours)")
@@ -1607,7 +1613,7 @@ def phase_6_rules(log: Log, data: dict):
                     elif _age_h > 25:
                         log.warn(
                             f"QC-050: latest backup is {_age_h:.1f}h old. Daily fire "
-                            f"runs at 10 AM ET — newest backup expected <24h. Latest: "
+                            f"runs at 6 PM ET — newest backup expected <24h. Latest: "
                             f"{_latest.name}"
                         )
                     else:
@@ -2532,7 +2538,7 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 log.ok(f"QC-025: today's flag has {len(_lines)} send entries (healthy)")
         else:
-            log.ok("QC-025: today's flag not present (no send yet — normal pre-10AM)")
+            log.ok("QC-025: today's flag not present (no send yet — normal pre-6PM)")
     except Exception as _e:
         log.warn(f"QC-025: check failed with exception: {_e}")
 
@@ -2592,14 +2598,10 @@ def phase_6_rules(log: Log, data: dict):
     # at the data level so the email doesn't ship with empty cells.
     try:
         from datetime import datetime as _dt
-        from datetime import timedelta as _td
         _now_et = _dt.now(core.ET).date()
-        _wd = _now_et.weekday()
-        if _wd == 0: _delta = 3
-        elif _wd == 5: _delta = 1
-        elif _wd == 6: _delta = 2
-        else: _delta = 1
-        _report_iso = (_now_et - _td(days=_delta)).isoformat()
+        # Report day = today's now-complete biz day (core.report_business_day,
+        # the single source of truth shared with gen_email._report_date).
+        _report_iso = core.report_business_day(_now_et).isoformat()
         _missing = []
         for r in requests:
             for h in (r.get("status_history") or []):
@@ -2626,15 +2628,10 @@ def phase_6_rules(log: Log, data: dict):
     # card and Total = W + QL + NQ + Pending. This QC enforces it.
     try:
         from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        # Compute report date (mirror gen_email._report_date)
+        # Compute report date (mirror gen_email._report_date via the single
+        # source of truth core.report_business_day — today's complete biz day).
         _now_et = _dt.now(core.ET).date()
-        _wd = _now_et.weekday()
-        if _wd == 0: _delta = 3
-        elif _wd == 5: _delta = 1
-        elif _wd == 6: _delta = 2
-        else: _delta = 1
-        _report_iso = (_now_et - _td(days=_delta)).isoformat()
+        _report_iso = core.report_business_day(_now_et).isoformat()
         _day = [r for r in requests
                 if (r.get("request_date") == _report_iso) or (r.get("date") == _report_iso)]
         _w  = sum(1 for r in _day if r.get("status") == "WIN")

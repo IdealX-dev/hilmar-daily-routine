@@ -262,7 +262,7 @@ def main():
 
     # Sentry Cron heartbeat — `start` check-in. Sentry auto-creates the
     # monitor (slug=hilmar-daily-pipeline) on first call. Schedule is
-    # "0 10 * * 1-5" America/New_York (Mon-Fri 10 AM ET). If the
+    # "7 18 * * 1-5" America/New_York (Mon-Fri 6 PM ET). If the
     # finishing check-in doesn't arrive within max_runtime=60 min,
     # Sentry fires an alert — catches the silent-failure mode where the
     # Cloud PC / scheduler / wrapper dies before any error-event code

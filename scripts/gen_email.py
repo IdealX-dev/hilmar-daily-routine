@@ -103,36 +103,21 @@ def _week_bucket(d):
 
 
 def _report_date(now_et=None):
-    """Return the date this email REPORTS ON — the most recent COMPLETE
-    business day (Mon–Fri) before `now_et`.
+    """Return the date this email REPORTS ON.
 
-    Why: the pipeline runs at 10 AM ET each weekday morning. At that time
-    today's business day has barely begun and Lonny (in California, PT) is
-    still asleep — Hilmar HQ doesn't open for ~3 more hours. So the email
-    reports on yesterday's activity, not today's empty window.
-    Per Michael 2026-05-07: 'there should be a yesterday kpi run as we
-    send this in the morning, there would be absolutely no new data for
-    today since lonny is in california and doens't open for hours'.
+    Why: the pipeline now runs ~6 PM ET each weekday evening (moved from the
+    old 10 AM ET morning fire on 2026-06-16, Michael "move this to end of
+    every day"). At that time Lonny's California (PT) office has finished its
+    business day (~3 PM PT), so today's quotes and bookings are complete. The
+    email therefore reports on TODAY's now-finished activity, not yesterday's.
 
-    Logic (today.weekday(): Mon=0..Sun=6):
-      Tue–Fri (1..4): report = today − 1 day  (yesterday)
-      Mon (0):        report = today − 3 days (last Friday)
-      Sat (5):        report = today − 1 day  (Friday)
-      Sun (6):        report = today − 2 days (Friday)
+    Single source of truth is core.report_business_day (window="current"):
+      Mon–Fri: report = today
+      Sat:     report = Friday (today − 1)
+      Sun:     report = Friday (today − 2)
+    Set HILMAR_REPORT_WINDOW=previous to restore the old morning behavior.
     """
-    if now_et is None:
-        now_et = datetime.now(timezone.utc).astimezone(core.ET)
-    today = now_et.date()
-    wd = today.weekday()
-    if wd == 0:
-        delta = 3
-    elif wd == 5:
-        delta = 1
-    elif wd == 6:
-        delta = 2
-    else:
-        delta = 1
-    return today - timedelta(days=delta)
+    return core.report_business_day(now_et)
 
 
 def _report_label(report_date):
@@ -422,9 +407,9 @@ def _header_html(today_label, range_label, updated_label):
 
 def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     """Render the 'What Happened on <day>' block. The label `report_label` is
-    the previous business day (see _report_date) — not literal 'today' —
-    because at 10 AM ET fire time, today's data window is still empty
-    (Lonny's PT office isn't open yet).
+    TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
+    fire runs AFTER Lonny's PT office has closed for the day, so today's data
+    window is fully populated by send time.
 
     2026-05-19 PM (Michael "the current report is a mess. formatted poorly...
     the email should have clear tables with proper formatting and names of
@@ -728,7 +713,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     return f"""
 <div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:20px;margin-bottom:24px">
   <h2 style="margin:0 0 8px;color:#1e40af;font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
-  <p style="margin:0 0 14px;font-size:11px;color:#64748b">Previous business day. Daily email runs at 10 AM ET — Lonny's California office (PT) opens ~3 hours later, so 'today' has no data yet at send time.</p>
+  <p style="margin:0 0 14px;font-size:11px;color:#64748b">Today's activity through end of day. The tracker runs ~6 PM ET — after Lonny's California (PT) business day — so today's quotes and bookings are captured.</p>
 
   <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
   {new_table}
@@ -781,9 +766,9 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
 
 
 def _today_summary(requests, report_date=None):
-    """Compute wins/losses/etc for the report date (= previous business day).
-    Function name kept as `_today_summary` for backward compatibility, but it
-    no longer reports 'today' — see _report_date for rationale.
+    """Compute wins/losses/etc for the report date (= TODAY's now-complete
+    business day for the ~6 PM ET evening fire). The function name `_today_summary`
+    is now literally accurate again — see _report_date for rationale.
     """
     if report_date is None:
         report_date = _report_date()
@@ -805,14 +790,15 @@ def _today_summary(requests, report_date=None):
 
 def _kpi_block_html(summary, requests=None, report_date=None):
     """Two KPI rows:
-      Row 1 (REPORT DAY) — what happened on the previous business day in ET.
-        Often low or zero on quiet days — that's the truth.
+      Row 1 (REPORT DAY) — what happened TODAY (the now-complete business day)
+        in ET. Often low or zero on quiet days — that's the truth.
       Row 2 (PERIOD TO DATE) — cumulative over the data range. Used for negotiation depth.
 
     Michael 2026-04-30: "we didn't win that today" — fix is that the daily email's
     headline KPI was cumulative but unlabeled. Now both views are explicit.
-    Michael 2026-05-07: "yesterday kpi run" — Row 1 reports yesterday (or
-    last Friday on Mon), not literal today.
+    Michael 2026-06-16 ("move this to end of every day"): the fire moved to
+    ~6 PM ET, so Row 1 now reports TODAY's complete day (or last Friday on a
+    weekend), not the previous business day.
     """
     total = summary.get("total_entries", 0)
     wins = summary.get("wins", 0)
@@ -873,7 +859,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity on the previous business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity today (through end of day). Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
     {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=f"{day.get('total',0)} entries")}
@@ -1688,8 +1674,9 @@ FOOTER_HTML = """
 
 def build_body(data, cfg):
     now_et = datetime.now(timezone.utc).astimezone(core.ET)
-    # Email REPORTS on the previous business day, not "now". See _report_date
-    # docstring for rationale (10 AM ET fire = before Lonny's PT office opens).
+    # Email REPORTS on TODAY's now-complete business day (weekends roll back to
+    # Friday). See _report_date docstring for rationale (~6 PM ET fire = after
+    # Lonny's PT office has closed for the day).
     report_date = _report_date(now_et)
     report_label = _report_label(report_date)             # 'Wednesday May 6, 2026'
     report_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%b %-d, %Y")
