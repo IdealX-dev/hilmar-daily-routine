@@ -31,9 +31,10 @@ Parser-gap fixes 2026-05-19 (per Michael "no field should be empty ever"):
 """
 from __future__ import annotations
 
+import calendar
 import contextlib
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 
 
@@ -446,10 +447,51 @@ _NOT_A_DATE_TAIL = re.compile(
 _NOT_A_DATE_LEAD = re.compile(r"\d\s*[xX]\s*$")
 
 
-def _find_date_near(text, anchor_rx, window=120):
+# Relative date phrases Lonny uses instead of a calendar date (Michael
+# 2026-06-16: "sometime he says for etd next week"). Resolved against the
+# email's SEND date (ref_date), business reading: "next week" -> Monday of the
+# following calendar week; "next <weekday>" -> that weekday next week; "end of
+# month"/EOM -> last day of the send month; "end of week"/EOW -> that Friday.
+_REL_WEEKDAY = {
+    "monday": 0, "mon": 0, "tuesday": 1, "tues": 1, "tue": 1,
+    "wednesday": 2, "wed": 2, "thursday": 3, "thurs": 3, "thur": 3, "thu": 3,
+    "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+}
+_REL_NEXT_WEEKDAY_RX = re.compile(
+    r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+    r"|mon|tues|tue|wed|thurs|thur|thu|fri|sat|sun)\b", re.IGNORECASE)
+_REL_NEXT_WEEK_RX = re.compile(r"\bnext\s+week\b", re.IGNORECASE)
+_REL_EOM_RX = re.compile(r"\b(?:eom|end\s+of\s+(?:the\s+)?month)\b", re.IGNORECASE)
+_REL_EOW_RX = re.compile(r"\b(?:eow|end\s+of\s+(?:the\s+)?week)\b", re.IGNORECASE)
+
+
+def _relative_date_in(chunk, ref_date):
+    """Resolve a relative date phrase in `chunk` against `ref_date` (a date).
+    Returns ISO date string or None. See _REL_* above for the conventions."""
+    if not chunk or ref_date is None:
+        return None
+    if _REL_EOM_RX.search(chunk):
+        last = calendar.monthrange(ref_date.year, ref_date.month)[1]
+        return ref_date.replace(day=last).isoformat()
+    if _REL_EOW_RX.search(chunk):
+        return (ref_date + timedelta(days=(4 - ref_date.weekday()))).isoformat()
+    # Monday of the following calendar week (shared by next-week + next-weekday)
+    days_to_next_monday = (7 - ref_date.weekday()) % 7 or 7
+    next_monday = ref_date + timedelta(days=days_to_next_monday)
+    m = _REL_NEXT_WEEKDAY_RX.search(chunk)
+    if m:
+        return (next_monday + timedelta(days=_REL_WEEKDAY[m.group(1).lower()])).isoformat()
+    if _REL_NEXT_WEEK_RX.search(chunk):
+        return next_monday.isoformat()
+    return None
+
+
+def _find_date_near(text, anchor_rx, window=120, ref_date=None):
     """Find first plausible date after each anchor match. Reject candidates
     that look like demurrage/free-time ranges (e.g. '10-14 days free')
-    or container counts (e.g. '10x40HC')."""
+    or container counts (e.g. '10x40HC'). When `ref_date` is given and no
+    absolute date is found in an anchor's window, fall back to a relative
+    phrase ('next week', 'next Monday', 'end of month') resolved against it."""
     if not text:
         return None
     now_year = datetime.utcnow().year
@@ -467,14 +509,24 @@ def _find_date_near(text, anchor_rx, window=120):
                 iso = _date_from_match(dm, now_year)
                 if iso:
                     return iso
+        rel = _relative_date_in(chunk, ref_date)
+        if rel:
+            return rel
     return None
 
 
 _ETA_REQ_ANCHORS = re.compile(
-    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave)"
-    r"|target\s+etd|requested\s+etd|require(?:d)?\s+by"
+    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave|arrive|deliver)"
+    r"|target\s+et[ad]|requested\s+et[ad]|require(?:d)?\s+by"
     r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|cutoff"
-    r"|prefer(?:red)?\s+etd)",
+    r"|prefer(?:red)?\s+et[ad]"
+    # 2026-06-16 (Michael, Lonny's real RFQ "ETA 8/7"): Lonny states his
+    # target arrival as a BARE "ETA <date>" / "arrival" / "deliver by" — no
+    # "target"/"requested" prefix. On the request side that IS the requested
+    # ETA, so eta_requested was 100% blank on his quotes. OL-side ETAs are
+    # parsed separately by parse_eta_offered, so this doesn't conflate them.
+    r"|e\.?t\.?a\.?|arrival|arrive(?:\s+by)?|deliver(?:y|ed)?(?:\s+by)?"
+    r"|due(?:\s+(?:by|in\s+port))?|in\s+(?:your\s+)?port\s+by)",
     re.IGNORECASE,
 )
 
@@ -482,7 +534,8 @@ _ETD_OFFER_ANCHORS = re.compile(r"(?:etd|ets|sailing\s+date|departure)\s*[:\-]?"
 _ETA_OFFER_ANCHORS = re.compile(r"(?:eta|arrival)\s*[:\-]?", re.IGNORECASE)
 _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|door\s+cutoff)\s*[:\-]?", re.IGNORECASE)
 
-def parse_eta_requested(text):  return _find_date_near(text or "", _ETA_REQ_ANCHORS)
+def parse_eta_requested(text, ref_date=None):
+    return _find_date_near(text or "", _ETA_REQ_ANCHORS, ref_date=ref_date)
 def parse_etd_offered(text):    return _find_date_near(text or "", _ETD_OFFER_ANCHORS)
 def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_ANCHORS)
 def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
@@ -503,6 +556,10 @@ _ETD_REQ_ANCHORS = re.compile(
     r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|departure\s+by"
     r"|prefer(?:red)?\s+etd|preferred\s+departure"
     r"|etd\s+by|departure\s+date|sail\s+by"
+    # 2026-06-16: a BARE "ETD <date>" / "ETD next week" is Lonny's most common
+    # departure ask (no "by"/"target" prefix) — without this anchor the
+    # relative-date resolver had nothing to attach to.
+    r"|etd|ets"
     # 2026-05-19 broadening: Lonny's "cutoff" phrasing usually means ETD.
     # Catches "Cutoff week of 4/27" / "Cut off 5/1" / "cutoff by 5/15".
     r"|cut[-\s]?off"
@@ -511,11 +568,12 @@ _ETD_REQ_ANCHORS = re.compile(
     re.IGNORECASE,
 )
 
-def parse_etd_requested(text):
+def parse_etd_requested(text, ref_date=None):
     """Lonny's departure-date ask. Captures explicit "ship by X" / "departure
     X" patterns AND the more common "cutoff X" phrasing (which functionally
-    means ETD in shipping vernacular). Returns ISO date or None."""
-    return _find_date_near(text or "", _ETD_REQ_ANCHORS)
+    means ETD in shipping vernacular). With ref_date set, also resolves
+    relative asks ("ETD next week"). Returns ISO date or None."""
+    return _find_date_near(text or "", _ETD_REQ_ANCHORS, ref_date=ref_date)
 
 
 # parse_temperature — reefer rows only. Recognises:

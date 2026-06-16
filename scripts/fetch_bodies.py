@@ -60,6 +60,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -121,8 +122,12 @@ def _now_iso() -> str:
 
 # ---------- Parse helpers ----------
 
-def _parse_all(text_body: str, subject: str, bucket: str) -> dict:
-    """Run every body_parser parser applicable to this bucket."""
+def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = None) -> dict:
+    """Run every body_parser parser applicable to this bucket.
+
+    `sent_ts` (the email's send timestamp) anchors Lonny's relative date asks
+    — "ETD next week", "next Monday", "end of month" — to a concrete date.
+    """
     out = {
         "eta_requested": None,
         "etd_requested": None,           # 2026-05-19 parser-gap fix
@@ -155,8 +160,14 @@ def _parse_all(text_body: str, subject: str, bucket: str) -> dict:
     out["destination"] = dest
 
     # Date parsers — anchor-based (parse_etd_offered etc.) — work on any body.
-    out["eta_requested"]  = BP.parse_eta_requested(text_body)
-    out["etd_requested"]  = BP.parse_etd_requested(text_body)  # 2026-05-19 NEW
+    # Lonny's date asks can be relative ("ETD next week"); anchor them to the
+    # email's send date when we have it (2026-06-16).
+    _ref_date = None
+    if sent_ts:
+        with contextlib.suppress(Exception):
+            _ref_date = C.parse_iso(sent_ts).date()
+    out["eta_requested"]  = BP.parse_eta_requested(text_body, ref_date=_ref_date)
+    out["etd_requested"]  = BP.parse_etd_requested(text_body, ref_date=_ref_date)  # 2026-05-19 NEW
     out["etd_offered"]    = BP.parse_etd_offered(text_body)
     out["eta_offered"]    = BP.parse_eta_offered(text_body)
     out["origin_cutoff"]  = BP.parse_origin_cutoff(text_body)
@@ -235,7 +246,7 @@ def upsert_body(
 ) -> dict:
     """Add or replace a body row. Returns the stored record."""
     text_body = BP.html_to_text(html_body or "")
-    parsed = _parse_all(text_body, subject, bucket)
+    parsed = _parse_all(text_body, subject, bucket, sent_ts=sent_ts)
 
     rec = {
         "imid": imid,
