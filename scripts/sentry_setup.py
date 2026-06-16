@@ -324,8 +324,9 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 # the scheduled time, Sentry fires an "missed check-in" alert.
 #
 # Monitor slug: `hilmar-daily-pipeline`
-# Schedule:     Mon-Fri at 6:00 PM ET (per scheduled task on Cloud PC)
-# Margin:       Check-in must arrive within 30 min of scheduled time
+# Schedule:     Mon-Fri at 6:07 PM ET (the GH Actions cron)
+# Margin:       Check-in must arrive before the FULL evening backstop window
+#               closes (~10:57 PM ET) — see checkin_margin below.
 # Max runtime:  60 min before declaring the run hung/missed
 #
 # The monitor is AUTO-PROVISIONED by the first check-in that supplies a
@@ -335,15 +336,19 @@ MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
     # 18:07 ET is the GH Actions cron (offset minute — see daily.yml). The
-    # margin must absorb BOTH GitHub's cron jitter (observed 30min-4h on
-    # this repo) AND the evening liveness auto-recovery dispatch (~7:30 PM ET)
-    # — so this alert means "the cron AND the fallback both failed", not noise.
-    # (The old 30-min margin was built for Task Scheduler punctuality and
-    # false-alarmed the first GH-jitter morning, 2026-06-12.)
+    # margin must absorb BOTH GitHub's cron jitter (observed 30min-4.5h on this
+    # repo) AND the WHOLE evening liveness backstop, whose last auto-recovery
+    # tick is ~10:30 PM ET (liveness.yml) and can dispatch a fire that checks
+    # in ~10:45 PM ET. With a tight 95-min margin (→7:42 PM ET) a perfectly
+    # healthy fire that the backstop recovered at 9–10 PM still tripped a false
+    # "missed check-in" — that is the recurring HILMAR-DAILY-TRACKER-9 noise.
+    # 290 min (18:07 → ~10:57 PM ET) means the alert fires ONLY when the 6 PM
+    # cron AND every liveness recovery failed — a true "pipeline never ran
+    # today", which is exactly when a page is warranted (2026-06-16).
     "schedule": {"type": "crontab", "value": "7 18 * * 1-5"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
-    "checkin_margin": 95,    # alert ~7:42 PM ET — after the ~7:30 PM recovery window
+    "checkin_margin": 290,   # alert ~10:57 PM ET — only after the full backstop fails
     "max_runtime": 60,       # alert if pipeline runs >60 min (typical = 30-60s, lots of headroom)
     "failure_issue_threshold": 1,   # 1 missed/failed run = create issue immediately
     "recovery_threshold": 1,        # 1 successful run = resolve the issue
