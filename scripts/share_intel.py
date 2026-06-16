@@ -289,10 +289,8 @@ def _build_carrier_summary(rows: list[dict]) -> dict:
             # ol_rate is occasionally a non-numeric string ("Not Quoted") on
             # rows where the rate never resolved — coerce when possible, skip
             # otherwise (was crashing the best-effort share step, 2026-06-16).
-            try:
+            with contextlib.suppress(ValueError, TypeError):
                 b["rates"].append(float(str(_rate).replace("$", "").replace(",", "").strip()))
-            except (ValueError, TypeError):
-                pass
         td = _transit_days(r)
         if td is not None:
             b["transit_days"].append(td)
