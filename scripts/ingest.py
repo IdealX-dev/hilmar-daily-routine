@@ -267,6 +267,34 @@ def guess_teu_from_preview(preview: str | None) -> tuple[int, int, str | None]:
     return count, teu, canonical
 
 
+# Hilmar origins that ARE the ocean load port (so POL = origin). Inland
+# origins (Dalhart, Hilmar CA, Chicago, Tulare, ...) load via a gateway
+# seaport we only know from the OL rate table, so we DON'T guess POL for them.
+_SEAPORT_ORIGINS = {
+    "oakland", "los angeles", "long beach", "seattle", "tacoma",
+    "portland", "houston", "lax",
+}
+
+
+def _derive_ports(origin: str | None, destination: str | None) -> tuple[str | None, str | None]:
+    """Baseline POL/POD from the lane endpoints (2026-06-17, QC-027 fix).
+
+    POD = destination — the overseas discharge port for every lane, always.
+    POL = origin ONLY when the origin is itself a seaport; inland origins
+    leave POL empty for the OL rate table to fill. This is the intake
+    baseline; OL's stated pol/pod override it at the rate-response step.
+    Not fabrication — for this client the lane endpoints ARE the ports.
+    """
+    pod = (destination or "").strip() or None
+    o = (origin or "").strip()
+    # Strip a trailing US state code ("Oakland, CA" / "Dalhart TX") — require a
+    # comma OR whitespace before an UPPERCASE 2-letter code so we don't chop the
+    # last two letters off a plain city name ("Oakland" -> "Oakla").
+    base = re.sub(r"(?:,\s*|\s+)[A-Z]{2}$", "", o).strip().lower() if o else ""
+    pol = o if base in _SEAPORT_ORIGINS else None
+    return pol, pod
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Build requests from Lonny outbound
 # ─────────────────────────────────────────────────────────────────────
@@ -301,6 +329,7 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             continue
         destination = title_case_destination(destination)
         count, teu, containers = guess_teu_from_preview(preview)
+        _pol, _pod = _derive_ports(origin, destination)
 
         eta_requested = parsed.get("eta_requested")
         conv_id = row.get("conversation_id")  # attached by main() if body fetched
@@ -321,6 +350,8 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             "request_date": sent_dt.date().isoformat() if sent_dt else None,
             "lonny_time_pt": C.fmt_pt(sent_dt) if sent_dt else None,
             "subject": subject,
+            "pol": _pol,
+            "pod": _pod,
             "containers": containers or preview or None,
             "container_count": count,
             "teu_requested": teu,
@@ -795,6 +826,8 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             "request_date": bk_ts.date().isoformat() if bk_ts else None,
             "lonny_time_pt": None,
             "subject": bk.get("subject"),
+            "pol": s_bp.get("pol") or _derive_ports(s_origin, s_dest)[0],
+            "pod": s_bp.get("pod") or _derive_ports(s_origin, s_dest)[1],
             "containers": s_containers,
             "container_count": s_count,
             "teu_requested": s_teu,
@@ -969,6 +1002,11 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
         best["eta_offered"] = rt.get("eta") or parsed.get("eta_offered")
         best["vessel_voyage"] = rt.get("vessel_voyage") or parsed.get("vessel_voyage")
         best["transshipment"] = rt.get("transshipment") or parsed.get("transshipment")
+        # POL/POD: OL's stated ports win; fall back to the lane-derived
+        # baseline set at build time (POD=destination, POL=seaport origin).
+        _dpol, _dpod = _derive_ports(best.get("origin"), best.get("destination"))
+        best["pol"] = rt.get("pol") or best.get("pol") or _dpol
+        best["pod"] = rt.get("pod") or best.get("pod") or _dpod
         # 2026-05-19 parser-gap fix: pull the 4 newly-exposed fields from
         # the rate-table OR parsed.* (parsed bubbles them up in fetch_bodies).
         best["rate_expiry"]       = rt.get("rate_expiry") or parsed.get("rate_expiry")

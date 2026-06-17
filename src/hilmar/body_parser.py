@@ -767,6 +767,9 @@ def _find_carrier(text):
 _TABLE_LABELS = {
     # Label string (case-insensitive) → canonical key
     "POL": "pol", "POD": "pod", "CONTAINER SIZE": "container_size",
+    # POL/POD column aliases — OL relabels these across templates (2026-06-17).
+    "PORT OF LOADING": "pol", "LOAD PORT": "pol", "LOADING PORT": "pol", "ORIGIN PORT": "pol",
+    "PORT OF DISCHARGE": "pod", "DISCHARGE PORT": "pod", "DESTINATION PORT": "pod", "DEST PORT": "pod",
     "VESSEL": "vessel", "VOYAGE": "voyage",
     "ERD": "erd", "DOC CUT": "doc_cut", "PORT CUT": "port_cut",
     "RAIL CUT": "rail_cut", "ETD": "etd", "ETA": "eta",

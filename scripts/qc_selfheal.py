@@ -2425,6 +2425,26 @@ def phase_6_rules(log: Log, data: dict):
     try:
         _active = [r for r in requests if r.get("status") in ("WIN", "LOSS", "PENDING")
                    and r.get("response_timestamp")]
+        # SELF-HEAL (2026-06-17): POL/POD were measured but never healed, so
+        # QC-027 fired ERROR every day with nothing fixing it. POD is always
+        # the destination (the ocean discharge port); POL is the origin when
+        # it's a seaport. Derive any missing ones from the lane before
+        # measuring — the intake fix (ingest._derive_ports) covers new rows;
+        # this covers rows already in tracking-data from before that landed.
+        try:
+            from ingest import _derive_ports as _dports
+            _healed_ports = 0
+            for r in _active:
+                if not r.get("pol") or not r.get("pod"):
+                    _p, _d = _dports(r.get("origin"), r.get("destination"))
+                    if _p and not r.get("pol"):
+                        r["pol"] = _p; _healed_ports += 1
+                    if _d and not r.get("pod"):
+                        r["pod"] = _d; _healed_ports += 1
+            if _healed_ports:
+                log.fix(f"QC-027: derived {_healed_ports} missing POL/POD value(s) from lane endpoints")
+        except Exception as _e:
+            log.warn(f"QC-027: POL/POD self-heal skipped: {_e}")
         # A row is "reachable" if at least one of its source_imids points
         # to an mbd_rate_response body. We approximate by checking that
         # the row has ETD or vessel populated — if patch_carriers' two
