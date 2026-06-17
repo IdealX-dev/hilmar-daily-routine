@@ -80,6 +80,11 @@ on:
         options:
           - test              # michael.deitchman@idealx.us only — safe default
           - full              # the 10-recipient client distribution
+      force_resend:
+        description: "Override today's already-sent flag (re-send even if the daily email already went out). Manual dispatch ONLY — scheduled fires never force."
+        required: false
+        default: false
+        type: boolean
 
 # Serialize Daily runs so the multiple morning ticks (and any manual
 # dispatch) can't run concurrently and race the blob state push/pull.
@@ -206,6 +211,13 @@ jobs:
       # Scheduled fires are always the real thing; dispatches honor send_to
       # (default test — Michael only).
       SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
+      # Operator override for the per-day idempotency flag. ONLY a manual
+      # dispatch can set it (scheduled fires can't pass inputs, so this is
+      # always empty on a schedule → a scheduled fire NEVER force-sends and
+      # can never double-send the client list). Use when a stale/earlier flag
+      # is wrongly suppressing today's real send (e.g. the 2026-06-16 mid-day
+      # cutover hangover).
+      FORCE_RESEND: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_resend || 'false' }}
       # Never let a failed silent refresh fall into the interactive
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
@@ -301,13 +313,23 @@ jobs:
         # state — a test must never block or unblock the real send.
         run: |
           if [ "$SEND_TO" = "full" ]; then
+            # FORCE_RESEND=true (manual dispatch only) overrides the per-day
+            # already-sent flag. We use --force (NOT --no-flag) so the send is
+            # still recorded — a later un-forced run won't re-send again. This
+            # is the recovery lever for a stale/earlier flag wrongly suppressing
+            # today's real send.
+            FORCE_FLAG=""
+            if [ "$FORCE_RESEND" = "true" ]; then
+              FORCE_FLAG="--force"
+              echo "⚠️  FORCE_RESEND=true — overriding today's already-sent idempotency flag"
+            fi
             echo "FULL distribution send (config.json distribution.full_list)"
-            python3 scripts/outlook_send.py daily --to-from-config \
+            python3 scripts/outlook_send.py daily --to-from-config $FORCE_FLAG \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
               --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
             python3 scripts/gen_improvements_report.py
-            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us $FORCE_FLAG \
               --subject-from-file reports/improvements-subject.txt \
               --body-from-file reports/improvements-report.html
           else
