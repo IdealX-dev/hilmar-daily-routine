@@ -273,6 +273,12 @@ def main():
             cron_id = _sentry.start_cron_checkin()
         except Exception:
             cron_id = None
+        # Force-align the live Sentry monitor's schedule to our config via the
+        # REST API — the check-in's monitor_config does NOT reliably update an
+        # existing monitor, which left it stuck on the old 10 AM schedule and
+        # paging 'missed check-in' daily (2026-06-17). Best-effort, never blocks.
+        with contextlib.suppress(Exception):
+            _sentry.ensure_monitor_schedule()
 
     # Sentry Release marker — create a release for this fire's git SHA.
     # Per Michael 2026-05-17 ("use sentry for self check and improvements

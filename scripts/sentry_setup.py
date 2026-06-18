@@ -355,6 +355,54 @@ _MONITOR_CONFIG = {
 }
 
 
+def _monitor_config_rest() -> dict:
+    """``_MONITOR_CONFIG`` translated to the Sentry REST-API monitor shape.
+
+    The SDK ``monitor_config`` nests the schedule as ``{"type", "value"}``;
+    the REST monitor API wants a flat ``schedule`` string + ``schedule_type``.
+    Keep both in sync from the one source of truth above.
+    """
+    sch = _MONITOR_CONFIG["schedule"]
+    return {
+        "schedule_type": "crontab",
+        "schedule": sch["value"] if isinstance(sch, dict) else sch,
+        "timezone": _MONITOR_CONFIG.get("timezone", "UTC"),
+        "checkin_margin": _MONITOR_CONFIG.get("checkin_margin"),
+        "max_runtime": _MONITOR_CONFIG.get("max_runtime"),
+        "failure_issue_threshold": _MONITOR_CONFIG.get("failure_issue_threshold", 1),
+        "recovery_threshold": _MONITOR_CONFIG.get("recovery_threshold", 1),
+    }
+
+
+def ensure_monitor_schedule() -> bool:
+    """Force-align the LIVE Sentry monitor to ``_MONITOR_CONFIG`` via the REST
+    API (auth-token path), independent of the SDK check-in upsert.
+
+    Why this exists: the check-in's ``monitor_config`` does NOT reliably update
+    an existing monitor's schedule. On 2026-06-17 the monitor was still pinned
+    to the old 10 AM ET / 95-min config while the code had moved to 6 PM ET /
+    290, so Sentry paged 'missed check-in' every day at 11:42 AM ET (= 10:07 +
+    95). Run once per fire — cheap, idempotent, and self-heals any drift.
+    Best-effort: never raises, never blocks the pipeline.
+    """
+    try:
+        from sentry_api import SentryAPI
+        api = SentryAPI()
+        if not api.enabled:
+            return False
+        ok = api.update_monitor(MONITOR_SLUG, _monitor_config_rest())
+        if ok:
+            print(f"✅ Sentry monitor '{MONITOR_SLUG}' schedule aligned "
+                  f"({_monitor_config_rest()['schedule']} "
+                  f"{_monitor_config_rest()['timezone']}, "
+                  f"margin {_monitor_config_rest()['checkin_margin']}m)")
+        return ok
+    except Exception as _e:
+        with contextlib.suppress(Exception):
+            print(f"⚠️  ensure_monitor_schedule failed (non-fatal): {_e}")
+        return False
+
+
 def start_cron_checkin() -> str | None:
     """Mark the start of a pipeline run. Returns the check_in_id for
     pairing with the finishing call. Returns None if Sentry not initialized
