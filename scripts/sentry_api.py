@@ -124,6 +124,35 @@ class SentryAPI:
             return None
 
     # ─────────────────────────────────────────────────────────────────
+    # Cron monitors
+    # ─────────────────────────────────────────────────────────────────
+
+    def update_monitor(self, slug: str, config: dict, *,
+                       name: str | None = None, project: str | None = None) -> bool:
+        """Create-or-update a cron monitor's schedule via the REST API.
+
+        The SDK check-in upsert (sentry_sdk.crons.capture_checkin with
+        monitor_config) does NOT reliably update an EXISTING monitor's
+        schedule — on 2026-06-17 the live monitor was stuck at the old
+        10 AM/95-min config while the code had moved to 6 PM/290, so it paged
+        'missed check-in' daily. This auth-token REST path is authoritative:
+        PUT updates an existing monitor; if it 404s, POST creates it. `config`
+        is the REST-shape monitor config (schedule_type + schedule string +
+        checkin_margin + ...). Returns True on success. Never raises.
+        """
+        body = {
+            "name": name or slug,
+            "slug": slug,
+            "type": "cron_job",
+            "project": project or self.project,
+            "config": config,
+        }
+        res = self._request("PUT", f"/organizations/{self.org}/monitors/{slug}/", json=body)
+        if res is None:
+            res = self._request("POST", f"/organizations/{self.org}/monitors/", json=body)
+        return res is not None
+
+    # ─────────────────────────────────────────────────────────────────
     # Issues
     # ─────────────────────────────────────────────────────────────────
 

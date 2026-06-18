@@ -1024,10 +1024,24 @@ def parse_rate_table(text: str) -> dict:
     ):
         if cells.get(k_in):
             out[k_out] = cells[k_in]
-    for k in ("transshipment", "container_size", "pol", "pod", "dthc"):
+    for k in ("transshipment", "container_size", "dthc"):
         v = cells.get(k)
         if v:
             out[k] = v
+    # POL/POD — OL labels these "Port of Loading"/"Port of Discharge"/
+    # "Load Port"/"Origin Port" etc. across templates, not always "POL"/"POD".
+    # Pick the first populated alias so a relabeled schedule still fills them
+    # (2026-06-17: POL/POD completeness sat at 87% — QC-027 ERROR).
+    _pol = next((cells[k] for k in
+        ("pol", "port_of_loading", "load_port", "loading_port", "origin_port", "pol_port")
+        if cells.get(k)), None)
+    if _pol:
+        out["pol"] = _pol
+    _pod = next((cells[k] for k in
+        ("pod", "port_of_discharge", "discharge_port", "destination_port", "dest_port", "pod_port")
+        if cells.get(k)), None)
+    if _pod:
+        out["pod"] = _pod
     # 2026-05-19 parser-gap fix: surface free-time + rate-expiry from the
     # table cells. Header normalization via _norm_header() lowercases +
     # replaces non-alnum with underscores, so:
