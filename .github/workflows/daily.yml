@@ -43,18 +43,14 @@ name: Daily
 #      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
 
 on:
-  schedule:
-    # The Cloud PC trigger (deploy/trigger_github_fire.cmd) is the PUNCTUAL
-    # primary — it dispatches the fire on time at 6 PM ET. These scheduled
-    # crons are now just a BACKSTOP for when the Cloud PC is down, so we keep
-    # ONE per DST season instead of the old 3-per-season multi-tick (which had
-    # all 3 ticks pass the gate and each run the FULL pipeline — ~3x wasted
-    # compute/day; the only thing that made it "safe" was the no-op send guard).
-    # liveness.yml is the second backstop (auto-recovers if no heartbeat by
-    # 7 PM ET). The `gate` job accepts the tick whose HOUR matches 6 PM ET for
-    # the current DST offset (22 UTC in EDT, 23 in EST) and skips the other.
-    - cron: "7 22 * * 1-5"    # ~6:07 PM EDT (backstop; Cloud PC is primary)
-    - cron: "7 23 * * 1-5"    # ~6:07 PM EST (gated out in EDT)
+  # ONCE A DAY, right at report time. No GitHub schedule: GitHub's cron is
+  # hours-unreliable for this repo, and the Cloud PC trigger
+  # (deploy/trigger_github_fire.cmd) already dispatches this workflow PUNCTUALLY
+  # at 6 PM ET — that single dispatch is the daily fire. liveness.yml is the
+  # backstop (auto-dispatches if no success heartbeat lands by ~7:30 PM ET), so
+  # a down Cloud PC still gets exactly one fire. (Scheduled crons removed
+  # 2026-06-19 — they were a redundant second run/day; Michael: "once a day,
+  # right before report run, it's all you need".)
   workflow_dispatch:
     inputs:
       mode:
@@ -126,7 +122,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: gate
-    if: needs.gate.outputs.proceed == 'true'
+    # Only for an explicit audit-only dispatch. A production fire does NOT run
+    # this — the pipeline already runs the same test+coverage routine internally
+    # (QC-052 via run_audit_tests), so a separate audit job here just doubled
+    # the test-suite compute on every fire (2026-06-19 trim).
+    if: needs.gate.outputs.proceed == 'true' && github.event.inputs.mode == 'audit-only'
     steps:
       - uses: actions/checkout@v5
 
@@ -175,15 +175,17 @@ jobs:
 
   production-fire:
     name: Production fire
-    # Runs on manual dispatch (mode=production-fire), or on schedule once the
-    # HILMAR_FIRE_FROM_ACTIONS repo variable is 'true' (the cutover switch).
+    # The daily fire. Dispatched once a day at 6 PM ET by the Cloud PC trigger
+    # (deploy/trigger_github_fire.cmd) with mode=production-fire, and by
+    # liveness.yml's auto-recovery if that fire is missing.
     if: >-
       needs.gate.outputs.proceed == 'true' &&
-      ((github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'production-fire') ||
-       (github.event_name == 'schedule' && vars.HILMAR_FIRE_FROM_ACTIONS == 'true'))
+      github.event.inputs.mode == 'production-fire'
     runs-on: ubuntu-latest
     timeout-minutes: 50
-    needs: [gate, audit]
+    # Depends on `gate` only — NOT the audit job (which is skipped for a fire),
+    # so production-fire runs without a duplicate test-suite job.
+    needs: [gate]
     permissions:
       contents: read
       actions: write     # to dispatch heartbeat.yml at end of a full fire
@@ -369,6 +371,8 @@ jobs:
           path: |
             reports/run-log.txt
             reports/qc-result.json
+            reports/test-result.json
+            reports/coverage.json
             reports/email-body.html
             reports/improvements-report.html
           retention-days: 14
