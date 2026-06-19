@@ -27,18 +27,14 @@ name: Liveness monitor
 
 on:
   schedule:
-    # The backstop must fire AFTER the 6 PM ET daily fire (2026-06-16 move),
-    # and must not share its single-point-of-failure: GitHub's scheduler is
-    # itself hours-late on this repo, so fire SEVERAL evening ticks — each one
-    # re-checks "did a fire happen today?" and dispatches production-fire if
-    # not. Re-runs are safe: the check is idempotent (skips once a heartbeat
-    # exists) and the fire's mailbox guard blocks any duplicate send.
-    # The later three ticks cross midnight UTC, so their day-of-week field is
-    # 2-6 (Tue-Sat UTC) to still land Mon-Fri ET.
+    # Backstop checks AFTER the 6 PM ET daily fire. Each re-checks "did a fire
+    # happen today?" and dispatches production-fire if not — idempotent (skips
+    # once a heartbeat exists) and the mailbox guard blocks any double-send.
+    # Two ticks is enough: an early one (~7:30 PM ET) right after the fire
+    # window, and a later one (~9:30 PM ET) to catch a multi-hour-late fire.
+    # (Trimmed from 4 ticks 2026-06-19 to cut Actions-minute churn.)
     - cron: "30 23 * * 1-5"   # ~7:30 PM EDT / 6:30 PM EST
-    - cron: "30 0 * * 2-6"    # ~8:30 PM EDT (next UTC day → dow 2-6)
-    - cron: "30 1 * * 2-6"    # ~9:30 PM EDT
-    - cron: "30 2 * * 2-6"    # ~10:30 PM EDT — catches a multi-hour-late evening fire
+    - cron: "30 1 * * 2-6"    # ~9:30 PM EDT (next UTC day → dow 2-6)
   workflow_dispatch:
 
 # Serialize so overlapping late ticks don't both dispatch; the heartbeat

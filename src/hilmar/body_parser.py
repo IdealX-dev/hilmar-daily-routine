@@ -27,21 +27,47 @@ from html.parser import HTMLParser
 
 # HTML -> text
 class _HTMLStripper(HTMLParser):
+    # Mirror of scripts/body_parser.py (2026-06-16): tables must survive as
+    # "cell | cell | …\n" rows. OL's rate tables render each cell as
+    # <td><p><span>value</span></p></td> with the source pretty-printed
+    # (newlines between tags), which split every cell onto its own line and
+    # made the rate table unparseable → quotes silently dropped Not Quoted.
     def __init__(self):
         super().__init__()
         self.parts: list[str] = []
         self._skip = 0
+        self._in_cell = 0
+        self._in_table = 0
     def handle_starttag(self, tag, attrs):
         if tag in ("style", "script"):
             self._skip += 1
+        elif tag == "table":
+            self._in_table += 1
+        elif tag in ("td", "th"):
+            self._in_cell += 1
     def handle_endtag(self, tag):
-        if tag in ("style", "script") and self._skip:
-            self._skip -= 1
-        if tag in ("p", "br", "div", "tr", "li"):
+        if tag in ("style", "script"):
+            if self._skip:
+                self._skip -= 1
+            return
+        if tag == "table":
+            if self._in_table:
+                self._in_table -= 1
             self.parts.append("\n")
+        elif tag in ("td", "th"):
+            if self._in_cell:
+                self._in_cell -= 1
+            self.parts.append(" | ")
+        elif tag == "tr":
+            self.parts.append("\n")
+        elif tag in ("p", "br", "div", "li"):
+            self.parts.append(" " if self._in_table else "\n")
     def handle_data(self, data):
-        if not self._skip:
-            self.parts.append(data)
+        if self._skip:
+            return
+        if self._in_table and data:
+            data = re.sub(r"\s+", " ", data)
+        self.parts.append(data)
 
 def html_to_text(html: str | None) -> str:
     if not html:

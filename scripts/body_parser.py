@@ -44,23 +44,51 @@ class _HTMLStripper(HTMLParser):
         super().__init__()
         self.parts: list[str] = []
         self._skip = 0
+        self._in_cell = 0
+        self._in_table = 0
     def handle_starttag(self, tag, attrs):
         if tag in ("style", "script"):
             self._skip += 1
+        elif tag == "table":
+            self._in_table += 1
+        elif tag in ("td", "th"):
+            self._in_cell += 1
     def handle_endtag(self, tag):
-        if tag in ("style", "script") and self._skip:
-            self._skip -= 1
-        if tag in ("p", "br", "div", "tr", "li"):
+        if tag in ("style", "script"):
+            if self._skip:
+                self._skip -= 1
+            return
+        # Table structure must survive html_to_text as "cell | cell | …\n"
+        # rows. OL's rate tables render each cell as <td><p><span>value</span>
+        # </p></td> AND pretty-print the source with newlines BETWEEN tags, so
+        # every cell used to land on its own line (value, blank, " | ") and the
+        # table parser saw no row → the whole quote was silently dropped
+        # (2026-06-16 Oakland→Yokohama reported Not Quoted though OL quoted
+        # $3076/CMA). Inside a table: the only row break is </tr>; cell breaks
+        # are " | "; inner block tags and source whitespace become spaces.
+        if tag == "table":
+            if self._in_table:
+                self._in_table -= 1
             self.parts.append("\n")
-        # Insert column separator at end of every cell so adjacent <td>HMM RUBY</td>
-        # <td>0012W</td> doesn't smash into "HMM RUBY0012W" (which broke parse_vessel).
-        # Michael 2026-04-30 — vessel coverage 0/97 is the symptom. Pipe is unambiguous
-        # and survives the whitespace collapse below.
-        if tag in ("td", "th"):
+        elif tag in ("td", "th"):
+            if self._in_cell:
+                self._in_cell -= 1
             self.parts.append(" | ")
+        elif tag == "tr":
+            self.parts.append("\n")
+        elif tag in ("p", "br", "div", "li"):
+            # Inside a table a block break is a SPACE (keep the row intact);
+            # outside, it's a newline as before.
+            self.parts.append(" " if self._in_table else "\n")
     def handle_data(self, data):
-        if not self._skip:
-            self.parts.append(data)
+        if self._skip:
+            return
+        # Inside a table, collapse ALL whitespace (incl. the source's
+        # inter-tag newlines) to single spaces so a cell value can't be split
+        # across lines; row/cell structure comes from </tr> and </td> above.
+        if self._in_table and data:
+            data = re.sub(r"\s+", " ", data)
+        self.parts.append(data)
 
 _CAUTION_BANNER_RX = re.compile(
     r"CAUTION:\s*THIS EMAIL ORIGINATED FROM OUTSIDE OF OUR COMPANY\.?"
