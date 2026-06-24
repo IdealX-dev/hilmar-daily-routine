@@ -52,6 +52,16 @@ STEPS = [
     # OBSERVER step — run_audit_tests.py always exits 0 so a failing test
     # never blocks the client email; QC-052 + the audit decide severity.
     ("Test + coverage routine",  [PY, str(SCRIPTS / "run_audit_tests.py"), "--quiet"]),
+    # 2026-06-24: re-parse the CACHED bodies with the current body_parser
+    # BEFORE ingest. refresh_stage parses each email once at fetch time and
+    # caches it; ingest consumes that cache, so a parser fix would otherwise
+    # only reach newly-fetched mail and the back-catalog in the window would
+    # stay stale until a manual reprocess. Running it here makes every parser
+    # improvement self-apply to the whole window each fire (no manual
+    # re-ingest, ever). Idempotent + atomic; best-effort (a failure falls back
+    # to the existing cache and is caught by QC-059). The "break in data flow"
+    # Michael named: upstream raw body fine, downstream parse stale → backfill.
+    ("Parser backfill (reprocess cache)", [PY, str(SCRIPTS / "reprocess_bodies.py")]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
     # 2026-05-06: drift_check wired in per orchestrator.md step 3.5. Runs
     # BEFORE QC. 6 phases: imid uniqueness, matcher quality, quote-rate
@@ -132,6 +142,7 @@ SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
 # the audit email, AND backup_offline from running. A downstream-bonus step
 # must never gate the upstream client deliverable.
 BEST_EFFORT_STEPS = {
+    "Parser backfill (reprocess cache)",  # cache refresh; on failure ingest uses existing cache, QC-059 catches drift
     "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email

@@ -2914,6 +2914,44 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-058: check failed with exception: {_e}")
 
+    # QC-059: DATA-FLOW INTEGRITY — the cached parse matches the CURRENT parser.
+    # Michael 2026-06-24: "the system should check for breaks in data flow then
+    # backfill as quality control." refresh_stage parses each email once at
+    # fetch time and caches it; ingest consumes that cache. So after a
+    # body_parser fix the back-catalog already in the window stays stale until
+    # its cache is refreshed — a real break (upstream raw body fine, downstream
+    # parse stale) that used to need a manual reprocess. The pipeline now runs
+    # reprocess_bodies BEFORE ingest to self-heal this every fire; THIS check is
+    # the guard that the backfill actually happened: it re-parses the cache and
+    # compares to what's stored. changed==0 → integrity verified. changed>0 →
+    # the pre-ingest backfill didn't run (or a parser change landed after it),
+    # so SELF-HEAL by backfilling now (takes effect next fire) and WARN with
+    # what was stale. Never ERROR — a stale cache degrades fields, it doesn't
+    # lose live data (tracking-data rebuilds from Outlook each fire).
+    try:
+        import reprocess_bodies as _rp
+        _drift = _rp.reprocess(write=False)
+        if not _drift.get("present"):
+            log.ok("QC-059: skipped — no cached bodies present (ephemeral runner / pre-fetch)")
+        elif _drift.get("changed", 0) == 0:
+            log.ok(f"QC-059: data-flow integrity verified — all {_drift['total']} "
+                   f"cached parses match the current parser")
+        else:
+            _healed = _rp.reprocess(write=True)
+            _bits = ", ".join(
+                f"{k.replace('delta_', '+')}={_drift[k]}"
+                for k in ("delta_carrier", "delta_rate", "delta_dest",
+                          "delta_signer", "delta_vessel") if _drift.get(k))
+            log.fix(f"QC-059: backfilled {_healed.get('changed', _drift['changed'])} "
+                    f"stale parse(s) [{_bits or 'fields changed'}] — the pre-ingest "
+                    f"reprocess step did not keep the cache fresh this fire")
+            log.warn(f"QC-059: {_drift['changed']}/{_drift['total']} cached parses were "
+                     f"STALE vs the current parser (data-flow break) — backfilled now; "
+                     f"re-ingest to surface them this report, else they land next fire. "
+                     f"Check the 'Parser backfill (reprocess cache)' pipeline step.")
+    except Exception as _e:
+        log.warn(f"QC-059: check failed with exception: {_e}")
+
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
     # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate

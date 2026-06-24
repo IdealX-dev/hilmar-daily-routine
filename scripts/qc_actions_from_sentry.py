@@ -202,6 +202,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "The durable Turso stats historian is configured but its newest write is >26h old — the daily 'Historian (finalized → Turso)' append likely failed. This does NOT affect the client report (the historian is write-only analytics), so it never gates a fire. Check: the historian step's exit in run-log.txt, secrets/historian-turso.txt (URL+token), and that libsql is installed on the fire host. Stats accuracy degrades while stale but no live data is lost (tracking-data is rebuilt from Outlook each fire).",
         "auto_resolve_safe": False,
     },
+    "QC-059": {
+        "name": "Data-flow break — cached parse stale vs current parser",
+        "action": "flag_for_operator",
+        "comment": "Cached email parses no longer match what the current body_parser produces — a parser fix did not reach the back-catalog already in the window. QC-059 already SELF-HEALED (backfilled the stale parses), so this is informational: it means the pre-ingest 'Parser backfill (reprocess cache)' step did not run or failed this fire (the back-stop caught it). The backfilled fields land on the NEXT fire automatically; to surface them in TODAY's report, re-run ingest. Check that the reprocess step is wired + exited 0 in run-log.txt. No live data is lost — tracking-data rebuilds from Outlook each fire.",
+        "auto_resolve_safe": False,
+    },
     "cron.missed_checkin": {
         "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
         "action": "resolve_if_post_fix",

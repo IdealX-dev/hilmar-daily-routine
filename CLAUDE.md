@@ -152,6 +152,7 @@ a Sentry Cron heartbeat + per-step Performance spans.
 
 ```
 1. backup.py                       Snapshot tracking-data-v2.json → data-backups/
+1b. reprocess_bodies.py            Re-parse CACHED bodies with current body_parser BEFORE ingest, so a parser fix self-applies to the whole window (no manual re-ingest). Atomic + best-effort; verified by QC-059.
 2. ingest.py                       Staged emails → request rows
 3. drift_check.py --auto-heal      6-phase integrity gate (FAILs at <80% quote-rate)
 4. qc_selfheal.py (pre-patch)      QC before enrichment; Sentry-suppressed
