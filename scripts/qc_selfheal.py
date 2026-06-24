@@ -402,6 +402,51 @@ def _load_bodies_index() -> dict:
     return out
 
 
+def _intake_reconciliation(stage_rows, bodies):
+    """Reconcile staged Lonny RFQs against ingest's OWN drop conditions.
+
+    ingest.build_requests silently drops any lonny_outbound email whose
+    subject (and body) yields no parseable destination — the condition at
+    ``if not destination: skipped_ops += 1; continue`` — incrementing a
+    counter it never logs or returns. A genuine rate request can therefore
+    vanish from the report with no alarm (the 2026-06-24 "Busan Korea from
+    Dalhart" miss that hid for a week).
+
+    Returns ``(expected, dropped)`` where ``expected`` is the count of
+    lonny_outbound emails that are genuine rate asks (not operational, not
+    out-of-scope) and ``dropped`` lists the subjects of those ingest would
+    drop for lack of a destination. Reuses ingest's own
+    out_of_scope_reason / is_operational_subject / clean_destination so this
+    guard and the intake can never drift (QC-040 spirit).
+    """
+    import ingest
+
+    bodies = bodies or {}
+    expected, dropped = 0, []
+    for r in stage_rows or []:
+        if r.get("bucket") != "lonny_outbound":
+            continue
+        subj = r.get("subject") or ""
+        body = bodies.get(r.get("imid")) or {}
+        # Same two upstream filters ingest applies before build_requests.
+        if ingest.out_of_scope_reason({
+            "subject": subj,
+            "summary_preview": r.get("summary_preview"),
+            "text_body": body.get("text_body"),
+        }):
+            continue
+        if ingest.is_operational_subject(subj):
+            continue
+        expected += 1
+        # Exact destination resolution from ingest.build_requests:
+        #   destination = clean_destination(subject) or parsed.destination
+        parsed = body.get("parsed") or {}
+        dest = ingest.clean_destination(subj) or parsed.get("destination")
+        if not dest:
+            dropped.append(subj.strip()[:80] or "(no subject)")
+    return expected, dropped
+
+
 def phase_3_entries(log: Log, data: dict):
     log.section("PHASE 3: ENTRY-LEVEL HEALING")
     # Cleanup pass: drop stand_* WINs that don't have HILMAR in subject.
@@ -2801,6 +2846,44 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-056: healed {len(_healed)} rate-without-carrier row(s); none stuck")
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
+
+    # QC-057: INTAKE RECONCILIATION — a staged Lonny RFQ silently dropped.
+    # Root cause this guards: ingest.build_requests skips any lonny_outbound
+    # email whose subject (and body) yields no parseable destination
+    # ("if not destination: skipped_ops += 1; continue"), bumping a counter it
+    # never logs or returns — so a REAL rate request can vanish from the
+    # report with NO alarm. This is the exact 2026-06-24 "Busan Korea from
+    # Dalhart" miss that hid for a week (PR #57 fixed that subject; this guard
+    # catches the NEXT novel one). _intake_reconciliation reuses ingest's own
+    # clean_destination / is_operational_subject / out_of_scope_reason so the
+    # guard and the intake can never drift. SELF-HEAL: none possible
+    # automatically — you cannot invent a lane; the root fix is always a
+    # parser extension, so the dropped subjects are surfaced for the operator
+    # (route: flag_for_operator). WARN for 1-2 (one novel subject must not
+    # block the whole client report), ERROR at >=3 (systemic parser breakage).
+    try:
+        import ingest as _ingest
+        if not _ingest.STAGE_PATH.exists():
+            log.ok("QC-057: skipped — no staged emails present (ephemeral runner / pre-ingest)")
+        else:
+            _expected, _dropped = _intake_reconciliation(
+                _ingest.load_stage(), _ingest.load_bodies_index())
+            if not _dropped:
+                log.ok(f"QC-057: intake reconciled — all {_expected} staged Lonny "
+                       f"RFQ(s) resolved a destination")
+            else:
+                _n = len(_dropped)
+                _lst = "; ".join(_dropped[:5]) + (f" + {_n-5} more" if _n > 5 else "")
+                _m = (f"QC-057: {_n}/{_expected} staged Lonny RFQ(s) SILENTLY DROPPED by "
+                      f"ingest — subject+body yield no destination (not ops, not "
+                      f"out-of-scope), so a real rate request is missing from the report. "
+                      f"Extend body_parser.parse_subject_lane for: {_lst}")
+                if _n >= 3:
+                    log.error(_m + "  [>=3 -> systemic parser breakage]")
+                else:
+                    log.warn(_m)
+    except Exception as _e:
+        log.warn(f"QC-057: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

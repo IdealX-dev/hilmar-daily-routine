@@ -295,8 +295,38 @@ def _rotate_stage(days_to_keep: int, dry: bool = False) -> dict:
     return out
 
 
-def search_messages(token: str, kql: str, max_results: int = 250) -> list[dict]:
-    """Run a $search query against /me/messages, paginate through nextLink."""
+def _warn_search_cap(kql: str, got: int, cap: int) -> None:
+    """A $search query hit the result cap with MORE messages available.
+
+    This matters because Graph KQL $search ranks by RELEVANCE, not date, and
+    $search CANNOT be combined with $orderby (Graph rejects the request), so
+    we can't force newest-first. A cap-hit therefore drops an ARBITRARY tail —
+    possibly recent mail — silently. Make it LOUD: stderr (captured in the
+    fire's run-log) + a best-effort Sentry message so it surfaces in the audit
+    rather than vanishing. Mitigation when this fires: re-run with a tighter
+    --since (narrower window => fewer matches) or a higher --max-results-per-query.
+    """
+    msg = (f"refresh_stage: WARNING — $search hit the {cap}-result cap with more "
+           f"available for query [{kql[:80]}]; relevance-ranked truncation may have "
+           f"dropped recent messages. Narrow --since or raise --max-results-per-query.")
+    print(msg, file=sys.stderr)
+    print(f"::warning::{msg}")  # GitHub Actions annotation when run there
+    with contextlib.suppress(Exception):
+        import sentry_setup  # best-effort; no-op if SDK/DSN absent
+        sentry_setup.init("refresh_stage")
+        import sentry_sdk
+        sentry_sdk.capture_message(msg, level="warning")
+
+
+def search_messages(token: str, kql: str, max_results: int = 500) -> list[dict]:
+    """Run a $search query against /me/messages, paginate through nextLink.
+
+    Cap raised 250->500 (2026-06-24): the cap only ever bounds work when a
+    query matches more than `max_results` in the window (the loop stops at the
+    last nextLink otherwise), so the higher ceiling is free headroom against a
+    silent truncation. If the cap IS hit with more available, _warn_search_cap
+    makes it visible — see that function for why $orderby can't fix this.
+    """
     url: str | None = f"{_mailbox_base}/messages"
     # Graph requires the $search value to be a quoted string.
     params: dict | None = {
@@ -305,14 +335,20 @@ def search_messages(token: str, kql: str, max_results: int = 250) -> list[dict]:
         "$select": GRAPH_SELECT,
     }
     out: list[dict] = []
+    truncated = False
     while url and len(out) < max_results:
         data = graph_get(token, url, params=params)
         for item in data.get("value", []):
-            out.append(item)
             if len(out) >= max_results:
+                truncated = True   # this page held more than the cap allows
                 break
+            out.append(item)
         url = data.get("@odata.nextLink")
         params = None  # nextLink already carries the query string
+        if len(out) >= max_results and url:
+            truncated = True       # cap reached and Graph still has more pages
+    if truncated:
+        _warn_search_cap(kql, len(out), max_results)
     return out
 
 
@@ -536,8 +572,9 @@ def main() -> int:
                          "best-practices batch. Recommended: 90.")
     ap.add_argument("--pdf-backfill", action="store_true",
                     help="Also fetch PDF attachments for existing mbd_inbound bodies that don't have them on disk yet (one-time catch-up).")
-    ap.add_argument("--max-results-per-query", type=int, default=250,
-                    help="Cap results per search query (default 250)")
+    ap.add_argument("--max-results-per-query", type=int, default=500,
+                    help="Cap results per search query (default 500); a cap-hit "
+                         "with more available emits a loud WARN + Sentry event")
     args = ap.parse_args()
 
     if args.since:
