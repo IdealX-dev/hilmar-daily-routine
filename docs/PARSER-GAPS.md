@@ -161,6 +161,44 @@ the legitimate sparse-source fields above.
    fails. Use `parser_fallback.py` (already in src/hilmar/) to call
    Anthropic API for fuzzy thread-linking.
 
+## 2026-06-24 — OL prose quotes + "...DEST from ORIGIN" subjects
+
+Michael forwarded "RE: Updated Cheese Rates Busan Korea from Dalhart" and the
+report showed it as **lane unresolved / not quoted**. Two distinct root causes,
+both fixed in both parser trees (`scripts/` + `src/hilmar/`):
+
+1. **Subject lane `<DEST> <region> from <ORIGIN>`.** Lonny's RFQ subject was
+   "...Busan Korea from Dalhart", not "Oakland to Busan". `parse_subject_lane`
+   returned `(None, None)`, so `ingest.build_requests` **silently dropped the
+   request row** (it skips any row with no parseable destination). Added a
+   last-resort fallback: strip a trailing region word (Korea/China/…), take the
+   port before it as DEST and the token after "from" as ORIGIN, guarded by a
+   stopword list. → `("Dalhart", "Busan")`.
+
+2. **OL prose-format quotes.** OL sometimes quotes in free prose, not the
+   pipe/column grid:
+
+   ```
+   Please see able Hapag option from Houston port to Busan.
+   Houston to Busan _ 40' Reefer _ Chilled Cheese
+   Hapag: $2,275/40' reefer
+   4 equipment free days at Origin / 3 at destination / Direct service
+   ```
+
+   The **production `scripts/` `parse_rate_table` had no prose path at all**
+   (pure architectural drift — `src/hilmar/` had a partial one) and returned
+   `{}`, so the quote vanished. Added `parse_prose_rate()` (+ `_prose_lane()`)
+   to BOTH trees: carrier (normalized — bare "Hapag" token added → Hapag-Lloyd),
+   `$` rate (200–50k gate), POL/POD from the prose lane, container size, origin/
+   dest free time, Direct/`via` transshipment. `parse_rate_table` now routes
+   no-table text to it. Gated on a `$` rate so non-quote prose stays `{}`.
+
+End-to-end after the fix: the dropped row is built (`Dalhart → Busan`) and the
+prose quote flips it to quoted (Hapag-Lloyd / $2,275 / POL Houston / POD Busan).
+Locked by `tests/test_korea_prose_quote.py` (both trees). Re-ingest
+(`reprocess_bodies.py` + `ingest.py`) on the fire host re-parses the cached
+week with the new parser.
+
 ## How to test parser improvements safely
 
 For each new parser function:
