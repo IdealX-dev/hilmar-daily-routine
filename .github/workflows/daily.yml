@@ -43,14 +43,20 @@ name: Daily
 #      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
 
 on:
-  # ONCE A DAY, right at report time. No GitHub schedule: GitHub's cron is
-  # hours-unreliable for this repo, and the Cloud PC trigger
-  # (deploy/trigger_github_fire.cmd) already dispatches this workflow PUNCTUALLY
-  # at 6 PM ET — that single dispatch is the daily fire. liveness.yml is the
-  # backstop (auto-dispatches if no success heartbeat lands by ~7:30 PM ET), so
-  # a down Cloud PC still gets exactly one fire. (Scheduled crons removed
-  # 2026-06-19 — they were a redundant second run/day; Michael: "once a day,
-  # right before report run, it's all you need".)
+  # ONCE A DAY, right at report time (~6 PM ET). ONE GitHub cron per DST
+  # season is the RELIABLE trigger — it's runner-backed and doesn't depend on
+  # the Cloud PC. (Removing the schedule entirely on 2026-06-19 silently killed
+  # the daily fire for 4 weekdays: the Cloud PC dispatch + liveness were NOT
+  # actually firing, and the schedule was the only working trigger. Lesson:
+  # "once a day" needs one reliable trigger, not zero.) GitHub cron can land
+  # 2-4h late, which is fine for an EVENING fire (Lonny's PT day is already
+  # complete). liveness.yml remains the backstop; the Cloud PC trigger, if it
+  # ever fires, is de-duped by the same-day sent-flag (no double client email).
+  # The gate accepts the tick whose HOUR matches 6 PM ET for the current DST
+  # offset (22 UTC in EDT, 23 in EST) and skips the other, so DST never doubles.
+  schedule:
+    - cron: "7 22 * * 1-5"    # ~6:07 PM EDT
+    - cron: "7 23 * * 1-5"    # ~6:07 PM EST (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -175,12 +181,14 @@ jobs:
 
   production-fire:
     name: Production fire
-    # The daily fire. Dispatched once a day at 6 PM ET by the Cloud PC trigger
-    # (deploy/trigger_github_fire.cmd) with mode=production-fire, and by
-    # liveness.yml's auto-recovery if that fire is missing.
+    # The daily fire. Runs on the ~6 PM ET schedule (the reliable trigger), on a
+    # manual dispatch with mode=production-fire, and on liveness.yml's
+    # auto-recovery dispatch. A scheduled run always sends to the full list
+    # (SEND_TO below); the same-day sent-flag makes any overlap idempotent.
     if: >-
       needs.gate.outputs.proceed == 'true' &&
-      github.event.inputs.mode == 'production-fire'
+      (github.event_name == 'schedule' ||
+       github.event.inputs.mode == 'production-fire')
     runs-on: ubuntu-latest
     timeout-minutes: 50
     # Depends on `gate` only — NOT the audit job (which is skipped for a fire),
