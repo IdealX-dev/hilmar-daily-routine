@@ -100,6 +100,12 @@ STEPS = [
     # "the shared you are using" + "client intelligence is client intelligence
     # and should be all encompassing". No-op if APP_PASSWORD missing.
     ("Sync to ol-quote-tracker", [PY, str(SCRIPTS / "sync_to_quote_tracker.py")]),
+    # 2026-06-24: append finalized (terminal-state) rows to the durable Turso
+    # historian so longitudinal stats survive past the 14-day fetch window
+    # (Michael "i concur with building the data base for stats"). WRITE-ONLY
+    # from the pipeline — never read back as authority — so it can't drift the
+    # daily run. No-op (exit 0) when no Turso creds are configured.
+    ("Historian (finalized → Turso)", [PY, str(SCRIPTS / "historian.py")]),
     # 2026-05-21: "Reconcile with ol-quote-tracker" step removed. The cross-check
     # assumed ol-quote-tracker independently ingests Hilmar bookings — a live API
     # probe proved it does not (0 Hilmar rows of 24 total quotes; QT tracks a
@@ -132,6 +138,7 @@ BEST_EFFORT_STEPS = {
     "Share to client_intelligence",    # SHARED-folder export; no client impact
     "Rate intelligence",               # idealx.us-only cheat sheet; not in email
     "Sync to ol-quote-tracker",        # downstream registry push; no client impact
+    "Historian (finalized → Turso)",   # durable stats append; no client impact
 }
 
 

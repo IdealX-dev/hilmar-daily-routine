@@ -2885,6 +2885,35 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-057: check failed with exception: {_e}")
 
+    # QC-058: HISTORIAN FRESHNESS — the durable Turso stats store is being fed
+    # daily. Per CLAUDE.md §3 ("new API integration → freshness check"): the
+    # 2026-06-24 historian appends finalized rows to Turso so longitudinal
+    # stats survive past the 14-day window. If that append silently stops, the
+    # history quietly goes stale. This check WARNs (never ERROR — a downstream
+    # analytics sync must not block the client report) when the historian is
+    # configured but its newest write is >26h old. SKIPS cleanly when dormant
+    # (no creds) so it costs nothing until the DB is provisioned. Note the
+    # write happens later in the SAME fire (after QC), so a None age = "no rows
+    # yet" is benign on the first day, not a failure.
+    try:
+        import historian as _hist
+        if not _hist.is_configured():
+            log.ok("QC-058: skipped — historian dormant (no Turso creds configured)")
+        else:
+            _age = _hist.latest_write_age_hours()
+            if _age is None:
+                log.ok("QC-058: historian configured; no rows yet "
+                       "(first append happens later this fire)")
+            elif _age > 26:
+                log.warn(
+                    f"QC-058: historian last write was {_age:.0f}h ago (>26h) — "
+                    f"the daily finalized-row append may be failing. Check the "
+                    f"'Historian (finalized → Turso)' step + secrets/historian-turso.txt.")
+            else:
+                log.ok(f"QC-058: historian fresh — last write {_age:.0f}h ago")
+    except Exception as _e:
+        log.warn(f"QC-058: check failed with exception: {_e}")
+
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
     # Hilmar's primary carrier). ERROR > 75% catches the CMA-boilerplate

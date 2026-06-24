@@ -140,7 +140,8 @@ Runtime state that **never goes in git** (enforced by `.gitignore`):
 - `scripts/stage_emails*.txt` / `stage_emails_bodies*.txt` — Graph fetch cache
 - `data-backups/` — rotating snapshots (14 retained, dual-format prune)
 - `secrets/` — `token-cache.json` (MSAL), `sentry-dsn.txt`,
-  `sentry-auth-token.txt`, `anthropic-api-key.txt`, `quote-tracker-pwd.txt`
+  `sentry-auth-token.txt`, `anthropic-api-key.txt`, `quote-tracker-pwd.txt`,
+  `historian-turso.txt` (Turso stats-DB url+token — optional; historian dormant without it)
 - `reports/*` artifacts (HTML dashboard, PDF, scorecards, run-log, sent flags)
 
 ## 5. The pipeline (`scripts/run_pipeline.py`)
@@ -165,6 +166,7 @@ a Sentry Cron heartbeat + per-step Performance spans.
 13. share_intel.py export          Push to SHARED/client_intelligence/hilmar/
 14. gen_rate_intelligence.py       Rate-negotiation cheat sheet + cooling alerts
 15. sync_to_quote_tracker.py       Push to ol-quote-tracker Turso registry (no-op if pw missing)
+16. historian.py                   Append finalized rows to durable Turso stats DB (no-op if no creds; see docs/HISTORIAN.md)
 ```
 
 After the pipeline, `deploy/run_daily_laptop.cmd` runs:

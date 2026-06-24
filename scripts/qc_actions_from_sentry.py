@@ -196,6 +196,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "A staged lonny_outbound rate request (not operational, not out-of-scope) yielded no parseable destination, so ingest.build_requests dropped it and it is MISSING from the report — the silent-drop failure mode behind the 2026-06-24 Busan/Korea miss. No auto-heal is possible (a lane can't be invented). FIX: read the dropped subject(s) in the QC-057 message, extend body_parser.parse_subject_lane to resolve that lane shape, then re-ingest (reprocess_bodies.py + ingest.py) so the row is rebuilt. >=3 dropped at once means a systemic parser regression — diff body_parser before triaging individual subjects.",
         "auto_resolve_safe": False,
     },
+    "QC-058": {
+        "name": "Turso historian stale (finalized-row append failing)",
+        "action": "flag_for_operator",
+        "comment": "The durable Turso stats historian is configured but its newest write is >26h old — the daily 'Historian (finalized → Turso)' append likely failed. This does NOT affect the client report (the historian is write-only analytics), so it never gates a fire. Check: the historian step's exit in run-log.txt, secrets/historian-turso.txt (URL+token), and that libsql is installed on the fire host. Stats accuracy degrades while stale but no live data is lost (tracking-data is rebuilt from Outlook each fire).",
+        "auto_resolve_safe": False,
+    },
     "cron.missed_checkin": {
         "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
         "action": "resolve_if_post_fix",
