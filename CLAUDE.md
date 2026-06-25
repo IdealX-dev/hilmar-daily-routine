@@ -345,6 +345,11 @@ QC-023 warns at 60 days, errors at 80. The token cache lives at
 
 ## 11. Pointers to deeper docs
 
+- **`docs/PASSOFF.md`** — START HERE in a fresh context. Current state of
+  `main` after the 2026-06-25 reliability overhaul + the open operator/infra
+  items (Teams webhook, fire-time reconciliation, single-box SPOF).
+- **`docs/RELIABILITY.md`** — the "prove the report shipped or scream" design
+  (preflight + integrity assertion + out-of-band alerts + env-drift sentinel).
 - **`RUNBOOK.md`** — failure-mode playbook: wrapper rc=255, MSAL refresh
   expired, duplicate sends, QC drift triage, etc.
 - **`docs/HANDOFF.md`** — inherited handoff from the merged `hilmar-tracker`
