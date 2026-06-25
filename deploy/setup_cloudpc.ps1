@@ -52,16 +52,31 @@ Write-Host "[2/6] Verifying Python == $PINNED (pinned)..." -ForegroundColor Yell
 $pythonOK = $false
 $script:PYTHON_CMD = $null
 $pinEsc = [regex]::Escape($PINNED)
-foreach ($cmd in @("python", "py", "python3")) {
-    try {
-        $ver = & $cmd --version 2>&1
-        if ($ver -match "Python $pinEsc(\.\d+)?$") {
-            Write-Host "  OK  $cmd -> $ver" -ForegroundColor Green
-            $script:PYTHON_CMD = (Get-Command $cmd).Source
-            $pythonOK = $true
-            break
-        }
-    } catch {}
+# Ask the py launcher for the EXACT pinned build first (py -3.12). Bare
+# python/py default to whatever's first on PATH (3.14 on the drifted box), so
+# without this the setup would install deps into the wrong interpreter and
+# never find the 3.12 you just installed.
+try {
+    $exe = (& py "-$PINNED" -c "import sys;print(sys.executable)" 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $exe) {
+        $exe = $exe.Trim()
+        Write-Host "  OK  py -$PINNED -> $exe" -ForegroundColor Green
+        $script:PYTHON_CMD = $exe
+        $pythonOK = $true
+    }
+} catch {}
+if (-not $pythonOK) {
+    foreach ($cmd in @("python", "py", "python3")) {
+        try {
+            $ver = & $cmd --version 2>&1
+            if ($ver -match "Python $pinEsc(\.\d+)?$") {
+                Write-Host "  OK  $cmd -> $ver" -ForegroundColor Green
+                $script:PYTHON_CMD = (Get-Command $cmd).Source
+                $pythonOK = $true
+                break
+            }
+        } catch {}
+    }
 }
 if (-not $pythonOK) {
     Write-Host "  Python $PINNED not found. Installing via winget..." -ForegroundColor Yellow
