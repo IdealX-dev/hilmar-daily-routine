@@ -132,6 +132,11 @@ if exist "%ROOT%\hilmar-daily-routine\.git" (
   REM already filtered to only-changed). EXCLUDES the wrapper itself
   REM (we're running it right now — replacing in-flight is dangerous).
   xcopy /Y /Q "%ROOT%\hilmar-daily-routine\scripts\*.py" "%ROOT%\scripts\" >> "%LOG%" 2>&1
+  REM Also sync deploy\*.py (e.g. assert_fire_integrity.py — the final gate).
+  REM These live in deploy/, not scripts/, so the scripts xcopy above misses
+  REM them; without this a pull updates the checkout but the fire still runs
+  REM the stale asserter (2026-06-25: the manual-copy footgun).
+  if exist "%ROOT%\deploy" xcopy /Y /Q "%ROOT%\hilmar-daily-routine\deploy\*.py" "%ROOT%\deploy\" >> "%LOG%" 2>&1
   if exist "%ROOT%\hilmar-daily-routine\config.json" (
     xcopy /Y /Q "%ROOT%\hilmar-daily-routine\config.json" "%ROOT%\" >> "%LOG%" 2>&1
   )
@@ -276,5 +281,11 @@ REM Surface the fire outcome as the wrapper's exit code so Windows Task
 REM Scheduler's Last-Run-Result reflects a failed fire (was an unconditional 0).
 REM FIRE_STATUS dies with endlocal, so compute EXITRC first, then return it via
 REM the `endlocal & exit` parse-time-expansion trick.
+REM NOTE: the DEPLOYED wrapper itself (this file) is intentionally NOT
+REM self-overwritten — replacing a .cmd while cmd.exe is still reading it by
+REM byte-offset is undefined behavior. A wrapper change reaches the box by
+REM re-running deploy\setup_cloudpc.ps1 (which copies it safely while it's not
+REM executing). deploy\*.py + scripts\*.py DO auto-sync above, so only an edit
+REM to THIS file needs the setup re-run. QC-026 flags the drift if it happens.
 if "!FIRE_STATUS!"=="failed" ( set EXITRC=1 ) else ( set EXITRC=0 )
 endlocal & exit /b %EXITRC%
