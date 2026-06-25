@@ -8,18 +8,18 @@ inherits this system.
 
 ---
 
-## Daily fire (10:00 AM ET weekdays)
+## Daily fire (6:07 PM ET weekdays)
 
 **Trigger**: Cloud PC `CPC-micha-E552L` Windows Task Scheduler → `deploy\run_daily_laptop.cmd`
 
-**Expected outcome by 10:05 AM ET**:
+**Expected outcome by 6:25 PM ET**:
 - 10 OL/IdealX recipients receive `Hilmar Ingredients — Daily Shipment Tracker Update (May N, 2026)`
 - `michael.deitchman@idealx.us` receives audit `Hilmar Tracker — Daily Systems Audit (May N) — XR/YO/ZS`
 - Dual offline backups written: `OneDrive - IdealX/HILMAR_BACKUPS/hilmar-YYYY-MM-DD.tar.gz` + `~/hilmar-local-backups/hilmar-YYYY-MM-DD.tar.gz`
-- `reports/run-log.txt` has a new entry headed `Hilmar daily on CPC-micha-E552L — <day> <date> 10:00:0X`
+- `reports/run-log.txt` has a new entry headed `Hilmar daily on CPC-micha-E552L — <day> <date> 18:07:0X`
 - `reports/sent-YYYY-MM-DD.flag` written
 
-**If no emails by 10:10 AM ET**:
+**If no emails by 6:30 PM ET**:
 1. RDP into Cloud PC via `windows.cloud.microsoft` from any browser
 2. Check `reports/run-log.txt` tail — find today's date marker
 3. Read the failure mode below that matches what you see
@@ -113,12 +113,12 @@ inherits this system.
 
 ---
 
-## Failure mode: Cloud PC didn't fire at 10:00 AM
+## Failure mode: Cloud PC didn't fire at 6:07 PM
 
-**Symptom**: No 10:00 entry in run-log for today; Task Scheduler "LastRunTime" is yesterday or older.
+**Symptom**: No 18:07 entry in run-log for today; Task Scheduler "LastRunTime" is yesterday or older.
 
 **Root cause** (possibilities, in order):
-1. Cloud PC was offline / stopped at 10:00 AM ET
+1. Cloud PC was offline / stopped at 6:07 PM ET
 2. Task got disabled or deleted
 3. Cloud PC's Windows credentials expired
 4. Microsoft 365 service incident
@@ -283,9 +283,9 @@ days GH owned the fire — copy the latest from the blob container
 
 ## Routine tasks
 
-### Push freshly-merged code to production NOW (don't wait for 10 AM)
-The daily wrapper auto-pulls `main` at the start of each 10 AM ET fire
-(Step 0), so production self-updates every morning — you normally never
+### Push freshly-merged code to production NOW (don't wait for the evening fire)
+The daily wrapper auto-pulls `main` at the start of each 6:07 PM ET fire
+(Step 0), so production self-updates every evening — you normally never
 need to sync by hand. To go live *immediately* after a PR merges, run:
 ```
 deploy\sync_now.cmd
@@ -335,7 +335,7 @@ python scripts/qc_selfheal.py      # post-run validation
 ```
 Cloud PC (CPC-micha-E552L, always on)
     │
-    │ 10:00 AM ET weekday — Windows Task Scheduler
+    │ 6:07 PM ET weekday — Windows Task Scheduler
     ▼
 deploy/run_daily_laptop.cmd
     ├── Step 0: git pull (sync Codespaces edits)

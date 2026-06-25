@@ -8,13 +8,13 @@
 > dormant repo is now archived for historical reference only.
 > ONE repo, ONE application — per Michael 2026-05-17.
 
-Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 10:00 AM ET each weekday from a Win365 Cloud PC.
+Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 6:07 PM ET each weekday from a Win365 Cloud PC (6 PM ET = 3 PM PT, end of Lonny's Pacific workday; moved from the old 10 AM ET morning fire).
 
 **Status (2026-05-17):** 40-check QC matrix, 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + 519-test regression suite (full hilmar-tracker port), Codespaces-ready for editing from any device.
 
 ## Two code paths — both authoritative, by phase
 
-- **`scripts/`** — the ACTIVE production pipeline. `run_pipeline.py` orchestrates the daily 10 AM ET fire on the Cloud PC. Runs `ingest.py` → `qc_selfheal.py` → `gen_email.py` → `outlook_send.py`. This is what Lonny + the OL distribution list see daily.
+- **`scripts/`** — the ACTIVE production pipeline. `run_pipeline.py` orchestrates the daily 6:07 PM ET fire on the Cloud PC. Runs `ingest.py` → `qc_selfheal.py` → `gen_email.py` → `outlook_send.py`. This is what Lonny + the OL distribution list see daily.
 - **`src/hilmar/`** — the inherited mature module library from the consolidated hilmar-tracker. Contains `baselines.py` (rolling P50/P90 stats), `insights.py` (LLM-driven daily narratives), `feedback_ingest.py` (👍/👎 self-learning), `model_router.py` (LLM task routing), `parser_fallback.py`, plus the full pytest-compatible test suite. Available for the next migration phase when `scripts/` evolves toward this richer architecture.
 
 The two folders coexist intentionally during the migration period. Tests run against `src/hilmar/`; production runs against `scripts/`. Daily pipeline is unaffected by `src/hilmar/` additions.
@@ -43,7 +43,7 @@ The two folders coexist intentionally during the migration period. Tests run aga
 2. Sign in with `michael.deitchman@idealx.us`
 3. Select `CPC-micha-E552L` to RDP into the Cloud PC from your browser
 4. Open File Explorer → `C:\Users\MichaelDeitchman\OneDrive - IdealX\claude\PROJECT HILMAR`
-5. Double-click `deploy\run_daily_laptop.cmd` to fire the wrapper manually. Idempotency flag (`reports/sent-YYYY-MM-DD.flag`) prevents duplicate sends if the 10 AM scheduled fire already ran.
+5. Double-click `deploy\run_daily_laptop.cmd` to fire the wrapper manually. Idempotency flag (`reports/sent-YYYY-MM-DD.flag`) prevents duplicate sends if the 6:07 PM ET scheduled fire already ran.
 
 ### 🤖 Drive via Claude (any device with claude.ai)
 - Open `claude.ai` in any browser. Tell Claude what you want changed/checked. Claude can edit code via Codespaces / GitHub, schedule routines, or surface findings to your IdealX audit inbox.
@@ -76,7 +76,7 @@ Live data + secrets that must never hit GitHub:
 
 ## Daily flow
 
-Cloud PC `CPC-micha-E552L` Task Scheduler fires `deploy\run_daily_laptop.cmd` at 10:00 AM ET weekdays:
+Cloud PC `CPC-micha-E552L` Task Scheduler fires `deploy\run_daily_laptop.cmd` at 6:07 PM ET weekdays:
 
 | Step | Script | What |
 |---|---|---|

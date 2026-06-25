@@ -2,12 +2,18 @@
 REM run_chase_evening.cmd — Standalone evening auto-chase task.
 REM
 REM Fired by Windows Task Scheduler at 16:30 ET weekdays. This is a
-REM SEPARATE schedule from the 10:00 ET daily fire because
+REM SEPARATE schedule from the 6:07 PM ET daily fire because
 REM scripts/auto_chase_pending.py has an `earliest_send_hour_et: 16`
 REM gate (chases must land in Lonny's late-afternoon PT, not at 7 AM
-REM his time). The morning wrapper's call to the same script was a
-REM daily no-op — it always bailed at the time gate. Discovered in
-REM the 2026-05-31 audit; this evening task is the fix.
+REM his time). When the fire was a 10 AM morning run, the wrapper's
+REM call to the same script was a daily no-op — it always bailed at the
+REM time gate. Discovered in the 2026-05-31 audit; this task was the fix.
+REM
+REM NOTE (2026-06-25): the daily fire moved from 10 AM to 6:07 PM ET, so
+REM this 16:30 chase now runs ~1.5h BEFORE the fire — i.e. on the PRIOR
+REM fire's data. Consider re-timing this task to ~18:45 ET so it chases on
+REM fresh post-fire data:
+REM   schtasks /Change /TN "Hilmar Auto-Chase - CloudPC" /ST 18:45
 REM
 REM Idempotency: auto_chase writes reports\chase-sent-YYYY-MM-DD.flag
 REM with the request_ids of every chase sent today. If this task runs

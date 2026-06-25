@@ -95,8 +95,8 @@ SCHEDULER itself breaks (Cloud PC offline, task scheduler crashes,
 wrapper crashes before any Python code runs). Plain error-event capture
 can't catch this because no code is running to report.
 
-**Schedule:** `0 10 * * 1-5` America/New_York (Mon-Fri 10 AM ET)
-**Margin:** 30 min — alert if start check-in doesn't arrive within 30 min of scheduled fire
+**Schedule:** `7 18 * * 1-5` America/New_York (Mon-Fri 6:07 PM ET)
+**Margin:** 290 min — alert if the start check-in doesn't arrive within 290 min of the scheduled fire (~10:57 PM ET). The wide margin absorbs GitHub-cron lateness (observed 30 min–4.5h) plus the full evening liveness-backstop window, so Sentry only pages when the pipeline truly never ran all day.
 **Max runtime:** 60 min — alert if pipeline runs >60 min (typical is 30-60s)
 
 How it works:
@@ -105,7 +105,7 @@ How it works:
 2. Pipeline runs.
 3. `run_pipeline.py main()` calls `sentry_setup.finish_cron_checkin(id, ok=True/False)`
    at the end with success/error status.
-4. If Sentry doesn't see the start check-in within 30 min of 10 AM ET on
+4. If Sentry doesn't see the start check-in within 290 min of 6:07 PM ET on
    any weekday → "missed check-in" alert.
 5. If Sentry sees a start but no finish within 60 min → "max runtime exceeded".
 6. If finish status=error → "run failed" alert.

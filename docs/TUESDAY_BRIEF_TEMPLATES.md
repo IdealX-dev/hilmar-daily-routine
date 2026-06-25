@@ -1,7 +1,7 @@
 # Tuesday Brief — Templates
 
 The Tuesday Brief is an **additive** weekly send to Lonny Upfold. It does
-not replace the 10 AM ET daily shipment-tracker; it goes Tuesday morning
+not replace the 6 PM ET daily shipment-tracker; it goes Tuesday morning
 ET (so it lands Monday evening Pacific, ready for Lonny's Tuesday
 workday). Goal: shift the relationship from "one of 8 brokers in the
 queue" to "freight advisor we hear from on Tuesdays."

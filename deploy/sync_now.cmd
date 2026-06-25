@@ -2,7 +2,7 @@
 REM sync_now.cmd — pull latest main + copy scripts to production, NO fire.
 REM
 REM Use this when you want the Cloud PC / laptop running the newest merged
-REM code RIGHT NOW instead of waiting for the next 10:00 AM ET scheduled
+REM code RIGHT NOW instead of waiting for the next 6:07 PM ET scheduled
 REM fire. It does ONLY what Step 0 of run_daily_laptop.cmd does:
 REM   1. git pull origin main  (into the hilmar-daily-routine checkout)
 REM   2. write reports\deployment-sha.txt  (HEAD + commits-behind for QC-053)
@@ -86,6 +86,6 @@ xcopy /Y /Q "%REPO%\deploy\*.cmd" "%ROOT%\deploy\" >> "%LOG%" 2>&1
 
 echo SYNC_NOW: done — HEAD=!HEAD_SHA! BEHIND=!BEHIND! >> "%LOG%"
 echo SYNC_NOW: done. Production now at HEAD=!HEAD_SHA! ^(BEHIND=!BEHIND!^).
-echo The next 10 AM ET fire will use this code. No email was sent.
+echo The next 6:07 PM ET fire will use this code. No email was sent.
 endlocal
 exit /b 0

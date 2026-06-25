@@ -171,7 +171,7 @@ if (-not (Test-Path $wrapperPath)) {
     exit 1
 }
 $action = New-ScheduledTaskAction -Execute $wrapperPath
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 10:00am
+$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 6:07pm
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -DontStopOnIdleEnd `
@@ -179,7 +179,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 5)
-$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 10:00 AM ET weekdays. Replaces the laptop scheduler. OneDrive-synced code, OL-allowlisted IP."
+$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 6:07 PM ET weekdays (aligned to the Sentry cron monitor + daily.yml schedule; 6 PM ET = 3 PM PT, after Lonny's Pacific workday). Replaces the laptop scheduler. OneDrive-synced code, OL-allowlisted IP."
 Register-ScheduledTask `
     -TaskName "Hilmar Daily Tracker - CloudPC" `
     -Action $action -Trigger $trigger -Settings $settings -Description $desc `
@@ -195,7 +195,7 @@ Write-Host "=== Setup complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "What this Cloud PC will do:"
 Write-Host "  Wake:  N/A - always on"
-Write-Host "  When:  10:00 AM Cloud PC local time, weekdays"
+Write-Host "  When:  6:07 PM Cloud PC local time (ET), weekdays"
 Write-Host "  What:  refresh_stage.py, run_pipeline.py, outlook_send.py daily"
 Write-Host "  To:    Currently test_list (Michael only) until wrapper flipped"
 Write-Host ""

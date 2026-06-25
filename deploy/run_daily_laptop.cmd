@@ -1,7 +1,9 @@
 @echo off
 REM run_daily_laptop.cmd — Pinned Hilmar daily run for Cloud PC + MBD-TRAVEL.
 REM
-REM Fired by Windows Task Scheduler at 10:00 AM ET weekdays.
+REM Fired by Windows Task Scheduler at 6:07 PM ET weekdays (aligned to the
+REM Sentry cron monitor + daily.yml/liveness.yml schedules; 6 PM ET = 3 PM PT,
+REM after Lonny's Pacific workday so the report captures the current PT day).
 REM
 REM Daily flow:
 REM   1. refresh_stage.py — pull new Lonny↔OL emails + HILMAR booking

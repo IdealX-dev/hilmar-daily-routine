@@ -1,7 +1,7 @@
 # Moving the Hilmar Daily Tracker off the Cloud PC
 
 The Cloud PC fire (`deploy/run_daily_laptop.cmd` triggered by Windows Task
-Scheduler at 10 AM ET) is fragile in ways the 2026-05-28 audit made
+Scheduler at 6:07 PM ET) is fragile in ways the 2026-05-28 audit made
 unmistakable: `git pull` → `xcopy` to a parallel folder is a five-step
 silent-failure chain, and an unmerged PR sat for 5 days while the daily
 audit reported the SAME problems every morning. QC-053 catches that class
