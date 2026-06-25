@@ -1028,6 +1028,28 @@ def find_stale_shadow_dirs():
     return [REPO_ROOT / sub for sub in ("tests", "src") if (REPO_ROOT / sub).is_dir()]
 
 
+def load_step_history():
+    """run_pipeline's per-fire failed-step log (rolling). [] if absent."""
+    p = REPO_ROOT / "reports" / "step-history.json"
+    if not p.exists():
+        return []
+    try:
+        h = json.loads(p.read_text(encoding="utf-8"))
+        return h if isinstance(h, list) else []
+    except Exception:
+        return []
+
+
+def consecutive_failed_steps(history, n=3):
+    """Step names that failed in ALL of the last n recorded fires — a step
+    that's been dead for days, not a one-day blip."""
+    if not history or len(history) < n:
+        return []
+    sets = [set(h.get("failed") or []) for h in history[-n:]]
+    common = set.intersection(*sets) if sets else set()
+    return sorted(common)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Phase 6 — cross-check rules
 # ─────────────────────────────────────────────────────────────────────
@@ -3162,6 +3184,33 @@ def phase_6_rules(log: Log, data: dict):
                           + ", ".join(str(d) for d in _left))
     except Exception as _e:
         log.warn(f"QC-062: check failed with exception: {_e}")
+
+    # QC-063: CONSECUTIVE-FAILURE RATCHET — a best-effort/observer step that's
+    # been dead for DAYS, not a one-day blip. Eight best-effort steps + the
+    # test routine exit 0 by design, so per-fire a dead step is invisible and a
+    # step failing every fire for a WEEK looks identical to a single blip (no
+    # aggregation). run_pipeline records each fire's failed steps to
+    # step-history.json; this escalates any step that failed the last 3
+    # consecutive fires to a LOUD WARN. No auto-heal (the step's own
+    # dep/env/config is the fix) → flag_for_operator.
+    try:
+        _hist = load_step_history()
+        if not _hist:
+            log.ok("QC-063: skipped — no step history yet (ephemeral runner / first fires)")
+        else:
+            _dead = consecutive_failed_steps(_hist, n=3)
+            if _dead:
+                log.warn(
+                    f"QC-063: {len(_dead)} pipeline step(s) have failed the last 3 "
+                    f"CONSECUTIVE fires — degraded for days, not a blip: "
+                    f"{', '.join(_dead)}. Investigate the step + its dep/env "
+                    f"(check reports/run-log.txt); a best-effort step being dead "
+                    f"for a week is the silent-degradation failure mode.")
+            else:
+                log.ok(f"QC-063: no step failing 3 consecutive fires "
+                       f"({len(_hist)} fires recorded)")
+    except Exception as _e:
+        log.warn(f"QC-063: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

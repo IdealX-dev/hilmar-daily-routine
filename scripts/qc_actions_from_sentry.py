@@ -226,6 +226,18 @@ ACTIONS: dict[str, dict] = {
         "comment": "A pre-checkout-era flat copy of tests/+src/ sat directly under PROJECT HILMAR/ shadowing the real hilmar-daily-routine/ checkout (the pytest 'import file mismatch' cause). QC-062 SELF-HEALS by deleting the stale dirs — this is informational. If it recurs, something is re-creating them (it is NOT the wrapper's xcopy, which only copies scripts/). Resolve once the self-heal is confirmed.",
         "auto_resolve_safe": True,
     },
+    "QC-063": {
+        "name": "Pipeline step dead 3 consecutive fires",
+        "action": "flag_for_operator",
+        "comment": "A best-effort/observer step has failed the last 3 CONSECUTIVE daily fires — degraded for days, not a one-day blip (these steps exit 0 by design so per-fire they're invisible). The QC-063 message names the dead step(s). FIX: open reports/run-log.txt for that step's error and repair its dep/env/config (e.g. a sync token, a Sentry/Seer auth, a missing optional dep). Non-blocking to the client report, but a week-dead step is exactly the silent-degradation this ratchet exists to surface.",
+        "auto_resolve_safe": False,
+    },
+    "QC-023": {
+        "name": "MSAL device-code token near/over expiry",
+        "action": "flag_for_operator",
+        "comment": "The cached MSAL token is approaching (WARN ≥60d) or past (ERROR ≥80d) its refresh window — auth is the classic SILENT killer (a stale token makes the daily Graph fetch + Outlook send fail, and HILMAR_NONINTERACTIVE now makes it fail FAST rather than hang). FIX, same day: on the Cloud PC run `python scripts/outlook_send.py auth` to re-run the device-code flow and refresh secrets/token-cache.json. Do NOT wait for the 80d ERROR — re-auth at the 60d WARN.",
+        "auto_resolve_safe": False,
+    },
     "cron.missed_checkin": {
         "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
         "action": "resolve_if_post_fix",

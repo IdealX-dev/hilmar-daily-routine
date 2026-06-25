@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -261,6 +262,31 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
                 txn_cm.__exit__(None, None, None)
 
 
+STEP_HISTORY = ROOT / "reports" / "step-history.json"
+
+
+def _record_step_history(failed_steps, *, path=None, keep=30):
+    """Append this fire's failed-step list to step-history.json (rolling
+    `keep` entries). Best-effort — a write failure never affects the fire."""
+    path = path or STEP_HISTORY
+    try:
+        from datetime import timezone
+        hist = []
+        if path.exists():
+            try:
+                hist = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(hist, list):
+                    hist = []
+            except Exception:
+                hist = []
+        hist.append({"ts": datetime.now(timezone.utc).isoformat(),
+                     "failed": sorted(set(failed_steps))})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(hist[-keep:], indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip-ingest", action="store_true",
@@ -423,6 +449,11 @@ def main():
             pass
 
     elapsed = (datetime.now() - started).total_seconds()
+    # Append this fire's failed-step list to reports/step-history.json so
+    # QC-063 can detect a best-effort/observer step that has been dead for
+    # SEVERAL fires (which, per-fire, looks identical to a one-day blip — the
+    # silent-degradation-for-a-week failure mode). Best-effort; never blocks.
+    _record_step_history(failures)
     # Partition failures into client-blocking vs best-effort. The pipeline's
     # exit code is gated only on client-blocking ones so a single bad
     # telemetry/sync step can't drop the daily email.
