@@ -28,6 +28,10 @@ REM MBD-TRAVEL and Cloud PC (different user profiles, same OneDrive folder).
 set ROOT=%USERPROFILE%\OneDrive - IdealX\claude\PROJECT HILMAR
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
+REM Fail FAST + LOUD on a stale MSAL token instead of hanging on an unanswered
+REM interactive device-code prompt until Task Scheduler kills the job (a silent
+REM stop). outlook_send honors this; GH Actions already sets it.
+set HILMAR_NONINTERACTIVE=1
 set LOG=%ROOT%\reports\run-log.txt
 
 REM Never let git block the daily fire on an interactive credential prompt.
@@ -131,6 +135,19 @@ if exist "%ROOT%\hilmar-daily-routine\.git" (
   echo git pull SKIPPED: no .git in %ROOT%\hilmar-daily-routine >> "%LOG%"
 )
 
+REM Step 0.5 — PREFLIGHT: verify the box BEFORE building anything. Hard-fails
+REM (rc=2) on interpreter drift (wrong Python vs .python-version) and aborts the
+REM fire LOUDLY rather than build a degraded report on an unvalidated
+REM interpreter — the 2026-06 silent-week root cause. It raises an out-of-band
+REM alert (GitHub issue + Teams) on its own, independent of Outlook.
+echo --- preflight_env --- >> "%LOG%"
+"%PY%" scripts\preflight_env.py >> "%LOG%" 2>&1
+if %ERRORLEVEL% EQU 2 (
+  echo PREFLIGHT HARD-FAIL rc=2 — aborting fire ^(env drift; alert already raised^) >> "%LOG%"
+  endlocal
+  exit /b 2
+)
+
 REM Step 1 — refresh stage from Outlook
 echo --- refresh_stage --- >> "%LOG%"
 "%PY%" scripts\refresh_stage.py --days-back 14 >> "%LOG%" 2>&1
@@ -162,7 +179,8 @@ echo --- outlook_send (full distribution) --- >> "%LOG%"
   --subject-from-file reports\email-subject.txt ^
   --body-from-file reports\email-body.html ^
   --attach reports\hilmar-dashboard.html reports\hilmar-report.pdf >> "%LOG%" 2>&1
-echo Send exit code: %ERRORLEVEL% >> "%LOG%"
+set SEND_RC=%ERRORLEVEL%
+echo Send exit code: %SEND_RC% >> "%LOG%"
 
 REM Step 4 — alert Michael if QC drifted from CLEAN (always run)
 "%PY%" deploy\qc_alert_if_needed.py >> "%LOG%" 2>&1
@@ -213,13 +231,26 @@ REM      OR drop a PAT (scope: actions:write) into secrets\github-pat.txt
 REM      and run: gh auth login --with-token < secrets\github-pat.txt
 REM   3. Verify: gh auth status
 REM See docs\CLOUD-PC-HEARTBEAT-SETUP.md for the full walkthrough.
+REM Step 5 — PROVE the fire shipped a report (or scream). Mandatory final
+REM gate: asserts pipeline rc==0 + fresh artifacts + today's send-flag + token
+REM cache. On ANY violation it raises an OUT-OF-BAND alarm (GitHub issue +
+REM Teams + queue — never Outlook) and exits non-zero. We capture that into
+REM FIRE_STATUS and pass the REAL status to the heartbeat, so liveness sees the
+REM truth instead of a hardcoded "success" (the 2026-06 silent-week root cause).
+echo --- assert_fire_integrity --- >> "%LOG%"
+"%PY%" deploy\assert_fire_integrity.py --pipeline-rc %RC% >> "%LOG%" 2>&1
+if %ERRORLEVEL% EQU 0 ( set FIRE_STATUS=success ) else ( set FIRE_STATUS=failed )
+echo Fire integrity: %FIRE_STATUS% >> "%LOG%"
+
 echo --- heartbeat dispatch --- >> "%LOG%"
 where gh >nul 2>&1
 if errorlevel 1 (
   echo gh CLI not found; heartbeat skipped ^(install: winget install GitHub.cli^) >> "%LOG%"
 ) else (
   REM Pass timestamp + repo HEAD so the heartbeat workflow's run log
-  REM ties back to a specific commit. Best-effort — non-blocking.
+  REM ties back to a specific commit. Status is the REAL outcome from the
+  REM integrity assertion above — heartbeat.yml fails its job on status!=success
+  REM so liveness's failed branch actually fires.
   set HB_AT=%DATE%T%TIME%
   set HB_SHA=
   if exist "%ROOT%\reports\deployment-sha.txt" (
@@ -232,10 +263,14 @@ if errorlevel 1 (
     -R IdealX-dev/hilmar-daily-routine ^
     -f at="!HB_AT!" ^
     -f sha="!HB_SHA!" ^
-    -f status="success" ^
+    -f status="!FIRE_STATUS!" ^
     -f host="cloud-pc" >> "%LOG%" 2>&1
   echo Heartbeat dispatch exit code: !ERRORLEVEL! >> "%LOG%"
 )
 
-endlocal
-exit /b 0
+REM Surface the fire outcome as the wrapper's exit code so Windows Task
+REM Scheduler's Last-Run-Result reflects a failed fire (was an unconditional 0).
+REM FIRE_STATUS dies with endlocal, so compute EXITRC first, then return it via
+REM the `endlocal & exit` parse-time-expansion trick.
+if "!FIRE_STATUS!"=="failed" ( set EXITRC=1 ) else ( set EXITRC=0 )
+endlocal & exit /b %EXITRC%

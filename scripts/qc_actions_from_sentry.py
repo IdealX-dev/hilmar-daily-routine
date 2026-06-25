@@ -208,6 +208,24 @@ ACTIONS: dict[str, dict] = {
         "comment": "Cached email parses no longer match what the current body_parser produces — a parser fix did not reach the back-catalog already in the window. QC-059 already SELF-HEALED (backfilled the stale parses), so this is informational: it means the pre-ingest 'Parser backfill (reprocess cache)' step did not run or failed this fire (the back-stop caught it). The backfilled fields land on the NEXT fire automatically; to surface them in TODAY's report, re-run ingest. Check that the reprocess step is wired + exited 0 in run-log.txt. No live data is lost — tracking-data rebuilds from Outlook each fire.",
         "auto_resolve_safe": False,
     },
+    "QC-060": {
+        "name": "Dependency-list drift (box may install an incomplete set)",
+        "action": "flag_for_operator",
+        "comment": "The three dependency lists disagree, so the set the Cloud PC installs may not cover what QC-054 requires (the jinja2/sentry-sdk silent-degradation failure mode). FIX: ensure every module in RUNTIME_IMPORT_REQUIRED is pinned in requirements.txt, and reconcile pyproject [project.dependencies] with requirements-tracker.txt. Repo-state check — also fails CI, so it should normally be caught before a fire.",
+        "auto_resolve_safe": False,
+    },
+    "QC-061": {
+        "name": "Interpreter drift — box Python != pinned .python-version",
+        "action": "flag_for_operator",
+        "comment": "The Cloud PC is running a Python version no test validates (the 2026-06 drift to 3.14 while CI is on 3.12). Not auto-fixable. FIX: install the pinned version from .python-version, remove the wrong one, and repoint the wrapper at it (re-run deploy/setup_cloudpc.ps1, which now pins to .python-version and installs the full requirements.txt). Until fixed, 'green in CI' does not imply the box works.",
+        "auto_resolve_safe": False,
+    },
+    "QC-062": {
+        "name": "Stale shadow tests/+src/ duplicate under repo root",
+        "action": "resolve_if_post_fix",
+        "comment": "A pre-checkout-era flat copy of tests/+src/ sat directly under PROJECT HILMAR/ shadowing the real hilmar-daily-routine/ checkout (the pytest 'import file mismatch' cause). QC-062 SELF-HEALS by deleting the stale dirs — this is informational. If it recurs, something is re-creating them (it is NOT the wrapper's xcopy, which only copies scripts/). Resolve once the self-heal is confirmed.",
+        "auto_resolve_safe": True,
+    },
     "cron.missed_checkin": {
         "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
         "action": "resolve_if_post_fix",

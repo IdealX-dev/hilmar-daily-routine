@@ -1,23 +1,26 @@
-# Hilmar Tracker — Python dependencies
-# Install: pip install -r requirements.txt
+# Hilmar Tracker — CANONICAL runtime dependency set.
+#
+# This is the single list the Cloud PC installs (the wrapper / setup_cloudpc.ps1
+# run `pip install -r requirements.txt`). It MUST cover every module QC-054
+# verifies importable — QC-060 fails CI if a QC-054-required module has no
+# pinned line here or in pyproject [project.dependencies]. Reconciled 2026-06-25
+# after the box fired for a week with jinja2 + sentry-sdk MISSING, silently
+# degrading render + observability (the audit's only alarm channel).
+#
+# Keep Windows-installable: reportlab (not weasyprint, which needs GTK) renders
+# the PDF; weasyprint/azure-* stay declared in pyproject for future/deploy use
+# but are NOT forced onto the box here.
 
-# PDF generation (gen_pdf.py, gen_carrier_scorecard_pdf.py)
-reportlab>=4.0,<5.0
-
-# Healthcheck pings (scripts/healthcheck_ping.py uses urllib stdlib by default,
-# but requests is preferred if present for better timeout/retry handling)
-requests>=2.31,<3.0
-
-# Timezone database — the zoneinfo MODULE is stdlib, but on Windows there
-# is no system tz database, so ZoneInfo("America/New_York") raises
-# ZoneInfoNotFoundError without this package. core.py constructs ET/PT at
-# import time, so a fresh Cloud PC without tzdata can't even import the
-# pipeline. (QC-054 walks this.)
-tzdata>=2024.1
-
-# Everything else is Python 3.11+ stdlib (json, re, html.parser, datetime,
-# pathlib, collections, dataclasses, hashlib, subprocess, etc.)
-pdfplumber
+msal>=1.28                 # Microsoft auth — Graph fetch + Outlook send
+requests>=2.32             # Graph REST
+jsonschema>=4.22           # tracking-data-v2 schema validation
+python-dateutil>=2.9       # date parsing
+tzdata>=2024.1             # zoneinfo DATA on Windows — core.py builds ET/PT at import
+reportlab>=4.0             # PDF rendering (no GTK)
+jinja2>=3.1                # HTML templating (src/hilmar/render.py)
+pdfplumber>=0.11           # booking-confirmation PDF parsing
+sentry-sdk>=2.0            # observability — cron heartbeat + error capture
+anthropic>=0.40            # LLM narrative for daily insights
 
 # OPTIONAL — only needed to ACTIVATE the durable quote historian
 # (scripts/historian.py → Turso). Dormant by default: without creds the

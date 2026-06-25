@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime
@@ -897,6 +899,133 @@ def _check_email_subject_date(log, subj_path, now_et=None):
             )
     except Exception as _e:
         log.warn(f"QC-011: check failed with exception: {_e}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# Environment-integrity helpers (QC-054 / QC-060 / QC-061 / QC-062).
+# These verify the BOX the pipeline runs on, not the data — the gap behind
+# the 2026-06 silent week (box drifted to Python 3.14 with jinja2 missing and
+# stale shadow dirs, all invisible). Module-level + pure so the QC checks and
+# their tests share one source of truth.
+# ─────────────────────────────────────────────────────────────────────
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# The modules the wrapper's interpreter MUST be able to import. Single source
+# of truth: QC-054 verifies they import, QC-060 verifies each maps to a pinned
+# entry in requirements.txt. (Was a local list inside QC-054 — promoted so the
+# two checks can't drift.)
+RUNTIME_IMPORT_REQUIRED = [
+    "sentry_sdk",                 # observability — silent absence = HILMAR-9
+    "msal", "requests",           # auth + Graph
+    "jsonschema", "dateutil",     # schema + date parsing
+    "tzdata",                     # zoneinfo data on Windows
+    "reportlab", "jinja2",        # rendering
+    "pdfplumber",                 # booking-PDF parsing
+]
+
+# import-name → pip-package-name where they differ.
+_MODULE_TO_PACKAGE = {
+    "sentry_sdk": "sentry-sdk",
+    "dateutil": "python-dateutil",
+}
+
+
+def _norm_pkg(name: str) -> str:
+    return name.strip().lower().replace("_", "-")
+
+
+def _module_package(mod: str) -> str:
+    return _MODULE_TO_PACKAGE.get(mod, _norm_pkg(mod))
+
+
+def _parse_requirements_packages(path: Path) -> set:
+    """Package names pinned in a requirements file (lowercased, _→-)."""
+    out = set()
+    if not path.exists():
+        return out
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = re.split(r"[<>=!~ \[;]", line, maxsplit=1)[0]
+        if name:
+            out.add(_norm_pkg(name))
+    return out
+
+
+def _pyproject_runtime_packages() -> set:
+    """Package names in pyproject [project.dependencies]."""
+    pp = REPO_ROOT / "pyproject.toml"
+    if not pp.exists():
+        return set()
+    try:
+        import tomllib
+        data = tomllib.loads(pp.read_text(encoding="utf-8"))
+        deps = (data.get("project") or {}).get("dependencies") or []
+    except Exception:
+        return set()
+    out = set()
+    for d in deps:
+        name = re.split(r"[<>=!~ \[;]", str(d), maxsplit=1)[0]
+        if name:
+            out.add(_norm_pkg(name))
+    return out
+
+
+def _read_pinned_python() -> str | None:
+    f = REPO_ROOT / ".python-version"
+    if not f.exists():
+        return None
+    for ln in f.read_text(encoding="utf-8").splitlines():
+        ln = ln.strip()
+        if ln:
+            return ln
+    return None
+
+
+def check_interpreter_parity():
+    """(ok, running, pinned_mm) — does the running interpreter's major.minor
+    match .python-version? ok=True (with pinned=None) when no pin exists."""
+    pinned = _read_pinned_python()
+    running = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    if not pinned:
+        return True, running, None
+    pin_mm = ".".join(pinned.split(".")[:2])
+    return (running == pin_mm), running, pin_mm
+
+
+def check_dep_consistency():
+    """(ok, problems[]) — every RUNTIME_IMPORT_REQUIRED module is pinned in
+    requirements.txt, and pyproject deps == requirements-tracker.txt."""
+    problems = []
+    req = _parse_requirements_packages(REPO_ROOT / "requirements.txt")
+    for mod in RUNTIME_IMPORT_REQUIRED:
+        pkg = _module_package(mod)
+        if pkg not in req:
+            problems.append(
+                f"QC-054 imports '{mod}' but '{pkg}' is not pinned in requirements.txt")
+    pp = _pyproject_runtime_packages()
+    tracker = _parse_requirements_packages(REPO_ROOT / "requirements-tracker.txt")
+    if pp and tracker:
+        only_pp = pp - tracker
+        only_tr = tracker - pp
+        if only_pp:
+            problems.append(f"in pyproject deps but not requirements-tracker.txt: {sorted(only_pp)}")
+        if only_tr:
+            problems.append(f"in requirements-tracker.txt but not pyproject deps: {sorted(only_tr)}")
+    return (not problems), problems
+
+
+def find_stale_shadow_dirs():
+    """Stale duplicate tests/ + src/ sitting directly under REPO_ROOT when the
+    REAL git checkout lives in REPO_ROOT/hilmar-daily-routine (the Cloud PC
+    layout). Returns [] in the dev/CI layout where REPO_ROOT IS the checkout."""
+    checkout = REPO_ROOT / "hilmar-daily-routine"
+    if not (checkout / "tests").is_dir() or not (checkout / "src" / "hilmar").is_dir():
+        return []  # dev/CI — REPO_ROOT's own tests/+src/ are the real ones
+    return [REPO_ROOT / sub for sub in ("tests", "src") if (REPO_ROOT / sub).is_dir()]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2731,39 +2860,52 @@ def phase_6_rules(log: Log, data: dict):
     # mode this check exists to surface).
     try:
         import importlib as _imp54
-        _required = [
-            # Observability — silent absence here is what produced
-            # HILMAR-DAILY-TRACKER-9.
-            "sentry_sdk",
-            # Auth + Graph
-            "msal", "requests",
-            # Pipeline core deps
-            "jsonschema", "dateutil",
-            # Timezone database — zoneinfo is stdlib but its DATA isn't on
-            # Windows; core.py builds ZoneInfo("America/New_York") at import
-            # time, so a missing tzdata bricks every pipeline step's import.
-            "tzdata",
-            # Rendering
-            "reportlab", "jinja2",
-            # PDF parsing
-            "pdfplumber",
-        ]
-        _missing = []
-        for _mod in _required:
+
+        def _import_missing(mods):
+            out = []
+            for _m in mods:
+                try:
+                    _imp54.invalidate_caches()
+                    _imp54.import_module(_m)
+                except Exception:
+                    out.append(_m)
+            return out
+
+        _missing = _import_missing(RUNTIME_IMPORT_REQUIRED)
+        # SELF-HEAL (CLAUDE.md §3 'self-heal safe cases'): try to install the
+        # missing packages into THIS interpreter once, then re-import. The box
+        # repairs its own env instead of emailing a human a pip command that
+        # rides the very Outlook channel that may be down. HILMAR_QC_NO_PIP=1
+        # disables the install (tests / locked-down hosts).
+        _healed = []
+        if _missing and os.environ.get("HILMAR_QC_NO_PIP") != "1":
+            _pkgs = [_module_package(m) for m in _missing]
             try:
-                _imp54.import_module(_mod)
-            except Exception as _ie:
-                _missing.append(f"{_mod} ({type(_ie).__name__})")
+                _rc = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "--user", "--quiet", *_pkgs],
+                    capture_output=True, text=True, timeout=300).returncode
+            except Exception:
+                _rc = 1
+            if _rc == 0:
+                _still = _import_missing(_missing)
+                _healed = [m for m in _missing if m not in _still]
+                _missing = _still
+                for _h in _healed:
+                    log.fix(f"QC-054: auto-installed missing runtime dep '{_module_package(_h)}'")
         if _missing:
             log.error(
                 f"QC-054: {len(_missing)} runtime dep(s) NOT importable in the "
-                f"wrapper's Python — pipeline observability and/or render WILL "
-                f"silently degrade. Missing: {', '.join(_missing)}. Install: "
-                f"`<wrapper-python> -m pip install "
-                f"{' '.join(m.split()[0] for m in _missing)}`"
+                f"wrapper's Python and auto-install did not resolve them — "
+                f"pipeline observability and/or render WILL silently degrade. "
+                f"Missing: {', '.join(_missing)}. Install: "
+                f"`{sys.executable} -m pip install --user "
+                f"{' '.join(_module_package(m) for m in _missing)}`"
             )
+        elif _healed:
+            log.ok(f"QC-054: healed {len(_healed)} missing dep(s); all "
+                   f"{len(RUNTIME_IMPORT_REQUIRED)} wrapper-runtime imports now resolve")
         else:
-            log.ok(f"QC-054: all {len(_required)} wrapper-runtime imports resolve")
+            log.ok(f"QC-054: all {len(RUNTIME_IMPORT_REQUIRED)} wrapper-runtime imports resolve")
     except Exception as _e:
         log.warn(f"QC-054: check failed with exception: {_e}")
 
@@ -2951,6 +3093,75 @@ def phase_6_rules(log: Log, data: dict):
                      f"Check the 'Parser backfill (reprocess cache)' pipeline step.")
     except Exception as _e:
         log.warn(f"QC-059: check failed with exception: {_e}")
+
+    # QC-061: INTERPRETER PARITY — the running Python matches the pinned
+    # .python-version. The box silently drifted to 3.14 (untested; CI is 3.12)
+    # for a week because the wrapper's discovery loop preferred whatever was on
+    # disk and nothing asserted the version. Because QC runs INSIDE the
+    # wrapper's chosen interpreter, this catches the exact drift at fire time.
+    # No auto-heal (can't reinstall Python from here) → flag_for_operator.
+    try:
+        _ok61, _running, _pinned = check_interpreter_parity()
+        if _pinned is None:
+            log.warn("QC-061: no .python-version pin found — cannot verify interpreter parity")
+        elif _ok61:
+            log.ok(f"QC-061: interpreter {_running} matches pinned {_pinned}")
+        else:
+            log.error(
+                f"QC-061: running Python {_running} != pinned {_pinned} "
+                f"(.python-version). The box is on an interpreter no test validates "
+                f"— 'green in CI / broken on the box'. Install Python {_pinned} and "
+                f"repoint the wrapper (deploy/setup_cloudpc.ps1).")
+    except Exception as _e:
+        log.warn(f"QC-061: check failed with exception: {_e}")
+
+    # QC-060: DEPENDENCY-LIST CONSISTENCY — the list the box installs is
+    # PROVABLY the list QC-054 verifies. Every RUNTIME_IMPORT_REQUIRED module
+    # must be pinned in requirements.txt, and pyproject deps must equal
+    # requirements-tracker.txt. The 2026-06 jinja2/sentry-sdk gap existed
+    # precisely because three dep lists disagreed and none was enforced.
+    # This is a SHRINK-ONLY config invariant (like QC-040 cross-tree drift):
+    # repo-state, so it fires the same in CI — a contributor can't add a
+    # QC-054 dep without pinning it. No auto-heal → flag_for_operator.
+    try:
+        _ok60, _probs60 = check_dep_consistency()
+        if _ok60:
+            log.ok("QC-060: dependency lists consistent (requirements.txt covers "
+                   "QC-054; pyproject == requirements-tracker)")
+        else:
+            log.error("QC-060: dependency-list drift — the box may install a set "
+                      "that doesn't cover what QC-054 needs. " + "; ".join(_probs60[:4]))
+    except Exception as _e:
+        log.warn(f"QC-060: check failed with exception: {_e}")
+
+    # QC-062: LAYOUT HYGIENE — no stale duplicate tests/ + src/ shadow the real
+    # git checkout. On the Cloud PC a pre-checkout-era flat copy of tests/+src/
+    # sat directly under PROJECT HILMAR/ shadowing hilmar-daily-routine/,
+    # causing pytest 'import file mismatch' collection errors. The xcopy never
+    # cleans them. SELF-HEAL: delete them (known-safe — the checkout subdir is
+    # the only valid copy). Returns [] in dev/CI (REPO_ROOT IS the checkout), so
+    # it never deletes the real trees.
+    try:
+        _stale = find_stale_shadow_dirs()
+        if not _stale:
+            log.ok("QC-062: layout clean — no stale tests/+src/ shadowing the checkout")
+        else:
+            _removed = []
+            for _d in _stale:
+                try:
+                    shutil.rmtree(_d)
+                    _removed.append(_d.name)
+                except Exception as _re62:
+                    log.warn(f"QC-062: could not remove stale {_d}: {_re62}")
+            if _removed:
+                log.fix(f"QC-062: removed stale shadow dir(s) under repo root: "
+                        f"{', '.join(_removed)} (the hilmar-daily-routine/ checkout is authoritative)")
+            _left = find_stale_shadow_dirs()
+            if _left:
+                log.error("QC-062: stale shadow dirs remain after self-heal: "
+                          + ", ".join(str(d) for d in _left))
+    except Exception as _e:
+        log.warn(f"QC-062: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

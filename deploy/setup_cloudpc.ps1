@@ -40,15 +40,22 @@ foreach ($f in @(
     }
 }
 
-# Step 2 - verify Python 3.11+
+# Step 2 - verify Python is EXACTLY the pinned version (.python-version).
+# The box silently drifted to 3.14 (untested; CI is 3.12) because this step
+# accepted any 3.11+ AND winget-installed 3.14. We now pin to the ONE version
+# the whole toolchain validates against, read from the repo's .python-version.
 Write-Host ""
-Write-Host "[2/6] Verifying Python..." -ForegroundColor Yellow
+$PINNED = (Get-Content (Join-Path $PSScriptRoot "..\.python-version") -ErrorAction SilentlyContinue | Select-Object -First 1)
+if (-not $PINNED) { $PINNED = "3.12" }
+$PINNED = $PINNED.Trim()
+Write-Host "[2/6] Verifying Python == $PINNED (pinned)..." -ForegroundColor Yellow
 $pythonOK = $false
 $script:PYTHON_CMD = $null
+$pinEsc = [regex]::Escape($PINNED)
 foreach ($cmd in @("python", "py", "python3")) {
     try {
         $ver = & $cmd --version 2>&1
-        if ($ver -match "Python 3\.(1[1-9]|[2-9]\d)") {
+        if ($ver -match "Python $pinEsc(\.\d+)?$") {
             Write-Host "  OK  $cmd -> $ver" -ForegroundColor Green
             $script:PYTHON_CMD = (Get-Command $cmd).Source
             $pythonOK = $true
@@ -57,15 +64,19 @@ foreach ($cmd in @("python", "py", "python3")) {
     } catch {}
 }
 if (-not $pythonOK) {
-    Write-Host "  Python 3.11+ not found. Installing via winget..." -ForegroundColor Yellow
-    winget install --id Python.Python.3.14 --accept-source-agreements --accept-package-agreements --silent
+    Write-Host "  Python $PINNED not found. Installing via winget..." -ForegroundColor Yellow
+    winget install --id "Python.Python.$PINNED" --accept-source-agreements --accept-package-agreements --silent
     $script:PYTHON_CMD = "python"
+    Write-Host "  After install, RE-OPEN the shell and re-run so the wrapper picks up $PINNED." -ForegroundColor Yellow
 }
 
-# Step 3 - install Python deps
+# Step 3 - install the COMPLETE runtime dependency set from requirements.txt.
+# (Was a hand-typed 4-package line that omitted jinja2/jsonschema/dateutil/
+# sentry-sdk — the box ran for a week missing them. requirements.txt is now the
+# canonical list QC-054 verifies + QC-060 reconciles, so this can't drift.)
 Write-Host ""
-Write-Host "[3/6] Installing Python deps (reportlab, msal, requests, tzdata)..." -ForegroundColor Yellow
-& $script:PYTHON_CMD -m pip install --user --quiet reportlab msal requests tzdata
+Write-Host "[3/6] Installing runtime deps from requirements.txt..." -ForegroundColor Yellow
+& $script:PYTHON_CMD -m pip install --user --quiet -r (Join-Path $PSScriptRoot "..\requirements.txt")
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 Write-Host "  OK" -ForegroundColor Green
 
