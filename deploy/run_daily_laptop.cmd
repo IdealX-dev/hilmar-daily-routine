@@ -263,12 +263,20 @@ if errorlevel 1 (
       set HB_SHA=!HB_SHA:HEAD=!
     )
   )
+  REM Forward the box's ENVIRONMENT FINGERPRINT (interpreter + dep health) that
+  REM preflight stamped. heartbeat.yml — running on GitHub, independent of this
+  REM box — compares it to the pinned .python-version and pages the operator
+  REM when a fire shipped on a DRIFTED env (the proactive sentinel). Default
+  REM signals "unknown" if preflight didn't write it.
+  set HB_ENV=unknown
+  if exist "%ROOT%\reports\env-fingerprint.txt" set /p HB_ENV=<"%ROOT%\reports\env-fingerprint.txt"
   gh workflow run heartbeat.yml ^
     -R IdealX-dev/hilmar-daily-routine ^
     -f at="!HB_AT!" ^
     -f sha="!HB_SHA!" ^
     -f status="!FIRE_STATUS!" ^
-    -f host="cloud-pc" >> "%LOG%" 2>&1
+    -f host="cloud-pc" ^
+    -f env="!HB_ENV!" >> "%LOG%" 2>&1
   echo Heartbeat dispatch exit code: !ERRORLEVEL! >> "%LOG%"
 )
 

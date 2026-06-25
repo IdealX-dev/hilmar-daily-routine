@@ -39,14 +39,20 @@ on:
         required: false
         default: "cloud-pc"
         type: string
+      env:
+        description: "Box environment fingerprint (running=.. pinned=.. health=..)"
+        required: false
+        default: "unknown"
+        type: string
 
 jobs:
   record:
     name: Record heartbeat
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     permissions:
       contents: read
+      issues: write     # the env-drift sentinel files/closes a labeled issue
     steps:
       - name: Echo heartbeat payload + FAIL the job on a non-success fire
         run: |
@@ -55,6 +61,7 @@ jobs:
           echo "  sha:    ${{ github.event.inputs.sha }}"
           echo "  status: ${{ github.event.inputs.status }}"
           echo "  host:   ${{ github.event.inputs.host }}"
+          echo "  env:    ${{ github.event.inputs.env }}"
           echo ""
           echo "Heartbeat workflow run timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           # 2026-06-25 — HONEST heartbeat. The wrapper now passes the REAL fire
@@ -70,3 +77,69 @@ jobs:
             exit 1
           fi
           echo "✅ Fire status=success — heartbeat recorded."
+
+      # ENVIRONMENT-DRIFT SENTINEL (2026-06-25). Even when a report shipped
+      # successfully, the box may be running a DRIFTED environment (wrong Python
+      # / missing deps) — the exact "degraded but it still went out, so nobody
+      # noticed for a week" failure mode. The box stamps its env fingerprint via
+      # preflight; this step — on GitHub, independent of the box and its MSAL —
+      # compares it to the pinned .python-version and files a labeled issue (a
+      # notification the operator actually receives) on drift, auto-closing it
+      # when the next fire reports healthy. The proactive prevention layer.
+      - name: Checkout (read .python-version pin)
+        if: ${{ github.event.inputs.host == 'cloud-pc' && github.event.inputs.env != '' && github.event.inputs.env != 'unknown' }}
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Environment-drift sentinel
+        if: ${{ github.event.inputs.host == 'cloud-pc' && github.event.inputs.env != '' && github.event.inputs.env != 'unknown' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVFP: ${{ github.event.inputs.env }}
+        run: |
+          set -e
+          envfp="$(echo "$ENVFP" | tr -d '\r')"
+          pinned="$(head -n1 .python-version 2>/dev/null | tr -d '[:space:]')"
+          running="$(echo "$envfp" | grep -oE 'running=[^ ]+' | cut -d= -f2 || true)"
+          health="$(echo "$envfp" | grep -oE 'health=[^ ]+' | cut -d= -f2 || true)"
+          drift=""
+          if [ -n "$running" ] && [ -n "$pinned" ] && [ "$running" != "$pinned" ]; then
+            drift="interpreter is Python $running but the pin is $pinned"
+          fi
+          if [ -n "$health" ] && [ "$health" != "ok" ]; then
+            [ -n "$drift" ] && drift="$drift; "
+            drift="${drift}preflight reported health=$health"
+          fi
+          gh label list --search box-env-drift --json name -q '.[].name' 2>/dev/null \
+            | grep -Fxq box-env-drift \
+            || gh label create box-env-drift --color D93F0B \
+                 --description "Cloud PC fired on a drifted environment" || true
+          if [ -z "$drift" ]; then
+            echo "✅ Box environment healthy ($envfp) — closing any open drift issue."
+            for n in $(gh issue list --label box-env-drift --state open --json number -q '.[].number' 2>/dev/null); do
+              gh issue comment "$n" --body "Recovered: box reported a healthy environment (\`$envfp\`) at $(date -u +%FT%TZ). Auto-closing." || true
+              gh issue close "$n" || true
+            done
+            exit 0
+          fi
+          echo "::warning::Box environment DRIFT — $drift"
+          body=$(printf '%s\n' \
+            "**The daily fire shipped, but the Cloud PC ran on a DRIFTED environment.**" \
+            "" \
+            "- Fingerprint: \`$envfp\`" \
+            "- Drift: $drift" \
+            "- Pinned (.python-version): \`$pinned\`" \
+            "- When: $(date -u +%FT%TZ)" \
+            "" \
+            "The report still went out, but on an environment no test validates — fix it BEFORE it degrades into a silent failure (the 2026-06 root cause). On the Cloud PC: install Python \`$pinned\`, re-run \`deploy/setup_cloudpc.ps1\`, then confirm \`py -$pinned scripts/preflight_env.py\` is green. See docs/RELIABILITY.md." \
+            "" \
+            "_Auto-closes when the next fire reports a healthy environment._")
+          today=$(date -u +%F)
+          existing=$(gh issue list --label box-env-drift --state open --search "created:>=$today" --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Box environment drift — fire shipped on an unvalidated env" \
+              --label box-env-drift --body "$body"
+          fi
