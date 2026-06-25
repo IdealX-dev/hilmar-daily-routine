@@ -14,8 +14,11 @@ historical from the merged `hilmar-tracker` repo).
 ## 1. What this repo is
 
 Production pipeline for the **OL-USA / Hilmar Ingredients daily shipment
-tracker** email + dashboard. Runs unattended at **10:00 AM ET** every
-weekday from a Win365 Cloud PC (`CPC-micha-E552L`).
+tracker** email + dashboard. Runs unattended at **6:07 PM ET** every
+weekday from a Win365 Cloud PC (`CPC-micha-E552L`). (6 PM ET = 3 PM PT —
+fired at end of Lonny's Pacific workday so the report reflects the current
+PT business day. Moved from the old 10 AM ET morning fire; see
+`docs/PASSOFF.md` and the schedule-consistency note in §5.)
 
 - **Client:** Hilmar Ingredients (contact: Lonny Upfold, `lupfold@hilmaringredients.com`)
 - **Provider:** OL-USA (responder mailbox: `MBD_OceanExportBookingShared@ol-usa.com`)
@@ -146,9 +149,19 @@ Runtime state that **never goes in git** (enforced by `.gitignore`):
 
 ## 5. The pipeline (`scripts/run_pipeline.py`)
 
-16 ordered steps fired by `deploy/run_daily_laptop.cmd` at 10:00 AM ET on
+16 ordered steps fired by `deploy/run_daily_laptop.cmd` at 6:07 PM ET on
 the Cloud PC. Each step is a subprocess; the orchestrator wraps the run in
 a Sentry Cron heartbeat + per-step Performance spans.
+
+**Fire time is one canonical value across four surfaces** — keep them in
+sync or monitoring false-alerts: (1) the Cloud-PC Task Scheduler trigger
+(`deploy/setup_cloudpc.ps1` `-At 6:07pm`), (2) the Sentry cron monitor
+(`scripts/sentry_setup.py` `_MONITOR_CONFIG` `"7 18 * * 1-5"`, tz
+America/New_York), (3) the GitHub schedule (`.github/workflows/daily.yml`
+`7 22`/`7 23 * * 1-5` — the two DST-season UTC crons that both map to
+6:07 PM ET), and (4) the liveness backstops (`.github/workflows/liveness.yml`,
+which run *after* the fire). `tests/test_fire_time_consistency.py` fails CI
+if these drift apart.
 
 ```
 1. backup.py                       Snapshot tracking-data-v2.json → data-backups/

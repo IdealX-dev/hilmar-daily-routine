@@ -61,12 +61,18 @@ freshness), **QC-059** (data-flow integrity), **QC-060** (dep consistency),
    `config.alerts.teams_webhook_url` (Teams → Connectors → Incoming Webhook) and
    `fire_alert` + the sentinel ping his phone. **Until this, alerts are filed
    but not delivered.**
-2. **Reconcile the fire TIME** *(real inconsistency)* — the Cloud-PC Task
-   Scheduler + `setup_cloudpc.ps1` fire at **10:00 AM ET**, but this session
-   moved the Sentry cron monitor + GH `liveness/daily` schedules toward the
-   evening. They must agree or the cron monitor will false-alert "missed
-   check-in." Decide one time; align Task Scheduler + `sentry_setup` monitor
-   schedule + `liveness.yml`/`daily.yml` crons + the wrapper header.
+2. **Reconcile the fire TIME** — ✅ **RESOLVED 2026-06-25** (decision: **6:07 PM
+   ET**, to match where the code + monitors already were). The Cloud-PC Task
+   Scheduler trigger (`setup_cloudpc.ps1` `-At 6:07pm`) now agrees with the
+   Sentry cron monitor (`7 18 * * 1-5` ET, 290-min margin) and the
+   `daily.yml`/`liveness.yml` schedules; `tests/test_fire_time_consistency.py`
+   fails CI if the four surfaces ever drift again, and all the stale "10 AM ET"
+   docs were corrected. **Operator step to make it LIVE on the box:** re-run
+   `deploy\setup_cloudpc.ps1` on the Cloud PC — editing the script does not
+   change the already-registered Task Scheduler entry until the setup is re-run.
+   *Optional follow-up:* the 16:30 ET auto-chase now runs ~1.5h before the
+   evening fire (on the prior fire's data); consider re-timing it to ~18:45 ET
+   (`schtasks /Change /TN "Hilmar Auto-Chase - CloudPC" /ST 18:45`).
 3. **Scheduled-task hardening** — confirm the task is enabled, surfaces a
    non-zero Last-Run-Result, and the box won't sleep through the window
    (wake-to-run / run-ASAP-after-missed / no-sleep at fire time).

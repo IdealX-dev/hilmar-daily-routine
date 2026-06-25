@@ -25,12 +25,12 @@ Bundles one skill, `hilmar-daily-tracker`, which gives Claude:
 
 The skill triggers automatically when you mention Hilmar, the daily shipment
 tracker, Lonny Upfold, the OL-USA booking pipeline, MDOLX bookings, the
-10 AM ET fire, parser accuracy, the Hilmar QC checks, or ask to run / check /
+6 PM ET fire, parser accuracy, the Hilmar QC checks, or ask to run / check /
 debug / report on the pipeline — on any device.
 
 **Note:** the skill lets Claude *understand, run, and report on* the project.
 Actually executing the Python pipeline still needs a real machine with the
-code + Python (the Cloud PC does the scheduled 10 AM ET fire). From the
+code + Python (the Cloud PC does the scheduled 6:07 PM ET fire). From the
 iPhone you can review the audit, check status, explain results, and make
 decisions — heavy runs happen on a laptop or the Cloud PC.
 

@@ -6,7 +6,7 @@ description: >-
   shipment-tracker email + dashboard + PDF + private audit. Use this skill
   WHENEVER Michael mentions Hilmar, the Hilmar tracker, the daily shipment
   tracker, Lonny Upfold, the OL-USA booking pipeline, MDOLX bookings, the
-  10 AM ET daily fire, Hilmar parser accuracy, the Hilmar QC checks
+  6 PM ET daily fire, Hilmar parser accuracy, the Hilmar QC checks
   (QC-001..QC-050), or Sentry/Seer for Hilmar — or wants to run, check, debug,
   explain, or report on the Hilmar pipeline from ANY device including the
   iPhone Claude app. Also trigger on "run the Hilmar pipeline", "check Hilmar
@@ -19,7 +19,7 @@ description: >-
 # Hilmar Daily Shipment Tracker
 
 The Hilmar Daily Shipment Tracker is a production pipeline that runs every
-weekday at **10:00 AM ET** on a Windows 365 Cloud PC. It ingests the Outlook
+weekday at **6:07 PM ET** on a Windows 365 Cloud PC. It ingests the Outlook
 email thread between **Lonny Upfold** (Logistics Coordinator, Hilmar
 Ingredients) and **OL-USA** (the ocean freight forwarder), and produces:
 
@@ -63,7 +63,7 @@ work there. If no, use a git clone. Tell Michael which one you found so he
 knows the state of the device.
 
 **Heavy pipeline runs need a real machine with Python + the staged emails.**
-The Cloud PC does the scheduled 10 AM ET fire. From the iPhone Claude app you
+The Cloud PC does the scheduled 6:07 PM ET fire. From the iPhone Claude app you
 can review the audit, check status, explain results, and make decisions — but
 you cannot run the Python pipeline there. That's expected and matches how the
 rate checker works.
@@ -143,7 +143,7 @@ email) that you must not skip.
 
 - **Repo:** `github.com/IdealX-dev/hilmar-daily-routine` (branch `main`)
 - **Pipeline entry point:** `scripts/run_pipeline.py`
-- **Schedule:** weekdays 10:00 AM ET, Windows Cloud PC
+- **Schedule:** weekdays 6:07 PM ET, Windows Cloud PC
 - **Data file:** `tracking-data-v2.json` (155-170 request rows)
 - **Backups:** `data-backups/` (timestamped snapshots, retention-pruned)
 - **Observability:** Sentry (org `idealx-llc`, project `hilmar-daily-tracker`)
@@ -161,5 +161,5 @@ a rate. Lonny either books (→ **WIN**, gets an MDOLX booking number), the rate
 goes stale (→ **Q&L**, Quoted & Lost), OL never responds (→ **NQ**, Not
 Quoted), or it's still open (→ **PENDING**). One row per RFQ in
 `tracking-data-v2.json`. Win Rate = Wins / (Wins + Q&L). The daily email
-reports the previous business day plus period-to-date rollups. See
+reports the current Pacific business day plus period-to-date rollups. See
 `references/architecture.md` for the full field list + status state machine.
