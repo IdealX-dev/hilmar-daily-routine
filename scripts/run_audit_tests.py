@@ -83,12 +83,19 @@ def _test_root() -> Path | None:
     Returns the test root directory if found, or ``None`` if neither
     layout matches — caller writes SKIPPED in that case rather than
     bombing pytest with a "no tests collected" error.
+
+    Order matters: the canonical git checkout (``ROOT/hilmar-daily-routine``)
+    is preferred FIRST. On the Cloud PC there can ALSO be a stale tests/+src/
+    copy sitting directly in ROOT from an older layout — collecting THAT
+    alongside the checkout gives two test modules with the same basename and
+    pytest aborts with "import file mismatch" (the 2026-06-25 fire's 3
+    collection errors). Preferring the real checkout sidesteps the stale copy.
     """
-    if (ROOT / "tests").is_dir() and (ROOT / "src" / "hilmar").is_dir():
-        return ROOT
     sibling = ROOT / "hilmar-daily-routine"
     if (sibling / "tests").is_dir() and (sibling / "src" / "hilmar").is_dir():
         return sibling
+    if (ROOT / "tests").is_dir() and (ROOT / "src" / "hilmar").is_dir():
+        return ROOT
     return None
 
 
@@ -285,6 +292,83 @@ def _detect_collection_error(stdout: str, failures: list[dict]) -> bool:
     return bool(failures and sum(1 for f in failures if f.get("phase") == "collect") >= max(1, len(failures) // 2))
 
 
+# Collection errors of these types mean the HOST can't import a test
+# dependency — an ENVIRONMENT gap, not a code regression.
+_IMPORT_ERR_TYPES = frozenset({"ModuleNotFoundError", "ImportError"})
+
+
+def _classify_outcome(counts: dict, failures: list[dict],
+                      total_cov: float | None, gate: float) -> dict:
+    """Decide PASS / FAIL / SKIPPED, separating a CODE failure from an
+    ENVIRONMENT-incomplete run.
+
+    A collection ImportError/ModuleNotFoundError means this host lacks a
+    test-only dependency (e.g. the Cloud PC installs bare runtime deps, so
+    ``jinja2`` — used only by ``src/hilmar/render.py``, never the production
+    ``scripts/`` — is absent). That is NOT a code regression and must not
+    red-flag the audit; the authoritative suite runs in CI. What DOES fail:
+      - a call-phase test failure (real regression),
+      - a non-import collection error (e.g. a syntax error in a test),
+      - an error count we could not positively classify (stay conservative),
+      - coverage below the gate (only when coverage was actually measured).
+
+    Returns {status, env_incomplete, missing_modules, reason}.
+    """
+    call_failures = [f for f in failures if f.get("phase") == "call"]
+    collect_failures = [f for f in failures if f.get("phase") == "collect"]
+    import_errors = [f for f in collect_failures
+                     if f.get("error_type") in _IMPORT_ERR_TYPES]
+    real_collect = [f for f in collect_failures
+                    if f.get("error_type") not in _IMPORT_ERR_TYPES]
+
+    missing: list[str] = []
+    for f in import_errors:
+        m = re.search(r"No module named ['\"]([\w.]+)['\"]", f.get("short_message", ""))
+        if m:
+            missing.append(m.group(1))
+    missing = sorted(set(missing))
+
+    # Coverage fails the gate when measured-and-below, OR when tests actually
+    # ran but coverage couldn't be measured at all (preserves the old
+    # conservative behavior). A SKIPPED env run (0 passed) gets no coverage
+    # penalty — there was nothing to measure.
+    coverage_fail = (
+        (total_cov is not None and total_cov < gate)
+        or (total_cov is None and int(counts.get("passed", 0)) > 0)
+    )
+    # Any error we could NOT classify as a missing-dep import error is treated
+    # as a real problem — never mask an unknown break.
+    unclassified = max(0, int(counts.get("error", 0)) - len(collect_failures))
+    real_failure = (
+        int(counts.get("failed", 0)) > 0
+        or bool(call_failures)
+        or bool(real_collect)
+        or unclassified > 0
+        or coverage_fail
+    )
+    env_incomplete = bool(import_errors) and not real_failure
+
+    if real_failure:
+        status = "FAIL"
+    elif env_incomplete and int(counts.get("passed", 0)) == 0:
+        status = "SKIPPED"   # nothing could run in this env
+    else:
+        status = "PASS"
+
+    reason = None
+    if env_incomplete:
+        mods = ", ".join(missing) if missing else "test-only dependencies"
+        reason = (
+            f"{len(import_errors)} test module(s) could not be imported on this "
+            f"host (missing {mods}) — library/test-only deps NOT used by the "
+            f"production pipeline (it runs scripts/, not src/hilmar). The "
+            f"authoritative suite runs in CI; install dev extras to run it here: "
+            f"pip install -e '.[dev]'."
+        )
+    return {"status": status, "env_incomplete": env_incomplete,
+            "missing_modules": missing, "reason": reason}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true", help="Suppress pytest stdout")
@@ -348,6 +432,14 @@ def main() -> int:
         sys.executable, "-m", "pytest", "-q", "--no-header",
         "-rfE",
         "--tb=short",
+        # Collect ONLY the checkout's tests — never a stale sibling copy at a
+        # parent dir (the source of the "import file mismatch" collisions).
+        str(test_root / "tests"),
+        # A couple of missing-dep import errors must NOT abort the whole
+        # session (default pytest behavior is "Interrupted: N errors during
+        # collection" → 0 tests run). Run everything collectable; the missing
+        # modules surface as classified collection errors below.
+        "--continue-on-collection-errors",
         "--cov=hilmar",
         f"--cov-report=json:{coverage_json}",
         "--cov-fail-under=0",
@@ -369,7 +461,6 @@ def main() -> int:
     failures = _parse_failures(stdout)
     error_buckets = _bucket_error_types(failures)
     collection_error = _detect_collection_error(stdout, failures)
-    tests_ok = proc.returncode == 0 and counts["failed"] == 0 and counts["error"] == 0
 
     total_cov = None
     modules_below_floor: list[dict] = []
@@ -390,8 +481,14 @@ def main() -> int:
 
     coverage_ok = total_cov is not None and total_cov >= gate
 
-    # Overall status: FAIL if a test failed OR coverage is below the gate.
-    status = "FAIL" if not tests_ok or not coverage_ok else "PASS"
+    # Overall status: FAIL on a real code regression or coverage below gate;
+    # a missing test-only dependency is an ENVIRONMENT gap (SKIPPED/PASS), not
+    # a FAIL — see _classify_outcome. tests_ok is retained for the artifact.
+    outcome = _classify_outcome(counts, failures, total_cov, gate)
+    status = outcome["status"]
+    # Align tests_ok with the classified outcome (was a raw "0 errors" flag,
+    # which mislabeled an env-incomplete run as not-ok).
+    tests_ok = status == "PASS"
 
     # pytest_output_path: serialize as a repo-relative POSIX path when the
     # output landed under ROOT; otherwise fall back to the absolute path.
@@ -421,16 +518,25 @@ def main() -> int:
         "errors": failures,
         "error_type_buckets": error_buckets,
         "collection_error": collection_error,
+        # NEW 2026-06-25: distinguish a missing test-only dependency (this
+        # host can't import it) from a code regression, so the audit doesn't
+        # red-flag an incomplete Cloud-PC env as broken code.
+        "env_incomplete": outcome["env_incomplete"],
+        "missing_modules": outcome["missing_modules"],
+        "reason": outcome["reason"],
         "pytest_output_path": output_ref,
         "generated_at": now,
     }
     _write(artifact)
 
+    _icon = {"PASS": "✅", "SKIPPED": "⏭️"}.get(status, "❌")
     print(
-        f"{'✅' if status == 'PASS' else '❌'} test-result.json: {status} — "
+        f"{_icon} test-result.json: {status} — "
         f"{counts['passed']} passed / {counts['failed']} failed / "
         f"{counts['error']} error · coverage {total_cov}% (gate {gate}%)"
     )
+    if outcome["env_incomplete"]:
+        print(f"   ⏭️  environment incomplete (not a code failure): {outcome['reason']}")
     if untested:
         print(f"   ⚠️  untested modules (0%): {', '.join(untested)}")
     return 0  # observer: never block the pipeline
