@@ -87,7 +87,7 @@ if (-not $pythonOK) {
 
 # Step 3 - install the COMPLETE runtime dependency set from requirements.txt.
 # (Was a hand-typed 4-package line that omitted jinja2/jsonschema/dateutil/
-# sentry-sdk — the box ran for a week missing them. requirements.txt is now the
+# sentry-sdk -- the box ran for a week missing them. requirements.txt is now the
 # canonical list QC-054 verifies + QC-060 reconciles, so this can't drift.)
 Write-Host ""
 Write-Host "[3/6] Installing runtime deps from requirements.txt..." -ForegroundColor Yellow
@@ -98,7 +98,7 @@ Write-Host "  OK" -ForegroundColor Green
 # Step 3b - deploy the latest code from the checkout into the runtime locations
 # the scheduled task reads. The fire's xcopy auto-syncs scripts\ + deploy\*.py,
 # but it deliberately CANNOT replace the running wrapper (run_daily_laptop.cmd)
-# — so a wrapper change reaches the box by re-running THIS setup, which copies
+# -- so a wrapper change reaches the box by re-running THIS setup, which copies
 # it safely (the wrapper is not executing now). Idempotent.
 Write-Host ""
 Write-Host "[3b/6] Deploying scripts + wrapper from checkout to runtime..." -ForegroundColor Yellow
@@ -114,7 +114,7 @@ if (Test-Path (Join-Path $checkout "deploy\run_daily_laptop.cmd")) {
     }
     Write-Host "  OK  scripts\*.py + deploy\*.py + wrapper + config deployed" -ForegroundColor Green
 } else {
-    Write-Warning "Checkout not found at $checkout — skipping deploy (the fire's git-pull will sync scripts later)."
+    Write-Warning "Checkout not found at $checkout - skipping deploy (the fire's git-pull will sync scripts later)."
 }
 
 # Step 4 - verify MSAL silent refresh works on this Cloud PC
