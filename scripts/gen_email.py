@@ -1503,20 +1503,25 @@ def _loss_reason_mix_html(data) -> str:
 
     def _bar_row(label, count, total, color):
         pct = (count * 100.0 / total) if total else 0
-        # Inline-styled table cell with width:N% as the bar fill, plus the
-        # label/count to the right. Outlook respects this; flexbox does not.
+        # Two inner cells: a PURE colored fill (width:N%, no text) and the
+        # "count · pct%" value to its RIGHT. The value never sits inside the
+        # bar, so a narrow bar (e.g. 7%) can't squeeze its label onto two
+        # lines — the 2026-06-25 "terrible formatting" wrap. Min 4% so a tiny
+        # bar still shows a sliver. Outlook-safe: nested <table> + inline
+        # width %, no flexbox/SVG/gradient (QC-045's lesson).
         return (
             '<tr>'
             f'<td style="padding:6px 12px 6px 0;color:#0f172a;font-size:13px;'
-            f'white-space:nowrap;font-weight:500">{_esc(label)}</td>'
-            f'<td style="padding:6px 0;width:60%">'
+            f'white-space:nowrap;font-weight:500;vertical-align:middle">{_esc(label)}</td>'
+            f'<td style="padding:6px 0;width:60%;vertical-align:middle">'
             f'<table cellspacing="0" cellpadding="0" border="0" '
-            f'style="width:100%;border-collapse:collapse">'
-            f'<tr><td style="background:{color};color:#fff;padding:3px 8px;'
-            f'border-radius:3px;font-size:12px;width:{max(pct, 4):.0f}%;'
-            f'white-space:nowrap;font-variant-numeric:tabular-nums">'
+            f'style="width:100%;border-collapse:collapse"><tr>'
+            f'<td style="width:{max(pct, 4):.0f}%;background:{color};'
+            f'border-radius:3px;line-height:16px;font-size:12px">&nbsp;</td>'
+            f'<td style="padding-left:8px;white-space:nowrap;color:#0f172a;'
+            f'font-size:12px;font-weight:600;font-variant-numeric:tabular-nums">'
             f'{count} &middot; {pct:.0f}%</td>'
-            f'<td style="padding-left:6px"></td></tr></table>'
+            f'</tr></table>'
             f'</td></tr>'
         )
 

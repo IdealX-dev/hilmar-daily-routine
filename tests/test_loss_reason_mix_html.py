@@ -163,6 +163,35 @@ def test_lonely_no_response_only_still_renders_section():
     assert "Push OL" in out
 
 
+def test_bar_value_label_sits_outside_the_colored_bar_and_never_wraps():
+    """2026-06-25 'terrible formatting': at small percentages the bar was too
+    thin to hold its 'N · M%' label, which wrapped onto two lines inside the
+    fill. The value must now live in a separate white-space:nowrap cell to the
+    RIGHT of the bar, and the colored bar must be a pure fill (no text)."""
+    import re
+    # A deliberately lopsided mix → a ~8% bar, the wrap case.
+    data = {"requests":
+            [{"status": "LOSS", "loss_reason": "PRICE", "response_timestamp": _ts(2)}]
+            + [{"status": "LOSS", "loss_reason": "UNDIFFERENTIATED", "response_timestamp": _ts(3)}
+               for _ in range(12)]}
+    out = GE._loss_reason_mix_html(data)
+
+    # Every "count · pct%" value cell is nowrap and carries NO background
+    # (i.e. it is NOT the colored bar).
+    value_cells = re.findall(r'<td style="([^"]*)"[^>]*>(\d+ &middot; \d+%)</td>', out)
+    assert value_cells, "no value cells found"
+    for style, _val in value_cells:
+        assert "white-space:nowrap" in style, style
+        assert "background:" not in style, style
+
+    # Every colored bar cell is a pure fill — its content is just a spacer,
+    # never the value text (which is what wrapped).
+    bar_cells = re.findall(r'<td style="[^"]*background:[^"]*">(.*?)</td>', out)
+    assert bar_cells, "no colored bar cells found"
+    for content in bar_cells:
+        assert content.strip() in ("&nbsp;", ""), content
+
+
 def test_undifferentiated_renders_with_distinct_label():
     """UNDIFFERENTIATED — the new (2026-06-02) "lost but rate was
     competitive" bucket — must render with the explicit "needs
