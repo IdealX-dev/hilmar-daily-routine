@@ -295,6 +295,20 @@ the live PROJECT HILMAR folder — **no pipeline, no email**. Exit 0 =
 synced, 3 = git pull failed (auth/network, production left on prior code).
 Replaces the old manual `cd … & git pull & xcopy …` dance.
 
+### Update the box after a code change (pull + deps + re-register task)
+When a change touches more than scripts -- new deps, the wrapper, or the fire
+TIME (the Task Scheduler trigger) -- `sync_now.cmd` is not enough (it only
+copies code). Run the one-command updater:
+```
+deploy\update_box.cmd
+```
+It does git pull (ONCE) -> installs the full `requirements.txt` -> deploys
+scripts/wrapper/config -> re-registers the 6:07 PM ET task, then verifies MSAL
++ smoke-tests `refresh_stage`. **No pipeline, no email.** It pulls the latest
+`setup_cloudpc.ps1` and *then* runs it, so a fix to the setup script itself
+lands on the same run. Replaces the manual `pull -> pip -> copy ->
+Register-ScheduledTask` dance (the 2026-06-25 cutover).
+
 ### Re-auth MSAL (every ~80 days, before QC-023 errors)
 ```
 python scripts/outlook_send.py auth
