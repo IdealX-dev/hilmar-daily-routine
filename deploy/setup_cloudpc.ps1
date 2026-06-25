@@ -95,6 +95,28 @@ Write-Host "[3/6] Installing runtime deps from requirements.txt..." -ForegroundC
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 Write-Host "  OK" -ForegroundColor Green
 
+# Step 3b - deploy the latest code from the checkout into the runtime locations
+# the scheduled task reads. The fire's xcopy auto-syncs scripts\ + deploy\*.py,
+# but it deliberately CANNOT replace the running wrapper (run_daily_laptop.cmd)
+# — so a wrapper change reaches the box by re-running THIS setup, which copies
+# it safely (the wrapper is not executing now). Idempotent.
+Write-Host ""
+Write-Host "[3b/6] Deploying scripts + wrapper from checkout to runtime..." -ForegroundColor Yellow
+$checkout = Join-Path $ROOT "hilmar-daily-routine"
+if (Test-Path (Join-Path $checkout "deploy\run_daily_laptop.cmd")) {
+    Copy-Item -Force (Join-Path $checkout "scripts\*.py") (Join-Path $ROOT "scripts\")
+    if (Test-Path (Join-Path $ROOT "deploy")) {
+        Copy-Item -Force (Join-Path $checkout "deploy\*.py") (Join-Path $ROOT "deploy\")
+        Copy-Item -Force (Join-Path $checkout "deploy\run_daily_laptop.cmd") (Join-Path $ROOT "deploy\")
+    }
+    if (Test-Path (Join-Path $checkout "config.json")) {
+        Copy-Item -Force (Join-Path $checkout "config.json") (Join-Path $ROOT "config.json")
+    }
+    Write-Host "  OK  scripts\*.py + deploy\*.py + wrapper + config deployed" -ForegroundColor Green
+} else {
+    Write-Warning "Checkout not found at $checkout — skipping deploy (the fire's git-pull will sync scripts later)."
+}
+
 # Step 4 - verify MSAL silent refresh works on this Cloud PC
 # This is the make-or-break test: if the Cloud PC's IP is on OL's
 # Conditional Access allowlist, silent refresh + Graph calls will
