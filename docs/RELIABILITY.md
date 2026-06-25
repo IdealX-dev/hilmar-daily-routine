@@ -64,6 +64,16 @@ it can't silently drift in the first place.
 - **`run_pipeline.py`** — prints a LOUD "BUILD COMPLETE — NOTHING WAS SENT"
   banner when today's send-flag is absent, so a hand-run can't be mistaken for
   a shipped report (the footgun Michael hit).
+- **Environment-drift sentinel** (proactive prevention) — `preflight_env`
+  stamps the box's interpreter + dep health to `reports/env-fingerprint.txt`;
+  the wrapper forwards it as the heartbeat's `env` input; and `heartbeat.yml`
+  — running on GitHub, independent of the box and its MSAL — compares it to the
+  pinned `.python-version` and **files a labeled `box-env-drift` issue even when
+  the report shipped successfully** (the "degraded but it still went out, so
+  nobody noticed for a week" case), auto-closing it when the next fire reports a
+  healthy env. This is the one that catches drift *before* it festers — but the
+  issue is only a real page once `alerts.teams_webhook_url` (or GitHub
+  notifications) reaches you; configure that.
 
 ## What YOU must do on the Cloud PC (one-time, in order)
 

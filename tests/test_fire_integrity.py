@@ -133,3 +133,29 @@ def test_preflight_clean_when_pinned_and_present(monkeypatch):
     monkeypatch.setattr(preflight_env, "_git_behind", lambda: 0)
     hard, soft = preflight_env.run_preflight()
     assert hard == [] and soft == []
+
+
+# ── env fingerprint (the sentinel's input) ───────────────────────────────
+def test_fingerprint_ok(tmp_path):
+    p = tmp_path / "fp.txt"
+    line = preflight_env.write_fingerprint([], [], path=p)
+    assert "health=ok" in line
+    assert f"running={sys.version_info[0]}.{sys.version_info[1]}" in line
+    assert "pinned=" in line
+    # LF-only, no stray CR (would break `set /p` → heartbeat parsing).
+    assert b"\r" not in p.read_bytes()
+    assert p.read_text(encoding="utf-8").strip() == line
+
+
+def test_fingerprint_soft_lists_missing(tmp_path):
+    p = tmp_path / "fp.txt"
+    line = preflight_env.write_fingerprint(
+        [], ["runtime deps not importable: jinja2, msal (QC-054 will self-heal)"], path=p)
+    assert "health=soft" in line
+    assert "missing=jinja2,msal" in line
+
+
+def test_fingerprint_drift(tmp_path):
+    p = tmp_path / "fp.txt"
+    line = preflight_env.write_fingerprint(["interpreter drift: 3.14 != 3.12"], [], path=p)
+    assert "health=drift" in line

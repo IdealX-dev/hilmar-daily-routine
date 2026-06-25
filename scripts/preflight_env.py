@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -77,12 +78,49 @@ def run_preflight() -> tuple[list[str], list[str]]:
     return hard, soft
 
 
+def write_fingerprint(hard: list[str], soft: list[str], *, path: Path | None = None) -> str:
+    """Stamp the box's environment health to reports/env-fingerprint.txt so the
+    wrapper can forward it into the heartbeat. heartbeat.yml (on GitHub,
+    independent of the box) then pages the operator when a fire shipped on a
+    DRIFTED env — the proactive sentinel. One line, space-separated key=value:
+        running=3.12 pinned=3.12 health=ok
+        running=3.12 pinned=3.12 health=soft missing=jinja2,msal
+        running=3.14 pinned=3.12 health=drift
+    """
+    running = f"{sys.version_info[0]}.{sys.version_info[1]}"
+    pinned = "unknown"
+    try:
+        from qc_selfheal import _read_pinned_python
+        pinned = (_read_pinned_python() or "unknown")
+    except Exception:
+        pass
+    health = "drift" if hard else ("soft" if soft else "ok")
+    line = f"running={running} pinned={pinned} health={health}"
+    # Surface missing deps for the issue body (parse from the soft message).
+    for s in soft:
+        m = re.search(r"runtime deps not importable: ([^(]+)", s)
+        if m:
+            line += " missing=" + m.group(1).strip().rstrip(" ").replace(", ", ",")
+            break
+    path = path or (ROOT / "reports" / "env-fingerprint.txt")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # write_bytes with an explicit LF — text mode on Windows would emit
+        # CRLF, and `set /p` in the wrapper would carry the stray CR into the
+        # heartbeat input and break the sentinel's parsing.
+        path.write_bytes((line + "\n").encode("utf-8"))
+    except Exception:
+        pass
+    return line
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Fire-start environment preflight")
     ap.add_argument("--no-alert", action="store_true", help="Don't raise out-of-band alert (tests)")
     args = ap.parse_args()
 
     hard, soft = run_preflight()
+    write_fingerprint(hard, soft)   # always stamp the fingerprint for the sentinel
     if not hard and not soft:
         print("✅ Preflight OK — interpreter pinned, deps import, checkout current")
         return 0
