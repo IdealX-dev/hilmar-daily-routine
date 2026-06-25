@@ -31,6 +31,11 @@ if str(SRC_DIR) not in sys.path:
 # doesn't otherwise mock the network.
 os.environ.setdefault("HILMAR_PARSER_FALLBACK_DISABLE", "1")
 
+# Never let QC-054's dependency self-heal shell out to `pip install` during a
+# test run (the sandbox legitimately lacks some optional deps like sentry_sdk).
+# Tests that exercise the self-heal path set/unset this explicitly.
+os.environ.setdefault("HILMAR_QC_NO_PIP", "1")
+
 # pytest is optional — fall through cleanly if missing (CI uses plain python).
 try:
     import pytest

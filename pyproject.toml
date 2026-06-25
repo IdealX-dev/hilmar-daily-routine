@@ -7,7 +7,12 @@ name = "hilmar-tracker"
 version = "0.1.0"
 description = "OL-USA daily Hilmar Ingredients rate-desk tracker — ingest, classify, render, send"
 readme = "README.md"
-requires-python = ">=3.10"
+# Pinned to 3.12 — the single version CI (.github/workflows/test.yml),
+# .python-version, the Cloud PC interpreter, and QC-061 all consume. The box
+# silently drifted to 3.14 (untested) for a week; the upper bound makes the
+# toolchain itself reject an unvalidated interpreter. Bump deliberately, in
+# lockstep with CI + .python-version, never by accident.
+requires-python = ">=3.12,<3.13"
 license = { text = "Proprietary — IdealX / OL-USA internal" }
 authors = [
   { name = "Michael Deitchman", email = "michael.deitchman@idealx.us" },
@@ -24,6 +29,8 @@ dependencies = [
   "python-dateutil>=2.9",
   "tzdata>=2024.1",
   "jsonschema>=4.22",
+  "pdfplumber>=0.11",          # booking-PDF parsing (QC-054 requires it; was undeclared)
+  "sentry-sdk>=2.0",           # observability (QC-054 requires it; was undeclared — the silent gap)
 ]
 
 [project.optional-dependencies]

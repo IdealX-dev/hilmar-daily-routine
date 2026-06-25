@@ -1,10 +1,18 @@
-# Runtime — keep in sync with pyproject.toml [project.dependencies]
+# Mirror of pyproject.toml [project.dependencies] — the full DECLARED runtime
+# set (incl. deploy-time/future deps like weasyprint + azure-*). QC-060 asserts
+# this file and pyproject stay identical. The Cloud PC installs the leaner,
+# Windows-safe requirements.txt (which QC-060 also proves covers every
+# QC-054-required module); this list is for environments that want everything.
 msal>=1.28
 azure-identity>=1.16
 azure-keyvault-secrets>=4.8
 requests>=2.32
 weasyprint>=62
+reportlab>=4.0
+anthropic>=0.40
 jinja2>=3.1
 python-dateutil>=2.9
 tzdata>=2024.1
 jsonschema>=4.22
+pdfplumber>=0.11
+sentry-sdk>=2.0
