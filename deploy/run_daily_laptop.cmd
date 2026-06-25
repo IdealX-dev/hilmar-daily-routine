@@ -52,24 +52,28 @@ REM (per-user vs system, py launcher vs explicit). Cloud PC fire 2026-05-07
 REM 10:00 ET failed rc=3 because the hardcoded MBD-TRAVEL path didn't exist
 REM on Cloud PC. This loop fixes that.
 REM
-REM 2026-06-08: added the bare C:\PythonNNN system-install paths to the TOP.
-REM The pythoncore-3.14-64 embeddable that the loop used to find was deleted
-REM off the Cloud PC, so discovery fell through to C:\Windows\py.exe. py.exe
-REM DOES resolve to C:\Python314 — but only the bare-path interpreter has
-REM pytest + pytest-cov installed, and routing through py.exe obscured which
-REM interpreter actually ran (the cause of the recurring QC-052 false-fail).
-REM Pin the real system install first so the daily test routine sees its deps.
+REM 2026-06-25: PREFER THE PINNED interpreter (.python-version = 3.12). The box
+REM silently drifted to 3.14 BECAUSE this loop listed C:\Python314 first and
+REM took the first one on disk — so a 3.14 install always shadowed a 3.12 one
+REM and the preflight (QC-061) then aborted the fire. With 3.12 paths first,
+REM installing Python 3.12 is SUFFICIENT — no need to uninstall 3.14, which can
+REM stay as a never-selected fallback. The `py -3.12` launcher resolves the
+REM exact pinned build first so even a non-standard install path is found.
+REM (Earlier note, 2026-06-08: the bare C:\PythonNNN system installs are the
+REM ones with pytest deps; routing through py.exe obscured which ran.)
 set PY=
-for %%P in (
+for /f "delims=" %%E in ('py -3.12 -c "import sys;print(sys.executable)" 2^>nul') do if not defined PY set PY=%%E
+if not defined PY for %%P in (
+  "C:\Python312\python.exe"
+  "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+  "%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe"
   "C:\Python314\python.exe"
   "C:\Python313\python.exe"
-  "C:\Python312\python.exe"
   "%USERPROFILE%\AppData\Local\Python\pythoncore-3.14-64\python.exe"
   "%LOCALAPPDATA%\Python\pythoncore-3.14-64\python.exe"
   "%LOCALAPPDATA%\Programs\Python\Python314\python.exe"
   "%USERPROFILE%\AppData\Local\Programs\Python\Python314\python.exe"
   "%LOCALAPPDATA%\Programs\Python\Python313\python.exe"
-  "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
   "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
   "C:\Windows\py.exe"
 ) do (
