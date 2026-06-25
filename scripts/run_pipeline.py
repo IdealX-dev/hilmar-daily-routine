@@ -52,6 +52,16 @@ STEPS = [
     # OBSERVER step — run_audit_tests.py always exits 0 so a failing test
     # never blocks the client email; QC-052 + the audit decide severity.
     ("Test + coverage routine",  [PY, str(SCRIPTS / "run_audit_tests.py"), "--quiet"]),
+    # 2026-06-24: re-parse the CACHED bodies with the current body_parser
+    # BEFORE ingest. refresh_stage parses each email once at fetch time and
+    # caches it; ingest consumes that cache, so a parser fix would otherwise
+    # only reach newly-fetched mail and the back-catalog in the window would
+    # stay stale until a manual reprocess. Running it here makes every parser
+    # improvement self-apply to the whole window each fire (no manual
+    # re-ingest, ever). Idempotent + atomic; best-effort (a failure falls back
+    # to the existing cache and is caught by QC-059). The "break in data flow"
+    # Michael named: upstream raw body fine, downstream parse stale → backfill.
+    ("Parser backfill (reprocess cache)", [PY, str(SCRIPTS / "reprocess_bodies.py")]),
     ("Ingest (stage → requests)", [PY, str(SCRIPTS / "ingest.py")]),
     # 2026-05-06: drift_check wired in per orchestrator.md step 3.5. Runs
     # BEFORE QC. 6 phases: imid uniqueness, matcher quality, quote-rate
@@ -100,6 +110,12 @@ STEPS = [
     # "the shared you are using" + "client intelligence is client intelligence
     # and should be all encompassing". No-op if APP_PASSWORD missing.
     ("Sync to ol-quote-tracker", [PY, str(SCRIPTS / "sync_to_quote_tracker.py")]),
+    # 2026-06-24: append finalized (terminal-state) rows to the durable Turso
+    # historian so longitudinal stats survive past the 14-day fetch window
+    # (Michael "i concur with building the data base for stats"). WRITE-ONLY
+    # from the pipeline — never read back as authority — so it can't drift the
+    # daily run. No-op (exit 0) when no Turso creds are configured.
+    ("Historian (finalized → Turso)", [PY, str(SCRIPTS / "historian.py")]),
     # 2026-05-21: "Reconcile with ol-quote-tracker" step removed. The cross-check
     # assumed ol-quote-tracker independently ingests Hilmar bookings — a live API
     # probe proved it does not (0 Hilmar rows of 24 total quotes; QT tracks a
@@ -126,12 +142,14 @@ SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
 # the audit email, AND backup_offline from running. A downstream-bonus step
 # must never gate the upstream client deliverable.
 BEST_EFFORT_STEPS = {
+    "Parser backfill (reprocess cache)",  # cache refresh; on failure ingest uses existing cache, QC-059 catches drift
     "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
     "Share to client_intelligence",    # SHARED-folder export; no client impact
     "Rate intelligence",               # idealx.us-only cheat sheet; not in email
     "Sync to ol-quote-tracker",        # downstream registry push; no client impact
+    "Historian (finalized → Turso)",   # durable stats append; no client impact
 }
 
 

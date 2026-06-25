@@ -190,7 +190,12 @@ def backup(root: Path | None = None, *, container=None) -> str | None:
     # retention window. list_blobs may be unsupported on exotic clients;
     # pruning is best-effort.
     with contextlib.suppress(Exception):
-        cutoff = (datetime.now(ZoneInfo("America/New_York"))
+        # Anchor the prune cutoff to the SAME "today" that named this
+        # snapshot (_today_et), not a fresh wall-clock read — otherwise the
+        # naming and pruning disagree whenever the two are evaluated against
+        # different clocks (e.g. a mocked _today_et in tests, or a run that
+        # straddles midnight ET). Both now derive from one date.
+        cutoff = (datetime.strptime(today, "%Y-%m-%d")
                   - timedelta(days=BACKUP_RETENTION_DAYS)).strftime("%Y-%m-%d")
         for b in cc.list_blobs(name_starts_with=BACKUP_PREFIX):
             bname = getattr(b, "name", b)

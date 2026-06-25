@@ -402,6 +402,51 @@ def _load_bodies_index() -> dict:
     return out
 
 
+def _intake_reconciliation(stage_rows, bodies):
+    """Reconcile staged Lonny RFQs against ingest's OWN drop conditions.
+
+    ingest.build_requests silently drops any lonny_outbound email whose
+    subject (and body) yields no parseable destination — the condition at
+    ``if not destination: skipped_ops += 1; continue`` — incrementing a
+    counter it never logs or returns. A genuine rate request can therefore
+    vanish from the report with no alarm (the 2026-06-24 "Busan Korea from
+    Dalhart" miss that hid for a week).
+
+    Returns ``(expected, dropped)`` where ``expected`` is the count of
+    lonny_outbound emails that are genuine rate asks (not operational, not
+    out-of-scope) and ``dropped`` lists the subjects of those ingest would
+    drop for lack of a destination. Reuses ingest's own
+    out_of_scope_reason / is_operational_subject / clean_destination so this
+    guard and the intake can never drift (QC-040 spirit).
+    """
+    import ingest
+
+    bodies = bodies or {}
+    expected, dropped = 0, []
+    for r in stage_rows or []:
+        if r.get("bucket") != "lonny_outbound":
+            continue
+        subj = r.get("subject") or ""
+        body = bodies.get(r.get("imid")) or {}
+        # Same two upstream filters ingest applies before build_requests.
+        if ingest.out_of_scope_reason({
+            "subject": subj,
+            "summary_preview": r.get("summary_preview"),
+            "text_body": body.get("text_body"),
+        }):
+            continue
+        if ingest.is_operational_subject(subj):
+            continue
+        expected += 1
+        # Exact destination resolution from ingest.build_requests:
+        #   destination = clean_destination(subject) or parsed.destination
+        parsed = body.get("parsed") or {}
+        dest = ingest.clean_destination(subj) or parsed.get("destination")
+        if not dest:
+            dropped.append(subj.strip()[:80] or "(no subject)")
+    return expected, dropped
+
+
 def phase_3_entries(log: Log, data: dict):
     log.section("PHASE 3: ENTRY-LEVEL HEALING")
     # Cleanup pass: drop stand_* WINs that don't have HILMAR in subject.
@@ -2801,6 +2846,111 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-056: healed {len(_healed)} rate-without-carrier row(s); none stuck")
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
+
+    # QC-057: INTAKE RECONCILIATION — a staged Lonny RFQ silently dropped.
+    # Root cause this guards: ingest.build_requests skips any lonny_outbound
+    # email whose subject (and body) yields no parseable destination
+    # ("if not destination: skipped_ops += 1; continue"), bumping a counter it
+    # never logs or returns — so a REAL rate request can vanish from the
+    # report with NO alarm. This is the exact 2026-06-24 "Busan Korea from
+    # Dalhart" miss that hid for a week (PR #57 fixed that subject; this guard
+    # catches the NEXT novel one). _intake_reconciliation reuses ingest's own
+    # clean_destination / is_operational_subject / out_of_scope_reason so the
+    # guard and the intake can never drift. SELF-HEAL: none possible
+    # automatically — you cannot invent a lane; the root fix is always a
+    # parser extension, so the dropped subjects are surfaced for the operator
+    # (route: flag_for_operator). WARN for 1-2 (one novel subject must not
+    # block the whole client report), ERROR at >=3 (systemic parser breakage).
+    try:
+        import ingest as _ingest
+        if not _ingest.STAGE_PATH.exists():
+            log.ok("QC-057: skipped — no staged emails present (ephemeral runner / pre-ingest)")
+        else:
+            _expected, _dropped = _intake_reconciliation(
+                _ingest.load_stage(), _ingest.load_bodies_index())
+            if not _dropped:
+                log.ok(f"QC-057: intake reconciled — all {_expected} staged Lonny "
+                       f"RFQ(s) resolved a destination")
+            else:
+                _n = len(_dropped)
+                _lst = "; ".join(_dropped[:5]) + (f" + {_n-5} more" if _n > 5 else "")
+                _m = (f"QC-057: {_n}/{_expected} staged Lonny RFQ(s) SILENTLY DROPPED by "
+                      f"ingest — subject+body yield no destination (not ops, not "
+                      f"out-of-scope), so a real rate request is missing from the report. "
+                      f"Extend body_parser.parse_subject_lane for: {_lst}")
+                if _n >= 3:
+                    log.error(_m + "  [>=3 -> systemic parser breakage]")
+                else:
+                    log.warn(_m)
+    except Exception as _e:
+        log.warn(f"QC-057: check failed with exception: {_e}")
+
+    # QC-058: HISTORIAN FRESHNESS — the durable Turso stats store is being fed
+    # daily. Per CLAUDE.md §3 ("new API integration → freshness check"): the
+    # 2026-06-24 historian appends finalized rows to Turso so longitudinal
+    # stats survive past the 14-day window. If that append silently stops, the
+    # history quietly goes stale. This check WARNs (never ERROR — a downstream
+    # analytics sync must not block the client report) when the historian is
+    # configured but its newest write is >26h old. SKIPS cleanly when dormant
+    # (no creds) so it costs nothing until the DB is provisioned. Note the
+    # write happens later in the SAME fire (after QC), so a None age = "no rows
+    # yet" is benign on the first day, not a failure.
+    try:
+        import historian as _hist
+        if not _hist.is_configured():
+            log.ok("QC-058: skipped — historian dormant (no Turso creds configured)")
+        else:
+            _age = _hist.latest_write_age_hours()
+            if _age is None:
+                log.ok("QC-058: historian configured; no rows yet "
+                       "(first append happens later this fire)")
+            elif _age > 26:
+                log.warn(
+                    f"QC-058: historian last write was {_age:.0f}h ago (>26h) — "
+                    f"the daily finalized-row append may be failing. Check the "
+                    f"'Historian (finalized → Turso)' step + secrets/historian-turso.txt.")
+            else:
+                log.ok(f"QC-058: historian fresh — last write {_age:.0f}h ago")
+    except Exception as _e:
+        log.warn(f"QC-058: check failed with exception: {_e}")
+
+    # QC-059: DATA-FLOW INTEGRITY — the cached parse matches the CURRENT parser.
+    # Michael 2026-06-24: "the system should check for breaks in data flow then
+    # backfill as quality control." refresh_stage parses each email once at
+    # fetch time and caches it; ingest consumes that cache. So after a
+    # body_parser fix the back-catalog already in the window stays stale until
+    # its cache is refreshed — a real break (upstream raw body fine, downstream
+    # parse stale) that used to need a manual reprocess. The pipeline now runs
+    # reprocess_bodies BEFORE ingest to self-heal this every fire; THIS check is
+    # the guard that the backfill actually happened: it re-parses the cache and
+    # compares to what's stored. changed==0 → integrity verified. changed>0 →
+    # the pre-ingest backfill didn't run (or a parser change landed after it),
+    # so SELF-HEAL by backfilling now (takes effect next fire) and WARN with
+    # what was stale. Never ERROR — a stale cache degrades fields, it doesn't
+    # lose live data (tracking-data rebuilds from Outlook each fire).
+    try:
+        import reprocess_bodies as _rp
+        _drift = _rp.reprocess(write=False)
+        if not _drift.get("present"):
+            log.ok("QC-059: skipped — no cached bodies present (ephemeral runner / pre-fetch)")
+        elif _drift.get("changed", 0) == 0:
+            log.ok(f"QC-059: data-flow integrity verified — all {_drift['total']} "
+                   f"cached parses match the current parser")
+        else:
+            _healed = _rp.reprocess(write=True)
+            _bits = ", ".join(
+                f"{k.replace('delta_', '+')}={_drift[k]}"
+                for k in ("delta_carrier", "delta_rate", "delta_dest",
+                          "delta_signer", "delta_vessel") if _drift.get(k))
+            log.fix(f"QC-059: backfilled {_healed.get('changed', _drift['changed'])} "
+                    f"stale parse(s) [{_bits or 'fields changed'}] — the pre-ingest "
+                    f"reprocess step did not keep the cache fresh this fire")
+            log.warn(f"QC-059: {_drift['changed']}/{_drift['total']} cached parses were "
+                     f"STALE vs the current parser (data-flow break) — backfilled now; "
+                     f"re-ingest to surface them this report, else they land next fire. "
+                     f"Check the 'Parser backfill (reprocess cache)' pipeline step.")
+    except Exception as _e:
+        log.warn(f"QC-059: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

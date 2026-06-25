@@ -232,6 +232,7 @@ _SUBJECT_CARRIER_TOKENS = [
     ("CMACGM",           "CMA CGM"),
     ("HAPAG-LLOYD",      "Hapag-Lloyd"),
     ("HAPAG LLOYD",      "Hapag-Lloyd"),
+    ("HAPAG",            "Hapag-Lloyd"),
     ("YANG MING",        "Yang Ming"),
     ("WAN HAI",          "Wan Hai"),
     ("EVERGREEN",        "Evergreen"),
@@ -368,6 +369,25 @@ def parse_subject_carrier(subject):
     return None
 
 
+# Region/country words that trail a destination PORT in OL/Lonny subjects
+# ("Busan Korea", "Ningbo China", "Yokohama Japan"). The parse_subject_lane
+# "...DEST <region> from ORIGIN" fallback strips these so it resolves the
+# actual port ("Busan") rather than the country ("Korea").
+_TRAILING_REGION_WORDS = frozenset({
+    "korea", "china", "japan", "vietnam", "taiwan", "thailand", "indonesia",
+    "india", "malaysia", "philippines", "singapore", "prc", "asia",
+})
+
+# Generic words that must never be read as a lane endpoint when scanning a
+# subject heuristically ("Updated Cheese Rates Busan ... from Dalhart").
+_LANE_STOPWORDS = frozenset({
+    "re", "fw", "fwd", "pls", "need", "the", "rate", "rates", "rated",
+    "quote", "quotes", "quoted", "pricing", "price", "cheese", "updated",
+    "update", "new", "revised", "booking", "request", "requested", "cost",
+    "costs", "option", "options", "cheaper", "for", "from", "to",
+})
+
+
 def parse_subject_lane(subject):
     if not subject:
         return None, None
@@ -425,6 +445,23 @@ def parse_subject_lane(subject):
         if origin.lower() in ("re", "fw", "fwd", "pls", "need", "the"):
             return None, None
         return _norm(origin), _norm(dest)
+
+    # Last resort — OL/Lonny "...<DEST> [region] from <ORIGIN>" phrasing
+    # ("Updated Cheese Rates Busan Korea from Dalhart"): the destination port
+    # precedes a trailing region word, the origin follows "from". Only reached
+    # when no "X to Y" lane matched above, so it can't shadow the normal form.
+    # Without this the Lonny RFQ row is dropped entirely — ingest.build_requests
+    # skips any row with no parseable destination (2026-06-24 Busan/Korea miss).
+    fm = re.search(r"\bfrom\s+(?P<origin>[A-Z][A-Za-z.\-]+)\b", s)
+    if fm:
+        origin = fm.group("origin")
+        before_toks = re.findall(r"[A-Z][A-Za-z.\-]+", s[:fm.start()])
+        while before_toks and before_toks[-1].lower() in _TRAILING_REGION_WORDS:
+            before_toks.pop()
+        dest = before_toks[-1] if before_toks else None
+        if (dest and dest.lower() not in _LANE_STOPWORDS
+                and origin.lower() not in _LANE_STOPWORDS):
+            return _norm(origin), _norm(dest)
     return None, None
 
 
@@ -984,12 +1021,133 @@ def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", h.lower()).strip("_")
 
 
+def _prose_lane(text: str):
+    """Resolve origin/dest from OL prose: "from <ORIGIN> port to <DEST>" or a
+    bare "<ORIGIN> to <DEST>" spec line. Returns (origin, dest) or (None,None).
+    Case-sensitive on the place names (they're Capitalized) so a stray "to"
+    in lowercase prose can't form a false lane."""
+    if not text:
+        return None, None
+    pats = (
+        # "from Houston port to Busan" — tolerate an interposed
+        # "port"/"terminal" word (stripped off the captured origin below).
+        # Dest excludes '.' so it stops at the sentence period ("Busan. We ...").
+        re.compile(r"\bfrom\s+(?P<o>[A-Z][A-Za-z.\s]{2,30}?)\s+to\s+"
+                   r"(?P<d>[A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+){0,2})\b"),
+        # A bare "Houston to Busan" spec line (start-anchored, dest followed
+        # by a separator/size token: "Houston to Busan _ 40' Reefer").
+        re.compile(r"(?m)^[\s>]*(?P<o>[A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+){0,1})"
+                   r"\s+to\s+(?P<d>[A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+){0,1})"
+                   r"(?=\s*(?:[_|–\-]|\d|$))"),
+    )
+    for rx in pats:
+        m = rx.search(text)
+        if not m:
+            continue
+        o = re.sub(r"\s+(?:port|terminal|seaport)\s*$", "", m.group("o"),
+                   flags=re.IGNORECASE).strip()
+        d = m.group("d").strip()
+        o, d = _norm(o), _norm(d)
+        if (o and d and o.lower() not in _LANE_STOPWORDS
+                and d.lower() not in _LANE_STOPWORDS):
+            return o, d
+    return None, None
+
+
+def parse_prose_rate(text: str) -> dict:
+    """Extract a quote from an OL *prose* rate reply (no pipe/column table).
+
+    OL sends some quotes as free prose instead of the grid, e.g. the
+    2026-06-24 Houston->Busan Hapag quote:
+
+        Please see able Hapag option from Houston port to Busan.
+        Houston to Busan _ 40' Reefer _ Chilled Cheese
+        Hapag: $2,275/40' reefer
+        4 equipment free days at Origin
+        3 equipment free days at destination
+        Direct service
+
+    Returns the same field shape as parse_rate_table (carrier_quoted /
+    ol_rate / pol / pod / container_size / origin_free_time / dest_free_time
+    / transshipment / etd_offered / eta_offered). Gated on a plausible $
+    ocean rate — the caller already knows the email is an OL rate response,
+    so a dollar figure is the one signal that this prose *is* a quote.
+    Returns {} when no rate is found.
+    """
+    if not text:
+        return {}
+    out: dict = {}
+    # Rate — first plausible $ amount in the $200–$50k ocean range. The newest
+    # quote sits at the top of a reply, so first-match is the current rate.
+    for m in re.finditer(r"\$\s*([\d,]+(?:\.\d{2})?)", text):
+        try:
+            val = float(m.group(1).replace(",", ""))
+        except ValueError:
+            continue
+        if 200 <= val <= 50000:
+            out["ol_rate"] = val
+            break
+    if "ol_rate" not in out:
+        return {}
+    # Carrier — normalized through core's alias map ("Hapag" -> "Hapag-Lloyd").
+    car = detect_carrier_token(text, allow_short=False)
+    if car:
+        try:
+            import core as _core
+            out["carrier_quoted"] = _core.normalize_carrier(car) or car
+        except Exception:
+            out["carrier_quoted"] = car
+    # Lane -> POL/POD.
+    pol, pod = _prose_lane(text)
+    if pol:
+        out["pol"] = pol
+    if pod:
+        out["pod"] = pod
+    # Container size ("40' Reefer", "6x40'RF", "2 x 20'DV").
+    cs = re.search(r"\b(?:\d{1,2}\s*[xX]\s*)?\d{2}[\'’]?\s*"
+                   r"(?:HC\s*Reefer|Reefer|RF|HC|DV|GP|ST|FR|OT)\b", text)
+    if cs:
+        out["container_size"] = re.sub(r"\s+", " ", cs.group(0)).strip()
+    # Free time ("4 equipment free days at Origin", "3 ... at destination").
+    oft = re.search(r"(\d{1,2})\s*(?:equipment\s+|calendar\s+|business\s+)?"
+                    r"(?:free\s+days?|days?\s+free)\s+(?:at\s+)?origin",
+                    text, re.IGNORECASE)
+    if oft:
+        out["origin_free_time"] = f"{oft.group(1)} days"
+    dft = re.search(r"(\d{1,2})\s*(?:equipment\s+|calendar\s+|business\s+)?"
+                    r"(?:free\s+days?|days?\s+free)\s+(?:at\s+)?(?:destination|dest)\b",
+                    text, re.IGNORECASE)
+    if dft:
+        out["dest_free_time"] = f"{dft.group(1)} days"
+    # Transshipment — "Direct service" -> Direct, else "via <PORT>".
+    if re.search(r"\bdirect\s+(?:service|sailing|routing)\b", text, re.IGNORECASE):
+        out["transshipment"] = "Direct"
+    else:
+        ts = re.search(r"\b(?:via|t/?s|transship(?:ment)?)\s*[:\-]?\s*"
+                       r"([A-Z][A-Za-z .\-]{2,24})", text)
+        if ts:
+            out["transshipment"] = ts.group(1).strip()
+    # Offered ETD/ETA via the anchor-based prose date parsers.
+    etd = parse_etd_offered(text)
+    if etd:
+        out["etd_offered"] = etd
+    eta = parse_eta_offered(text)
+    if eta:
+        out["eta_offered"] = eta
+    return out
+
+
 def parse_rate_table(text: str) -> dict:
     """Extract carrier_quoted / ol_rate / etd_offered / eta_offered /
-    vessel_voyage / transshipment / pol / pod from an OL pipe-table reply."""
+    vessel_voyage / transshipment / pol / pod from an OL rate reply.
+
+    Pipe/column grid is the common case; when no table is present OL has
+    also sent the same quote as free prose, so fall back to parse_prose_rate
+    rather than returning nothing (2026-06-24 Houston->Busan Hapag miss —
+    production had no prose path at all, pure drift from src/hilmar)."""
     rows = _find_table_rows(text or "")
     if not rows or len(rows) < 2:
-        return {}
+        return parse_prose_rate(text or "")
     header = [_norm_header(c) for c in rows[0]]
     data = rows[1]
     if len(data) < len(header):

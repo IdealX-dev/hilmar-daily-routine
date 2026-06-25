@@ -18,3 +18,11 @@ tzdata>=2024.1
 # Everything else is Python 3.11+ stdlib (json, re, html.parser, datetime,
 # pathlib, collections, dataclasses, hashlib, subprocess, etc.)
 pdfplumber
+
+# OPTIONAL — only needed to ACTIVATE the durable quote historian
+# (scripts/historian.py → Turso). Dormant by default: without creds the
+# historian no-ops, so this dep is not required for the daily fire. Install on
+# the fire host only when provisioning the stats DB (see docs/HISTORIAN.md).
+# Tests use stdlib sqlite3, so CI does not need it either.
+#   pip install libsql-experimental
+# libsql-experimental>=0.0.40

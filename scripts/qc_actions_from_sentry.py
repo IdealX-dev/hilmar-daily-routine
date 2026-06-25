@@ -190,6 +190,24 @@ ACTIONS: dict[str, dict] = {
         "comment": "A row has an OL rate but no carrier. Root cause is usually a rate-response whose carrier column OL relabeled (the body_parser carrier scan should now catch header aliases + data-cell + prose). If it persists: re-ingest (reprocess_bodies.py + ingest.py + patch_carriers.py) so the strengthened parser re-reads the body. If the carrier is genuinely absent from OL's quote (bare rate, carrier assigned at booking), it will fill from the booking confirmation on the WIN — no action needed.",
         "auto_resolve_safe": False,
     },
+    "QC-057": {
+        "name": "Staged Lonny RFQ silently dropped at intake",
+        "action": "flag_for_operator",
+        "comment": "A staged lonny_outbound rate request (not operational, not out-of-scope) yielded no parseable destination, so ingest.build_requests dropped it and it is MISSING from the report — the silent-drop failure mode behind the 2026-06-24 Busan/Korea miss. No auto-heal is possible (a lane can't be invented). FIX: read the dropped subject(s) in the QC-057 message, extend body_parser.parse_subject_lane to resolve that lane shape, then re-ingest (reprocess_bodies.py + ingest.py) so the row is rebuilt. >=3 dropped at once means a systemic parser regression — diff body_parser before triaging individual subjects.",
+        "auto_resolve_safe": False,
+    },
+    "QC-058": {
+        "name": "Turso historian stale (finalized-row append failing)",
+        "action": "flag_for_operator",
+        "comment": "The durable Turso stats historian is configured but its newest write is >26h old — the daily 'Historian (finalized → Turso)' append likely failed. This does NOT affect the client report (the historian is write-only analytics), so it never gates a fire. Check: the historian step's exit in run-log.txt, secrets/historian-turso.txt (URL+token), and that libsql is installed on the fire host. Stats accuracy degrades while stale but no live data is lost (tracking-data is rebuilt from Outlook each fire).",
+        "auto_resolve_safe": False,
+    },
+    "QC-059": {
+        "name": "Data-flow break — cached parse stale vs current parser",
+        "action": "flag_for_operator",
+        "comment": "Cached email parses no longer match what the current body_parser produces — a parser fix did not reach the back-catalog already in the window. QC-059 already SELF-HEALED (backfilled the stale parses), so this is informational: it means the pre-ingest 'Parser backfill (reprocess cache)' step did not run or failed this fire (the back-stop caught it). The backfilled fields land on the NEXT fire automatically; to surface them in TODAY's report, re-run ingest. Check that the reprocess step is wired + exited 0 in run-log.txt. No live data is lost — tracking-data rebuilds from Outlook each fire.",
+        "auto_resolve_safe": False,
+    },
     "cron.missed_checkin": {
         "name": "Sentry cron monitor missed check-in (hilmar-daily-pipeline)",
         "action": "resolve_if_post_fix",
