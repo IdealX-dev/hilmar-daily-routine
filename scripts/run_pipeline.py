@@ -450,6 +450,32 @@ def main():
     print(f"   Reports: {ROOT / 'reports'}")
     print(f"   Data:    {ROOT / 'tracking-data-v2.json'}")
 
+    # FOOTGUN GUARD (2026-06-25): run_pipeline BUILDS but does not SEND — the
+    # wrapper's outlook_send step does. A hand-run that stops here produces
+    # artifacts and NO email, and the "✅ COMPLETE" above reads like success
+    # (exactly what bit Michael: ran the pipeline, saw COMPLETE, no report
+    # landed). If today's full-distribution send-flag isn't present, say so
+    # LOUDLY so "built" is never mistaken for "shipped".
+    try:
+        from zoneinfo import ZoneInfo as _ZI
+        _today = datetime.now(_ZI("America/New_York")).date().isoformat()
+    except Exception:
+        _today = datetime.now().date().isoformat()
+    _sent_flag = ROOT / "reports" / f"sent-{_today}.flag"
+    if not _sent_flag.exists():
+        print()
+        print("⚠️ " + "─" * 66)
+        print("⚠️  BUILD COMPLETE — NOTHING WAS SENT.")
+        print("⚠️  run_pipeline only builds the report; it does not email it.")
+        print("⚠️  To ship today's report:")
+        print("⚠️    deploy\\run_daily_laptop.cmd            (full daily fire + send)")
+        print("⚠️    — or, to send only to yourself first —")
+        print("⚠️    python scripts\\outlook_send.py daily --to michael.deitchman@idealx.us \\")
+        print("⚠️        --force --no-flag --subject-from-file reports\\email-subject.txt \\")
+        print("⚠️        --body-from-file reports\\email-body.html \\")
+        print("⚠️        --attach reports\\hilmar-dashboard.html reports\\hilmar-report.pdf")
+        print("⚠️ " + "─" * 66)
+
 
 if __name__ == "__main__":
     main()

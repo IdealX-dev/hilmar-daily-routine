@@ -48,15 +48,25 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Echo heartbeat payload
+      - name: Echo heartbeat payload + FAIL the job on a non-success fire
         run: |
-          echo "✅ Hilmar daily fire heartbeat received"
+          echo "Hilmar daily fire heartbeat received"
           echo "  at:     ${{ github.event.inputs.at }}"
           echo "  sha:    ${{ github.event.inputs.sha }}"
           echo "  status: ${{ github.event.inputs.status }}"
           echo "  host:   ${{ github.event.inputs.host }}"
           echo ""
           echo "Heartbeat workflow run timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          # The mere existence of this successful run (and its
-          # github-recorded created_at timestamp) IS the heartbeat.
-          # liveness.yml reads `gh run list --workflow=heartbeat.yml`.
+          # 2026-06-25 — HONEST heartbeat. The wrapper now passes the REAL fire
+          # outcome (from assert_fire_integrity), not a hardcoded "success". A
+          # failed/partial fire must produce a FAILED heartbeat run so
+          # liveness.yml's `--status=success` query does NOT see it (the run is
+          # stale-from-its-perspective) AND its failed-conclusion branch fires.
+          # Previously this always succeeded, so a failed send still looked
+          # green — the silent-week mechanism.
+          status="${{ github.event.inputs.status }}"
+          if [ "$status" != "success" ]; then
+            echo "::error::Daily fire reported status=$status — failing the heartbeat so liveness flags it."
+            exit 1
+          fi
+          echo "✅ Fire status=success — heartbeat recorded."
