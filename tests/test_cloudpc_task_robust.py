@@ -21,8 +21,8 @@ self-report; catching a true no-fire is liveness.yml's job (GitHub-side,
 independent of the box). This guard guarantees the *configuration the operator
 deploys* is the resilient one.
 """
-from pathlib import Path
 import re
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PS1 = (ROOT / "deploy" / "setup_cloudpc.ps1").read_text(encoding="utf-8")
