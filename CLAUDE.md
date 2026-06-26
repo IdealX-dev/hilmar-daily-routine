@@ -40,7 +40,7 @@ The repo intentionally holds **two parallel Python trees**:
 | Tree | Status | What's there | Who uses it |
 |---|---|---|---|
 | `scripts/` | **ACTIVE production** | The 16-step daily pipeline (`run_pipeline.py` and friends) | Cloud PC daily fire |
-| `src/hilmar/` | Inherited mature library | Pytest-compatible modules (`core`, `qc`, `ingest`, `body_parser`, `baselines`, `insights`, `model_router`, `parser_fallback`, `parser_accuracy`, ...) | The 519-test suite + future migration target |
+| `src/hilmar/` | Inherited mature library | Pytest-compatible modules (`core`, `qc`, `ingest`, `body_parser`, `baselines`, `insights`, `model_router`, `parser_fallback`, `parser_accuracy`, ...) | The pytest suite + future migration target |
 
 **Tests run against `src/hilmar/`. Production runs against `scripts/`.** The
 two coexist on purpose during the migration period; do not delete one to
@@ -118,7 +118,7 @@ hilmar-daily-routine/
 ├── CLAUDE.md                  This file
 ├── config.json                Distribution list, paths, rules, auto-chase, backup
 ├── schema.json                JSON Schema for tracking-data-v2.json
-├── pyproject.toml             Package metadata; test config (pytest, ruff, mypy, 85% cov gate)
+├── pyproject.toml             Package metadata; test config (pytest, ruff, mypy, 90% cov gate)
 ├── requirements.txt           Bare runtime deps (Cloud PC wrapper install)
 ├── requirements-tracker.txt   Library deps mirroring pyproject [project.dependencies]
 ├── .devcontainer/             Codespaces config (Python 3.12 + Claude Code extension)
@@ -126,7 +126,7 @@ hilmar-daily-routine/
 │
 ├── scripts/                   ACTIVE production pipeline (see §5)
 ├── src/hilmar/                Inherited mature library (target for §2 migration)
-├── tests/                     519-test pytest suite (runs against src/hilmar/)
+├── tests/                     pytest suite (runs against src/hilmar/)
 │   ├── conftest.py            Adds src/ to sys.path; disables LLM fallback
 │   └── fixtures/golden_day.json  Pinned schema-clean fixture
 ├── deploy/                    Cloud PC wrapper, setup PS1, qc_alert_if_needed
@@ -279,7 +279,7 @@ See `docs/SENTRY.md` for the full runbook.
 ### Running tests
 
 ```bash
-# Full pytest suite (519 tests against src/hilmar/)
+# Full pytest suite (runs against src/hilmar/)
 cd hilmar-daily-routine
 PYTHONIOENCODING=utf-8 python -m pytest tests/ --override-ini="addopts=" -q
 
@@ -290,7 +290,7 @@ python scripts/run_tests.py
 python -m compileall scripts/ deploy/ src/
 ```
 
-`pyproject.toml` configures pytest with `--cov-fail-under=85` (the gate is
+`pyproject.toml` configures pytest with `--cov-fail-under=90` (the gate is
 a regression ratchet — bump, never lower). CI workflow strips that with
 `--override-ini="addopts="` because it does not install dev extras; do the
 same in local quick-check runs.
