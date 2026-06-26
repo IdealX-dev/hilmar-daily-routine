@@ -75,6 +75,18 @@ it can't silently drift in the first place.
   issue is only a real page once `alerts.teams_webhook_url` (or GitHub
   notifications) reaches you; configure that.
 
+  **Scope (by design):** the sentinel is Cloud-PC-only — its `heartbeat.yml`
+  guard requires `host == 'cloud-pc'` and a non-`unknown` env fingerprint. The
+  GitHub-Actions fire path (`HILMAR_FIRE_FROM_ACTIONS=true`) does NOT carry a
+  fingerprint and structurally cannot drift: GH runners pin Python via
+  `.python-version` and reinstall deps every run, and `daily.yml`'s own
+  prerequisite-verification steps cover that path. Do NOT "widen" the guard to
+  `host == 'github-actions'` (it passes no fingerprint, so the guard would
+  either no-op or false-page). If symmetric monitoring is ever wanted after the
+  Actions cutover, the correct change is to run `preflight_env --no-alert` in
+  `daily.yml` and forward its fingerprint via `-f env` — a separate, reviewed
+  change, not a guard relaxation.
+
 ## What YOU must do on the Cloud PC (one-time, in order)
 
 1. **Install Python 3.12, remove 3.14, repoint the wrapper.** Re-run
