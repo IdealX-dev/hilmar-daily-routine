@@ -46,9 +46,14 @@ STATE_FILES: list[str] = [
     # to register an app-only Entra app, making device-code the only auth
     # that works off the Cloud PC. The runner pulls this, silently refreshes
     # (which keeps the ~90d refresh-token alive day after day), and pushes
-    # the rotated cache back. Same trust boundary as today: the cache
-    # already lives on OneDrive; the blob container is private and keyed by
-    # a repo secret. Seed once from the Cloud PC: state_store.py push.
+    # the rotated cache back. The blob container is private and keyed by a
+    # repo secret. Seed once from the Cloud PC: state_store.py push.
+    # SECURITY (2026-06-26): canonical is the non-indexed .bin (outlook_send
+    # writes .bin now; see its TOKEN_CACHE_PATH note). Both names are synced
+    # during the migration so a mid-transition host keeps working; absent files
+    # are skipped (push/pull both no-op on a missing path). Once every host is
+    # on .bin, drop the .json entry AND delete the .json blob + ROTATE the token.
+    "secrets/token-cache.bin",
     "secrets/token-cache.json",
 ]
 

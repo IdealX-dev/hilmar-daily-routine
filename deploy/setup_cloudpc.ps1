@@ -174,14 +174,24 @@ $TaskName = "Hilmar Daily Tracker - CloudPC"
 $action = New-ScheduledTaskAction -Execute $wrapperPath
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 6:07pm
 # -WakeToRun nudges the box if it ever sleeps at fire time.
+# ExecutionTimeLimit raised 15 -> 50 min (2026-06-26): run_pipeline's per-step
+# timeouts alone sum to ~25 min worst case, plus refresh_stage + 2x outlook_send
+# + teams + weekly + backup + improvements + integrity + heartbeat. The old
+# 15-min cap could SIGTERM the whole tree mid-run on a slow box. 50 min matches
+# daily.yml's timeout-minutes:50 for the same pipeline.
+# RestartCount 3 -> 0: auto-restarting an email-sending wrapper is unsafe. If
+# the old 15-min kill landed DURING outlook_send (after Graph accepted the
+# message but before the sent-flag was written), the restart re-ran the send
+# and double-mailed all 10 recipients. With a 50-min budget the run is allowed
+# to finish, so no restart is needed. (RestartInterval is dropped -- it only
+# applies when RestartCount > 0.)
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -WakeToRun `
     -DontStopOnIdleEnd `
-    -ExecutionTimeLimit (New-TimeSpan -Minutes 15) `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 50) `
     -MultipleInstances IgnoreNew `
-    -RestartCount 3 `
-    -RestartInterval (New-TimeSpan -Minutes 5)
+    -RestartCount 0
 $desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 6:07 PM ET weekdays whether logged on or not (S4U). 6 PM ET = 3 PM PT, after Lonny's Pacific workday; aligned to the Sentry cron monitor + daily.yml schedule."
 # Register to run WHETHER OR NOT THE USER IS LOGGED ON (S4U). Root cause of the
 # 2026-06 silent miss: an INTERACTIVE task quietly skipped 10 straight fires

@@ -130,10 +130,44 @@ def _before_send(event, hint):
         if "contexts" in event:
             event["contexts"] = _walk_scrub(event["contexts"])
     except Exception:
-        # Never let the scrubber crash a real event — let it through
-        # rather than drop the alert.
-        pass
+        # FAIL CLOSED on PII (audit finding [30]). The old behavior returned the
+        # raw, UNSCRUBBED event on any scrub fault — the exact opposite of this
+        # hook's purpose ("observability WITHOUT leaking client data"): a
+        # malformed event that trips the scrubber would ship raw emails / MDOLX
+        # / conv-IDs to the third-party SaaS. Instead, keep the alert (so we
+        # still learn an error occurred) but hard-redact every field that can
+        # carry free-text PII to a fixed placeholder. We do NOT return the raw
+        # event, and we never crash the real error path.
+        try:
+            return _fail_closed_event(event)
+        except Exception:
+            # If even the redaction fails, drop the event rather than leak.
+            return None
     return event
+
+
+# Fields that carry free-text and therefore client PII. On a scrub fault we
+# blunt-redact these wholesale rather than risk shipping them unscrubbed.
+_PII_BEARING_KEYS = ("message", "exception", "extra", "breadcrumbs",
+                     "logentry", "request", "user")
+
+
+def _fail_closed_event(event):
+    """Minimal, never-raising redaction used when the normal scrubber faulted.
+
+    Strips the free-text/PII-bearing fields to a placeholder while preserving
+    the skeleton Sentry needs to record that *an* error happened (level, tags
+    we control, the fingerprint). Better a near-empty alert than a raw leak.
+    """
+    if not isinstance(event, dict):
+        return None
+    safe = {}
+    for k, v in event.items():
+        if k in _PII_BEARING_KEYS:
+            continue  # drop the whole PII-bearing field
+        safe[k] = v
+    safe["message"] = "[SCRUBBER_FAILED — event redacted to prevent PII leak]"
+    return safe
 
 
 # ─────────────────────────────────────────────────────────────────────

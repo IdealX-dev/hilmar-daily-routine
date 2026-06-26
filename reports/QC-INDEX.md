@@ -4,18 +4,26 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-05-21 (post-consolidation). Total active checks: **42**
-(QC-001 through QC-020a/b + QC-021 through QC-041, including QC-014a/b
-and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
+Generated 2026-05-13, updated 2026-06-25. Total active checks: **64**
+(QC-001 through QC-063, including the QC-014a/b and QC-020a/b sub-variants;
+QC-038 retired). Last commit: see `git log scripts/qc_selfheal.py`.
+The newest checks are QC-055..QC-063 (added 2026-06-25); see the matrix below.
 
-**Three drift-prevention + accuracy checks added 2026-05-17 evening:**
-- **QC-039** (ERROR) — Parser accuracy ≥98% on critical fields. Gates ship.
-- **QC-040** (WARN) — Cross-folder enum drift between `scripts/core.py` and `src/hilmar/core.py`.
+**Three drift-prevention + accuracy checks added 2026-05-17 evening** (historical
+note — at the time these were the newest; the current ceiling is QC-063):
+- **QC-039** (ERROR) — Parser accuracy ≥95% on critical fields. Gates ship.
+  (Originally 98%; lowered to 95% on 2026-05-19 — see the standing-rule note below.)
+- **QC-040** (WARN) — Cross-folder drift between `scripts/` and `src/hilmar/`: `core.py` enums (VALID_STATUSES, LOSS_REASONS) + `body_parser.py` `KNOWN_ORIGINS`.
 - **QC-041** (ERROR) — Classifier form consistency in production data (no mixed LEGACY/STRICT).
 
 Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 - *"this parser and your system have to run at minimum of 98 percent accuracy no matter COST"*
 - *"never to allow drift like this as standard"*
+
+> Note: the 98% directive above was superseded on 2026-05-19 (*"PARSER MUST
+> REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS"*). The live gate is
+> `ACCURACY_THRESHOLD = 0.95` — see `src/hilmar/parser_accuracy.py:57` and the
+> in-code comment at `scripts/qc_selfheal.py:2149`.
 
 ## How to read this table
 
@@ -68,8 +76,8 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
 | QC-037 | WARN / **ERROR** | ol-quote-tracker sync log missing, stale (>36h), or last sync errored. **ERROR-severity** when ≥3 consecutive fires fail (Turso entity registry going stale; audit also raises a dedicated red flag with the actual error excerpt). | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`), streak detection 2026-05-28 |
 | QC-038 | _retired 2026-05-21_ | ol-quote-tracker reconciliation — retired: a live API probe proved ol-quote-tracker holds zero Hilmar rows, so the cross-check only ever produced phantom drift | n/a — check + script + pipeline step removed | 2026-05-21 |
-| QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
-| QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
+| QC-039 | **ERROR**/WARN | Parser accuracy <95% on CRITICAL fields (ERROR) or <95% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation; threshold lowered 98%→95% 2026-05-19) |
+| QC-040 | WARN | Undocumented cross-folder drift between `scripts/` and `src/hilmar/`: `core.py` enums (VALID_STATUSES via LEGACY view + LOSS_REASONS strict) and `body_parser.py` `KNOWN_ORIGINS` (strict — the constant whose drift caused the "Hilmar -> X" lane-bucket bug) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation; body_parser.KNOWN_ORIGINS added 2026-06-26) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 | QC-042 | **ERROR** | Email body contains a `data:` URI (`<img src="data:image/...">`) — Outlook blocks these so the logo renders broken | None — `branding.py` uses `cid:` attachments (commit `fa337b2`) | 2026-05-17 |
 | QC-043 | WARN | Sentry self-improvement loop — surfaces unresolved-issue count + hot issues (≥5×/24h) into the audit | None — informational meta-check | 2026-05-17 |
@@ -92,7 +100,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-060 | **ERROR** | **Dependency-list consistency** — the list the box installs is PROVABLY the list QC-054 verifies: every `RUNTIME_IMPORT_REQUIRED` module is pinned in `requirements.txt`, and `pyproject [project.dependencies]` == `requirements-tracker.txt`. The 2026-06 jinja2/sentry-sdk gap existed because three dep lists disagreed and none was enforced. Repo-state invariant — fires the same in CI, so a contributor can't add a QC-054 dep without pinning it. | **No auto-heal** (config edit) — `flag_for_operator`. Add the missing pin / reconcile the lists. | 2026-06-25 |
 | QC-061 | **ERROR** | **Interpreter parity** — the running Python's major.minor matches the pinned `.python-version` (the single value CI, the box, and the toolchain consume). Catches the 2026-06 silent drift to Python 3.14 (untested; CI is 3.12) at fire time, since QC runs inside the wrapper's chosen interpreter. | **No auto-heal** (can't reinstall Python from here) — `flag_for_operator`: install the pinned version + repoint the wrapper (`deploy/setup_cloudpc.ps1`). | 2026-06-25 |
 | QC-062 | **ERROR** (self-heal) | **Layout hygiene** — no stale duplicate `tests/`+`src/` shadow the real `hilmar-daily-routine/` checkout. A pre-checkout-era flat copy under `PROJECT HILMAR/` caused pytest "import file mismatch" collection errors on the 2026-06-25 fire; the xcopy never cleans them. | **Self-heal** — delete the stale shadow dirs (known-safe: the checkout subdir is authoritative). Returns nothing in dev/CI (REPO_ROOT IS the checkout) so it never deletes the real trees. | 2026-06-25 |
-| QC-063 | WARN | **Consecutive-failure ratchet** — a best-effort/observer step dead for DAYS, not a blip. The 8 best-effort steps + the test routine exit 0 by design, so per-fire a dead step is invisible and a step failing every fire for a week looks identical to a single blip. `run_pipeline` records each fire's failed steps to `reports/step-history.json`; this escalates any step that failed the last 3 CONSECUTIVE fires to a loud WARN. | **No auto-heal** (the step's own dep/env/config is the fix) — `flag_for_operator` with the dead step(s) named. SKIPS until ≥3 fires of history exist. | 2026-06-25 |
+| QC-063 | WARN | **Consecutive-failure ratchet** — a best-effort/observer step dead for DAYS, not a blip. The 8 best-effort steps + the test routine exit 0 by design, so per-fire a dead step is invisible and a step failing every fire for a week looks identical to a single blip. `run_pipeline` records each fire's failed steps to `reports/step-history.json`; this escalates any step that failed the last 3 CONSECUTIVE fires to a loud WARN **and pages out-of-band** via `fire_alert` (Teams/GitHub-issue/queue, level=warning) so a week-dead step can't rot in the Outlook-routed audit email alone. | **No auto-heal** (the step's own dep/env/config is the fix) — `flag_for_operator` with the dead step(s) named + out-of-band warn page. SKIPS until ≥3 fires of history exist. | 2026-06-25 |
 
 ## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
 

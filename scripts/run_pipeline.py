@@ -153,6 +153,14 @@ BEST_EFFORT_STEPS = {
     "Historian (finalized → Turso)",   # durable stats append; no client impact
 }
 
+# Option A hard gate (CLAUDE.md rule #2): the exit code qc_selfheal returns from
+# its POST-PATCH run when the QC-039 parser-accuracy gate fails. The post-patch
+# QC step returning THIS code is the one QC failure that is CLIENT-BLOCKING — it
+# aborts the fire so a sub-95% report never ships. Any other QC exit code (crash,
+# timeout) stays non-blocking so a QC bug can't drop the email. Must match
+# qc_selfheal.QC039_GATE_BLOCK_RC (locked by tests/test_auditfix_qc039_gate.py).
+QC039_GATE_BLOCK_RC = 39
+
 
 # Sentry observability — initialized lazily so the pipeline runs fine
 # even when sentry-sdk isn't installed or the DSN is missing.
@@ -195,7 +203,7 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
     print("═" * 70)
     if dry_run:
         print("   (dry-run — skipped)")
-        return True
+        return 0
 
     # Wrap each step in a Sentry transaction so step durations + failures
     # are visible in Sentry's Performance view. Each step is a child of
@@ -254,8 +262,8 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
                         "pipeline.step_failure",
                         f"{name} {label}",
                     )
-            return False
-        return True
+            return rc
+        return 0
     finally:
         if txn_cm is not None:
             with contextlib.suppress(Exception):
@@ -375,6 +383,7 @@ def main():
             pipeline_txn = None
 
     failures = []
+    gate_blocked = False
     for step in STEPS:
         # Each step is either (name, cmd) or (name, cmd, extra_env_dict)
         if len(step) == 3:
@@ -386,8 +395,20 @@ def main():
             print()
             print(f"⏭️   SKIP — {name} (--skip-ingest)")
             continue
-        if not run_step(name, cmd, dry_run=args.dry_run, extra_env=extra_env):
+        _rc = run_step(name, cmd, dry_run=args.dry_run, extra_env=extra_env)
+        if _rc != 0:
             failures.append(name)
+            # Option A hard gate (CLAUDE.md rule #2): the ONE QC failure that is
+            # client-blocking is the post-patch parser-accuracy gate (QC-039).
+            # qc_selfheal returns QC039_GATE_BLOCK_RC for it and has ALREADY
+            # fired the out-of-band alarm; abort so the wrapper never ships a
+            # sub-95% report. Any other QC exit code (crash/timeout) stays
+            # non-blocking below, so a QC engine bug can't drop the client email.
+            if name == "QC self-heal (post-patch)" and _rc == QC039_GATE_BLOCK_RC:
+                print("❌ QC-039 parser-accuracy gate FAILED post-patch — BLOCKING "
+                      "the client ship (CLAUDE.md rule #2); aborting before email build.")
+                gate_blocked = True
+                break
             # Non-blocking failure classes:
             #   - QC self-heal: WARN-grade findings expected (already-handled exception)
             #   - Best-effort steps: telemetry + housekeeping, never blocks client output
@@ -460,6 +481,14 @@ def main():
     blocking_failures = [f for f in failures
                          if "QC self-heal" not in f and f not in BEST_EFFORT_STEPS]
     best_effort_failures = [f for f in failures if f not in blocking_failures]
+    # Option A (CLAUDE.md rule #2): the post-patch parser-accuracy gate is
+    # client-blocking even though it's a "QC self-heal" step — reclassify it so
+    # the pipeline exits non-zero and the wrapper skips the send.
+    if gate_blocked:
+        _gate_step = "QC self-heal (post-patch)"
+        if _gate_step in best_effort_failures:
+            best_effort_failures.remove(_gate_step)
+        blocking_failures.append(_gate_step + ": QC-039 parser-accuracy gate")
     print()
     print("═" * 70)
     if blocking_failures:

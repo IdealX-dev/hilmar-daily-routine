@@ -40,15 +40,29 @@ The repo intentionally holds **two parallel Python trees**:
 | Tree | Status | What's there | Who uses it |
 |---|---|---|---|
 | `scripts/` | **ACTIVE production** | The 16-step daily pipeline (`run_pipeline.py` and friends) | Cloud PC daily fire |
-| `src/hilmar/` | Inherited mature library | Pytest-compatible modules (`core`, `qc`, `ingest`, `body_parser`, `baselines`, `insights`, `model_router`, `parser_fallback`, `parser_accuracy`, ...) | The 519-test suite + future migration target |
+| `src/hilmar/` | Inherited mature library | Pytest-compatible modules (`core`, `qc`, `ingest`, `body_parser`, `baselines`, `insights`, `model_router`, `parser_fallback`, `parser_accuracy`, ...) | The pytest suite + future migration target |
 
 **Tests run against `src/hilmar/`. Production runs against `scripts/`.** The
 two coexist on purpose during the migration period; do not delete one to
 "clean up" the other.
 
-A few files appear in BOTH places (`body_parser.py`, `core.py`, `ingest.py`,
-`parser_accuracy.py`). When you edit one of these, **mirror the change to
-the paired file** — QC-040 enforces no drift between the pair, and parser
+A few files appear in BOTH places (`body_parser.py`, `core.py`,
+`ingest.py`). When you edit one of these, **mirror the change to the paired
+file**. Drift enforcement is NARROWER than it sounds, so mirror by hand and
+do not assume a guard will catch a miss:
+- `core.py` — `VALID_STATUSES`/`LOSS_REASONS` guarded by QC-040 +
+  `tests/test_core_parity.py`. Trade-region taxonomy DELIBERATELY differs
+  between trees (coarse trade-lane buckets in production vs fine country buckets
+  in the library) pending a migration decision; `tests/test_trade_region_parity.py`
+  locks that divergence (sentinel split + "nothing Unmapped") so it can't widen.
+- `body_parser.py` — `KNOWN_ORIGINS` guarded by QC-040 (runtime) +
+  `tests/test_body_parser_parity.py` (incl. `parse_subject_lane`); other
+  functions are mirror-by-hand.
+- `ingest.py` — `DEST_RX` + the shared pure helpers (`canonical_lane_key`,
+  `clean_origin/destination`, `extract_mdolx`) are parity-checked by
+  `tests/test_ingest_parity.py`; the production-only logic (additive merge,
+  booking linker) is mirror-by-hand.
+`parser_accuracy.py` lives ONLY in `src/hilmar/` (no `scripts/` copy); parser
 accuracy is computed from `src/hilmar/parser_accuracy.py`.
 
 ## 3. Hard rules (do not violate)
@@ -118,7 +132,7 @@ hilmar-daily-routine/
 ├── CLAUDE.md                  This file
 ├── config.json                Distribution list, paths, rules, auto-chase, backup
 ├── schema.json                JSON Schema for tracking-data-v2.json
-├── pyproject.toml             Package metadata; test config (pytest, ruff, mypy, 85% cov gate)
+├── pyproject.toml             Package metadata; test config (pytest, ruff, mypy, 90% cov gate)
 ├── requirements.txt           Bare runtime deps (Cloud PC wrapper install)
 ├── requirements-tracker.txt   Library deps mirroring pyproject [project.dependencies]
 ├── .devcontainer/             Codespaces config (Python 3.12 + Claude Code extension)
@@ -126,7 +140,7 @@ hilmar-daily-routine/
 │
 ├── scripts/                   ACTIVE production pipeline (see §5)
 ├── src/hilmar/                Inherited mature library (target for §2 migration)
-├── tests/                     519-test pytest suite (runs against src/hilmar/)
+├── tests/                     pytest suite (runs against src/hilmar/)
 │   ├── conftest.py            Adds src/ to sys.path; disables LLM fallback
 │   └── fixtures/golden_day.json  Pinned schema-clean fixture
 ├── deploy/                    Cloud PC wrapper, setup PS1, qc_alert_if_needed
@@ -279,7 +293,7 @@ See `docs/SENTRY.md` for the full runbook.
 ### Running tests
 
 ```bash
-# Full pytest suite (519 tests against src/hilmar/)
+# Full pytest suite (runs against src/hilmar/)
 cd hilmar-daily-routine
 PYTHONIOENCODING=utf-8 python -m pytest tests/ --override-ini="addopts=" -q
 
@@ -290,7 +304,7 @@ python scripts/run_tests.py
 python -m compileall scripts/ deploy/ src/
 ```
 
-`pyproject.toml` configures pytest with `--cov-fail-under=85` (the gate is
+`pyproject.toml` configures pytest with `--cov-fail-under=90` (the gate is
 a regression ratchet — bump, never lower). CI workflow strips that with
 `--override-ini="addopts="` because it does not install dev extras; do the
 same in local quick-check runs.

@@ -10,7 +10,7 @@
 
 Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 6:07 PM ET each weekday from a Win365 Cloud PC (6 PM ET = 3 PM PT, end of Lonny's Pacific workday; moved from the old 10 AM ET morning fire).
 
-**Status (2026-05-17):** 40-check QC matrix, 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + 519-test regression suite (full hilmar-tracker port), Codespaces-ready for editing from any device.
+**Status (last reviewed 2026-06-26):** self-healing QC matrix (QC-001..QC-063; see [`reports/QC-INDEX.md`](reports/QC-INDEX.md)), 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + full pytest regression suite (full hilmar-tracker port), Codespaces-ready for editing from any device.
 
 ## Two code paths — both authoritative, by phase
 
@@ -59,7 +59,7 @@ deploy/          Wrapper batch (run_daily_laptop.cmd) + qc_alert + Cloud PC setu
 config.json      Distribution list, paths, rules
 schema.json      JSON Schema for tracking-data-v2.json
 requirements.txt reportlab, msal, requests, tzdata
-reports/         QC-INDEX.md (the 26-check matrix index)
+reports/         QC-INDEX.md (the QC matrix index)
 .devcontainer/   Codespaces config — auto-installs Python deps + extensions
 ```
 
@@ -89,7 +89,7 @@ Cloud PC `CPC-micha-E552L` Task Scheduler fires `deploy\run_daily_laptop.cmd` at
 
 ## QC + self-heal matrix
 
-See [`reports/QC-INDEX.md`](reports/QC-INDEX.md) for the full 26-check index: severity, what each catches, what self-healing fires automatically, which commit added it.
+See [`reports/QC-INDEX.md`](reports/QC-INDEX.md) for the full QC matrix index: severity, what each catches, what self-healing fires automatically, which commit added it.
 
 Standing rule: every new code pattern ships with its QC counterpart in the same commit.
 

@@ -21,25 +21,28 @@ canonical value shared across the Cloud-PC task trigger, the Sentry cron
 monitor (`7 18 * * 1-5`), and the GitHub `daily.yml` schedule — see
 `tests/test_fire_time_consistency.py`, which fails CI if they drift apart.
 
-## The 16 steps (in order)
+## The 18 steps (in order)
 
 | # | Step | Script | What it does |
 |---|---|---|---|
 | 1 | Backup snapshot | `backup.py` | Timestamped copy of `tracking-data-v2.json` → `data-backups/`. Retention-pruned. |
-| 2 | Ingest | `ingest.py` | Staged emails → request rows. Builds `tracking-data-v2.json`. |
-| 3 | Drift check (pre-QC) | `drift_check.py --auto-heal` | 6-phase integrity check. FAILs + stops the pipeline if quote-rate < 80%. Auto-heals dup imids + NQ schema. |
-| 4 | QC self-heal (pre-patch) | `qc_selfheal.py` | QC before enrichment. `HILMAR_QC_PHASE=pre-patch` suppresses Sentry for findings the patch step fixes. |
-| 5 | Carrier enrichment patch | `patch_carriers.py` | 4-pass backfill of carrier / rate / ETD / vessel / ERD / free-time, incl. booking-PDF extraction. |
-| 6 | QC self-heal (post-patch) | `qc_selfheal.py` | The real shipped-state QC. `HILMAR_QC_PHASE=post-patch` — this run fires Sentry. |
-| 7 | Sentry-driven QC actions | `qc_actions_from_sentry.py --apply` | Polls unresolved Sentry issues, dispatches remediation per the ACTIONS table. |
-| 8 | Sentry Seer autofix trigger | `sentry_seer.py trigger --apply` | Asks Seer to attempt autofix on recent error-level issues. |
-| 9 | Dashboard HTML | `gen_dashboard.py` | Interactive dashboard → `reports/hilmar-dashboard.html`. |
-| 10 | Client PDF (6-page) | `gen_pdf.py` | → `reports/hilmar-report.pdf`. |
-| 11 | Carrier scorecard PDFs | `gen_carrier_scorecard_pdf.py` | Per-carrier negotiation scorecards. |
-| 12 | Email body HTML | `gen_email.py` | → `reports/email-body.html` + `email-subject.txt`. |
-| 13 | Share to client_intelligence | `share_intel.py export` | Pushes Hilmar data to the shared cross-project intelligence store. |
-| 14 | Rate intelligence | `gen_rate_intelligence.py --quiet` | Rate-negotiation cheat sheet + cooling/regression alerts. |
-| 15 | Sync to ol-quote-tracker | `sync_to_quote_tracker.py` | Pushes entities to ol-quote-tracker's Turso registry. No-op if password absent. |
+| 2 | Test + coverage routine | `run_audit_tests.py --quiet` | Runs the pytest suite under coverage, writes `reports/test-result.json` for the daily audit. OBSERVER step — always exits 0 (QC-052 decides severity). |
+| 3 | Parser backfill (reprocess cache) | `reprocess_bodies.py` | Re-parses CACHED email bodies with the current `body_parser` BEFORE ingest so a parser fix self-applies to the whole window. Best-effort; the QC-059 data-flow self-heal. |
+| 4 | Ingest | `ingest.py` | Staged emails → request rows. Builds `tracking-data-v2.json`. |
+| 5 | Drift check (pre-QC) | `drift_check.py --auto-heal` | 6-phase integrity check. FAILs + stops the pipeline if quote-rate < 80%. Auto-heals dup imids + NQ schema. |
+| 6 | QC self-heal (pre-patch) | `qc_selfheal.py` | QC before enrichment. `HILMAR_QC_PHASE=pre-patch` suppresses Sentry for findings the patch step fixes. |
+| 7 | Carrier enrichment patch | `patch_carriers.py` | 4-pass backfill of carrier / rate / ETD / vessel / ERD / free-time, incl. booking-PDF extraction. |
+| 8 | QC self-heal (post-patch) | `qc_selfheal.py` | The real shipped-state QC. `HILMAR_QC_PHASE=post-patch` — this run fires Sentry. |
+| 9 | Sentry-driven QC actions | `qc_actions_from_sentry.py --apply` | Polls unresolved Sentry issues, dispatches remediation per the ACTIONS table. |
+| 10 | Sentry Seer autofix trigger | `sentry_seer.py trigger --apply` | Asks Seer to attempt autofix on recent error-level issues. |
+| 11 | Dashboard HTML | `gen_dashboard.py` | Interactive dashboard → `reports/hilmar-dashboard.html`. |
+| 12 | Client PDF (6-page) | `gen_pdf.py` | → `reports/hilmar-report.pdf`. |
+| 13 | Carrier scorecard PDFs | `gen_carrier_scorecard_pdf.py` | Per-carrier negotiation scorecards. |
+| 14 | Email body HTML | `gen_email.py` | → `reports/email-body.html` + `email-subject.txt`. |
+| 15 | Share to client_intelligence | `share_intel.py export` | Pushes Hilmar data to the shared cross-project intelligence store. |
+| 16 | Rate intelligence | `gen_rate_intelligence.py --quiet` | Rate-negotiation cheat sheet + cooling/regression alerts. |
+| 17 | Sync to ol-quote-tracker | `sync_to_quote_tracker.py` | Pushes entities to ol-quote-tracker's Turso registry. No-op if password absent. |
+| 18 | Historian (finalized → Turso) | `historian.py` | Appends finalized terminal-state rows to the durable Turso stats DB (QC-058). Write-only; no-op when no creds. |
 
 The **email send** is a separate step after this list — `outlook_send.py`
 delivers `reports/email-body.html` + attachments to the distribution.
@@ -53,14 +56,16 @@ Lanes, Top Losing Lanes, Not Quoted detail, and Pending Hilmar Response.
 
 ## The two QC phases — why there are two
 
-`patch_carriers.py` (Step 5) backfills fields that ingest couldn't extract on
-its own. If QC measured accuracy *before* the patch, it would see an
-artificially low number and fire false Sentry alerts. So:
+`patch_carriers.py` (the carrier-enrichment patch step) backfills fields that
+ingest couldn't extract on its own. If QC measured accuracy *before* the patch,
+it would see an artificially low number and fire false Sentry alerts. So:
 
-- **Pre-patch QC** (Step 4) runs on the raw ingest state. `HILMAR_QC_PHASE=pre-patch`
-  tells `qc_selfheal.py` to NOT emit Sentry events.
-- **Post-patch QC** (Step 6) runs on the real shipped state. `HILMAR_QC_PHASE=post-patch`
-  — this is the run that fires Sentry events + powers the audit email.
+- **Pre-patch QC** (the `qc_selfheal.py` run right before the patch) runs on the
+  raw ingest state. `HILMAR_QC_PHASE=pre-patch` tells `qc_selfheal.py` to NOT
+  emit Sentry events.
+- **Post-patch QC** (the `qc_selfheal.py` run right after the patch) runs on the
+  real shipped state. `HILMAR_QC_PHASE=post-patch` — this is the run that fires
+  Sentry events + powers the audit email.
 
 ## Failure handling
 

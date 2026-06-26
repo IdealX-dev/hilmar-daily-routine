@@ -1,8 +1,9 @@
 """
-parser_accuracy.py — measure + enforce ≥98% parser accuracy on key fields.
+parser_accuracy.py — measure + enforce ≥95% parser accuracy on key fields.
 
 Per Michael 2026-05-17: "this parser and your system have to run at minimum
-of 98 percent accuracy no matter COST."
+of 98 percent accuracy no matter COST." (Verbatim historical quote; the
+operative gate was subsequently set to 0.95 — see ACCURACY_THRESHOLD below.)
 
 ACCURACY MODEL
 
@@ -20,9 +21,10 @@ that an obscure conditional field with 100% on 3 applicable rows doesn't
 mask a major field failing on 100 applicable rows — see
 `weighted_accuracy()` for the alternative weighting).
 
-THRESHOLD: 98%. Below that on any individual field → QC-039 ERRORs and
-blocks the daily pipeline ship. The cost of letting bad data into the
-daily email exceeds the cost of investigating a regression.
+THRESHOLD: 95% (ACCURACY_THRESHOLD = 0.95; some fields have lower per-field
+floors in PER_FIELD_THRESHOLDS). Below the applicable threshold → QC-039
+ERRORs and blocks the daily pipeline ship. The cost of letting bad data into
+the daily email exceeds the cost of investigating a regression.
 
 WHAT COUNTS AS "POPULATED"
 
@@ -37,7 +39,8 @@ USAGE
   from hilmar.parser_accuracy import compute_accuracy, ACCURACY_THRESHOLD
   result = compute_accuracy(requests)
   if not result["pass"]:
-      raise SystemExit(f"Parser accuracy {result['overall_rate']:.1%} < 98%")
+      raise SystemExit(
+          f"Parser accuracy {result['overall_rate']:.1%} < {ACCURACY_THRESHOLD:.0%}")
 """
 from __future__ import annotations
 
@@ -53,7 +56,8 @@ from collections.abc import Callable
 #: pdfplumber can't OCR.
 ACCURACY_THRESHOLD = 0.95
 
-#: Per-field accuracy thresholds. Override for fields where 98% is unattainable
+#: Per-field accuracy thresholds. Override for fields where the 95%
+#: ACCURACY_THRESHOLD is unattainable
 #: on the existing data (historical gaps) but the parser's CURRENT accuracy
 #: is fine. The lower threshold is a "data quality floor" not a "parser
 #: quality target." mdolx_ref currently has 11 historical WINs (Apr-May 2026)

@@ -20,6 +20,18 @@ EXTRACT_PATH = ROOT / "scripts" / "ingest_extract.json"
 DATA_PATH = ROOT / "tracking-data-v2.json"
 
 
+def _fmt_time(dt, fmt: str) -> str:
+    """Cross-platform strftime that supports '%-d' / '%-I' (Linux/macOS) by
+    transparently mapping to '%#d' / '%#I' on Windows (which is what cpython's
+    msvcrt strftime expects). Mirrors gen_email._fmt_date — CLAUDE.md §8 forbids
+    the bare Unix-only tokens because they raise ValueError on the Cloud PC."""
+    if dt is None:
+        return ""
+    if sys.platform == "win32":
+        fmt = fmt.replace("%-d", "%#d").replace("%-I", "%#I").replace("%-m", "%#m").replace("%-H", "%#H")
+    return dt.strftime(fmt)
+
+
 def merge_record(
     rec: dict,
     existing_requests: list[dict],
@@ -86,9 +98,9 @@ def merge_record(
     lonny_pt = None
     olusa_et = None
     if req_dt:
-        lonny_pt = req_dt.astimezone(core.PT).strftime("%-I:%M %p PT")
+        lonny_pt = _fmt_time(req_dt.astimezone(core.PT), "%-I:%M %p PT")
     if resp_dt:
-        olusa_et = resp_dt.astimezone(core.ET).strftime("%-I:%M %p ET")
+        olusa_et = _fmt_time(resp_dt.astimezone(core.ET), "%-I:%M %p ET")
 
     # Canonicalize carrier names so CMA / CMA-CGM / CMA CGM all collapse to "CMA CGM"
     carrier_quoted_norm = core.normalize_carrier(rec.get("carrier_quoted"))

@@ -37,11 +37,29 @@ import msal
 import requests
 
 ROOT = Path(__file__).resolve().parent.parent
-# 2026-05-06: renamed from .bin to .json so SharePoint indexes the file
-# (M365 MCP can search-and-fetch JSON files; .bin extension is not indexed).
-# Falls back to legacy .bin if .json doesn't exist yet.
-_LEGACY_BIN = ROOT / "secrets" / "token-cache.bin"
-TOKEN_CACHE_PATH = (ROOT / "secrets" / "token-cache.json") if (ROOT / "secrets" / "token-cache.json").exists() or not _LEGACY_BIN.exists() else _LEGACY_BIN
+# SECURITY (2026-06-26): the token cache holds a LIVE delegated OAuth refresh
+# token (Mail.Send/Read, Files.ReadWrite). It must NEVER be search-indexed. The
+# 2026-05-06 ".json so SharePoint indexes it" change made the credential
+# discoverable via tenant search and is REVERTED here. Canonical is the
+# non-indexed .bin. We still READ a legacy .json if it is the ONLY cache present
+# (so a mid-migration box can't break the fire), but we always WRITE .bin.
+# OPERATOR migration: once secrets/token-cache.bin exists, delete
+# secrets/token-cache.json (local AND the Azure Blob state store) and ROTATE the
+# delegated token — the old .json one must be treated as potentially exposed.
+_CACHE_BIN = ROOT / "secrets" / "token-cache.bin"
+_CACHE_JSON_LEGACY = ROOT / "secrets" / "token-cache.json"
+#: Canonical (WRITE) path — always the non-indexed .bin.
+TOKEN_CACHE_PATH = _CACHE_BIN
+
+
+def _token_cache_read_path() -> Path:
+    """Prefer the non-indexed .bin; fall back to a legacy .json only when it is
+    the sole cache present, so a box still mid-migration keeps authenticating."""
+    if _CACHE_BIN.exists():
+        return _CACHE_BIN
+    if _CACHE_JSON_LEGACY.exists():
+        return _CACHE_JSON_LEGACY
+    return _CACHE_BIN
 CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"  # Microsoft public client
 TENANT = "common"
 SCOPES = ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
@@ -83,8 +101,9 @@ def _app_only_send_context():
 
 def _load_cache() -> msal.SerializableTokenCache:
     cache = msal.SerializableTokenCache()
-    if TOKEN_CACHE_PATH.exists():
-        cache.deserialize(TOKEN_CACHE_PATH.read_text())
+    read_path = _token_cache_read_path()
+    if read_path.exists():
+        cache.deserialize(read_path.read_text())
     return cache
 
 
@@ -368,6 +387,26 @@ def cmd_daily(args) -> int:
             print(f"⛔ MAILBOX GUARD: '{subject}' already sent today at {prior}")
             print("   (sent by another machine — flags can't see across hosts).")
             print("   Pass --force to send anyway.")
+            # Record a local sent-flag for today even though THIS host didn't
+            # emit: the client email demonstrably shipped (Graph confirms a
+            # message with this subject left the mailbox today). Without this,
+            # assert_fire_integrity sees no flag on the guarded host and screams
+            # a false "no verified report shipped" page after a real delivery.
+            # The marker keeps the per-day flag's invariant honest — "a flag
+            # for today means the email shipped today by SOME host" — without
+            # weakening idempotency (it's the same per-day flag, so a later
+            # same-day run still no-ops).
+            if flag_path and not flag_path.exists():
+                try:
+                    flag_path.parent.mkdir(parents=True, exist_ok=True)
+                    marker = (
+                        f"Sent (mailbox guard: already sent by another host) "
+                        f"{_dt.now(_zi('America/New_York')).strftime('%Y-%m-%d %H:%M ET')} "
+                        f"prior={prior}\n"
+                    )
+                    flag_path.write_text(marker, encoding="utf-8")
+                except Exception as _e:
+                    print(f"   (could not write cross-host marker flag: {_e})")
             return 0
 
     print(f"→ TO ({len(to)}): {to}")

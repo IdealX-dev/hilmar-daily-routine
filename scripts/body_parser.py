@@ -124,8 +124,14 @@ _ORIGIN_ALIASES = {
     "dfw":        "Dallas",
 }
 
+# Ocean ports-of-loading that legitimately appear as origin in subject lanes.
+# "HILMAR" was previously in this list but is the customer-name reference
+# in booking subjects ("MDOLX...// HILMAR 3x40'RF Oakland to Tokyo"), not
+# a port. Including it caused _scan_for_origin to greedily pick "Hilmar"
+# over the actual port "Oakland" (since it appears first in the string),
+# producing lane labels like "Hilmar → Tokyo" that split the lane bucket
+# in the carrier scoreboard. The actual ports-of-loading remain.
 _KNOWN_ORIGINS = [
-    "Hilmar, CA", "Hilmar",
     "Salt Lake City", "SLC",
     "Oakland", "OAK",
     "Chicago",

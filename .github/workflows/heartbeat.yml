@@ -86,6 +86,13 @@ jobs:
       # compares it to the pinned .python-version and files a labeled issue (a
       # notification the operator actually receives) on drift, auto-closing it
       # when the next fire reports healthy. The proactive prevention layer.
+      #
+      # SCOPE: the host=='cloud-pc' guard below is INTENTIONAL, not an oversight.
+      # The GitHub-Actions fire (host=github-actions) passes no env fingerprint
+      # and cannot drift (runners pin Python via .python-version + reinstall deps
+      # each run; daily.yml verifies prereqs). Do NOT widen this to
+      # github-actions — with no fingerprint it would no-op or false-page. See
+      # docs/RELIABILITY.md "Scope (by design)".
       - name: Checkout (read .python-version pin)
         if: ${{ github.event.inputs.host == 'cloud-pc' && github.event.inputs.env != '' && github.event.inputs.env != 'unknown' }}
         uses: actions/checkout@v5

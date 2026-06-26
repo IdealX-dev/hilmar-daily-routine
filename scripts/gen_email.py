@@ -869,7 +869,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU won")}
     {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%", sublabel="OL quoted; not booked")}
     {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%", sublabel="OL did not respond")}
-    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel="awaiting Hilmar")}
+    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel="OL quote + Lonny decision")}
   </tr>
   <tr>
     <td style="padding:0 4px;text-align:center">{spark_total}</td>
@@ -889,7 +889,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU · OL silent")}
   </tr>
   <tr>
-    {_kpi_card(pending, "Pending Lonny", "#8b5cf6", sublabel=f"{teu_pending} TEU")}
+    {_kpi_card(pending, "Pending", "#8b5cf6", sublabel=f"{teu_pending} TEU · any party")}
     {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
     {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", "#f59e0b", sublabel=f"{nq} NQ ÷ {decided_all} total")}
     {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1", sublabel="Lonny → OL quote")}

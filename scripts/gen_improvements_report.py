@@ -465,7 +465,7 @@ def collect_red_flags(data, qc, drift):
                             "detail": (
                                 "refresh_stage.py hasn't pulled new emails in over 36h. "
                                 "Outlook search may be silently broken or the MSAL token "
-                                "expired. Check secrets/token-cache.json mtime."
+                                "expired. Check secrets/token-cache.bin (or legacy .json) mtime."
                             ),
                         })
     except Exception:

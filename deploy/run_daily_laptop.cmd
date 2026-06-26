@@ -174,8 +174,15 @@ echo --- run_pipeline --- >> "%LOG%"
 set RC=%ERRORLEVEL%
 echo Pipeline exit code: %RC% >> "%LOG%"
 if %RC% NEQ 0 (
-  echo PIPELINE FAILED rc=%RC% >> "%LOG%"
-  exit /b %RC%
+  REM Do NOT exit here. The old `exit /b %RC%` terminated before the
+  REM prove-or-scream gate + heartbeat ever ran, so the DOMINANT failure mode
+  REM (a client-blocking pipeline step failing) produced NO out-of-band alarm
+  REM and NO heartbeat — it stayed silent until liveness's 25h staleness check.
+  REM Instead jump straight to the integrity gate (skipping the client send +
+  REM diagnostic steps below, so no broken/stale email ships) so it screams
+  REM with the real rc and the heartbeat reports status=failed.
+  echo PIPELINE FAILED rc=%RC% — skipping client send; jumping to integrity gate so the alarm + heartbeat fire >> "%LOG%"
+  goto integrity
 )
 
 REM Step 3 — send daily email. outlook_send.py daily has BUILT-IN idempotency:
@@ -226,7 +233,33 @@ echo --- improvements_report (Michael only) --- >> "%LOG%"
   --body-from-file reports\improvements-report.html >> "%LOG%" 2>&1
 echo Improvements send exit code: %ERRORLEVEL% >> "%LOG%"
 
-REM Step 6 — GitHub Actions heartbeat (2026-06-01 — replaces the missing
+REM ── Integrity gate + heartbeat. Reached by fall-through on a clean fire, or
+REM    by `goto integrity` from the pipeline-failure branch above (which skips
+REM    the client send + diagnostic steps so no broken email ships). Either
+REM    way the prove-or-scream gate + heartbeat ALWAYS run.
+:integrity
+REM Step 6 — PROVE the fire shipped a report (or scream). Mandatory final
+REM gate: asserts pipeline rc==0 + fresh artifacts + today's send-flag + token
+REM cache. On ANY violation it raises an OUT-OF-BAND alarm (GitHub issue +
+REM Teams + queue — never Outlook) and exits non-zero. We capture that into
+REM FIRE_STATUS and pass the REAL status to the heartbeat, so liveness sees the
+REM truth instead of a hardcoded "success" (the 2026-06 silent-week root cause).
+echo --- assert_fire_integrity --- >> "%LOG%"
+"%PY%" deploy\assert_fire_integrity.py --pipeline-rc %RC% >> "%LOG%" 2>&1
+if %ERRORLEVEL% EQU 0 ( set FIRE_STATUS=success ) else ( set FIRE_STATUS=failed )
+echo Fire integrity: %FIRE_STATUS% >> "%LOG%"
+
+REM ISO-8601 UTC timestamp for the heartbeat, matching daily.yml's
+REM `date -u +%Y-%m-%dT%H:%M:%SZ`. The old `set HB_AT=%DATE%T%TIME%` produced a
+REM locale-formatted, unparseable value (spaces/slashes/weekday) that diverged
+REM from the GH-Actions heartbeat feeding the SAME heartbeat.yml input. Compute
+REM via Python to a temp file (no strftime %-escaping / for-loop quote traps),
+REM falling back to the locale string only if Python is somehow unavailable.
+"%PY%" -c "import datetime;print(datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z'),end='')" > "%ROOT%\reports\hb-at.txt" 2>nul
+set HB_AT=%DATE%T%TIME%
+if exist "%ROOT%\reports\hb-at.txt" set /p HB_AT=<"%ROOT%\reports\hb-at.txt"
+
+REM Step 7 — GitHub Actions heartbeat (2026-06-01 — replaces the missing
 REM daily-fire.yml self-hosted runner trigger). Tells the liveness monitor
 REM workflow that the daily fire actually completed. Best-effort: if gh
 REM CLI isn't installed, the PAT isn't configured, or github.com is
@@ -242,27 +275,15 @@ REM      OR drop a PAT (scope: actions:write) into secrets\github-pat.txt
 REM      and run: gh auth login --with-token < secrets\github-pat.txt
 REM   3. Verify: gh auth status
 REM See docs\CLOUD-PC-HEARTBEAT-SETUP.md for the full walkthrough.
-REM Step 5 — PROVE the fire shipped a report (or scream). Mandatory final
-REM gate: asserts pipeline rc==0 + fresh artifacts + today's send-flag + token
-REM cache. On ANY violation it raises an OUT-OF-BAND alarm (GitHub issue +
-REM Teams + queue — never Outlook) and exits non-zero. We capture that into
-REM FIRE_STATUS and pass the REAL status to the heartbeat, so liveness sees the
-REM truth instead of a hardcoded "success" (the 2026-06 silent-week root cause).
-echo --- assert_fire_integrity --- >> "%LOG%"
-"%PY%" deploy\assert_fire_integrity.py --pipeline-rc %RC% >> "%LOG%" 2>&1
-if %ERRORLEVEL% EQU 0 ( set FIRE_STATUS=success ) else ( set FIRE_STATUS=failed )
-echo Fire integrity: %FIRE_STATUS% >> "%LOG%"
-
 echo --- heartbeat dispatch --- >> "%LOG%"
 where gh >nul 2>&1
 if errorlevel 1 (
   echo gh CLI not found; heartbeat skipped ^(install: winget install GitHub.cli^) >> "%LOG%"
 ) else (
-  REM Pass timestamp + repo HEAD so the heartbeat workflow's run log
-  REM ties back to a specific commit. Status is the REAL outcome from the
-  REM integrity assertion above — heartbeat.yml fails its job on status!=success
-  REM so liveness's failed branch actually fires.
-  set HB_AT=%DATE%T%TIME%
+  REM Pass HB_AT (ISO-8601, computed above) + repo HEAD so the heartbeat
+  REM workflow's run log ties back to a specific commit. Status is the REAL
+  REM outcome from the integrity assertion above — heartbeat.yml fails its job
+  REM on status!=success so liveness's failed branch actually fires.
   set HB_SHA=
   if exist "%ROOT%\reports\deployment-sha.txt" (
     for /f "tokens=2 delims= " %%S in ('findstr /b "HEAD=" "%ROOT%\reports\deployment-sha.txt" 2^>nul') do (

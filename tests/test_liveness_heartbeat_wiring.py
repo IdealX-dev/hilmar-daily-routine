@@ -171,6 +171,57 @@ def test_wrapper_heartbeat_runs_after_email_sends():
     )
 
 
+# ── prove-or-scream survives a pipeline failure (audit finding [2]) ───────
+
+def test_wrapper_does_not_exit_before_integrity_gate_on_pipeline_failure():
+    """The DOMINANT failure mode — a client-blocking pipeline step failing —
+    must still reach the integrity gate so the out-of-band alarm + heartbeat
+    fire. The old `exit /b %RC%` terminated first, going silent until liveness's
+    25h staleness check. Lock that the failure branch jumps to the gate and that
+    no unconditional `exit /b %RC%` sits between the rc capture and the gate."""
+    text = WRAPPER.read_text()
+    rc_idx = text.find("set RC=%ERRORLEVEL%")
+    gate_idx = text.find("assert_fire_integrity.py --pipeline-rc")
+    assert rc_idx > 0 and gate_idx > rc_idx, "integrity gate must follow rc capture"
+    between = text[rc_idx:gate_idx]
+    # Inspect only EXECUTABLE lines — a REM that mentions the old `exit /b %RC%`
+    # for context must not count.
+    exec_lines = [ln.strip() for ln in between.splitlines()
+                  if not ln.strip().upper().startswith("REM")]
+    assert not any("exit /b %RC%" in ln for ln in exec_lines), (
+        "wrapper must NOT exit /b %RC% before the integrity gate — that bypasses "
+        "the prove-or-scream alarm on the most common failure mode"
+    )
+    assert "goto integrity" in between, (
+        "the pipeline-failure branch must jump to the :integrity gate"
+    )
+    assert "\n:integrity\n" in text, "the :integrity label must exist"
+
+
+def test_integrity_gate_runs_before_heartbeat_dispatch():
+    """The heartbeat status must reflect the integrity outcome, so the gate
+    has to run before the dispatch (true on both the success and failure path)."""
+    text = WRAPPER.read_text()
+    gate_idx = text.find("assert_fire_integrity.py --pipeline-rc")
+    hb_idx = text.find("gh workflow run heartbeat.yml")
+    assert 0 < gate_idx < hb_idx
+
+
+# ── heartbeat timestamp is ISO-8601 UTC, not locale (audit finding [34]) ──
+
+def test_heartbeat_timestamp_is_iso_utc_not_locale():
+    """%DATE%T%TIME% is locale-formatted (spaces/slashes/weekday) and diverges
+    from daily.yml's ISO-8601 heartbeat into the SAME heartbeat.yml input. The
+    wrapper must derive HB_AT from a real UTC ISO timestamp."""
+    text = WRAPPER.read_text()
+    # The locale form must not be the value actually sent: HB_AT is recomputed
+    # from a Python-produced ISO file, with the locale string only as fallback.
+    assert "hb-at.txt" in text, "HB_AT must come from the computed ISO timestamp file"
+    assert 'isoformat().replace(' in text and "'+00:00','Z'" in text, (
+        "HB_AT must be a UTC ISO-8601 timestamp (matching daily.yml)"
+    )
+
+
 # ── docs ────────────────────────────────────────────────────────────────
 
 def test_setup_doc_present():

@@ -15,9 +15,13 @@ scream." It asserts:
   - today's client artifacts (email-subject.txt / email-body.html /
     hilmar-report.pdf) exist and are dated TODAY,
   - today's full-distribution send actually happened (the sent-YYYY-MM-DD.flag
-    that outlook_send writes only AFTER a successful send),
-  - (best-effort) the MSAL token cache is present (a missing/empty cache is the
-    classic silent-auth killer).
+    that outlook_send writes only AFTER a successful send).
+
+It also surfaces (best-effort) a WARNING if the MSAL token cache is absent (the
+classic silent-auth killer). That is NOT a delivery-proof violation: a missing
+cache after a successful send (OneDrive sync lag, cleanup, an auth in progress)
+must not fake a "no verified report shipped" page. The token-cache check rides
+the warning channel (level="warning") and never gates the exit code.
 
 On ANY violation it raises an OUT-OF-BAND alert (fire_alert: GitHub issue +
 Teams + durable queue + stderr — never the Outlook path it's alarming about)
@@ -87,14 +91,25 @@ def check_integrity(*, pipeline_rc: int, require_send: bool = True,
                 f"NO send proof: reports/sent-{today}.flag is absent — the "
                 f"client email did NOT ship to the full distribution today")
 
-    # Best-effort: the MSAL token cache should exist (empty/missing = the
-    # silent-auth failure mode). Non-fatal on its own, but worth surfacing.
-    cache = secrets / "token-cache.json"
-    if not cache.exists():
-        violations.append("MSAL token cache absent (secrets/token-cache.json) — "
-                          "auth may be unconfigured/expired")
-
     return violations
+
+
+def check_warnings(*, secrets: Path = SECRETS) -> list[str]:
+    """Return non-gating warnings (empty == nothing to surface). These are NOT
+    delivery-proof violations — they must never drive the exit code or the
+    critical alarm, only a warning-level out-of-band note. Pure/injectable."""
+    warnings: list[str] = []
+
+    # Best-effort: the MSAL token cache should exist (empty/missing = the
+    # silent-auth failure mode). Non-fatal on its own, but worth surfacing — a
+    # transiently-absent cache after a successful send must not fake a critical
+    # "no verified report shipped" page. Accept EITHER the canonical non-indexed
+    # .bin or a legacy .json (mid-migration) — see outlook_send TOKEN_CACHE_PATH.
+    if not (secrets / "token-cache.bin").exists() and not (secrets / "token-cache.json").exists():
+        warnings.append("MSAL token cache absent (secrets/token-cache.bin|.json) — "
+                        "auth may be unconfigured/expired")
+
+    return warnings
 
 
 def main() -> int:
@@ -110,18 +125,39 @@ def main() -> int:
         pipeline_rc=args.pipeline_rc,
         require_send=not args.no_require_send,
         today=args.date)
+    warnings = check_warnings()
 
     if not violations:
         print(f"✅ Fire integrity OK — fresh report shipped ({args.date or _et_today()})")
+        # The report DID ship; a missing token cache is a non-gating warning,
+        # never the critical "no verified report shipped" page.
+        if warnings:
+            wtitle = "Daily fire shipped OK — non-fatal warning"
+            wbody = ("The daily Hilmar fire shipped a verified report, but a "
+                     "non-fatal condition is worth surfacing:\n  - "
+                     + "\n  - ".join(warnings))
+            print("⚠ " + wtitle, file=sys.stderr)
+            for w in warnings:
+                print("   - " + w, file=sys.stderr)
+            try:
+                import fire_alert
+                res = fire_alert.send_alert(wtitle, wbody, level="warning",
+                                            labels=("fire-alert",))
+                print(f"   out-of-band warning channels: {res}", file=sys.stderr)
+            except Exception as e:
+                print(f"   (fire_alert failed: {e})", file=sys.stderr)
         return 0
 
     title = "Daily fire integrity FAILED — no verified report shipped"
     body = ("The daily Hilmar fire did NOT prove it shipped a report:\n  - "
-            + "\n  - ".join(violations)
-            + "\n\nThis fired the OUT-OF-BAND alarm (not Outlook). Recover: re-run "
-              "deploy\\run_daily_laptop.cmd on the Cloud PC, or check the run-log "
-              "for the failing step. The wrapper passes status=failed to the "
-              "heartbeat so liveness will also flag this.")
+            + "\n  - ".join(violations))
+    if warnings:
+        # Fold warnings in for context, but they do NOT gate the exit code.
+        body += "\n\nAdditional (non-gating) warnings:\n  - " + "\n  - ".join(warnings)
+    body += ("\n\nThis fired the OUT-OF-BAND alarm (not Outlook). Recover: re-run "
+             "deploy\\run_daily_laptop.cmd on the Cloud PC, or check the run-log "
+             "for the failing step. The wrapper passes status=failed to the "
+             "heartbeat so liveness will also flag this.")
     print("❌ " + title, file=sys.stderr)
     for v in violations:
         print("   - " + v, file=sys.stderr)

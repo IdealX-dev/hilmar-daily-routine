@@ -65,3 +65,32 @@ def test_trigger_is_the_canonical_evening_fire():
         "the task trigger must be -At 6:07pm (the canonical evening fire time; "
         "see tests/test_fire_time_consistency.py)."
     )
+
+
+def test_execution_time_limit_exceeds_worst_case_pipeline():
+    """Audit finding [33]: the old 15-min cap could SIGTERM the run mid-fire
+    (the pipeline's per-step timeouts alone sum to ~25 min worst case). The
+    limit must comfortably exceed that, matching daily.yml's 50-min budget."""
+    m = re.search(r"-ExecutionTimeLimit\s*\(New-TimeSpan\s+-Minutes\s+(\d+)\)", PS1)
+    assert m, "setup_cloudpc.ps1 must set an explicit -ExecutionTimeLimit"
+    assert int(m.group(1)) >= 40, (
+        f"ExecutionTimeLimit is {m.group(1)} min -- too short for the ~25-min "
+        "worst-case pipeline + send/audit chain; must be >=40 (daily.yml uses 50)."
+    )
+
+
+def test_no_auto_restart_of_the_email_wrapper():
+    """Audit finding [33]: auto-restart is unsafe for an email-sending wrapper.
+    A restart after a mid-send kill re-runs outlook_send before the sent-flag
+    exists and double-mails all 10 recipients. RestartCount must be 0, and
+    RestartInterval (which only applies when RestartCount>0) must be gone."""
+    m = re.search(r"-RestartCount\s+(\d+)", PS1)
+    assert m, "expected an explicit -RestartCount"
+    assert int(m.group(1)) == 0, (
+        f"-RestartCount is {m.group(1)}; must be 0 -- restarting an email wrapper "
+        "mid-send risks a duplicate client email."
+    )
+    assert "-RestartInterval" not in PS1, (
+        "-RestartInterval must be removed when RestartCount is 0 (it only applies "
+        "when RestartCount > 0)."
+    )
