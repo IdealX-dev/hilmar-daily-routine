@@ -365,7 +365,7 @@ deploy/run_daily_laptop.cmd
     │       ├── backup.py
     │       ├── ingest.py
     │       ├── drift_check.py
-    │       ├── qc_selfheal.py (35 checks)
+    │       ├── qc_selfheal.py (QC-001..QC-063; see reports/QC-INDEX.md)
     │       ├── patch_carriers.py (auto-discovery + body-scan + PDF fallback)
     │       ├── qc_selfheal.py (post-patch)
     │       ├── gen_dashboard.py
@@ -391,7 +391,7 @@ deploy/run_daily_laptop.cmd
 > + self-heal action in the SAME commit. Never ship a new pattern without
 > its QC counterpart.
 
-Active QC checks: 35 (QC-001 through QC-033 incl. sub-variants). See
+Active QC checks: QC-001 through QC-063 (incl. sub-variants) — see
 `reports/QC-INDEX.md` for the full matrix.
 
 ---

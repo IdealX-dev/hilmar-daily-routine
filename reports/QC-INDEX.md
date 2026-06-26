@@ -4,18 +4,26 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-05-21 (post-consolidation). Total active checks: **42**
-(QC-001 through QC-020a/b + QC-021 through QC-041, including QC-014a/b
-and QC-020a/b sub-variants). Last commit: see `git log scripts/qc_selfheal.py`.
+Generated 2026-05-13, updated 2026-06-25. Total active checks: **64**
+(QC-001 through QC-063, including the QC-014a/b and QC-020a/b sub-variants;
+QC-038 retired). Last commit: see `git log scripts/qc_selfheal.py`.
+The newest checks are QC-055..QC-063 (added 2026-06-25); see the matrix below.
 
-**Three drift-prevention + accuracy checks added 2026-05-17 evening:**
-- **QC-039** (ERROR) — Parser accuracy ≥98% on critical fields. Gates ship.
+**Three drift-prevention + accuracy checks added 2026-05-17 evening** (historical
+note — at the time these were the newest; the current ceiling is QC-063):
+- **QC-039** (ERROR) — Parser accuracy ≥95% on critical fields. Gates ship.
+  (Originally 98%; lowered to 95% on 2026-05-19 — see the standing-rule note below.)
 - **QC-040** (WARN) — Cross-folder enum drift between `scripts/core.py` and `src/hilmar/core.py`.
 - **QC-041** (ERROR) — Classifier form consistency in production data (no mixed LEGACY/STRICT).
 
 Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 - *"this parser and your system have to run at minimum of 98 percent accuracy no matter COST"*
 - *"never to allow drift like this as standard"*
+
+> Note: the 98% directive above was superseded on 2026-05-19 (*"PARSER MUST
+> REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS"*). The live gate is
+> `ACCURACY_THRESHOLD = 0.95` — see `src/hilmar/parser_accuracy.py:57` and the
+> in-code comment at `scripts/qc_selfheal.py:2149`.
 
 ## How to read this table
 
@@ -68,7 +76,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-036 | ERROR/WARN | tests/ folder missing or <3 test files — regression net thin | None — write more tests | 2026-05-14 (best-practices batch) |
 | QC-037 | WARN / **ERROR** | ol-quote-tracker sync log missing, stale (>36h), or last sync errored. **ERROR-severity** when ≥3 consecutive fires fail (Turso entity registry going stale; audit also raises a dedicated red flag with the actual error excerpt). | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`), streak detection 2026-05-28 |
 | QC-038 | _retired 2026-05-21_ | ol-quote-tracker reconciliation — retired: a live API probe proved ol-quote-tracker holds zero Hilmar rows, so the cross-check only ever produced phantom drift | n/a — check + script + pipeline step removed | 2026-05-21 |
-| QC-039 | **ERROR**/WARN | Parser accuracy <98% on CRITICAL fields (ERROR) or <98% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation) |
+| QC-039 | **ERROR**/WARN | Parser accuracy <95% on CRITICAL fields (ERROR) or <95% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation; threshold lowered 98%→95% 2026-05-19) |
 | QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 | QC-042 | **ERROR** | Email body contains a `data:` URI (`<img src="data:image/...">`) — Outlook blocks these so the logo renders broken | None — `branding.py` uses `cid:` attachments (commit `fa337b2`) | 2026-05-17 |

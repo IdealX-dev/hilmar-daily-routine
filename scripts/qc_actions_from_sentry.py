@@ -537,6 +537,11 @@ def _do_claude_diagnose(api, issue: dict, spec: dict, *, dry_run: bool, _via: st
         import sys
         sys.path.insert(0, str(ROOT / "scripts"))
         from pdf_llm_rescue import _load_api_key
+        try:
+            from sentry_setup import _scrub_string
+        except ImportError:
+            def _scrub_string(s):
+                return s
         api_key = _load_api_key()
         if not api_key:
             return {"shortId": short, "action": "claude_diagnose", "ok": False,
@@ -552,8 +557,12 @@ def _do_claude_diagnose(api, issue: dict, spec: dict, *, dry_run: bool, _via: st
 
         # Build a compact context for Claude: title + culprit + level +
         # short metadata. Skip the full event payload to keep tokens low.
-        title = issue.get("title") or ""
-        culprit = issue.get("culprit") or ""
+        # Defense-in-depth: scrub PII from title/culprit before they leave
+        # this process to Anthropic (and any downstream use). The capture-time
+        # scrubber in sentry_setup._before_send is fail-open, so do not rely
+        # on it alone for this egress to a second external provider.
+        title = _scrub_string(issue.get("title") or "")
+        culprit = _scrub_string(issue.get("culprit") or "")
         level = issue.get("level") or ""
         count = issue.get("count") or "?"
         platform = issue.get("platform") or ""

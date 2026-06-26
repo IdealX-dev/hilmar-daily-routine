@@ -791,7 +791,7 @@ def main():
     from datetime import datetime, timezone
     data["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-    data_path.write_text(json.dumps(data, indent=2))
+    C.save_data_validated(data, data_path)
     print(f"OK Patched -> revision {rev}")
 
 

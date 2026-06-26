@@ -48,7 +48,12 @@ CORRECTIONS_PATH = Path(__file__).resolve().parent / "operator_corrections.json"
 OL_RESPONDER_NAME = "MBD Ocean Export Booking"   # shared mailbox identity
 OL_RESPONDER_EMAIL = "MBD_OceanExportBookingShared@ol-usa.com"
 
-DEST_RX = re.compile(r"^\s*oakland\s+to\s+(.+?)(?:\s*\(\d+\)\s*)?\s*$", re.IGNORECASE)
+# Origin-general (was hardcoded "oakland" until 2026-06-11 — the Dalhart
+# blind spot): any known Hilmar origin site, single source in body_parser.
+DEST_RX = re.compile(
+    rf"^\s*(?:{'|'.join(re.escape(o) for o in BP.KNOWN_ORIGINS)})(?:,?\s*[A-Z]{{2}})?"
+    rf"\s+to\s+(.+?)(?:\s*\(\d+\)\s*)?\s*$",
+    re.IGNORECASE)
 MDOLX_RX = re.compile(r"MDOLX\s*(\d{6,})", re.IGNORECASE)
 
 

@@ -2225,7 +2225,12 @@ def phase_6_rules(log: Log, data: dict):
                 f"≥ {ACCURACY_THRESHOLD:.0%} on all {len([f for f in _acc['field_stats'].values() if not f.get('n_a')])} measured fields"
             )
     except Exception as _e:
-        log.warn(f"QC-039: check failed with exception: {_e}")
+        # Fail CLOSED, not open: a parser-accuracy gate that cannot evaluate
+        # (import regression, malformed requests, KeyError, ...) must surface
+        # as an ERROR so it gates qc-result status (HAS_ERRORS) and fires
+        # Sentry, not get buried as a non-blocking WARN. Per CLAUDE.md rule #3
+        # (solve root causes, never let a broken gate silently degrade).
+        log.error(f"QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): {_e}")
 
     # QC-040: CROSS-FOLDER DRIFT — per Michael 2026-05-17 "never to allow
     # drift like this as standard." Detects when scripts/core.py and

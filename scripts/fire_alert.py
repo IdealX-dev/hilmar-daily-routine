@@ -35,9 +35,30 @@ REPORTS = ROOT / "reports"
 ALERTS_QUEUE = REPORTS / "alerts-queue.json"
 GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY", "IdealX-dev/hilmar-daily-routine")
 
+# Make sibling scripts (sentry_setup) importable even when fire_alert is invoked
+# directly via main(); mirrors preflight_env.py / assert_fire_integrity.py.
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _scrub(s: str) -> str:
+    """Redact PII before egress so every out-of-band channel (GitHub issue,
+    Teams, queue, stderr) shares ONE redaction boundary with the Sentry path.
+
+    Reuses sentry_setup._scrub_string (pure-regex, never raises). If that
+    shared scrubber is unavailable, fail-CLOSED on the most obvious leak
+    (emails) while staying fail-OPEN on delivery — an alert must never be
+    suppressed by a scrub-import failure (this module is best-effort)."""
+    try:
+        import sentry_setup
+        return sentry_setup._scrub_string(s)
+    except Exception:
+        import re
+        return re.sub(r"[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]", s or "")
 
 
 def _stderr_banner(title: str, body: str) -> bool:
@@ -160,13 +181,18 @@ def send_alert(title: str, body: str, *, level: str = "error",
                labels: tuple = ("fire-alert", "cloud-pc-down")) -> dict:
     """Raise an out-of-band alert on every available channel. Best-effort:
     a failing channel never blocks the others. Returns {channel: delivered?}."""
-    full_body = f"{body}\n\n— raised {_now()} (level={level})"
-    record = {"ts": _now(), "level": level, "title": title, "body": body}
+    # Scrub once at the boundary so all four channels share one redaction
+    # boundary (parity with the Sentry before_send hook). _scrub_string is
+    # idempotent, so double-scrubbing is a harmless no-op.
+    s_title = _scrub(title)
+    s_body = _scrub(body)
+    full_body = f"{s_body}\n\n— raised {_now()} (level={level})"
+    record = {"ts": _now(), "level": level, "title": s_title, "body": s_body}
     results = {
-        "stderr": _stderr_banner(title, full_body),
+        "stderr": _stderr_banner(s_title, full_body),
         "queue": _append_queue(record),
-        "github": _github_issue(title, full_body, labels),
-        "teams": _teams(title, full_body),
+        "github": _github_issue(s_title, full_body, labels),
+        "teams": _teams(s_title, full_body),
     }
     return results
 

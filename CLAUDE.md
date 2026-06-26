@@ -46,8 +46,8 @@ The repo intentionally holds **two parallel Python trees**:
 two coexist on purpose during the migration period; do not delete one to
 "clean up" the other.
 
-A few files appear in BOTH places (`body_parser.py`, `core.py`, `ingest.py`,
-`parser_accuracy.py`). When you edit one of these, **mirror the change to
+A few files appear in BOTH places (`body_parser.py`, `core.py`,
+`ingest.py`). When you edit one of these, **mirror the change to
 the paired file** — QC-040 enforces no drift between the pair, and parser
 accuracy is computed from `src/hilmar/parser_accuracy.py`.
 
