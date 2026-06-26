@@ -97,6 +97,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ENVFP: ${{ github.event.inputs.env }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
         run: |
           set -e
           envfp="$(echo "$ENVFP" | tr -d '\r')"
@@ -143,9 +144,9 @@ jobs:
             gh issue create --title "Box environment drift — fire shipped on an unvalidated env" \
               --label box-env-drift --body "$body"
           fi
-          # Out-of-band Teams page (best-effort; clean no-op if the webhook is unset).
-          url=$(jq -r '.alerts.teams_webhook_url // ""' config.json)
-          if [ -n "$url" ] && [ "$url" != "null" ]; then
+          # Out-of-band Teams page (best-effort; clean no-op if the secret is unset).
+          url="${TEAMS_WEBHOOK_URL}"
+          if [ -n "$url" ]; then
             tp=$(jq -n --arg t "Hilmar fire shipped on a DRIFTED environment ($drift; fingerprint $envfp). Fix it before it degrades into a silent failure." '{"@type":"MessageCard","@context":"http://schema.org/extensions","themeColor":"D93F0B","summary":"Box env drift","title":"Hilmar box environment drift","text":$t}')
             curl -sS -o /dev/null -X POST -H "Content-Type: application/json" -d "$tp" "$url" || true
           fi

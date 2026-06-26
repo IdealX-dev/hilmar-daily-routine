@@ -126,7 +126,7 @@
     "teams_webhook_url": "",
     "events": ["win", "pending_overdue", "qc_error", "big_day"],
     "min_teu_for_big_day": 30,
-    "_note": "Empty teams_webhook_url = alerts queue to reports/alerts-queue.json. To go live: Teams channel → ⋯ → Connectors → Incoming Webhook → copy URL here. Michael 2026-05-14: thought permissions came from rate-tracker — none configured anywhere in user's projects."
+    "_note": "SECURE setup (keep this field EMPTY): the webhook URL stays OUT of this committed file. Box side -> put it in secrets/teams-webhook-url.txt (gitignored) or the TEAMS_WEBHOOK_URL env var. GitHub Actions side -> repo secret TEAMS_WEBHOOK_URL (Settings > Secrets and variables > Actions). fire_alert.py + liveness.yml + heartbeat.yml all read the secret; this field is only a discouraged last-resort fallback (anything pasted here lands in git history). Create the webhook: Teams channel > ... > Connectors > Incoming Webhook > copy URL. Empty teams_webhook_url = alerts still queue to reports/alerts-queue.json."
   },
   "backup": {
     "secondary_onedrive_dir": "%USERPROFILE%/OneDrive - IdealX/HILMAR_BACKUPS",
