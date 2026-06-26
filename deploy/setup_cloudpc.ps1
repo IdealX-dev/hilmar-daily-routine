@@ -170,24 +170,40 @@ if (-not (Test-Path $wrapperPath)) {
     Write-Error ("Wrapper batch missing: " + $wrapperPath)
     exit 1
 }
+$TaskName = "Hilmar Daily Tracker - CloudPC"
 $action = New-ScheduledTaskAction -Execute $wrapperPath
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 6:07pm
+# -WakeToRun nudges the box if it ever sleeps at fire time.
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
+    -WakeToRun `
     -DontStopOnIdleEnd `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15) `
     -MultipleInstances IgnoreNew `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 5)
-$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 6:07 PM ET weekdays (aligned to the Sentry cron monitor + daily.yml schedule; 6 PM ET = 3 PM PT, after Lonny's Pacific workday). Replaces the laptop scheduler. OneDrive-synced code, OL-allowlisted IP."
-Register-ScheduledTask `
-    -TaskName "Hilmar Daily Tracker - CloudPC" `
-    -Action $action -Trigger $trigger -Settings $settings -Description $desc `
-    -Force | Out-Null
-$t = Get-ScheduledTask -TaskName "Hilmar Daily Tracker - CloudPC"
-$t | Format-List TaskName, State
-($t | Get-ScheduledTaskInfo) | Format-List NextRunTime, LastRunTime
-Write-Host "  OK - task registered" -ForegroundColor Green
+$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 6:07 PM ET weekdays whether logged on or not (S4U). 6 PM ET = 3 PM PT, after Lonny's Pacific workday; aligned to the Sentry cron monitor + daily.yml schedule."
+# Register to run WHETHER OR NOT THE USER IS LOGGED ON (S4U). Root cause of the
+# 2026-06 silent miss: an INTERACTIVE task quietly skipped 10 straight fires
+# once the RDP session stopped staying logged on. S4U needs an ELEVATED shell;
+# if this setup is NOT elevated the registration throws Access Denied -- we
+# catch it, warn, and LEAVE ANY EXISTING TASK UNCHANGED, so a non-admin
+# update_box.cmd run can never downgrade a good S4U task back to interactive.
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$principal = New-ScheduledTaskPrincipal -UserId $me -LogonType S4U
+try {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $desc -Force | Out-Null
+    Write-Host "  OK - registered S4U (runs whether logged on or not)" -ForegroundColor Green
+} catch {
+    Write-Warning ("Task registration failed: " + $_.Exception.Message)
+    Write-Warning "S4U needs an ELEVATED PowerShell. Re-run this setup as Administrator to (re)create the run-whether-logged-on task. Any existing task was left UNCHANGED."
+}
+$t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+if ($t) {
+    $t | Format-List TaskName, State
+    ($t | Get-ScheduledTaskInfo) | Format-List NextRunTime, LastRunTime
+    $t.Principal | Format-List UserId, LogonType
+}
 
 # Done
 Write-Host ""

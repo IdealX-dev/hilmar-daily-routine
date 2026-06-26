@@ -118,10 +118,17 @@ inherits this system.
 **Symptom**: No 18:07 entry in run-log for today; Task Scheduler "LastRunTime" is yesterday or older.
 
 **Root cause** (possibilities, in order):
-1. Cloud PC was offline / stopped at 6:07 PM ET
-2. Task got disabled or deleted
-3. Cloud PC's Windows credentials expired
-4. Microsoft 365 service incident
+1. **Task is INTERACTIVE, not S4U** (the 2026-06 silent-miss root cause): an
+   interactive task skips EVERY fire when no one is logged on, while still
+   looking healthy. Check
+   `(Get-ScheduledTask -TaskName "Hilmar Daily Tracker - CloudPC").Principal.LogonType`
+   -- it MUST be `S4U`. Fix: re-run `deploy\setup_cloudpc.ps1` from an
+   **elevated** PowerShell (S4U needs admin); confirm `Get-ScheduledTaskInfo`
+   shows `NumberOfMissedRuns 0` the next day.
+2. Cloud PC was offline / stopped at 6:07 PM ET
+3. Task got disabled or deleted
+4. Cloud PC's Windows credentials expired
+5. Microsoft 365 service incident
 
 **Fix**:
 1. RDP into Cloud PC via `windows.cloud.microsoft`
