@@ -47,8 +47,22 @@ two coexist on purpose during the migration period; do not delete one to
 "clean up" the other.
 
 A few files appear in BOTH places (`body_parser.py`, `core.py`,
-`ingest.py`). When you edit one of these, **mirror the change to
-the paired file** — QC-040 enforces no drift between the pair, and parser
+`ingest.py`). When you edit one of these, **mirror the change to the paired
+file**. Drift enforcement is NARROWER than it sounds, so mirror by hand and
+do not assume a guard will catch a miss:
+- `core.py` — `VALID_STATUSES`/`LOSS_REASONS` guarded by QC-040 +
+  `tests/test_core_parity.py`. Trade-region taxonomy DELIBERATELY differs
+  between trees (coarse trade-lane buckets in production vs fine country buckets
+  in the library) pending a migration decision; `tests/test_trade_region_parity.py`
+  locks that divergence (sentinel split + "nothing Unmapped") so it can't widen.
+- `body_parser.py` — `KNOWN_ORIGINS` guarded by QC-040 (runtime) +
+  `tests/test_body_parser_parity.py` (incl. `parse_subject_lane`); other
+  functions are mirror-by-hand.
+- `ingest.py` — `DEST_RX` + the shared pure helpers (`canonical_lane_key`,
+  `clean_origin/destination`, `extract_mdolx`) are parity-checked by
+  `tests/test_ingest_parity.py`; the production-only logic (additive merge,
+  booking linker) is mirror-by-hand.
+`parser_accuracy.py` lives ONLY in `src/hilmar/` (no `scripts/` copy); parser
 accuracy is computed from `src/hilmar/parser_accuracy.py`.
 
 ## 3. Hard rules (do not violate)

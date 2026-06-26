@@ -2281,15 +2281,34 @@ def phase_6_rules(log: Log, data: dict):
                     f"only in scripts/ = {sorted(_missing_in_hilmar)}"
                 )
 
+        # body_parser.KNOWN_ORIGINS — strict equality. This is the constant
+        # whose drift caused the "Hilmar -> X" lane-bucket bug (the src tree was
+        # fixed but production wasn't, invisible to the old core-only QC-040).
+        # body_parser is a CLAUDE.md §2 paired file; the origin list must match.
+        try:
+            import body_parser as _s_bp
+            from hilmar import body_parser as _h_bp
+            _s_origins = tuple(getattr(_s_bp, "KNOWN_ORIGINS", ()) or ())
+            _h_origins = tuple(getattr(_h_bp, "KNOWN_ORIGINS", ()) or ())
+            if _s_origins and _h_origins and _s_origins != _h_origins:
+                _only_s = [o for o in _s_origins if o not in _h_origins]
+                _only_h = [o for o in _h_origins if o not in _s_origins]
+                _drift_findings.append(
+                    f"body_parser.KNOWN_ORIGINS drift: only in scripts/ = {_only_s}; "
+                    f"only in src/hilmar/ = {_only_h} (order/membership must match)"
+                )
+        except Exception as _bpe:
+            _drift_findings.append(f"body_parser.KNOWN_ORIGINS compare failed: {_bpe}")
+
         if _drift_findings:
             log.warn(
                 f"QC-040: {len(_drift_findings)} undocumented cross-folder drift "
-                f"finding(s) between scripts/core.py and src/hilmar/core.py: " +
+                f"finding(s) between scripts/ and src/hilmar/: " +
                 " | ".join(_drift_findings)
             )
         else:
-            log.ok("QC-040: scripts/core ↔ src/hilmar/core enums aligned "
-                   "(VALID_STATUSES via LEGACY view; LOSS_REASONS strict)")
+            log.ok("QC-040: scripts ↔ src/hilmar aligned (core VALID_STATUSES via "
+                   "LEGACY view; LOSS_REASONS strict; body_parser.KNOWN_ORIGINS strict)")
     except Exception as _e:
         log.warn(f"QC-040: check failed with exception: {_e}")
 

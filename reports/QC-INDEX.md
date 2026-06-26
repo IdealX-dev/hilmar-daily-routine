@@ -13,7 +13,7 @@ The newest checks are QC-055..QC-063 (added 2026-06-25); see the matrix below.
 note — at the time these were the newest; the current ceiling is QC-063):
 - **QC-039** (ERROR) — Parser accuracy ≥95% on critical fields. Gates ship.
   (Originally 98%; lowered to 95% on 2026-05-19 — see the standing-rule note below.)
-- **QC-040** (WARN) — Cross-folder enum drift between `scripts/core.py` and `src/hilmar/core.py`.
+- **QC-040** (WARN) — Cross-folder drift between `scripts/` and `src/hilmar/`: `core.py` enums (VALID_STATUSES, LOSS_REASONS) + `body_parser.py` `KNOWN_ORIGINS`.
 - **QC-041** (ERROR) — Classifier form consistency in production data (no mixed LEGACY/STRICT).
 
 Per Michael's standing rules in `~/.claude/CLAUDE.md`:
@@ -77,7 +77,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-037 | WARN / **ERROR** | ol-quote-tracker sync log missing, stale (>36h), or last sync errored. **ERROR-severity** when ≥3 consecutive fires fail (Turso entity registry going stale; audit also raises a dedicated red flag with the actual error excerpt). | None — surfaces APP_PASSWORD missing or endpoint failure | 2026-05-16 (`c8c3d14`), streak detection 2026-05-28 |
 | QC-038 | _retired 2026-05-21_ | ol-quote-tracker reconciliation — retired: a live API probe proved ol-quote-tracker holds zero Hilmar rows, so the cross-check only ever produced phantom drift | n/a — check + script + pipeline step removed | 2026-05-21 |
 | QC-039 | **ERROR**/WARN | Parser accuracy <95% on CRITICAL fields (ERROR) or <95% overall / non-critical field below (WARN) | None — gates ship until backfill or parser fix | 2026-05-17 (consolidation; threshold lowered 98%→95% 2026-05-19) |
-| QC-040 | WARN | Undocumented enum drift between `scripts/core.py` and `src/hilmar/core.py` (VALID_STATUSES + LOSS_REASONS) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation) |
+| QC-040 | WARN | Undocumented cross-folder drift between `scripts/` and `src/hilmar/`: `core.py` enums (VALID_STATUSES via LEGACY view + LOSS_REASONS strict) and `body_parser.py` `KNOWN_ORIGINS` (strict — the constant whose drift caused the "Hilmar -> X" lane-bucket bug) | None — operator must align or add to allowed-drift list | 2026-05-17 (consolidation; body_parser.KNOWN_ORIGINS added 2026-06-26) |
 | QC-041 | **ERROR** | tracking-data-v2.json has MIXED classifier forms (some rows with LOSS, some with Q&L/NQ) — parser bug | None — investigate ingest split-classifier write | 2026-05-17 (consolidation) |
 | QC-042 | **ERROR** | Email body contains a `data:` URI (`<img src="data:image/...">`) — Outlook blocks these so the logo renders broken | None — `branding.py` uses `cid:` attachments (commit `fa337b2`) | 2026-05-17 |
 | QC-043 | WARN | Sentry self-improvement loop — surfaces unresolved-issue count + hot issues (≥5×/24h) into the audit | None — informational meta-check | 2026-05-17 |
