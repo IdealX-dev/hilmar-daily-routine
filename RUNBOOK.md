@@ -56,7 +56,7 @@ inherits this system.
 
 **Symptom**: `outlook_send.py` errors with "silent token refresh failed" or QC-023 warns ">60d cache age".
 
-**Root cause**: MSAL refresh token expires after ~90 days of disuse. The token cache at `secrets/token-cache.json` needs interactive re-auth.
+**Root cause**: MSAL refresh token expires after ~90 days of disuse. The token cache at `secrets/token-cache.bin` (legacy `secrets/token-cache.json` still read during migration) needs interactive re-auth.
 
 **Fix**:
 1. Open Cloud PC RDP (or run from MBD-TRAVEL — same OneDrive token cache)
@@ -66,6 +66,24 @@ inherits this system.
 5. New token cached. Next pipeline fire will use it.
 
 **Prevention**: QC-023 warns at 60 days. Set a calendar reminder to re-auth quarterly.
+
+### One-time: finish the token-cache `.json` → `.bin` migration (security)
+
+The MSAL cache was renamed to `.json` in 2026-05 so SharePoint would index it —
+which made a live OAuth refresh token search-discoverable across the tenant.
+The code now WRITES the non-indexed `secrets/token-cache.bin` and only READS a
+legacy `.json` when it's the only cache present, so the fire self-migrates on
+the next successful run (no action needed to keep firing). To CLOSE the
+exposure, once `secrets/token-cache.bin` exists on the box:
+1. Delete `secrets/token-cache.json` locally **and** from the Azure Blob state
+   store (`python scripts/state_store.py` — or delete the `token-cache.json`
+   blob in the private container). The `.json` STATE_FILES entry can then be
+   removed (see `state_store.py`).
+2. **ROTATE** the old token — treat the `.json` one as potentially exposed:
+   sign out / revoke the delegated grant, then `python scripts/outlook_send.py
+   auth` to mint a fresh cache (lands as `.bin`).
+3. Optionally update the `secrets\token-cache.json` entry in
+   `deploy/setup_cloudpc.ps1`'s sanity-check list to `.bin`.
 
 ---
 

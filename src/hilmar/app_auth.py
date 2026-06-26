@@ -1,7 +1,7 @@
 """app_auth.py — App-only (client credentials) Microsoft Graph auth.
 
 Today's auth uses MSAL device-code flow against a real user account.
-Tokens live on disk (`secrets/token-cache.json`) and need re-acquisition
+Tokens live on disk (`secrets/token-cache.bin`, non-indexed) and need re-acquisition
 roughly every 80 days — QC-023 warns at 60d, errors at 80d. When the cache
 expires there's nobody to re-auth on the Cloud PC and the pipeline silently
 fails refresh_stage.

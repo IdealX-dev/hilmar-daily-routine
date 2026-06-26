@@ -1488,9 +1488,11 @@ def phase_6_rules(log: Log, data: dict):
     # but the refresh-token TTL eventually expires and silent refresh fails,
     # causing send to error out. Warn at 60d so we have time to re-auth.
     try:
+        # Prefer the canonical non-indexed .bin first; post-migration the legacy
+        # .json is stale (no longer written) and would give a false "old cache".
         _cache_paths = [
-            Path(__file__).resolve().parent.parent / "secrets" / "token-cache.json",
             Path(__file__).resolve().parent.parent / "secrets" / "token-cache.bin",
+            Path(__file__).resolve().parent.parent / "secrets" / "token-cache.json",
         ]
         _found = next((p for p in _cache_paths if p.exists()), None)
         if _found:
@@ -2287,6 +2289,7 @@ def phase_6_rules(log: Log, data: dict):
         # body_parser is a CLAUDE.md §2 paired file; the origin list must match.
         try:
             import body_parser as _s_bp
+
             from hilmar import body_parser as _h_bp
             _s_origins = tuple(getattr(_s_bp, "KNOWN_ORIGINS", ()) or ())
             _h_origins = tuple(getattr(_h_bp, "KNOWN_ORIGINS", ()) or ())

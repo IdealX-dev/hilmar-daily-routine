@@ -103,10 +103,10 @@ def check_warnings(*, secrets: Path = SECRETS) -> list[str]:
     # Best-effort: the MSAL token cache should exist (empty/missing = the
     # silent-auth failure mode). Non-fatal on its own, but worth surfacing — a
     # transiently-absent cache after a successful send must not fake a critical
-    # "no verified report shipped" page.
-    cache = secrets / "token-cache.json"
-    if not cache.exists():
-        warnings.append("MSAL token cache absent (secrets/token-cache.json) — "
+    # "no verified report shipped" page. Accept EITHER the canonical non-indexed
+    # .bin or a legacy .json (mid-migration) — see outlook_send TOKEN_CACHE_PATH.
+    if not (secrets / "token-cache.bin").exists() and not (secrets / "token-cache.json").exists():
+        warnings.append("MSAL token cache absent (secrets/token-cache.bin|.json) — "
                         "auth may be unconfigured/expired")
 
     return warnings

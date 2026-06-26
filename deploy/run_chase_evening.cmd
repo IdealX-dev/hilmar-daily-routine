@@ -21,8 +21,9 @@ REM twice on the same day (manual + scheduled), the second pass
 REM dedupes per-request and sends nothing.
 REM
 REM Pre-requisites:
-REM   - secrets\token-cache.json must be present (MSAL device flow done
-REM     within the last 80 days; QC-023 warns + errors on freshness).
+REM   - secrets\token-cache.bin must be present (non-indexed canonical; a
+REM     legacy .json is still read during migration). MSAL device flow done
+REM     within the last 80 days; QC-023 warns + errors on freshness.
 REM   - config.json auto_chase.enabled == true (defaults true post-audit).
 REM
 REM Cloud PC scheduled task setup (one-time, run as the user). Two

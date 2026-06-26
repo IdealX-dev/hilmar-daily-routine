@@ -235,7 +235,7 @@ ACTIONS: dict[str, dict] = {
     "QC-023": {
         "name": "MSAL device-code token near/over expiry",
         "action": "flag_for_operator",
-        "comment": "The cached MSAL token is approaching (WARN ≥60d) or past (ERROR ≥80d) its refresh window — auth is the classic SILENT killer (a stale token makes the daily Graph fetch + Outlook send fail, and HILMAR_NONINTERACTIVE now makes it fail FAST rather than hang). FIX, same day: on the Cloud PC run `python scripts/outlook_send.py auth` to re-run the device-code flow and refresh secrets/token-cache.json. Do NOT wait for the 80d ERROR — re-auth at the 60d WARN.",
+        "comment": "The cached MSAL token is approaching (WARN ≥60d) or past (ERROR ≥80d) its refresh window — auth is the classic SILENT killer (a stale token makes the daily Graph fetch + Outlook send fail, and HILMAR_NONINTERACTIVE now makes it fail FAST rather than hang). FIX, same day: on the Cloud PC run `python scripts/outlook_send.py auth` to re-run the device-code flow and refresh secrets/token-cache.bin (non-indexed; legacy .json still read during migration). Do NOT wait for the 80d ERROR — re-auth at the 60d WARN.",
         "auto_resolve_safe": False,
     },
     "cron.missed_checkin": {
