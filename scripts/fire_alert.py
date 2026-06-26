@@ -111,15 +111,37 @@ def _have_gh() -> bool:
         return False
 
 
-def _teams(title: str, body: str) -> bool:
-    """POST to the Teams Incoming Webhook from config.alerts.teams_webhook_url.
-    No-op (returns False) when not configured. Independent of Outlook/MSAL."""
-    url = ""
+def _teams_webhook_url() -> str:
+    """Resolve the Teams Incoming Webhook URL SECRET-FIRST, so it never has to
+    live in the committed config.json:
+      1. TEAMS_WEBHOOK_URL env var      (GitHub Actions secret / Cloud PC env)
+      2. secrets/teams-webhook-url.txt  (gitignored -- the box's secret file)
+      3. config.alerts.teams_webhook_url (back-compat ONLY; discouraged --
+         config.json is committed, so a URL there lands in git history)
+    """
+    url = (os.environ.get("TEAMS_WEBHOOK_URL") or "").strip()
+    if url:
+        return url
+    try:
+        f = ROOT / "secrets" / "teams-webhook-url.txt"
+        if f.exists():
+            url = f.read_text(encoding="utf-8").strip()
+            if url:
+                return url
+    except Exception:
+        pass
     try:
         cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-        url = (cfg.get("alerts") or {}).get("teams_webhook_url") or ""
+        return ((cfg.get("alerts") or {}).get("teams_webhook_url") or "").strip()
     except Exception:
-        url = ""
+        return ""
+
+
+def _teams(title: str, body: str) -> bool:
+    """POST to the Teams Incoming Webhook (resolved secret-first; see
+    _teams_webhook_url). No-op (returns False) when not configured. Independent
+    of Outlook/MSAL."""
+    url = _teams_webhook_url()
     if not url:
         return False
     try:
