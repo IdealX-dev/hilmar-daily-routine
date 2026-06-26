@@ -27,8 +27,10 @@ def test_run_step_kills_a_hung_subprocess(monkeypatch):
     monkeypatch.setattr(RP.subprocess, "run", fake_run)
     monkeypatch.setitem(RP.STEP_TIMEOUTS_S, "Hung step", 1)
 
-    ok = RP.run_step("Hung step", [sys.executable, "-c", "import time; time.sleep(99)"])
-    assert ok is False
+    rc = RP.run_step("Hung step", [sys.executable, "-c", "import time; time.sleep(99)"])
+    # run_step returns an int exit code now; a killed timeout yields 124
+    # (GNU `timeout` convention) so the caller can distinguish it.
+    assert rc == 124
 
 
 def test_run_step_succeeds_inside_budget(monkeypatch):
@@ -37,8 +39,8 @@ def test_run_step_succeeds_inside_budget(monkeypatch):
         returncode = 0
 
     monkeypatch.setattr(RP.subprocess, "run", lambda *a, **kw: _Result())
-    ok = RP.run_step("Quick step", ["/bin/true"])
-    assert ok is True
+    rc = RP.run_step("Quick step", ["/bin/true"])
+    assert rc == 0
 
 
 def test_run_step_dry_run_skips_subprocess(monkeypatch):
@@ -50,16 +52,18 @@ def test_run_step_dry_run_skips_subprocess(monkeypatch):
         raise AssertionError("subprocess.run must not be called in dry-run")
 
     monkeypatch.setattr(RP.subprocess, "run", boom)
-    assert RP.run_step("anything", ["/bin/true"], dry_run=True) is True
+    assert RP.run_step("anything", ["/bin/true"], dry_run=True) == 0
     assert called["n"] == 0
 
 
-def test_run_step_nonzero_exit_returns_false(monkeypatch):
+def test_run_step_nonzero_exit_returns_the_code(monkeypatch):
     class _Result:
         returncode = 1
 
     monkeypatch.setattr(RP.subprocess, "run", lambda *a, **kw: _Result())
-    assert RP.run_step("Broken step", ["/bin/false"]) is False
+    # run_step now propagates the subprocess exit code so the caller can
+    # tell a generic failure (1) from the QC-039 gate block (39) / timeout (124).
+    assert RP.run_step("Broken step", ["/bin/false"]) == 1
 
 
 def test_per_step_timeout_overrides_default():

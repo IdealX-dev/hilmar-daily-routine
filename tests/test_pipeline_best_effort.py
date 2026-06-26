@@ -98,8 +98,8 @@ def test_every_classified_step_appears_in_STEPS():
 
 # ── Runtime behaviour — simulate failures, check exit code ──────────────
 #
-# Each test patches `run_step` to return False (failure) for selected
-# steps, runs main(), and asserts the pipeline-level exit code.
+# Each test patches `run_step` to return a non-zero exit code (failure)
+# for selected steps, runs main(), and asserts the pipeline-level exit code.
 
 class _FakeArgs:
     skip_ingest = False
@@ -109,7 +109,8 @@ def _run_main_with_step_failures(monkeypatch, failing_step_names):
     """Run RP.main() under a patched run_step that fails the named steps.
     Returns the SystemExit code (None / 0 if no exit was called)."""
     def fake_run_step(name, cmd, dry_run=False, extra_env=None):
-        return name not in failing_step_names
+        # run_step's contract is an int exit code: 0 == success, non-zero == failure.
+        return 1 if name in failing_step_names else 0
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     # Prevent argparse from reading real argv
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
@@ -191,7 +192,7 @@ def test_best_effort_failure_does_not_stop_subsequent_steps(monkeypatch, capsys)
     executed = []
     def fake_run_step(name, cmd, dry_run=False, extra_env=None):
         executed.append(name)
-        return name != "Sentry-driven QC actions"  # fail one best-effort early
+        return 1 if name == "Sentry-driven QC actions" else 0  # fail one best-effort early
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
     monkeypatch.setattr(RP, "_sentry", None)
@@ -211,7 +212,7 @@ def test_client_blocking_failure_stops_subsequent_steps(monkeypatch):
     executed = []
     def fake_run_step(name, cmd, dry_run=False, extra_env=None):
         executed.append(name)
-        return name != "Carrier enrichment patch"  # fail early in pipeline
+        return 1 if name == "Carrier enrichment patch" else 0  # fail early in pipeline
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
     monkeypatch.setattr(RP, "_sentry", None)

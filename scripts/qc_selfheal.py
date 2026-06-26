@@ -3444,6 +3444,27 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
 # Main
 # ─────────────────────────────────────────────────────────────────────
 
+# Option A hard gate (CLAUDE.md rule #2): the exit code main() returns when the
+# POST-PATCH parser-accuracy gate (QC-039) fails — a HARD client-ship block.
+# run_pipeline.py recognizes this exact code from the post-patch QC step and
+# aborts the fire before the wrapper sends. Must match
+# run_pipeline.QC039_GATE_BLOCK_RC (locked by tests/test_auditfix_qc039_gate.py).
+QC039_GATE_BLOCK_RC = 39
+
+
+def _gate_exit_code(error_messages, *, pre_patch: bool) -> int:
+    """Option A / CLAUDE.md rule #2: the exit code main() returns for the QC-039
+    parser-accuracy gate. A QC-039 ERROR in the POST-PATCH run is a hard
+    client-ship block (returns QC039_GATE_BLOCK_RC); the PRE-PATCH run is
+    advisory and never blocks (returns 0); a non-QC-039 error never triggers
+    this gate. Pure + injectable so the gate decision is unit-tested without a
+    full pipeline run."""
+    if pre_patch:
+        return 0
+    has_qc039_error = any("QC-039" in (e or "") for e in (error_messages or []))
+    return QC039_GATE_BLOCK_RC if has_qc039_error else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(core.CONFIG_PATH))
@@ -3493,6 +3514,28 @@ def main() -> int:
     print(f"  Carrier coverage: WIN {cc.get('win_with_carrier')}/{cc.get('win_total')} ({cc.get('win_coverage_pct')}%) | Q&L {cc.get('ql_with_carrier')}/{cc.get('ql_total')} ({cc.get('ql_coverage_pct')}%)")
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
+
+    # Option A hard gate (CLAUDE.md rule #2): in the POST-PATCH run a QC-039
+    # parser-accuracy ERROR BLOCKS the client ship. Scream out-of-band right
+    # here (Teams/issue/queue/stderr — never Outlook) so the block is loud no
+    # matter how the wrapper exits, then return the distinct gate code so
+    # run_pipeline aborts before any email is built or sent. Pre-patch never
+    # blocks — it measures pre-enrichment state and is intentionally advisory.
+    gate_errs = [e for e in log.errors if "QC-039" in e]
+    if _gate_exit_code(log.errors, pre_patch=_qc_phase_is_pre_patch()):
+        try:
+            import fire_alert
+            fire_alert.send_alert(
+                "Daily fire BLOCKED — parser accuracy below the 95% gate (QC-039)",
+                "Post-patch QC-039 failed, so the daily client email is BLOCKED "
+                "(CLAUDE.md rule #2: do not ship sub-95% data). Fix the parser "
+                "and re-fire.\n  - " + "\n  - ".join(gate_errs),
+                level="error", labels=("fire-alert", "qc-039-gate"))
+        except Exception as _e:
+            print(f"  (fire_alert escalation failed: {_e})", file=sys.stderr)
+        print("\n❌ QC-039 PARSER-ACCURACY GATE FAILED (post-patch) — blocking "
+              f"the client ship (exit {QC039_GATE_BLOCK_RC}).", file=sys.stderr)
+        return QC039_GATE_BLOCK_RC
     return 0
 
 
