@@ -107,16 +107,19 @@ jobs:
 
       - name: resolve
         if: inputs.action == 'resolve'
+        env:
+          SHORT_ID: ${{ inputs.short_id }}
         run: |
-          if [ -z "${{ inputs.short_id }}" ]; then
+          if [ -z "$SHORT_ID" ]; then
             echo "::error::short_id input is required for resolve"
             exit 1
           fi
+          case "$SHORT_ID" in *[!A-Za-z0-9-]*) echo "::error::invalid short_id (allowed: A-Za-z0-9-)"; exit 1;; esac
           python3 -c "
-          import sys; sys.path.insert(0, 'scripts')
+          import os, sys; sys.path.insert(0, 'scripts')
           from sentry_api import SentryAPI
           api = SentryAPI()
-          short = '${{ inputs.short_id }}'
+          short = os.environ['SHORT_ID']
           # Find the issue ID from the shortId
           issues = api.list_issues(stats_period='90d', query=f'is:unresolved short_id:{short}', limit=5)
           if not issues:
@@ -165,27 +168,33 @@ jobs:
 
       - name: trigger-seer
         if: inputs.action == 'trigger-seer'
+        env:
+          SHORT_ID: ${{ inputs.short_id }}
         run: |
-          if [ -z "${{ inputs.short_id }}" ]; then
+          if [ -z "$SHORT_ID" ]; then
             echo "::error::short_id input is required for trigger-seer"; exit 1
           fi
-          python3 scripts/sentry_seer.py trigger --apply --short-id "${{ inputs.short_id }}" \
+          case "$SHORT_ID" in *[!A-Za-z0-9-]*) echo "::error::invalid short_id (allowed: A-Za-z0-9-)"; exit 1;; esac
+          python3 scripts/sentry_seer.py trigger --apply --short-id "$SHORT_ID" \
             || echo "::warning::Seer trigger returned non-zero (may be normal if Seer can't analyze this issue)"
 
       - name: claude-diagnose
         if: inputs.action == 'claude-diagnose'
+        env:
+          SHORT_ID: ${{ inputs.short_id }}
         run: |
-          if [ -z "${{ inputs.short_id }}" ]; then
+          if [ -z "$SHORT_ID" ]; then
             echo "::error::short_id input is required for claude-diagnose"; exit 1
           fi
+          case "$SHORT_ID" in *[!A-Za-z0-9-]*) echo "::error::invalid short_id (allowed: A-Za-z0-9-)"; exit 1;; esac
           # claude_diagnose action is invoked by qc_actions_from_sentry.py
           # in dispatch mode. For ad-hoc, we re-use _do_claude_diagnose.
           python3 -c "
-          import sys; sys.path.insert(0, 'scripts')
+          import os, sys; sys.path.insert(0, 'scripts')
           from sentry_api import SentryAPI
           from qc_actions_from_sentry import _do_claude_diagnose
           api = SentryAPI()
-          short = '${{ inputs.short_id }}'
+          short = os.environ['SHORT_ID']
           open_issues = api.list_issues(stats_period='90d', query='is:unresolved', limit=200)
           match = [i for i in open_issues if i.get('shortId') == short]
           if not match:

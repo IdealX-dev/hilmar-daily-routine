@@ -303,10 +303,19 @@ jobs:
       - name: Run the daily pipeline (app-only Graph auth)
         # refresh_stage reads the OL/Lonny thread via app-only Graph; the
         # 16-step pipeline ingests → QC → renders. GRAPH_APP_* in env routes
-        # GraphClient to the app-only path automatically.
+        # GraphClient to the app-only path automatically. Capture the
+        # pipeline's true exit code so the integrity gate below can assert on
+        # it (rather than assuming success by reaching the last line).
+        id: pipeline
         run: |
           python3 scripts/refresh_stage.py --days-back 14
-          python3 scripts/run_pipeline.py
+          rc=0
+          python3 scripts/run_pipeline.py || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::run_pipeline.py exited rc=$rc"
+            exit "$rc"
+          fi
 
       - name: Send the daily email + audit
         # outlook_send picks /users/{SEND_MAILBOX}/sendMail because GRAPH_APP_*
@@ -349,6 +358,27 @@ jobs:
               --body-from-file reports/improvements-report.html
           fi
 
+      - name: Prove the fire shipped (integrity gate)
+        # Flip from "assume success by reaching the last line" to "prove the
+        # deliverable shipped or scream" — mirroring the Cloud PC wrapper's
+        # final step. assert_fire_integrity asserts the pipeline exited 0,
+        # today's client artifacts are fresh, and (for a full send) today's
+        # sent-flag exists — the proof outlook_send writes only AFTER a real
+        # delivery. A short-circuited send (stale flag, mailbox-guard
+        # false-positive) leaves no fresh flag, so this fails and the
+        # heartbeat below reports status=failed instead of a false green.
+        # On any violation it also raises the out-of-band alarm (GitHub issue
+        # + Teams), never the Outlook path it's alarming about. Verification
+        # (send_to=test) runs use --no-flag, so assert with --no-require-send.
+        id: integrity
+        if: always() && steps.pipeline.conclusion != 'skipped'
+        run: |
+          if [ "$SEND_TO" = "full" ]; then
+            python3 deploy/assert_fire_integrity.py --pipeline-rc "${{ steps.pipeline.outputs.rc }}"
+          else
+            python3 deploy/assert_fire_integrity.py --pipeline-rc "${{ steps.pipeline.outputs.rc }}" --no-require-send
+          fi
+
       - name: Push pipeline state back to blob store
         # ALWAYS — even on a failed fire we persist whatever state advanced,
         # so the next run doesn't re-ingest from a stale snapshot.
@@ -360,18 +390,32 @@ jobs:
         # 25h. The Cloud PC wrapper emits one after its fire; the GH fire
         # must do the same or liveness false-alarms the day after cutover.
         # Verification sends deliberately do NOT emit — a test fire must
-        # never mask a missed production fire.
-        if: success() && env.SEND_TO == 'full'
+        # never mask a missed production fire. The status reflects the
+        # integrity gate, NOT mere step completion: if the fire did not prove
+        # it shipped (integrity != success), we emit status=failed so
+        # heartbeat.yml fails the run and liveness's failed-branch fires —
+        # rather than a silent green that hides a missed delivery.
+        if: always() && env.SEND_TO == 'full' && steps.integrity.conclusion != 'skipped'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run heartbeat.yml --ref main -R "${{ github.repository }}" \
             -f at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -f sha="${{ github.sha }}" \
-            -f status=success \
+            -f status=${{ steps.integrity.outcome == 'success' && 'success' || 'failed' }} \
             -f host=github-actions
 
       - name: Upload run artifacts
+        # SECURITY: do NOT upload the rendered client email body or the audit
+        # report as plaintext artifacts. reports/email-body.html and
+        # reports/improvements-report.html embed exactly the client PII the
+        # pipeline scrubs on every other egress (client name, lanes, carriers,
+        # OL rates, the distribution list, MDOLX booking refs) — the Sentry
+        # path strips these via _before_send, but an artifact upload has no
+        # redaction and is downloadable by anyone with repo read access for
+        # the retention window. Upload only the non-PII debug artifacts
+        # (run-log / qc-result / test-result / coverage), which are sufficient
+        # to verify what the run did without leaking the client report.
         if: always()
         uses: actions/upload-artifact@v5
         with:
@@ -381,7 +425,5 @@ jobs:
             reports/qc-result.json
             reports/test-result.json
             reports/coverage.json
-            reports/email-body.html
-            reports/improvements-report.html
           retention-days: 14
           if-no-files-found: warn
