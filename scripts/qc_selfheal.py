@@ -3211,6 +3211,23 @@ def phase_6_rules(log: Log, data: dict):
                     f"{', '.join(_dead)}. Investigate the step + its dep/env "
                     f"(check reports/run-log.txt); a best-effort step being dead "
                     f"for a week is the silent-degradation failure mode.")
+                # A WARN only surfaces in the idealx.us audit email, which rides
+                # the same Outlook/MSAL channel RELIABILITY.md calls least
+                # trustworthy when something is wrong. A best-effort step dead
+                # for days deserves an out-of-band page so it can't rot silently
+                # — route through fire_alert (Teams/GitHub-issue/queue/stderr).
+                # Best-effort + isolated: a fire_alert failure must never affect
+                # QC (mirrors the surrounding try/except isolation).
+                try:
+                    import fire_alert
+                    fire_alert.send_alert(
+                        f"QC-063: pipeline step(s) dead {3}+ consecutive fires",
+                        f"{', '.join(_dead)} failed the last 3 consecutive daily "
+                        f"fires (silent best-effort degradation). See "
+                        f"reports/run-log.txt + reports/step-history.json.",
+                        level="warning", labels=("fire-alert", "qc-063"))
+                except Exception as _ae:
+                    log.warn(f"QC-063: out-of-band escalation failed: {_ae}")
             else:
                 log.ok(f"QC-063: no step failing 3 consecutive fires "
                        f"({len(_hist)} fires recorded)")

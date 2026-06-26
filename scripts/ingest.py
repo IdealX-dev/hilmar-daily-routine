@@ -1272,6 +1272,28 @@ def apply_operator_corrections(requests: list[dict]) -> int:
     return applied
 
 
+def _prior_win_captured(wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates) -> bool:
+    """Is this prior WIN already represented in the freshly-built wins?
+
+    Returns True when the prior WIN is "captured" (present in the new build, so
+    it must NOT be carried forward as a duplicate). A WIN is captured when ANY
+    of its MDOLX refs — primary OR any secondary — appears among the new build's
+    MDOLX values. When the prior WIN has no MDOLX at all, fall back to a
+    lane+date match.
+
+    The primary `mdolx_ref` is just the last-linked ref and can change which one
+    is primary across re-ingest (a request accumulates `mdolx_refs_all`). The
+    old inline test `(wm and wm not in new_mdolx_all) or (wma and not any(...))`
+    OR'd the two clauses on the primary alone, so a prior WIN whose primary ref
+    was absent but whose secondary ref WAS present got re-appended as a second
+    WIN row for one booking — inflating wins, win_rate, and teu_won.
+    """
+    all_refs = {wm, *(wma or [])} - {None, ""}
+    if all_refs:
+        return bool(all_refs & new_mdolx_all)
+    return bool(wdest and (wdest, wdate) in new_lane_dates)
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────
@@ -1411,20 +1433,18 @@ def main() -> int:
                 wma = list(w.get("mdolx_refs_all") or [])
                 wdate = (w.get("request_timestamp") or "")[:10]
                 wdest = (w.get("destination") or "").lower()
-                # MDOLX is the strongest signal — if the old win had one and
-                # it's NOT among the new wins' MDOLX values, we definitely
-                # lost the win in the new build. Preserve.
-                # If the old win had NO MDOLX (e.g., promoted via send-signal
-                # without booking visible), fall back to lane+date match —
-                # any new WIN on the same destination + same calendar day
-                # likely represents the same logical win, even if it has a
-                # different request_id under a renormalized conversation key.
-                if wm and wm not in new_mdolx_all or wma and not any(m in new_mdolx_all for m in wma):
-                    captured = False
-                elif not wm and not wma:
-                    captured = bool(wdest and (wdest, wdate) in new_lane_dates)
-                else:
-                    captured = True
+                # MDOLX is the strongest signal: the prior WIN is captured
+                # (already represented, so do NOT carry it forward) when ANY of
+                # its MDOLX refs — primary or secondary — appears among the new
+                # wins. Only when none of its refs survive is the win genuinely
+                # lost and preserved. If the old win had NO MDOLX (e.g. promoted
+                # via send-signal without a booking visible), fall back to a
+                # lane+date match — any new WIN on the same destination + same
+                # calendar day likely represents the same logical win, even
+                # under a renormalized conversation key. (See _prior_win_captured
+                # for why the primary ref alone is not sufficient.)
+                captured = _prior_win_captured(
+                    wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates)
                 if captured:
                     continue
                 # This prior WIN is not represented in the new build. Carry forward.

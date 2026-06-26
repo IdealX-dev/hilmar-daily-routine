@@ -116,6 +116,39 @@ def test_mailbox_guard_blocks_cross_machine_double_send(tmp_path, monkeypatch):
     assert sends == []  # refused — nothing sent
 
 
+def test_mailbox_guard_writes_cross_host_marker_flag(tmp_path, monkeypatch):
+    # Audit finding [9]: when the guard suppresses a send because another host
+    # already delivered, it must STILL leave today's sent-flag — otherwise
+    # assert_fire_integrity sees no flag on this host and false-alarms "no
+    # verified report shipped" even though the client got the email.
+    sends = _wire(tmp_path, monkeypatch)
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox",
+                        lambda s: "2026-06-11T14:02:56Z")
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True)) == 0
+    assert sends == []  # nothing actually emailed by this host
+    flag = tmp_path / "reports" / f"sent-{_today_et()}.flag"
+    assert flag.exists(), "guard must write a cross-host marker so integrity passes"
+    body = flag.read_text(encoding="utf-8")
+    assert "mailbox guard" in body
+    assert "2026-06-11T14:02:56Z" in body  # records who/when actually sent
+
+
+def test_mailbox_guard_marker_does_not_clobber_existing_flag(tmp_path, monkeypatch):
+    # If this host already wrote a real flag today, the guard must not overwrite
+    # it (idempotency: the original send record stays authoritative).
+    sends = _wire(tmp_path, monkeypatch)
+    flag = tmp_path / "reports" / f"sent-{_today_et()}.flag"
+    flag.parent.mkdir(parents=True)
+    flag.write_text("Sent 2026-06-11 09:00 ET req=real to=10 recipient(s)\n", encoding="utf-8")
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox",
+                        lambda s: "2026-06-11T14:02:56Z")
+    # An existing flag short-circuits before the guard, but assert the original
+    # record survives regardless.
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True)) == 0
+    assert sends == []
+    assert "req=real" in flag.read_text(encoding="utf-8")
+
+
 def test_mailbox_guard_fails_open(tmp_path, monkeypatch):
     # A Graph hiccup must never block the real send.
     sends = _wire(tmp_path, monkeypatch)

@@ -94,3 +94,47 @@ def test_qc063_skips_with_no_history(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "QC-063" in out and "skipped" in out
     assert not any("QC-063" in m for m in log.warnings + log.errors)
+
+
+# ── QC-063 out-of-band escalation (audit finding [10]) ───────────────────
+def _capture_fire_alert(monkeypatch):
+    """Stub fire_alert.send_alert and return the captured call list."""
+    import fire_alert  # scripts/fire_alert.py (scripts/ is on sys.path)
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        fire_alert, "send_alert",
+        lambda title, body, level="error", labels=(): calls.append(
+            {"title": title, "body": body, "level": level, "labels": labels}))
+    return calls
+
+
+def test_qc063_escalates_out_of_band_when_a_step_is_dead(monkeypatch):
+    """A step dead 3 consecutive fires must page out-of-band at warning level
+    (Teams/issue/queue) — not only the Outlook-routed audit email."""
+    calls = _capture_fire_alert(monkeypatch)
+    hist = [{"failed": ["Rate intelligence"]} for _ in range(3)]
+    _run(monkeypatch, hist)
+    assert len(calls) == 1, "exactly one out-of-band alert for the dead step"
+    c = calls[0]
+    assert c["level"] == "warning"
+    assert "Rate intelligence" in c["body"]
+    assert "qc-063" in c["labels"]
+
+
+def test_qc063_no_escalation_when_nothing_dead(monkeypatch):
+    calls = _capture_fire_alert(monkeypatch)
+    hist = [{"failed": ["Rate intelligence"]}, {"failed": []}, {"failed": ["Rate intelligence"]}]
+    _run(monkeypatch, hist)
+    assert calls == []
+
+
+def test_qc063_alert_failure_never_breaks_qc(monkeypatch):
+    """A fire_alert outage must not fail QC — the WARN still lands."""
+    import fire_alert
+
+    def _boom(*a, **k):
+        raise RuntimeError("teams down")
+    monkeypatch.setattr(fire_alert, "send_alert", _boom)
+    hist = [{"failed": ["Rate intelligence"]} for _ in range(3)]
+    log = _run(monkeypatch, hist)
+    assert any("QC-063" in m and "Rate intelligence" in m for m in log.warnings)

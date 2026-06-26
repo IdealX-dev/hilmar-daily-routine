@@ -368,6 +368,26 @@ def cmd_daily(args) -> int:
             print(f"⛔ MAILBOX GUARD: '{subject}' already sent today at {prior}")
             print("   (sent by another machine — flags can't see across hosts).")
             print("   Pass --force to send anyway.")
+            # Record a local sent-flag for today even though THIS host didn't
+            # emit: the client email demonstrably shipped (Graph confirms a
+            # message with this subject left the mailbox today). Without this,
+            # assert_fire_integrity sees no flag on the guarded host and screams
+            # a false "no verified report shipped" page after a real delivery.
+            # The marker keeps the per-day flag's invariant honest — "a flag
+            # for today means the email shipped today by SOME host" — without
+            # weakening idempotency (it's the same per-day flag, so a later
+            # same-day run still no-ops).
+            if flag_path and not flag_path.exists():
+                try:
+                    flag_path.parent.mkdir(parents=True, exist_ok=True)
+                    marker = (
+                        f"Sent (mailbox guard: already sent by another host) "
+                        f"{_dt.now(_zi('America/New_York')).strftime('%Y-%m-%d %H:%M ET')} "
+                        f"prior={prior}\n"
+                    )
+                    flag_path.write_text(marker, encoding="utf-8")
+                except Exception as _e:
+                    print(f"   (could not write cross-host marker flag: {_e})")
             return 0
 
     print(f"→ TO ({len(to)}): {to}")
