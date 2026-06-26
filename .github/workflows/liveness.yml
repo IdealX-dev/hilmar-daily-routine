@@ -223,6 +223,24 @@ jobs:
               --body "$body"
           fi
 
+      - name: Page via Teams webhook (out-of-band, reaches a phone)
+        # The GitHub issue above is the durable record, but it lands in a list
+        # nobody watches. If config.alerts.teams_webhook_url is set, ALSO POST
+        # the miss to Teams so it reaches the operator's phone — the same
+        # out-of-band channel fire_alert.py uses on the box side. Best-effort:
+        # an empty URL is a clean no-op, and a POST failure never fails the job.
+        if: steps.check.outputs.no_fire == 'true'
+        run: |
+          url=$(jq -r '.alerts.teams_webhook_url // ""' config.json)
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "config.alerts.teams_webhook_url is empty — Teams page skipped. Set it to reach your phone."
+            exit 0
+          fi
+          text="Hilmar daily fire MISSED — no successful heartbeat in >25h (latest run: ${{ steps.check.outputs.run_id }} at ${{ steps.check.outputs.created }}, age ${{ steps.check.outputs.age_h }}h; stale=${{ steps.check.outputs.stale }}, failed=${{ steps.check.outputs.failed }}). Check the Cloud PC task + the Actions tab."
+          payload=$(jq -n --arg t "$text" '{"@type":"MessageCard","@context":"http://schema.org/extensions","themeColor":"B60205","summary":"Hilmar daily fire missed","title":"Hilmar daily fire missed","text":$t}')
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Content-Type: application/json" -d "$payload" "$url" || echo "000")
+          echo "Teams webhook POST -> HTTP $code"
+
       - name: Auto-close stale alert issues (next successful fire)
         if: steps.check.outputs.no_fire != 'true'
         env:
