@@ -121,6 +121,54 @@ _KNOWN_ORIGINS = [
 #: Public alias — the single source of truth for Hilmar origin sites.
 KNOWN_ORIGINS = tuple(_KNOWN_ORIGINS)
 
+# Curated FOREIGN-PORT corpus — every export destination Hilmar ships to.
+# This mirrors the foreign ports of core._TRADE_REGION_MAP (the canonical
+# destination→trade-region table), Title-Cased. It DELIBERATELY excludes the
+# North-America inland keys (Sturgis / Sturgis MI) — those are US-side
+# movements, never export destinations. Used only by the last-resort
+# destination-recovery branch in parse_subject_lane (QC-057), so a real Lonny
+# RFQ whose subject names a port but no "X to Y" lane ("20' reefer request to
+# Yokohama") is recovered instead of being silently dropped by
+# ingest.build_requests. tests/test_auditfix_qc057_dest_recovery.py guards that
+# every entry maps to a non-"Unmapped" trade region, so this corpus can't drift
+# away from the map.
+_KNOWN_DESTINATIONS = [
+    # Far East
+    "Shanghai", "Xingang", "Tianjin", "Qingdao", "Ningbo", "Dalian",
+    "Yokohama", "Tokyo", "Osaka", "Kobe", "Nagoya", "Busan", "Incheon",
+    "Keelung", "Kaohsiung", "Taichung", "Hong Kong",
+    # SE Asia
+    "HCMC", "Ho Chi Minh", "Cat Lai", "Cai Mep", "Haiphong", "Manila",
+    "Singapore", "Port Klang", "Penang", "Laem Chabang", "Bangkok",
+    "Jakarta", "Surabaya", "Lat Krabang", "Pasir Gudang",
+    # Oceania
+    "Sydney", "Melbourne", "Brisbane", "Fremantle", "Auckland",
+    # Europe
+    "Hamburg", "Rotterdam", "Antwerp", "Felixstowe", "Le Havre",
+    "Algeciras", "Valencia", "Genoa", "Barcelona", "Dublin",
+    # Middle East
+    "Jebel Ali", "Dammam", "Jeddah", "Ashdod", "Haifa",
+    # Africa
+    "Durban", "Lagos", "Cape Town", "Mombasa", "Alexandria",
+    # South America
+    "Santos", "Buenos Aires", "Callao", "Valparaiso",
+    # Central America
+    "Acajutla", "Puerto Barrios", "Puerto Cortes", "Puerto Quetzal",
+    "Puerto Limon", "Balboa", "Caucedo",
+]
+
+#: Public alias — the single source of truth for recoverable export ports.
+KNOWN_DESTINATIONS = tuple(_KNOWN_DESTINATIONS)
+
+# Alternation built longest-first so multi-word ports ("Hong Kong") match
+# before any prefix ("Hong"). re.escape so spaces/punctuation are literal.
+_DEST_ALT = "|".join(
+    re.escape(d) for d in sorted(_KNOWN_DESTINATIONS, key=len, reverse=True))
+# Directional "to <known port>" — preferred recovery form.
+_DEST_TO_RX = re.compile(rf"\bto\s+(?P<dest>{_DEST_ALT})\b", re.IGNORECASE)
+# Bare known-port token anywhere — absolute last resort.
+_DEST_BARE_RX = re.compile(rf"\b(?P<dest>{_DEST_ALT})\b", re.IGNORECASE)
+
 #: Rate-response subject: "Re: <known origin> to <destination>". Built from
 #: the origins list above — NEVER hardcode a city here. Until 2026-06-11 this
 #: pattern (in refresh_stage + ingest) was literally "re: oakland to", so
@@ -392,6 +440,20 @@ def parse_subject_lane(subject):
         if (dest and dest.lower() not in _LANE_STOPWORDS
                 and origin.lower() not in _LANE_STOPWORDS):
             return _norm(origin), _norm(dest)
+
+    # Last-resort destination recovery (QC-057) — only reached when EVERY
+    # branch above already failed, so it can only ADD recoveries, never change
+    # an existing extraction. A real Lonny RFQ like "20' reefer request to
+    # Yokohama" names a known export port but no "X to Y" lane; without this it
+    # parses to (None, None) and ingest.build_requests silently drops the row,
+    # so the RFQ is missing from the client report with no alarm. Origin stays
+    # None — ingest.clean_origin defaults it to Oakland (Lonny's primary site).
+    tm = _DEST_TO_RX.search(s)            # (a) directional "to <known port>"
+    if tm:
+        return None, _norm(tm.group("dest"))
+    bm = _DEST_BARE_RX.search(s)          # (b) bare known port anywhere
+    if bm:
+        return None, _norm(bm.group("dest"))
     return None, None
 
 

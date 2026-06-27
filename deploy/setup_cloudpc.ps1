@@ -112,7 +112,16 @@ if (Test-Path (Join-Path $checkout "deploy\run_daily_laptop.cmd")) {
     if (Test-Path (Join-Path $checkout "config.json")) {
         Copy-Item -Force (Join-Path $checkout "config.json") (Join-Path $ROOT "config.json")
     }
-    Write-Host "  OK  scripts\*.py + deploy\*.py + wrapper + config deployed" -ForegroundColor Green
+    # src\hilmar\*.py is needed at runtime: scripts\qc_selfheal.py imports
+    # hilmar.parser_accuracy for the QC-039 gate (+ hilmar.core/body_parser for
+    # QC-040/041). Without it the box has no 'hilmar' on the path and the gate
+    # cannot evaluate ("No module named 'hilmar'").
+    if (Test-Path (Join-Path $checkout "src\hilmar")) {
+        $hilmarDst = Join-Path $ROOT "src\hilmar"
+        if (-not (Test-Path $hilmarDst)) { New-Item -ItemType Directory -Force -Path $hilmarDst | Out-Null }
+        Copy-Item -Force (Join-Path $checkout "src\hilmar\*.py") $hilmarDst
+    }
+    Write-Host "  OK  scripts\*.py + deploy\*.py + wrapper + config + src\hilmar deployed" -ForegroundColor Green
 } else {
     Write-Warning "Checkout not found at $checkout - skipping deploy (the fire's git-pull will sync scripts later)."
 }

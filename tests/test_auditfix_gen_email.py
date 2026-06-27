@@ -53,15 +53,17 @@ def test_misleading_pending_labels_removed():
     )
 
 
-def test_pending_tiles_still_present_with_neutral_labels():
-    """A Pending tile still exists, now with party-neutral wording."""
+def test_pending_tiles_show_the_substate_split():
+    """A Pending tile still exists, and now shows WHO to chase rather than a
+    party-neutral lump (Michael 2026-06-27: 'needs better clarity markers').
+    Both tiles surface the PENDING_OL ('OL quote') vs PENDING_HILMAR ('Lonny')
+    split in their sublabels."""
     block = _kpi_block_source()
-    # Day-row tile keeps its 'Pending — {day_short}' label and gains a
-    # party-neutral sublabel covering both substates.
-    assert "OL quote + Lonny decision" in block
-    # Period tile is now a plain 'Pending' with an any-party sublabel.
     assert '"Pending"' in block
-    assert "any party" in block
+    # The earlier party-neutral wording is replaced by the explicit split.
+    assert "any party" not in block
+    assert "OL quote + Lonny decision" not in block
+    assert "OL quote" in block and "Lonny" in block
 
 
 def test_pending_value_source_unchanged():

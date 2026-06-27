@@ -232,6 +232,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "A best-effort/observer step has failed the last 3 CONSECUTIVE daily fires — degraded for days, not a one-day blip (these steps exit 0 by design so per-fire they're invisible). The QC-063 message names the dead step(s). FIX: open reports/run-log.txt for that step's error and repair its dep/env/config (e.g. a sync token, a Sentry/Seer auth, a missing optional dep). Non-blocking to the client report, but a week-dead step is exactly the silent-degradation this ratchet exists to surface.",
         "auto_resolve_safe": False,
     },
+    "QC-064": {
+        "name": "Garbage token in a client-visible display field",
+        "action": "log_only",
+        "comment": "A display field (carrier/origin/destination/lane/pol/pod/vessel_voyage/transshipment) carried a garbage value that would ship to the client — a raw message-id, an email/mailbox name (e.g. the OL responder mailbox), or a phone-number fragment. QC-064 SELF-HEALED by nulling the field (a blank cell beats wrong info), so this is informational. The REAL fix is upstream: a parser leak put the bad token there — find the offending email shape and tighten body_parser / patch_carriers so the field is never populated with it, then re-ingest. WARN-class (never gates the client email).",
+        "auto_resolve_safe": True,
+    },
     "QC-023": {
         "name": "MSAL device-code token near/over expiry",
         "action": "flag_for_operator",

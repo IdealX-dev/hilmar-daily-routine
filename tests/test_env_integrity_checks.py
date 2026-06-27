@@ -39,6 +39,37 @@ def test_dep_consistency_passes_on_the_real_repo():
     assert ok, problems
 
 
+def test_dep_file_prefers_the_checkout_copy(monkeypatch, tmp_path):
+    """On the Cloud PC, qc_selfheal runs from the deployed mirror where
+    REPO_ROOT is the OneDrive parent and the dep lists are NOT deployed — only
+    the git checkout subdir has them. _dep_file must read the checkout copy so
+    QC-060/061 don't false-alarm on a stale/absent deployed copy (the box run
+    flagged 4 pinned deps as "not pinned" + "no .python-version"). In CI the
+    checkout subdir doesn't exist, so it falls back to REPO_ROOT."""
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    # No checkout subdir → falls back to REPO_ROOT/<name>.
+    assert q._dep_file("requirements.txt") == tmp_path / "requirements.txt"
+    # With a checkout subdir present → prefers it.
+    checkout = tmp_path / "hilmar-daily-routine"
+    checkout.mkdir()
+    (checkout / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
+    assert q._dep_file("requirements.txt") == checkout / "requirements.txt"
+
+
+def test_dep_consistency_reads_checkout_when_root_is_bare(monkeypatch, tmp_path):
+    """Simulate the box mirror: REPO_ROOT (the OneDrive parent) has NO dep
+    lists, but the checkout subdir carries the real, complete ones. QC-060 must
+    pass by reading the checkout — not false-flag every dep as unpinned."""
+    checkout = tmp_path / "hilmar-daily-routine"
+    checkout.mkdir()
+    # Full, consistent dep set in the checkout only.
+    reqs = "".join(f"{q._module_package(m)}>=1\n" for m in q.RUNTIME_IMPORT_REQUIRED)
+    (checkout / "requirements.txt").write_text(reqs, encoding="utf-8")
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    ok, problems = q.check_dep_consistency()
+    assert ok, problems
+
+
 def test_dep_consistency_flags_a_missing_qc054_pin(monkeypatch, tmp_path):
     (tmp_path / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
     (tmp_path / "requirements-tracker.txt").write_text("requests>=2\n", encoding="utf-8")
@@ -98,13 +129,16 @@ def test_no_shadow_dirs_in_dev_layout(monkeypatch, tmp_path):
 
 
 def test_shadow_dirs_found_in_cloudpc_layout(monkeypatch, tmp_path):
+    # Only tests/ is a true stale shadow now — REPO_ROOT/src is an INTENTIONAL
+    # QC-039 deploy target (the wrapper xcopies src\hilmar to the runtime root
+    # so qc_selfheal can import hilmar.parser_accuracy), so it must NOT be swept.
     repo = tmp_path / "hilmar-daily-routine"
     (repo / "tests").mkdir(parents=True)
     (repo / "src" / "hilmar").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
     (tmp_path / "src").mkdir()
     monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
-    assert {d.name for d in q.find_stale_shadow_dirs()} == {"tests", "src"}
+    assert {d.name for d in q.find_stale_shadow_dirs()} == {"tests"}
 
 
 def test_qc062_self_heals_stale_shadow_dirs(monkeypatch, tmp_path):
@@ -117,7 +151,23 @@ def test_qc062_self_heals_stale_shadow_dirs(monkeypatch, tmp_path):
     log = _run(monkeypatch)
     assert any("QC-062" in m for m in log.fixes), log.fixes
     assert not (tmp_path / "tests").exists()
-    assert not (tmp_path / "src").exists()
+    # The deployed src/ is a required runtime dir — QC-062 must leave it intact.
+    assert (tmp_path / "src").exists()
+
+
+def test_qc062_preserves_deployed_src(monkeypatch, tmp_path):
+    """Cloud-PC layout with REPO_ROOT/src/hilmar present (the wrapper-deployed
+    QC-039 target): find_stale_shadow_dirs returns ONLY the stale tests/ shadow
+    — never src, which the wrapper deploys on purpose."""
+    repo = tmp_path / "hilmar-daily-routine"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "hilmar").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "hilmar").mkdir(parents=True)
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    stale = q.find_stale_shadow_dirs()
+    assert {d.name for d in stale} == {"tests"}
+    assert all(d.name != "src" for d in stale)
 
 
 # ── QC-054: dependency self-heal (no-pip path) ───────────────────────────

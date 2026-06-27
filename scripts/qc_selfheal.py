@@ -952,6 +952,21 @@ def _module_package(mod: str) -> str:
     return _MODULE_TO_PACKAGE.get(mod, _norm_pkg(mod))
 
 
+def _dep_file(name: str) -> Path:
+    """Locate a repo state file (requirements.txt, pyproject.toml,
+    requirements-tracker.txt, .python-version). QC-060/061 are REPO-STATE checks
+    ("fire the same in CI"), but on the Cloud PC qc_selfheal runs from the
+    DEPLOYED mirror (PROJECT HILMAR/scripts/), where REPO_ROOT is the OneDrive
+    parent — and these files are NOT deployed there (the wrapper syncs scripts/
+    + deploy/ + config + src, not the dep lists). The live copies live in the
+    git checkout subdir. Prefer the checkout copy so QC-060/061 read the CURRENT
+    repo state instead of a stale/absent deployed copy and false-alarm. In CI /
+    the repo itself, REPO_ROOT already IS the repo, so the checkout path doesn't
+    exist and this falls back cleanly."""
+    checkout = REPO_ROOT / "hilmar-daily-routine" / name
+    return checkout if checkout.exists() else (REPO_ROOT / name)
+
+
 def _parse_requirements_packages(path: Path) -> set:
     """Package names pinned in a requirements file (lowercased, _→-)."""
     out = set()
@@ -969,7 +984,7 @@ def _parse_requirements_packages(path: Path) -> set:
 
 def _pyproject_runtime_packages() -> set:
     """Package names in pyproject [project.dependencies]."""
-    pp = REPO_ROOT / "pyproject.toml"
+    pp = _dep_file("pyproject.toml")
     if not pp.exists():
         return set()
     try:
@@ -987,7 +1002,7 @@ def _pyproject_runtime_packages() -> set:
 
 
 def _read_pinned_python() -> str | None:
-    f = REPO_ROOT / ".python-version"
+    f = _dep_file(".python-version")
     if not f.exists():
         return None
     for ln in f.read_text(encoding="utf-8").splitlines():
@@ -1012,14 +1027,14 @@ def check_dep_consistency():
     """(ok, problems[]) — every RUNTIME_IMPORT_REQUIRED module is pinned in
     requirements.txt, and pyproject deps == requirements-tracker.txt."""
     problems = []
-    req = _parse_requirements_packages(REPO_ROOT / "requirements.txt")
+    req = _parse_requirements_packages(_dep_file("requirements.txt"))
     for mod in RUNTIME_IMPORT_REQUIRED:
         pkg = _module_package(mod)
         if pkg not in req:
             problems.append(
                 f"QC-054 imports '{mod}' but '{pkg}' is not pinned in requirements.txt")
     pp = _pyproject_runtime_packages()
-    tracker = _parse_requirements_packages(REPO_ROOT / "requirements-tracker.txt")
+    tracker = _parse_requirements_packages(_dep_file("requirements-tracker.txt"))
     if pp and tracker:
         only_pp = pp - tracker
         only_tr = tracker - pp
@@ -1031,13 +1046,21 @@ def check_dep_consistency():
 
 
 def find_stale_shadow_dirs():
-    """Stale duplicate tests/ + src/ sitting directly under REPO_ROOT when the
-    REAL git checkout lives in REPO_ROOT/hilmar-daily-routine (the Cloud PC
-    layout). Returns [] in the dev/CI layout where REPO_ROOT IS the checkout."""
+    """Stale duplicate tests/ sitting directly under REPO_ROOT when the REAL
+    git checkout lives in REPO_ROOT/hilmar-daily-routine (the Cloud PC layout).
+    Returns [] in the dev/CI layout where REPO_ROOT IS the checkout.
+
+    NOTE: REPO_ROOT/src is NO LONGER a stale shadow — the wrapper now deploys
+    it ON PURPOSE (deploy/run_daily_laptop.cmd `xcopy src\\hilmar`) so
+    scripts/qc_selfheal.py can `import hilmar.parser_accuracy` for the QC-039
+    gate (it prepends REPO_ROOT/src to sys.path). On the Cloud PC REPO_ROOT/src
+    is therefore a REQUIRED runtime directory and must never be swept. Only
+    tests/ is a true never-deployed shadow (the wrapper never copies tests/ to
+    the runtime root)."""
     checkout = REPO_ROOT / "hilmar-daily-routine"
     if not (checkout / "tests").is_dir() or not (checkout / "src" / "hilmar").is_dir():
         return []  # dev/CI — REPO_ROOT's own tests/+src/ are the real ones
-    return [REPO_ROOT / sub for sub in ("tests", "src") if (REPO_ROOT / sub).is_dir()]
+    return [REPO_ROOT / sub for sub in ("tests",) if (REPO_ROOT / sub).is_dir()]
 
 
 def load_step_history():
@@ -1060,6 +1083,63 @@ def consecutive_failed_steps(history, n=3):
     sets = [set(h.get("failed") or []) for h in history[-n:]]
     common = set.intersection(*sets) if sets else set()
     return sorted(common)
+
+
+# Client-visible display fields scanned by QC-064. These all land in the email
+# / PDF / dashboard as plain text, so garbage here is "absolutely wrong info"
+# in front of the client — the failure class the operator flagged.
+QC064_DISPLAY_FIELDS = (
+    "carrier_quoted", "carrier_won", "origin", "destination",
+    "lane", "pol", "pod", "vessel_voyage", "transshipment",
+)
+
+# Exchange message-id shard: a long run of uppercase/digits with an embedded
+# "MB" segment (e.g. the MBD_OceanExport... mailbox's internetMessageId
+# fragments). Conservative — needs the "MB" anchor + length, so it won't match
+# a normal carrier/port name. Anchored on word boundaries elsewhere.
+_QC064_MSGID_SHARD_RX = re.compile(r"[A-Z0-9]{4,}MB[0-9A-Z]{2,}")
+# A phone fragment: NNN-NNN or NNN-NNNN (also . or whitespace separator).
+# \b-bounded so it can't fire on an arbitrary substring of a longer token.
+_QC064_PHONE_RX = re.compile(r"\b\d{3}[-.\s]\d{3,4}\b")
+
+
+def qc064_garbage_reason(value):
+    """Return a short reason string if `value` looks like garbage that leaked
+    into a client-visible display field, else None.
+
+    Patterns are deliberately conservative so a legitimate value (a normal
+    city, port code, or carrier name) is NEVER flagged:
+      - raw message-id: has the angle-bracket + '@' envelope OR an Exchange
+        msg-id shard ([A-Z0-9]{4,}MB[0-9A-Z]{2,}) — neither shape occurs in a
+        real lane/carrier value.
+      - mailbox / email: contains '@' (no real display value has one) OR the
+        OL responder-mailbox prose ("ocean export booking" / "mailbox" /
+        "shared mailbox") that has leaked from a From/footer line.
+      - phone fragment: a \\b-bounded NNN-NNN(N) run — a dialing fragment, never
+        part of a port or carrier name.
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    low = v.lower()
+    # raw message-id (angle-bracket envelope, e.g. "<AB12@host>")
+    if "<" in v and "@" in v and ">" in v:
+        return "raw message-id (<...@...>)"
+    # Exchange message-id shard
+    if _QC064_MSGID_SHARD_RX.search(v):
+        return "Exchange message-id shard"
+    # mailbox / email address or mailbox prose
+    if "@" in v:
+        return "email/mailbox address"
+    if ("ocean export booking" in low or "shared mailbox" in low
+            or "mailbox" in low):
+        return "mailbox name leaked into display field"
+    # phone fragment
+    if _QC064_PHONE_RX.search(v):
+        return "phone-number fragment"
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -3195,17 +3275,25 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-060: check failed with exception: {_e}")
 
-    # QC-062: LAYOUT HYGIENE — no stale duplicate tests/ + src/ shadow the real
-    # git checkout. On the Cloud PC a pre-checkout-era flat copy of tests/+src/
-    # sat directly under PROJECT HILMAR/ shadowing hilmar-daily-routine/,
-    # causing pytest 'import file mismatch' collection errors. The xcopy never
-    # cleans them. SELF-HEAL: delete them (known-safe — the checkout subdir is
-    # the only valid copy). Returns [] in dev/CI (REPO_ROOT IS the checkout), so
-    # it never deletes the real trees.
+    # QC-062: LAYOUT HYGIENE — no stale duplicate tests/ shadow the real git
+    # checkout. On the Cloud PC a pre-checkout-era flat copy of tests/ sat
+    # directly under PROJECT HILMAR/ shadowing hilmar-daily-routine/, causing
+    # pytest 'import file mismatch' collection errors. The xcopy never cleans
+    # them. SELF-HEAL: delete them (known-safe — the checkout subdir is the only
+    # valid copy). Returns [] in dev/CI (REPO_ROOT IS the checkout), so it never
+    # deletes the real trees.
+    #
+    # REPO_ROOT/src is DELIBERATELY EXCLUDED here: the wrapper now mirrors
+    # src\hilmar to the runtime root ON PURPOSE (deploy/run_daily_laptop.cmd
+    # `xcopy src\hilmar`) so this very module can import hilmar.parser_accuracy
+    # for the QC-039 gate. It is a REQUIRED deploy target, not a stale shadow —
+    # sweeping it would break QC-039 and, because OneDrive locks __pycache__, the
+    # rmtree would also fail and fire a false QC-062 ERROR every fire. Only
+    # tests/ (never deployed to the root) is swept.
     try:
         _stale = find_stale_shadow_dirs()
         if not _stale:
-            log.ok("QC-062: layout clean — no stale tests/+src/ shadowing the checkout")
+            log.ok("QC-062: layout clean — no stale tests/ shadowing the checkout")
         else:
             _removed = []
             for _d in _stale:
@@ -3267,6 +3355,42 @@ def phase_6_rules(log: Log, data: dict):
                        f"({len(_hist)} fires recorded)")
     except Exception as _e:
         log.warn(f"QC-063: check failed with exception: {_e}")
+
+    # QC-064: GARBAGE IN CLIENT-VISIBLE DISPLAY FIELDS. Defense-in-depth for
+    # the "absolutely wrong info" class the operator flagged — a phone
+    # fragment, a raw message-id, or the OL responder-mailbox name leaking
+    # into a display field (carrier/origin/destination/lane/pol/pod/vessel/
+    # transshipment) that ships straight into the client email + PDF. The
+    # parser is the real fix, but a single bad token in front of the client is
+    # high-blast-radius, so this is a last-line scrub. SELF-HEAL: null the
+    # offending field (a blank cell is strictly better than wrong info) and log
+    # the field + request id + scrubbed value. WARN-class, NOT an ERROR gate —
+    # a false positive must never block the client email, and the self-heal
+    # already removed the bad value.
+    try:
+        _g64_found = 0
+        _g64_remaining = 0
+        for r in requests:
+            for _f in QC064_DISPLAY_FIELDS:
+                _reason = qc064_garbage_reason(r.get(_f))
+                if not _reason:
+                    continue
+                _g64_found += 1
+                _bad = r.get(_f)
+                r[_f] = None
+                log.fix(f"QC-064: nulled {_f}={_bad!r} on {r.get('request_id', '?')} "
+                        f"— {_reason} (garbage in client-visible field)")
+                # Confirm the heal stuck (None can't be garbage); if a field
+                # somehow still reads garbage it's unhealable from here.
+                if qc064_garbage_reason(r.get(_f)):
+                    _g64_remaining += 1
+        if _g64_found == 0:
+            log.ok("QC-064: no garbage tokens in display fields")
+        elif _g64_remaining:
+            log.warn(f"QC-064: {_g64_remaining} garbage display value(s) could not be "
+                     f"scrubbed — manual review; fix the upstream parser")
+    except Exception as _e:
+        log.warn(f"QC-064: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is
@@ -3503,17 +3627,41 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
 QC039_GATE_BLOCK_RC = 39
 
 
+# Marker the QC-039 check uses when it could not EVALUATE (import error,
+# malformed data) as opposed to having MEASURED sub-95% accuracy. Must match the
+# string qc_selfheal logs in the QC-039 except branch.
+_QC039_UNEVAL_MARK = "FAILED TO EVALUATE"
+
+
+def _qc039_block_errors(error_messages) -> list:
+    """The QC-039 errors that represent a REAL measured accuracy miss (sub-95%
+    overall or a critical field below threshold) — i.e. the ones that justify
+    hard-blocking the client ship. EXCLUDES "FAILED TO EVALUATE" errors, which
+    mean the gate could not run (a deploy/infra gap), not that the data is bad."""
+    return [e for e in (error_messages or [])
+            if "QC-039" in (e or "") and _QC039_UNEVAL_MARK not in (e or "")]
+
+
+def _qc039_uneval_errors(error_messages) -> list:
+    """QC-039 errors where the gate could NOT evaluate (missing dep, import
+    error). These scream + set HAS_ERRORS for visibility but must NOT block the
+    client email — a missing measurement module is a deploy problem, not
+    sub-95% data, and blocking the fire over it is a self-inflicted outage."""
+    return [e for e in (error_messages or [])
+            if "QC-039" in (e or "") and _QC039_UNEVAL_MARK in (e or "")]
+
+
 def _gate_exit_code(error_messages, *, pre_patch: bool) -> int:
-    """Option A / CLAUDE.md rule #2: the exit code main() returns for the QC-039
-    parser-accuracy gate. A QC-039 ERROR in the POST-PATCH run is a hard
-    client-ship block (returns QC039_GATE_BLOCK_RC); the PRE-PATCH run is
-    advisory and never blocks (returns 0); a non-QC-039 error never triggers
-    this gate. Pure + injectable so the gate decision is unit-tested without a
-    full pipeline run."""
+    """CLAUDE.md rule #2: the exit code main() returns for the QC-039
+    parser-accuracy gate. A POST-PATCH QC-039 error that represents a MEASURED
+    sub-95% accuracy is a hard client-ship block (returns QC039_GATE_BLOCK_RC).
+    The PRE-PATCH run is advisory and never blocks. A QC-039 "FAILED TO
+    EVALUATE" error (the gate couldn't run) does NOT block — it screams instead
+    (see main()), because a deploy/import gap is not evidence the data is bad
+    and must never take down the client fire. Pure + injectable for unit tests."""
     if pre_patch:
         return 0
-    has_qc039_error = any("QC-039" in (e or "") for e in (error_messages or []))
-    return QC039_GATE_BLOCK_RC if has_qc039_error else 0
+    return QC039_GATE_BLOCK_RC if _qc039_block_errors(error_messages) else 0
 
 
 def main() -> int:
@@ -3566,27 +3714,52 @@ def main() -> int:
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
 
-    # Option A hard gate (CLAUDE.md rule #2): in the POST-PATCH run a QC-039
-    # parser-accuracy ERROR BLOCKS the client ship. Scream out-of-band right
-    # here (Teams/issue/queue/stderr — never Outlook) so the block is loud no
-    # matter how the wrapper exits, then return the distinct gate code so
-    # run_pipeline aborts before any email is built or sent. Pre-patch never
-    # blocks — it measures pre-enrichment state and is intentionally advisory.
-    gate_errs = [e for e in log.errors if "QC-039" in e]
-    if _gate_exit_code(log.errors, pre_patch=_qc_phase_is_pre_patch()):
+    # CLAUDE.md rule #2 hard gate (POST-PATCH only; pre-patch is advisory).
+    # Two distinct QC-039 failure modes, deliberately handled differently:
+    #
+    #  (1) MEASURED sub-95% accuracy → BLOCK the client ship. Scream out-of-band
+    #      (Teams/issue/queue/stderr — never Outlook) and return the distinct
+    #      gate code so run_pipeline aborts before any email is built.
+    #
+    #  (2) The gate COULD NOT EVALUATE (missing dep / src not deployed / import
+    #      error) → scream just as loudly, but DO NOT block. A missing
+    #      measurement module is a deploy gap, not sub-95% data; the data
+    #      pipeline itself succeeded, so blocking the client email over it is a
+    #      self-inflicted outage. The operator is paged to fix the deploy; the
+    #      email still ships. (This is what surfaced when the box ran without
+    #      src/hilmar/ on the path — "No module named 'hilmar'".)
+    def _scream(title, body, labels):
         try:
             import fire_alert
-            fire_alert.send_alert(
-                "Daily fire BLOCKED — parser accuracy below the 95% gate (QC-039)",
-                "Post-patch QC-039 failed, so the daily client email is BLOCKED "
-                "(CLAUDE.md rule #2: do not ship sub-95% data). Fix the parser "
-                "and re-fire.\n  - " + "\n  - ".join(gate_errs),
-                level="error", labels=("fire-alert", "qc-039-gate"))
+            fire_alert.send_alert(title, body, level="error", labels=labels)
         except Exception as _e:
             print(f"  (fire_alert escalation failed: {_e})", file=sys.stderr)
+
+    if _gate_exit_code(log.errors, pre_patch=_qc_phase_is_pre_patch()):
+        miss = _qc039_block_errors(log.errors)
+        _scream(
+            "Daily fire BLOCKED — parser accuracy below the 95% gate (QC-039)",
+            "Post-patch QC-039 MEASURED sub-95% accuracy, so the daily client "
+            "email is BLOCKED (CLAUDE.md rule #2: do not ship sub-95% data). Fix "
+            "the parser and re-fire.\n  - " + "\n  - ".join(miss),
+            ("fire-alert", "qc-039-gate"))
         print("\n❌ QC-039 PARSER-ACCURACY GATE FAILED (post-patch) — blocking "
               f"the client ship (exit {QC039_GATE_BLOCK_RC}).", file=sys.stderr)
         return QC039_GATE_BLOCK_RC
+
+    # Gate could not evaluate in the real (post-patch) run — scream, don't block.
+    if not _qc_phase_is_pre_patch():
+        uneval = _qc039_uneval_errors(log.errors)
+        if uneval:
+            _scream(
+                "Parser-accuracy gate COULD NOT EVALUATE (QC-039) — fix the deploy",
+                "QC-039 could not run this fire (e.g. src/hilmar not deployed or a "
+                "missing dependency), so parser accuracy was NOT verified. The email "
+                "still SHIPPED — the data pipeline succeeded — but the gate is blind "
+                "until the deploy is fixed.\n  - " + "\n  - ".join(uneval),
+                ("fire-alert", "qc-039-uneval"))
+            print("\n⚠️  QC-039 could NOT evaluate (deploy/dep gap) — screamed; NOT "
+                  "blocking the ship.", file=sys.stderr)
     return 0
 
 

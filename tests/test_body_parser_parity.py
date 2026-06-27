@@ -27,6 +27,25 @@ def test_known_origins_are_identical():
     )
 
 
+def test_known_destinations_are_identical():
+    """QC-057 corpus is a CLAUDE.md §2 paired surface — must be byte-identical
+    so the destination-recovery branch can't recover different ports in the two
+    trees (which would silently split lane buckets the same way KNOWN_ORIGINS
+    drift once did)."""
+    assert tuple(SBP.KNOWN_DESTINATIONS) == tuple(HBP.KNOWN_DESTINATIONS), (
+        "scripts/ and src/hilmar/ KNOWN_DESTINATIONS drifted — mirror the edit "
+        "to the paired file."
+    )
+
+
+def test_dest_recovery_live_in_both_trees():
+    """The live QC-057 drop: a bare 'to <known port>' RFQ that no prior lane
+    branch matched must recover the destination in BOTH trees, not (None,None)."""
+    for bp in (SBP, HBP):
+        origin, dest = bp.parse_subject_lane("20' reefer request to Yokohama")
+        assert dest == "Yokohama", (origin, dest)
+
+
 # Subjects chosen to exercise the origin-strip fix + ordinary lanes.
 _SUBJECTS = [
     "MDOLX260587_ NEW BOOKING // HILMAR - Oakland to Osaka - 2X40'RF // EVERGREEN",
