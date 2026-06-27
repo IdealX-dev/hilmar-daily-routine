@@ -873,9 +873,9 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         html += '<table><tr><th>Severity</th><th>Waiting On</th><th>Hours Waiting</th><th>Date</th><th>Lane</th><th>Equip</th><th>Carrier</th><th>Rate</th><th>Lonny ETA Ask</th><th>OL ETA</th></tr>\n'
         sev_label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
         for r in pending_watch:
-            wait_on = ('<span style="color:#b45309;font-weight:600">OL quote</span>'
-                       if r.get("_substate") == "PENDING_OL"
-                       else '<span style="color:#7c3aed;font-weight:600">Hilmar decision</span>')
+            _sub = r.get("_substate")
+            _wcolor = "#b45309" if _sub == "PENDING_OL" else "#7c3aed"
+            wait_on = f'<span style="color:{_wcolor};font-weight:600">{V.pending_label(_sub)}</span>'
             html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{r["_hours_since"]}h</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
         html += '</table>'
     else:
