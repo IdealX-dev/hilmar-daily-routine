@@ -89,6 +89,29 @@ def test_no_response_is_legacy_loss_no_response():
     assert d.loss_reason == "NO_RESPONSE"
 
 
+def test_quoted_with_missing_timestamp_is_never_no_response():
+    """THE BUG (user-reported): a request that DID get a rate (quoted=True) but
+    whose response_timestamp is missing was bucketed NQ 'OL never responded'
+    (and rendered Time-to-Quote '—'). It must be a Q&L (quoted & lost), never
+    NO_RESPONSE — the Oakland→Yokohama CMA CGM $3,076 case."""
+    d = SC.decide_status(has_send=False, mdolx_ref=None,
+                         response_timestamp=None, quoted=True, etd_fit_days=None,
+                         ol_rate="$3,076")
+    assert d.quoted is True
+    assert d.loss_reason != "NO_RESPONSE", "a quoted row can never be NO_RESPONSE"
+    assert d.loss_reason == "OTHER"   # 'assumed aged' Q&L (legacy LOSS form)
+
+
+def test_responded_but_no_rate_is_response_no_rate():
+    """OL acked but didn't quote (rate not extracted) → RESPONSE_NO_RATE, the
+    distinct NQ sub-reason — not conflated with true silence."""
+    d = SC.decide_status(has_send=False, mdolx_ref=None,
+                         response_timestamp="2026-06-12T15:00:00Z",
+                         quoted=False, etd_fit_days=None)
+    assert d.status == "LOSS"
+    assert d.loss_reason == "RESPONSE_NO_RATE"
+
+
 def test_quoted_within_window_is_pending():
     """Inside the 24h biz window on a normal weekday — stays PENDING.
     Wed 13:00 quote viewed Thu 12:00 UTC = 23h later → inside 24h."""

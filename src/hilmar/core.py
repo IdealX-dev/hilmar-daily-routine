@@ -745,19 +745,22 @@ def decide_status(
         return StatusDecision(STATUS_PENDING, True, False, "MDOLX_NO_SEND",
                               "MDOLX present without send signal — anomaly, see reason_detail")
 
-    # Truly silent — OL/MBD never responded.
-    if not response_timestamp:
-        return StatusDecision(STATUS_NQ, False, False, "NO_RESPONSE",
-                              "OL-USA never responded with a quote")
-
-    # Edge: response landed but no rate was extracted (e.g. MBD said
-    # "checking with carrier..." without quoting). Tracked as NQ but
-    # flagged separately so we don't conflate with true silence.
+    # OL never QUOTED → NQ. Check the quote FIRST: a row that DID carry a rate
+    # (quoted=True) can NEVER be NO_RESPONSE. The old order tested
+    # response_timestamp before `quoted`, so a real quote with a missing
+    # timestamp was bucketed as "OL never responded" — inflating NQ and
+    # rendering Time-to-Quote as "—". No response at all → NO_RESPONSE;
+    # response landed but no rate was extracted (e.g. MBD said "checking with
+    # carrier...") → RESPONSE_NO_RATE. Both display as NQ.
     if not quoted:
+        if not response_timestamp:
+            return StatusDecision(STATUS_NQ, False, False, "NO_RESPONSE",
+                                  "OL-USA never responded with a quote")
         return StatusDecision(STATUS_NQ, False, False, "RESPONSE_NO_RATE",
                               "MBD responded but no rate extracted — see reason_detail")
 
-    # Quoted — check aging.
+    # Quoted — a quoted row with a missing/None response_timestamp falls
+    # through here; parse_iso(None)→None hits the "assumed aged" Q&L guard.
     resp_dt = parse_iso(response_timestamp)
     if not resp_dt:
         # Malformed timestamp — treat as past window.

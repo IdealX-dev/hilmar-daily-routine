@@ -569,9 +569,21 @@ def phase_3_entries(log: Log, data: dict):
         if not r.get("lane") and r.get("origin") and r.get("destination"):
             r["lane"] = f"{r['origin']} → {r['destination']}"
 
+        # Reconcile the quoted flag against the actual evidence. A row carrying
+        # a real rate or carrier MUST be quoted=True — otherwise decide_status
+        # sees quoted=False and (esp. with a missing response_timestamp) buckets
+        # a genuine OL quote as NQ NO_RESPONSE (the user-reported phantom-NQ:
+        # the OL response table showed the $3,076 rate while the request row was
+        # counted Not Quoted). Previously this only DEFAULTED when the key was
+        # absent, so a stored quoted=False desync survived. Now it also REPAIRS.
+        _has_rate = bool(
+            (r.get("ol_rate") not in (None, "", "Not Quoted")) or r.get("carrier_quoted"))
         if "quoted" not in r:
-            r["quoted"] = bool(r.get("response_timestamp") or r.get("carrier_quoted") or r.get("ol_rate"))
+            r["quoted"] = bool(r.get("response_timestamp") or _has_rate)
             log.fix(f"{rid_label}: Defaulted quoted={r['quoted']}")
+        elif _has_rate and r.get("quoted") is not True:
+            r["quoted"] = True
+            log.fix(f"{rid_label}: Reconciled quoted=True (rate/carrier present, was {r.get('quoted')!r})")
 
         if "has_send" not in r:
             r["has_send"] = False
