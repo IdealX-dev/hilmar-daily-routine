@@ -39,6 +39,37 @@ def test_dep_consistency_passes_on_the_real_repo():
     assert ok, problems
 
 
+def test_dep_file_prefers_the_checkout_copy(monkeypatch, tmp_path):
+    """On the Cloud PC, qc_selfheal runs from the deployed mirror where
+    REPO_ROOT is the OneDrive parent and the dep lists are NOT deployed — only
+    the git checkout subdir has them. _dep_file must read the checkout copy so
+    QC-060/061 don't false-alarm on a stale/absent deployed copy (the box run
+    flagged 4 pinned deps as "not pinned" + "no .python-version"). In CI the
+    checkout subdir doesn't exist, so it falls back to REPO_ROOT."""
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    # No checkout subdir → falls back to REPO_ROOT/<name>.
+    assert q._dep_file("requirements.txt") == tmp_path / "requirements.txt"
+    # With a checkout subdir present → prefers it.
+    checkout = tmp_path / "hilmar-daily-routine"
+    checkout.mkdir()
+    (checkout / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
+    assert q._dep_file("requirements.txt") == checkout / "requirements.txt"
+
+
+def test_dep_consistency_reads_checkout_when_root_is_bare(monkeypatch, tmp_path):
+    """Simulate the box mirror: REPO_ROOT (the OneDrive parent) has NO dep
+    lists, but the checkout subdir carries the real, complete ones. QC-060 must
+    pass by reading the checkout — not false-flag every dep as unpinned."""
+    checkout = tmp_path / "hilmar-daily-routine"
+    checkout.mkdir()
+    # Full, consistent dep set in the checkout only.
+    reqs = "".join(f"{q._module_package(m)}>=1\n" for m in q.RUNTIME_IMPORT_REQUIRED)
+    (checkout / "requirements.txt").write_text(reqs, encoding="utf-8")
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    ok, problems = q.check_dep_consistency()
+    assert ok, problems
+
+
 def test_dep_consistency_flags_a_missing_qc054_pin(monkeypatch, tmp_path):
     (tmp_path / "requirements.txt").write_text("requests>=2\n", encoding="utf-8")
     (tmp_path / "requirements-tracker.txt").write_text("requests>=2\n", encoding="utf-8")

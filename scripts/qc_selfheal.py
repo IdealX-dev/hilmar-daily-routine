@@ -952,6 +952,21 @@ def _module_package(mod: str) -> str:
     return _MODULE_TO_PACKAGE.get(mod, _norm_pkg(mod))
 
 
+def _dep_file(name: str) -> Path:
+    """Locate a repo state file (requirements.txt, pyproject.toml,
+    requirements-tracker.txt, .python-version). QC-060/061 are REPO-STATE checks
+    ("fire the same in CI"), but on the Cloud PC qc_selfheal runs from the
+    DEPLOYED mirror (PROJECT HILMAR/scripts/), where REPO_ROOT is the OneDrive
+    parent — and these files are NOT deployed there (the wrapper syncs scripts/
+    + deploy/ + config + src, not the dep lists). The live copies live in the
+    git checkout subdir. Prefer the checkout copy so QC-060/061 read the CURRENT
+    repo state instead of a stale/absent deployed copy and false-alarm. In CI /
+    the repo itself, REPO_ROOT already IS the repo, so the checkout path doesn't
+    exist and this falls back cleanly."""
+    checkout = REPO_ROOT / "hilmar-daily-routine" / name
+    return checkout if checkout.exists() else (REPO_ROOT / name)
+
+
 def _parse_requirements_packages(path: Path) -> set:
     """Package names pinned in a requirements file (lowercased, _→-)."""
     out = set()
@@ -969,7 +984,7 @@ def _parse_requirements_packages(path: Path) -> set:
 
 def _pyproject_runtime_packages() -> set:
     """Package names in pyproject [project.dependencies]."""
-    pp = REPO_ROOT / "pyproject.toml"
+    pp = _dep_file("pyproject.toml")
     if not pp.exists():
         return set()
     try:
@@ -987,7 +1002,7 @@ def _pyproject_runtime_packages() -> set:
 
 
 def _read_pinned_python() -> str | None:
-    f = REPO_ROOT / ".python-version"
+    f = _dep_file(".python-version")
     if not f.exists():
         return None
     for ln in f.read_text(encoding="utf-8").splitlines():
@@ -1012,14 +1027,14 @@ def check_dep_consistency():
     """(ok, problems[]) — every RUNTIME_IMPORT_REQUIRED module is pinned in
     requirements.txt, and pyproject deps == requirements-tracker.txt."""
     problems = []
-    req = _parse_requirements_packages(REPO_ROOT / "requirements.txt")
+    req = _parse_requirements_packages(_dep_file("requirements.txt"))
     for mod in RUNTIME_IMPORT_REQUIRED:
         pkg = _module_package(mod)
         if pkg not in req:
             problems.append(
                 f"QC-054 imports '{mod}' but '{pkg}' is not pinned in requirements.txt")
     pp = _pyproject_runtime_packages()
-    tracker = _parse_requirements_packages(REPO_ROOT / "requirements-tracker.txt")
+    tracker = _parse_requirements_packages(_dep_file("requirements-tracker.txt"))
     if pp and tracker:
         only_pp = pp - tracker
         only_tr = tracker - pp
