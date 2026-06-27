@@ -395,7 +395,7 @@ def _header_html(today_label, range_label, updated_label):
 <!--[if !mso]><!-->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!--<![endif]-->
-<div style="max-width:900px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+<div style="max-width:1040px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
   <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
@@ -423,6 +423,21 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         'style="width:100%;border-collapse:collapse;font-size:12px;'
         'margin:4px 0 14px 0;border:1px solid #d1d5db">'
     )
+    # Fixed-layout variant for the WIDE tables (OL Responses = 11 cols, Status
+    # Changes = 7 cols). Without table-layout:fixed + an explicit <colgroup>,
+    # content-driven sizing crams the columns and truncates long cells (the
+    # "MBD rate re…" squish). The Word/Outlook engine honors table-layout:fixed
+    # and <col width>, so columns get controlled widths and long text WRAPS
+    # (cells default to white-space:normal) instead of overflowing.
+    _TABLE_OPEN_FIXED = (
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'style="width:100%;border-collapse:collapse;font-size:12px;'
+        'table-layout:fixed;margin:4px 0 14px 0;border:1px solid #d1d5db">'
+    )
+
+    def _colgroup(*widths):
+        return "<colgroup>" + "".join(
+            f'<col style="width:{w}%">' for w in widths) + "</colgroup>"
     _TH_STYLE = (
         'style="padding:6px 8px;background:#1e3a5f;color:#ffffff;'
         'font-size:11px;font-weight:600;text-align:left;'
@@ -546,8 +561,8 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
                 f'<td {_TD_STYLE}>{_esc(signer)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(ol_t)}</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(lonny_t)}</td>'
+                f'<td {_TD_STYLE};font-size:11px>{_esc(ol_t)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
                 f'<td {_TD_STYLE};font-size:11px>{_esc(etd_off)}</td>'
                 f'<td {_TD_STYLE};font-size:11px>{_esc(eta_off)}</td></tr>'
@@ -555,7 +570,10 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     else:
         resp_rows = _EMPTY_ROW
     resp_table = (
-        f'{_TABLE_OPEN}<thead><tr>'
+        # 11 cols: Lane Equip TEU Carrier Rate Signer LonnyPT OLet TTQ ETD ETA
+        f'{_TABLE_OPEN_FIXED}'
+        f'{_colgroup(15, 8, 5, 11, 9, 11, 11, 11, 6, 6.5, 6.5)}'
+        f'<thead><tr>'
         f'<th {_TH_STYLE}>Lane</th>'
         f'<th {_TH_STYLE}>Equipment</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
@@ -607,12 +625,16 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
                 f'{V.status_pill(h["from"])} → {V.status_pill(h["to"])}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(reason)}</td></tr>'
+                f'<td {_TD_STYLE};font-size:11px;white-space:normal;word-break:break-word>{_esc(reason)}</td></tr>'
             )
     else:
         sc_rows = _EMPTY_ROW
     sc_table = (
-        f'{_TABLE_OPEN}<thead><tr>'
+        # 7 cols: Lane Equip/TEU ReqDate StatusChange Carrier Rate Reason.
+        # Reason gets the widest share so it wraps instead of truncating.
+        f'{_TABLE_OPEN_FIXED}'
+        f'{_colgroup(15, 13, 10, 16, 12, 8, 26)}'
+        f'<thead><tr>'
         f'<th {_TH_STYLE}>Lane</th>'
         f'<th {_TH_STYLE}>Equipment / TEU</th>'
         f'<th {_TH_STYLE}>Requested Date</th>'

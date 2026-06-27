@@ -207,6 +207,15 @@ def _canon(decision) -> tuple:
     # mdolx only (no send) → MDOLX_NO_SEND anomaly on both
     dict(has_send=False, mdolx_ref="MDX9", response_timestamp="2026-04-21T03:00:00Z",
          quoted=True, etd_fit_days=0),
+    # NQ taxonomy parity (the fix): truly silent → NO_RESPONSE on both
+    dict(has_send=False, mdolx_ref=None, response_timestamp=None,
+         quoted=False, etd_fit_days=None),
+    # responded but no rate parsed → RESPONSE_NO_RATE on both
+    dict(has_send=False, mdolx_ref=None, response_timestamp="2026-04-21T03:00:00Z",
+         quoted=False, etd_fit_days=None),
+    # THE BUG: quoted=True but missing timestamp → Q&L (not NQ) on both
+    dict(has_send=False, mdolx_ref=None, response_timestamp=None,
+         quoted=True, etd_fit_days=None),
 ])
 def test_decide_status_win_and_send_outcomes_parity(kwargs):
     now = datetime(2026, 4, 27, 13, 0, tzinfo=UTC)

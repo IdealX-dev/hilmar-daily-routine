@@ -588,6 +588,7 @@ def main():
             body_hits.append(f"{r.get('request_id')}->{canon}")
             if parsed.get("ol_rate") is not None and not r.get("ol_rate"):
                 r["ol_rate"] = parsed["ol_rate"]
+                r["quoted"] = True   # a recovered rate IS a quote — never NQ
                 patched_rate += 1
             status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
             print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
@@ -604,6 +605,7 @@ def main():
         # ol_rate on WIN/PENDING rows too (PASS 1 only does it during carrier patch)
         if not r.get("ol_rate") and parsed.get("ol_rate") is not None:
             r["ol_rate"] = parsed["ol_rate"]
+            r["quoted"] = True   # a recovered rate IS a quote — never NQ
             patched_rate += 1
 
     # ─────────────────────────────────────────────────────────────────

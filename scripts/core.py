@@ -874,9 +874,18 @@ def decide_status(
         return StatusDecision("PENDING", True, True, "AWAITING_MDOLX",
                               "Lonny replied Send — awaiting MDOLX booking confirmation")
 
-    # No response at all
-    if not quoted or not response_timestamp:
-        return StatusDecision("LOSS", False, False, "NO_RESPONSE", "OL-USA never responded with a quote")
+    # OL never QUOTED → NQ. Check the quote FIRST: a row that DID carry a rate
+    # (quoted=True) can NEVER be NO_RESPONSE. The old `not quoted or not
+    # response_timestamp` gate bucketed a real quote with a missing
+    # response_timestamp as "OL never responded" — inflating NQ and rendering
+    # Time-to-Quote as "—". Now: no response at all → NO_RESPONSE; OL responded
+    # but no rate parsed → RESPONSE_NO_RATE. Both are quoted=False so
+    # display_status shows them as NQ. A quoted row falls through to the aging
+    # block below, where parse_iso(None)→None hits the "assumed aged" Q&L guard.
+    if not quoted:
+        if not response_timestamp:
+            return StatusDecision("LOSS", False, False, "NO_RESPONSE", "OL-USA never responded with a quote")
+        return StatusDecision("LOSS", False, False, "RESPONSE_NO_RATE", "OL responded but no rate was extracted")
 
     # Quoted — check aging
     resp_dt = parse_iso(response_timestamp)

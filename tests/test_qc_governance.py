@@ -69,11 +69,13 @@ KNOWN_UNTESTED: frozenset[str] = frozenset({
     # tests/test_qc_selfheal_checks.py.
     "QC-009", "QC-012", "QC-013", "QC-016", "QC-022", "QC-023", "QC-024",
     "QC-025", "QC-026", "QC-033", "QC-035", "QC-036", "QC-043",
-    "QC-044", "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
+    "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
 })
-# Ceiling lowered 26 -> 20 (2026-06-09). The ratchet test asserts len never
+# Ceiling lowered 26 -> 20 (2026-06-09) -> 18 (2026-06-26, QC-044 double-escape
+# now covered by tests/test_auditfix_email_render_squish.py's no-&amp;amp;
+# assertion on real rendered email output). The ratchet test asserts len never
 # grows; lower this again each time you remove entries.
-_KNOWN_UNTESTED_CEILING = 19
+_KNOWN_UNTESTED_CEILING = 18
 
 
 def emitted_checks() -> set[str]:
