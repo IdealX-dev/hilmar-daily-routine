@@ -107,6 +107,16 @@ REM code. Pulls are silent — no log spam if there's nothing to update.
 echo --- git_pull --- >> "%LOG%"
 if exist "%ROOT%\hilmar-daily-routine\.git" (
   pushd "%ROOT%\hilmar-daily-routine"
+  REM Disable git's opportunistic auto-gc for THIS repo before pulling. The box
+  REM runs from a OneDrive-synced folder; OneDrive intermittently locks files
+  REM under .git\objects, and a `git pull` can opportunistically trigger gc,
+  REM which then hangs retrying a prune it can never finish on the locked
+  REM objects -- stalling the unattended fire until Task Scheduler kills it (the
+  REM gc analogue of the credential-prompt hang the env vars above defend
+  REM against). This is a local, idempotent, best-effort config write; its
+  REM errorlevel is ignored (the unguarded pull already tolerates failure and
+  REM control flow falls through).
+  git config gc.auto 0 >> "%LOG%" 2>&1
   git pull --quiet origin main >> "%LOG%" 2>&1
   REM Surface a pull failure loudly but DON'T bail — a stale checkout still
   REM produces a (slightly old) email, which beats no email at all. The
