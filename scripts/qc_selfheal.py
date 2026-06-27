@@ -1046,13 +1046,21 @@ def check_dep_consistency():
 
 
 def find_stale_shadow_dirs():
-    """Stale duplicate tests/ + src/ sitting directly under REPO_ROOT when the
-    REAL git checkout lives in REPO_ROOT/hilmar-daily-routine (the Cloud PC
-    layout). Returns [] in the dev/CI layout where REPO_ROOT IS the checkout."""
+    """Stale duplicate tests/ sitting directly under REPO_ROOT when the REAL
+    git checkout lives in REPO_ROOT/hilmar-daily-routine (the Cloud PC layout).
+    Returns [] in the dev/CI layout where REPO_ROOT IS the checkout.
+
+    NOTE: REPO_ROOT/src is NO LONGER a stale shadow — the wrapper now deploys
+    it ON PURPOSE (deploy/run_daily_laptop.cmd `xcopy src\\hilmar`) so
+    scripts/qc_selfheal.py can `import hilmar.parser_accuracy` for the QC-039
+    gate (it prepends REPO_ROOT/src to sys.path). On the Cloud PC REPO_ROOT/src
+    is therefore a REQUIRED runtime directory and must never be swept. Only
+    tests/ is a true never-deployed shadow (the wrapper never copies tests/ to
+    the runtime root)."""
     checkout = REPO_ROOT / "hilmar-daily-routine"
     if not (checkout / "tests").is_dir() or not (checkout / "src" / "hilmar").is_dir():
         return []  # dev/CI — REPO_ROOT's own tests/+src/ are the real ones
-    return [REPO_ROOT / sub for sub in ("tests", "src") if (REPO_ROOT / sub).is_dir()]
+    return [REPO_ROOT / sub for sub in ("tests",) if (REPO_ROOT / sub).is_dir()]
 
 
 def load_step_history():
@@ -1075,6 +1083,63 @@ def consecutive_failed_steps(history, n=3):
     sets = [set(h.get("failed") or []) for h in history[-n:]]
     common = set.intersection(*sets) if sets else set()
     return sorted(common)
+
+
+# Client-visible display fields scanned by QC-064. These all land in the email
+# / PDF / dashboard as plain text, so garbage here is "absolutely wrong info"
+# in front of the client — the failure class the operator flagged.
+QC064_DISPLAY_FIELDS = (
+    "carrier_quoted", "carrier_won", "origin", "destination",
+    "lane", "pol", "pod", "vessel_voyage", "transshipment",
+)
+
+# Exchange message-id shard: a long run of uppercase/digits with an embedded
+# "MB" segment (e.g. the MBD_OceanExport... mailbox's internetMessageId
+# fragments). Conservative — needs the "MB" anchor + length, so it won't match
+# a normal carrier/port name. Anchored on word boundaries elsewhere.
+_QC064_MSGID_SHARD_RX = re.compile(r"[A-Z0-9]{4,}MB[0-9A-Z]{2,}")
+# A phone fragment: NNN-NNN or NNN-NNNN (also . or whitespace separator).
+# \b-bounded so it can't fire on an arbitrary substring of a longer token.
+_QC064_PHONE_RX = re.compile(r"\b\d{3}[-.\s]\d{3,4}\b")
+
+
+def qc064_garbage_reason(value):
+    """Return a short reason string if `value` looks like garbage that leaked
+    into a client-visible display field, else None.
+
+    Patterns are deliberately conservative so a legitimate value (a normal
+    city, port code, or carrier name) is NEVER flagged:
+      - raw message-id: has the angle-bracket + '@' envelope OR an Exchange
+        msg-id shard ([A-Z0-9]{4,}MB[0-9A-Z]{2,}) — neither shape occurs in a
+        real lane/carrier value.
+      - mailbox / email: contains '@' (no real display value has one) OR the
+        OL responder-mailbox prose ("ocean export booking" / "mailbox" /
+        "shared mailbox") that has leaked from a From/footer line.
+      - phone fragment: a \\b-bounded NNN-NNN(N) run — a dialing fragment, never
+        part of a port or carrier name.
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    low = v.lower()
+    # raw message-id (angle-bracket envelope, e.g. "<AB12@host>")
+    if "<" in v and "@" in v and ">" in v:
+        return "raw message-id (<...@...>)"
+    # Exchange message-id shard
+    if _QC064_MSGID_SHARD_RX.search(v):
+        return "Exchange message-id shard"
+    # mailbox / email address or mailbox prose
+    if "@" in v:
+        return "email/mailbox address"
+    if ("ocean export booking" in low or "shared mailbox" in low
+            or "mailbox" in low):
+        return "mailbox name leaked into display field"
+    # phone fragment
+    if _QC064_PHONE_RX.search(v):
+        return "phone-number fragment"
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -3210,17 +3275,25 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-060: check failed with exception: {_e}")
 
-    # QC-062: LAYOUT HYGIENE — no stale duplicate tests/ + src/ shadow the real
-    # git checkout. On the Cloud PC a pre-checkout-era flat copy of tests/+src/
-    # sat directly under PROJECT HILMAR/ shadowing hilmar-daily-routine/,
-    # causing pytest 'import file mismatch' collection errors. The xcopy never
-    # cleans them. SELF-HEAL: delete them (known-safe — the checkout subdir is
-    # the only valid copy). Returns [] in dev/CI (REPO_ROOT IS the checkout), so
-    # it never deletes the real trees.
+    # QC-062: LAYOUT HYGIENE — no stale duplicate tests/ shadow the real git
+    # checkout. On the Cloud PC a pre-checkout-era flat copy of tests/ sat
+    # directly under PROJECT HILMAR/ shadowing hilmar-daily-routine/, causing
+    # pytest 'import file mismatch' collection errors. The xcopy never cleans
+    # them. SELF-HEAL: delete them (known-safe — the checkout subdir is the only
+    # valid copy). Returns [] in dev/CI (REPO_ROOT IS the checkout), so it never
+    # deletes the real trees.
+    #
+    # REPO_ROOT/src is DELIBERATELY EXCLUDED here: the wrapper now mirrors
+    # src\hilmar to the runtime root ON PURPOSE (deploy/run_daily_laptop.cmd
+    # `xcopy src\hilmar`) so this very module can import hilmar.parser_accuracy
+    # for the QC-039 gate. It is a REQUIRED deploy target, not a stale shadow —
+    # sweeping it would break QC-039 and, because OneDrive locks __pycache__, the
+    # rmtree would also fail and fire a false QC-062 ERROR every fire. Only
+    # tests/ (never deployed to the root) is swept.
     try:
         _stale = find_stale_shadow_dirs()
         if not _stale:
-            log.ok("QC-062: layout clean — no stale tests/+src/ shadowing the checkout")
+            log.ok("QC-062: layout clean — no stale tests/ shadowing the checkout")
         else:
             _removed = []
             for _d in _stale:
@@ -3282,6 +3355,42 @@ def phase_6_rules(log: Log, data: dict):
                        f"({len(_hist)} fires recorded)")
     except Exception as _e:
         log.warn(f"QC-063: check failed with exception: {_e}")
+
+    # QC-064: GARBAGE IN CLIENT-VISIBLE DISPLAY FIELDS. Defense-in-depth for
+    # the "absolutely wrong info" class the operator flagged — a phone
+    # fragment, a raw message-id, or the OL responder-mailbox name leaking
+    # into a display field (carrier/origin/destination/lane/pol/pod/vessel/
+    # transshipment) that ships straight into the client email + PDF. The
+    # parser is the real fix, but a single bad token in front of the client is
+    # high-blast-radius, so this is a last-line scrub. SELF-HEAL: null the
+    # offending field (a blank cell is strictly better than wrong info) and log
+    # the field + request id + scrubbed value. WARN-class, NOT an ERROR gate —
+    # a false positive must never block the client email, and the self-heal
+    # already removed the bad value.
+    try:
+        _g64_found = 0
+        _g64_remaining = 0
+        for r in requests:
+            for _f in QC064_DISPLAY_FIELDS:
+                _reason = qc064_garbage_reason(r.get(_f))
+                if not _reason:
+                    continue
+                _g64_found += 1
+                _bad = r.get(_f)
+                r[_f] = None
+                log.fix(f"QC-064: nulled {_f}={_bad!r} on {r.get('request_id', '?')} "
+                        f"— {_reason} (garbage in client-visible field)")
+                # Confirm the heal stuck (None can't be garbage); if a field
+                # somehow still reads garbage it's unhealable from here.
+                if qc064_garbage_reason(r.get(_f)):
+                    _g64_remaining += 1
+        if _g64_found == 0:
+            log.ok("QC-064: no garbage tokens in display fields")
+        elif _g64_remaining:
+            log.warn(f"QC-064: {_g64_remaining} garbage display value(s) could not be "
+                     f"scrubbed — manual review; fix the upstream parser")
+    except Exception as _e:
+        log.warn(f"QC-064: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

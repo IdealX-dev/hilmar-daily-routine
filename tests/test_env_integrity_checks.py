@@ -129,13 +129,16 @@ def test_no_shadow_dirs_in_dev_layout(monkeypatch, tmp_path):
 
 
 def test_shadow_dirs_found_in_cloudpc_layout(monkeypatch, tmp_path):
+    # Only tests/ is a true stale shadow now — REPO_ROOT/src is an INTENTIONAL
+    # QC-039 deploy target (the wrapper xcopies src\hilmar to the runtime root
+    # so qc_selfheal can import hilmar.parser_accuracy), so it must NOT be swept.
     repo = tmp_path / "hilmar-daily-routine"
     (repo / "tests").mkdir(parents=True)
     (repo / "src" / "hilmar").mkdir(parents=True)
     (tmp_path / "tests").mkdir()
     (tmp_path / "src").mkdir()
     monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
-    assert {d.name for d in q.find_stale_shadow_dirs()} == {"tests", "src"}
+    assert {d.name for d in q.find_stale_shadow_dirs()} == {"tests"}
 
 
 def test_qc062_self_heals_stale_shadow_dirs(monkeypatch, tmp_path):
@@ -148,7 +151,23 @@ def test_qc062_self_heals_stale_shadow_dirs(monkeypatch, tmp_path):
     log = _run(monkeypatch)
     assert any("QC-062" in m for m in log.fixes), log.fixes
     assert not (tmp_path / "tests").exists()
-    assert not (tmp_path / "src").exists()
+    # The deployed src/ is a required runtime dir — QC-062 must leave it intact.
+    assert (tmp_path / "src").exists()
+
+
+def test_qc062_preserves_deployed_src(monkeypatch, tmp_path):
+    """Cloud-PC layout with REPO_ROOT/src/hilmar present (the wrapper-deployed
+    QC-039 target): find_stale_shadow_dirs returns ONLY the stale tests/ shadow
+    — never src, which the wrapper deploys on purpose."""
+    repo = tmp_path / "hilmar-daily-routine"
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "hilmar").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "hilmar").mkdir(parents=True)
+    monkeypatch.setattr(q, "REPO_ROOT", tmp_path)
+    stale = q.find_stale_shadow_dirs()
+    assert {d.name for d in stale} == {"tests"}
+    assert all(d.name != "src" for d in stale)
 
 
 # ── QC-054: dependency self-heal (no-pip path) ───────────────────────────

@@ -4,10 +4,11 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-06-25. Total active checks: **64**
-(QC-001 through QC-063, including the QC-014a/b and QC-020a/b sub-variants;
+Generated 2026-05-13, updated 2026-06-27. Total active checks: **65**
+(QC-001 through QC-064, including the QC-014a/b and QC-020a/b sub-variants;
 QC-038 retired). Last commit: see `git log scripts/qc_selfheal.py`.
-The newest checks are QC-055..QC-063 (added 2026-06-25); see the matrix below.
+The newest checks are QC-055..QC-063 (added 2026-06-25) and QC-064
+(garbage display-field guard, 2026-06-27); see the matrix below.
 
 **Three drift-prevention + accuracy checks added 2026-05-17 evening** (historical
 note — at the time these were the newest; the current ceiling is QC-063):
@@ -101,6 +102,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-061 | **ERROR** | **Interpreter parity** — the running Python's major.minor matches the pinned `.python-version` (the single value CI, the box, and the toolchain consume). Catches the 2026-06 silent drift to Python 3.14 (untested; CI is 3.12) at fire time, since QC runs inside the wrapper's chosen interpreter. | **No auto-heal** (can't reinstall Python from here) — `flag_for_operator`: install the pinned version + repoint the wrapper (`deploy/setup_cloudpc.ps1`). | 2026-06-25 |
 | QC-062 | **ERROR** (self-heal) | **Layout hygiene** — no stale duplicate `tests/`+`src/` shadow the real `hilmar-daily-routine/` checkout. A pre-checkout-era flat copy under `PROJECT HILMAR/` caused pytest "import file mismatch" collection errors on the 2026-06-25 fire; the xcopy never cleans them. | **Self-heal** — delete the stale shadow dirs (known-safe: the checkout subdir is authoritative). Returns nothing in dev/CI (REPO_ROOT IS the checkout) so it never deletes the real trees. | 2026-06-25 |
 | QC-063 | WARN | **Consecutive-failure ratchet** — a best-effort/observer step dead for DAYS, not a blip. The 8 best-effort steps + the test routine exit 0 by design, so per-fire a dead step is invisible and a step failing every fire for a week looks identical to a single blip. `run_pipeline` records each fire's failed steps to `reports/step-history.json`; this escalates any step that failed the last 3 CONSECUTIVE fires to a loud WARN **and pages out-of-band** via `fire_alert` (Teams/GitHub-issue/queue, level=warning) so a week-dead step can't rot in the Outlook-routed audit email alone. | **No auto-heal** (the step's own dep/env/config is the fix) — `flag_for_operator` with the dead step(s) named + out-of-band warn page. SKIPS until ≥3 fires of history exist. | 2026-06-25 |
+| QC-064 | WARN | **Garbage in client-visible display fields** — defense-in-depth for the "absolutely wrong info" class: a phone fragment, a raw message-id (`<...@...>` or an Exchange msg-id shard), or the OL responder-mailbox name leaking into `carrier_quoted`/`carrier_won`/`origin`/`destination`/`lane`/`pol`/`pod`/`vessel_voyage`/`transshipment` — fields that ship straight into the client email + PDF. Patterns are conservative (word-boundaried) so a legitimate city/port/carrier is never flagged. | **Self-heal** — null the offending field (a blank cell beats wrong info) and log the field + request id + scrubbed value. WARN-class, NOT an ERROR gate — a false positive must never block the client email, and the heal already removed the bad value. The REAL fix is the upstream parser leak. | 2026-06-27 |
 
 ## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
 
