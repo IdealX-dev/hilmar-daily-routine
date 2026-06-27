@@ -593,6 +593,24 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     # the reason strings from ingest.py are stored as "rate=3450.0" —
     # reformat at render time to "$3,450". Same regex used for any "rate=N"
     # substring across all status-change reasons.
+    def _sc_pill(status, r, other_status=None):
+        """Status-change pill with pending CLARITY: a plain amber 'PENDING'
+        doesn't say who to chase. Resolve the substate — amber 'OL QUOTE' vs
+        violet 'LONNY' — from the row's current state, or (for a historical
+        'from PENDING') infer it from the transition target: a move INTO QUOTED
+        means OL just quoted (was PENDING_OL); a move into a decision/outcome
+        means Lonny decided (was PENDING_HILMAR)."""
+        if (status or "").upper() != "PENDING":
+            return V.status_pill(status)
+        cur = (r.get("status") or "").upper()
+        if cur == "PENDING":
+            sub = core.pending_substate(r)
+        elif (other_status or "").upper() == "QUOTED":
+            sub = "PENDING_OL"
+        else:
+            sub = "PENDING_HILMAR"
+        return V.pending_pill(sub)
+
     import re as _re_sc
     def _fmt_rate_in_reason(reason):
         def _sub(m):
@@ -622,7 +640,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
                 f'<td {_TD_STYLE};font-size:11px>{_esc(str(cont_label))} / {teu} TEU</td>'
                 f'<td {_TD_STYLE}>{_esc(req_date)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>'
-                f'{V.status_pill(h["from"])} → {V.status_pill(h["to"])}</td>'
+                f'{_sc_pill(h["from"], r, h["to"])} → {_sc_pill(h["to"], r, h["from"])}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
                 f'<td {_TD_STYLE};font-size:11px;white-space:normal;word-break:break-word>{_esc(reason)}</td></tr>'
@@ -836,6 +854,13 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     teu_pending = summary.get("teu_pending", 0)
     biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
 
+    # Pending is two materially different waits — surface WHO to chase as a
+    # clear marker instead of one lumped "Pending". PENDING_OL = chase OL for a
+    # quote; PENDING_HILMAR = OL quoted, chase Lonny to decide.
+    _pend_all = [r for r in (requests or []) if (r.get("status") or "").upper() == "PENDING"]
+    pend_ol = sum(1 for r in _pend_all if core.pending_substate(r) == "PENDING_OL")
+    pend_hil = sum(1 for r in _pend_all if core.pending_substate(r) == "PENDING_HILMAR")
+
     # 2026-05-19 PM 6th pass (Michael "i don't think your win rate is accurate
     # how is it including w +q&l + nq.. q&l and nq are losses"):
     #
@@ -869,6 +894,14 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     day_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%a %b %-d")
     day = _today_summary(requests or [], report_date=report_date)
 
+    # Today's pending split (same date filter as _today_summary) for the day tile.
+    _rd_iso = report_date.isoformat()
+    _day_pend = [r for r in (requests or [])
+                 if ((r.get("request_date") == _rd_iso) or (r.get("date") == _rd_iso))
+                 and (r.get("status") or "").upper() == "PENDING"]
+    day_pend_ol = sum(1 for r in _day_pend if core.pending_substate(r) == "PENDING_OL")
+    day_pend_hil = sum(1 for r in _day_pend if core.pending_substate(r) == "PENDING_HILMAR")
+
     # 7-day trend per metric for sparklines under the day-row cards
     from datetime import timedelta as _td
     trend_days = []
@@ -891,7 +924,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU won")}
     {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%", sublabel="OL quoted; not booked")}
     {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%", sublabel="OL did not respond")}
-    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel="OL quote + Lonny decision")}
+    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel=f"{day_pend_ol} OL quote · {day_pend_hil} Lonny")}
   </tr>
   <tr>
     <td style="padding:0 4px;text-align:center">{spark_total}</td>
@@ -911,7 +944,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU · OL silent")}
   </tr>
   <tr>
-    {_kpi_card(pending, "Pending", "#8b5cf6", sublabel=f"{teu_pending} TEU · any party")}
+    {_kpi_card(pending, "Pending", "#8b5cf6", sublabel=f"{pend_ol} OL quote · {pend_hil} Lonny · {teu_pending} TEU")}
     {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
     {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", "#f59e0b", sublabel=f"{nq} NQ ÷ {decided_all} total")}
     {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1", sublabel="Lonny → OL quote")}

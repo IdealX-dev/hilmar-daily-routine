@@ -139,6 +139,13 @@ if exist "%ROOT%\hilmar-daily-routine\.git" (
   REM them; without this a pull updates the checkout but the fire still runs
   REM the stale asserter (2026-06-25: the manual-copy footgun).
   if exist "%ROOT%\deploy" xcopy /Y /Q "%ROOT%\hilmar-daily-routine\deploy\*.py" "%ROOT%\deploy\" >> "%LOG%" 2>&1
+  REM Also sync src\hilmar\*.py. Production runs scripts/, but scripts/qc_selfheal.py
+  REM imports hilmar.parser_accuracy for the QC-039 parser-accuracy gate (and
+  REM hilmar.core/body_parser for QC-040/041). Without this the box has no
+  REM src\hilmar\ on the path -> "No module named 'hilmar'" -> the gate cannot
+  REM evaluate. /I tells xcopy the destination is a directory so it creates it
+  REM on a fresh box instead of prompting.
+  if exist "%ROOT%\hilmar-daily-routine\src\hilmar" xcopy /Y /Q /I "%ROOT%\hilmar-daily-routine\src\hilmar\*.py" "%ROOT%\src\hilmar\" >> "%LOG%" 2>&1
   if exist "%ROOT%\hilmar-daily-routine\config.json" (
     xcopy /Y /Q "%ROOT%\hilmar-daily-routine\config.json" "%ROOT%\" >> "%LOG%" 2>&1
   )

@@ -37,16 +37,32 @@ def test_gate_code_matches_across_modules():
     )
 
 
-def test_post_patch_qc039_error_blocks_the_ship():
+def test_post_patch_qc039_measured_miss_blocks_the_ship():
     rc = Q._gate_exit_code(["QC-039: parser accuracy 80.0% with 2 CRITICAL field(s) below 95%"],
                            pre_patch=False)
-    assert rc == Q.QC039_GATE_BLOCK_RC, "post-patch QC-039 error must return the hard-block code"
+    assert rc == Q.QC039_GATE_BLOCK_RC, "a MEASURED sub-95% miss must hard-block the ship"
 
 
-def test_post_patch_qc039_eval_failure_also_blocks_fail_closed():
-    rc = Q._gate_exit_code(["QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): boom"],
+def test_post_patch_qc039_eval_failure_does_NOT_block():
+    """A gate that could not EVALUATE (missing dep / src not deployed) screams +
+    HAS_ERRORS for visibility but must NOT block — a deploy gap is not sub-95%
+    data, and blocking the client email over it is a self-inflicted outage. This
+    is the "No module named 'hilmar'" case seen on the box."""
+    rc = Q._gate_exit_code(["QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): No module named 'hilmar'"],
                            pre_patch=False)
-    assert rc == Q.QC039_GATE_BLOCK_RC, "a fail-closed QC-039 eval error must also block"
+    assert rc == 0, "an un-evaluable gate must scream-but-ship, not block"
+
+
+def test_block_vs_uneval_partition():
+    errs = [
+        "QC-039: parser accuracy 80.0% with 2 CRITICAL field(s) below 95%",
+        "QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): boom",
+    ]
+    assert len(Q._qc039_block_errors(errs)) == 1
+    assert len(Q._qc039_uneval_errors(errs)) == 1
+    # A run with ONLY an eval-failure must not block; add a real miss and it does.
+    assert Q._gate_exit_code(errs[1:], pre_patch=False) == 0
+    assert Q._gate_exit_code(errs, pre_patch=False) == Q.QC039_GATE_BLOCK_RC
 
 
 def test_pre_patch_never_blocks():

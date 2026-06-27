@@ -166,6 +166,12 @@ _PILL_PALETTE = {
     "WIN":     ("#dcfce7", "#166534", "#16a34a"),  # bg, text, border
     "LOSS":    ("#fee2e2", "#991b1b", "#dc2626"),
     "PENDING": ("#fef3c7", "#92400e", "#f59e0b"),
+    # Pending is two materially different waits — give each a DISTINCT marker so
+    # the reader sees at a glance who to chase, not just one amber "PENDING".
+    # Amber = waiting on OL to quote (chase OL); violet = OL quoted, waiting on
+    # Lonny to decide (chase Lonny). Colors match the detail-section headers.
+    "PENDING_OL":     ("#fef3c7", "#92400e", "#f59e0b"),  # amber — chase OL
+    "PENDING_HILMAR": ("#ede9fe", "#5b21b6", "#7c3aed"),  # violet — chase Lonny
     "QUOTED":  ("#dbeafe", "#1e40af", "#3b82f6"),
     "OK":      ("#dcfce7", "#166534", "#16a34a"),
     "WARN":    ("#fef3c7", "#92400e", "#f59e0b"),
@@ -173,17 +179,37 @@ _PILL_PALETTE = {
     "CLEAN":   ("#dcfce7", "#166534", "#16a34a"),
 }
 
+# Friendly labels so a pill reads as the ACTION, not the enum. Pending splits
+# into who-you-chase; everything else shows its own name.
+_PILL_LABELS = {
+    "PENDING_OL":     "PENDING · OL QUOTE",
+    "PENDING_HILMAR": "PENDING · LONNY",
+}
 
-def status_pill(status: str, icon: str = "") -> str:
-    """Colored pill badge for status. Falls back to neutral grey if unknown."""
+
+def status_pill(status: str, icon: str = "", label: str | None = None) -> str:
+    """Colored pill badge for status. Falls back to neutral grey if unknown.
+    `label` overrides the displayed text (defaults to a friendly label for the
+    pending substates, else the status name)."""
     s = (status or "").upper()
     bg, txt, border = _PILL_PALETTE.get(s, ("#f1f5f9", "#475569", "#cbd5e1"))
+    text = label if label is not None else _PILL_LABELS.get(s, s)
     icon_part = f"{icon} " if icon else ""
     return (
         f'<span style="display:inline-block;background:{bg};color:{txt};'
         f'border:1px solid {border};border-radius:10px;padding:2px 8px;'
-        f'font-size:10px;font-weight:600;letter-spacing:0.3px">{icon_part}{_esc(s)}</span>'
+        f'font-size:10px;font-weight:600;letter-spacing:0.3px">{icon_part}{_esc(text)}</span>'
     )
+
+
+def pending_pill(substate: str | None, icon: str = "") -> str:
+    """Substate-aware PENDING marker: amber 'PENDING · OL QUOTE' (chase OL) vs
+    violet 'PENDING · LONNY' (chase Lonny). Falls back to a plain amber
+    'PENDING' when the substate is unknown."""
+    s = (substate or "").upper()
+    if s in ("PENDING_OL", "PENDING_HILMAR"):
+        return status_pill(s, icon=icon)
+    return status_pill("PENDING", icon=icon)
 
 
 # ─────────────────────────────────────────────────────────────────────

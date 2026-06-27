@@ -3503,17 +3503,41 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
 QC039_GATE_BLOCK_RC = 39
 
 
+# Marker the QC-039 check uses when it could not EVALUATE (import error,
+# malformed data) as opposed to having MEASURED sub-95% accuracy. Must match the
+# string qc_selfheal logs in the QC-039 except branch.
+_QC039_UNEVAL_MARK = "FAILED TO EVALUATE"
+
+
+def _qc039_block_errors(error_messages) -> list:
+    """The QC-039 errors that represent a REAL measured accuracy miss (sub-95%
+    overall or a critical field below threshold) — i.e. the ones that justify
+    hard-blocking the client ship. EXCLUDES "FAILED TO EVALUATE" errors, which
+    mean the gate could not run (a deploy/infra gap), not that the data is bad."""
+    return [e for e in (error_messages or [])
+            if "QC-039" in (e or "") and _QC039_UNEVAL_MARK not in (e or "")]
+
+
+def _qc039_uneval_errors(error_messages) -> list:
+    """QC-039 errors where the gate could NOT evaluate (missing dep, import
+    error). These scream + set HAS_ERRORS for visibility but must NOT block the
+    client email — a missing measurement module is a deploy problem, not
+    sub-95% data, and blocking the fire over it is a self-inflicted outage."""
+    return [e for e in (error_messages or [])
+            if "QC-039" in (e or "") and _QC039_UNEVAL_MARK in (e or "")]
+
+
 def _gate_exit_code(error_messages, *, pre_patch: bool) -> int:
-    """Option A / CLAUDE.md rule #2: the exit code main() returns for the QC-039
-    parser-accuracy gate. A QC-039 ERROR in the POST-PATCH run is a hard
-    client-ship block (returns QC039_GATE_BLOCK_RC); the PRE-PATCH run is
-    advisory and never blocks (returns 0); a non-QC-039 error never triggers
-    this gate. Pure + injectable so the gate decision is unit-tested without a
-    full pipeline run."""
+    """CLAUDE.md rule #2: the exit code main() returns for the QC-039
+    parser-accuracy gate. A POST-PATCH QC-039 error that represents a MEASURED
+    sub-95% accuracy is a hard client-ship block (returns QC039_GATE_BLOCK_RC).
+    The PRE-PATCH run is advisory and never blocks. A QC-039 "FAILED TO
+    EVALUATE" error (the gate couldn't run) does NOT block — it screams instead
+    (see main()), because a deploy/import gap is not evidence the data is bad
+    and must never take down the client fire. Pure + injectable for unit tests."""
     if pre_patch:
         return 0
-    has_qc039_error = any("QC-039" in (e or "") for e in (error_messages or []))
-    return QC039_GATE_BLOCK_RC if has_qc039_error else 0
+    return QC039_GATE_BLOCK_RC if _qc039_block_errors(error_messages) else 0
 
 
 def main() -> int:
@@ -3566,27 +3590,52 @@ def main() -> int:
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
 
-    # Option A hard gate (CLAUDE.md rule #2): in the POST-PATCH run a QC-039
-    # parser-accuracy ERROR BLOCKS the client ship. Scream out-of-band right
-    # here (Teams/issue/queue/stderr — never Outlook) so the block is loud no
-    # matter how the wrapper exits, then return the distinct gate code so
-    # run_pipeline aborts before any email is built or sent. Pre-patch never
-    # blocks — it measures pre-enrichment state and is intentionally advisory.
-    gate_errs = [e for e in log.errors if "QC-039" in e]
-    if _gate_exit_code(log.errors, pre_patch=_qc_phase_is_pre_patch()):
+    # CLAUDE.md rule #2 hard gate (POST-PATCH only; pre-patch is advisory).
+    # Two distinct QC-039 failure modes, deliberately handled differently:
+    #
+    #  (1) MEASURED sub-95% accuracy → BLOCK the client ship. Scream out-of-band
+    #      (Teams/issue/queue/stderr — never Outlook) and return the distinct
+    #      gate code so run_pipeline aborts before any email is built.
+    #
+    #  (2) The gate COULD NOT EVALUATE (missing dep / src not deployed / import
+    #      error) → scream just as loudly, but DO NOT block. A missing
+    #      measurement module is a deploy gap, not sub-95% data; the data
+    #      pipeline itself succeeded, so blocking the client email over it is a
+    #      self-inflicted outage. The operator is paged to fix the deploy; the
+    #      email still ships. (This is what surfaced when the box ran without
+    #      src/hilmar/ on the path — "No module named 'hilmar'".)
+    def _scream(title, body, labels):
         try:
             import fire_alert
-            fire_alert.send_alert(
-                "Daily fire BLOCKED — parser accuracy below the 95% gate (QC-039)",
-                "Post-patch QC-039 failed, so the daily client email is BLOCKED "
-                "(CLAUDE.md rule #2: do not ship sub-95% data). Fix the parser "
-                "and re-fire.\n  - " + "\n  - ".join(gate_errs),
-                level="error", labels=("fire-alert", "qc-039-gate"))
+            fire_alert.send_alert(title, body, level="error", labels=labels)
         except Exception as _e:
             print(f"  (fire_alert escalation failed: {_e})", file=sys.stderr)
+
+    if _gate_exit_code(log.errors, pre_patch=_qc_phase_is_pre_patch()):
+        miss = _qc039_block_errors(log.errors)
+        _scream(
+            "Daily fire BLOCKED — parser accuracy below the 95% gate (QC-039)",
+            "Post-patch QC-039 MEASURED sub-95% accuracy, so the daily client "
+            "email is BLOCKED (CLAUDE.md rule #2: do not ship sub-95% data). Fix "
+            "the parser and re-fire.\n  - " + "\n  - ".join(miss),
+            ("fire-alert", "qc-039-gate"))
         print("\n❌ QC-039 PARSER-ACCURACY GATE FAILED (post-patch) — blocking "
               f"the client ship (exit {QC039_GATE_BLOCK_RC}).", file=sys.stderr)
         return QC039_GATE_BLOCK_RC
+
+    # Gate could not evaluate in the real (post-patch) run — scream, don't block.
+    if not _qc_phase_is_pre_patch():
+        uneval = _qc039_uneval_errors(log.errors)
+        if uneval:
+            _scream(
+                "Parser-accuracy gate COULD NOT EVALUATE (QC-039) — fix the deploy",
+                "QC-039 could not run this fire (e.g. src/hilmar not deployed or a "
+                "missing dependency), so parser accuracy was NOT verified. The email "
+                "still SHIPPED — the data pipeline succeeded — but the gate is blind "
+                "until the deploy is fixed.\n  - " + "\n  - ".join(uneval),
+                ("fire-alert", "qc-039-uneval"))
+            print("\n⚠️  QC-039 could NOT evaluate (deploy/dep gap) — screamed; NOT "
+                  "blocking the ship.", file=sys.stderr)
     return 0
 
 
