@@ -56,14 +56,14 @@ def test_misleading_pending_labels_removed():
 def test_pending_tiles_show_the_substate_split():
     """A Pending tile still exists, and now shows WHO to chase rather than a
     party-neutral lump (Michael 2026-06-27: 'needs better clarity markers').
-    Both tiles surface the PENDING_OL ('OL quote') vs PENDING_HILMAR ('Lonny')
-    split in their sublabels."""
+    Both tiles surface the Pending OL vs Pending Hilmar split in their
+    sublabels — the party word is HILMAR, not 'Lonny'."""
     block = _kpi_block_source()
     assert '"Pending"' in block
     # The earlier party-neutral wording is replaced by the explicit split.
     assert "any party" not in block
     assert "OL quote + Lonny decision" not in block
-    assert "OL quote" in block and "Lonny" in block
+    assert "Pending OL" in block and "Pending Hilmar" in block
 
 
 def test_pending_value_source_unchanged():

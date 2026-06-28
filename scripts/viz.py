@@ -171,7 +171,7 @@ _PILL_PALETTE = {
     # Amber = waiting on OL to quote (chase OL); violet = OL quoted, waiting on
     # Lonny to decide (chase Lonny). Colors match the detail-section headers.
     "PENDING_OL":     ("#fef3c7", "#92400e", "#f59e0b"),  # amber — chase OL
-    "PENDING_HILMAR": ("#ede9fe", "#5b21b6", "#7c3aed"),  # violet — chase Lonny
+    "PENDING_HILMAR": ("#ede9fe", "#5b21b6", "#7c3aed"),  # violet — chase Hilmar
     "QUOTED":  ("#dbeafe", "#1e40af", "#3b82f6"),
     "OK":      ("#dcfce7", "#166534", "#16a34a"),
     "WARN":    ("#fef3c7", "#92400e", "#f59e0b"),
@@ -182,8 +182,8 @@ _PILL_PALETTE = {
 # Friendly labels so a pill reads as the ACTION, not the enum. Pending splits
 # into who-you-chase; everything else shows its own name.
 _PILL_LABELS = {
-    "PENDING_OL":     "PENDING · OL QUOTE",
-    "PENDING_HILMAR": "PENDING · LONNY",
+    "PENDING_OL":     "PENDING OL",
+    "PENDING_HILMAR": "PENDING HILMAR",
 }
 
 
@@ -203,13 +203,27 @@ def status_pill(status: str, icon: str = "", label: str | None = None) -> str:
 
 
 def pending_pill(substate: str | None, icon: str = "") -> str:
-    """Substate-aware PENDING marker: amber 'PENDING · OL QUOTE' (chase OL) vs
-    violet 'PENDING · LONNY' (chase Lonny). Falls back to a plain amber
-    'PENDING' when the substate is unknown."""
+    """Substate-aware PENDING marker: amber 'PENDING OL' (chase OL for a quote)
+    vs violet 'PENDING HILMAR' (OL quoted, chase Hilmar to decide). Falls back
+    to a plain amber 'PENDING' when the substate is unknown."""
     s = (substate or "").upper()
     if s in ("PENDING_OL", "PENDING_HILMAR"):
         return status_pill(s, icon=icon)
     return status_pill("PENDING", icon=icon)
+
+
+def pending_label(substate: str | None) -> str:
+    """Plain-text 'who to chase' label for a PENDING substate — the single
+    source of truth shared by the PDF + dashboard tables so every surface reads
+    the same wording as the email pills: 'Pending OL' (RFQ sent, waiting on OL
+    to quote) vs 'Pending Hilmar' (OL quoted, waiting on Hilmar to decide).
+    Falls back to plain 'Pending' when the substate is unknown."""
+    s = (substate or "").upper()
+    if s == "PENDING_OL":
+        return "Pending OL"
+    if s == "PENDING_HILMAR":
+        return "Pending Hilmar"
+    return "Pending"
 
 
 # ─────────────────────────────────────────────────────────────────────

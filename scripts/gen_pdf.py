@@ -48,6 +48,7 @@ from reportlab.platypus import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import branding as B  # noqa: E402  Hilmar logo
+import viz as V  # noqa: E402  shared pending-substate label ("Pending OL"/"Pending Hilmar")
 import viz_pdf as VP  # noqa: E402  shared reportlab visual helpers
 
 # Register Inter — falls back to Helvetica if assets missing
@@ -208,7 +209,7 @@ def build_cover(story, styles, data, cfg):
             f"{ta_str}."
         )
         if pend > 0:
-            narrative.append(f"<b>{pend}</b> request(s) currently pending Hilmar decision — see page 6 for watchlist.")
+            narrative.append(f"<b>{pend}</b> request(s) currently pending (waiting on OL to quote, or on Hilmar to decide) — see page 6 watchlist for who to chase per row.")
         if nq > 0:
             narrative.append(f"<b>{nq}</b> request(s) went unanswered. Investigate root cause (capacity, lane gap, or missed inbox).")
 
@@ -491,22 +492,36 @@ def build_pending_trends_qc(story, styles, data):
     story.append(Paragraph("Pending Watchlist  •  Rate Trends  •  Data Quality", styles["H1"]))
     story.append(Spacer(1, 8))
 
-    # Pending
+    # Pending — split into the two materially different waits so the watchlist
+    # says WHO to chase per row, not one lumped "Pending Hilmar decision":
+    #   Pending OL     = RFQ sent, OL hasn't quoted yet (chase the OL desk)
+    #   Pending Hilmar = OL quoted, Lonny hasn't decided yet (chase Hilmar)
+    # (Michael 2026-06-27: "one should be 'pending OL' and one is 'pending
+    # Hilmar' for how you show pending".) "Waiting On" leads the table and the
+    # rows group OL-first so the two buckets read cleanly.
     pending = [r for r in reqs if r.get("status") == "PENDING"]
-    story.append(Paragraph(f"Pending Hilmar decision ({len(pending)})", styles["H2"]))
+    n_ol = sum(1 for r in pending if core.pending_substate(r) == "PENDING_OL")
+    n_hil = sum(1 for r in pending if core.pending_substate(r) == "PENDING_HILMAR")
+    story.append(Paragraph(
+        f"Pending Watchlist ({len(pending)})  —  {n_ol} Pending OL  ·  {n_hil} Pending Hilmar",
+        styles["H2"]))
     if pending:
-        rows = [["Request", "Lane", "TEU", "Carrier quoted", "Rate", "Aging (biz-hrs)"]]
-        for r in pending[:15]:
+        pend_sorted = sorted(
+            pending,
+            key=lambda r: (core.pending_substate(r) != "PENDING_OL",
+                           r.get("request_date") or ""))
+        rows = [["Waiting On", "Lane", "TEU", "Carrier quoted", "Rate", "Aging (biz-hrs)"]]
+        for r in pend_sorted[:15]:
             ta = r.get("turnaround_biz_hours")
             rows.append([
-                r.get("request_id", "")[:10],
+                V.pending_label(core.pending_substate(r)),
                 r.get("lane", "—"),
                 _fmt_int(r.get("teu_requested", 0)),
                 r.get("carrier_quoted", "—") or "—",
                 r.get("ol_rate", "—") or "—",
                 f"{ta:.1f}" if ta else "—",
             ])
-        t = Table(rows, colWidths=[0.9*inch, 1.6*inch, 0.5*inch, 1.3*inch, 1.1*inch, 1.1*inch])
+        t = Table(rows, colWidths=[1.1*inch, 1.5*inch, 0.5*inch, 1.3*inch, 1.0*inch, 1.1*inch])
         t.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
@@ -521,7 +536,6 @@ def build_pending_trends_qc(story, styles, data):
 
     # Rate trends
     try:
-        import core
         trends = core.rate_trends(reqs)
     except Exception:
         trends = []
