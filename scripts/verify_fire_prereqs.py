@@ -104,12 +104,20 @@ def check_delegated_cache() -> tuple[bool, str]:
     import msal
     import outlook_send as OS
 
-    if not OS.TOKEN_CACHE_PATH.exists():
+    # Accept whatever cache the AUTH LAYER would accept — the canonical
+    # non-indexed .bin OR a legacy .json when that's the only one present
+    # (a box mid-migration, or a blob seeded before the .bin cutover). The
+    # validator must not be STRICTER than outlook_send._load_cache(), or it
+    # false-fails the fire on a perfectly usable legacy cache (the 2026-06-27
+    # "No delegated token cache at token-cache.bin" dispatch failure: the blob
+    # still held token-cache.json, which auth would have used).
+    read_path = OS._token_cache_read_path()
+    if not read_path.exists():
         return False, (
-            f"No delegated token cache at {OS.TOKEN_CACHE_PATH.name}. Seed it once "
-            "from the Cloud PC: set AZURE_STORAGE_CONNECTION_STRING and run "
-            "`python scripts/state_store.py push` (uploads the existing cache "
-            "+ pipeline state to the blob store)."
+            f"No delegated token cache at {OS._CACHE_BIN.name} (or legacy "
+            f"{OS._CACHE_JSON_LEGACY.name}). Seed it once from the Cloud PC: set "
+            "AZURE_STORAGE_CONNECTION_STRING and run `python scripts/state_store.py "
+            "push` (uploads the existing cache + pipeline state to the blob store)."
         )
     cache = OS._load_cache()
     app = msal.PublicClientApplication(
