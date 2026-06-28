@@ -58,6 +58,36 @@ def test_client_id_must_be_guid():
     assert ok
 
 
+def test_delegated_cache_absent_names_both_filenames(monkeypatch, tmp_path):
+    """When NEITHER the canonical .bin nor the legacy .json is present, the
+    validator fails with the seed instruction and names both files."""
+    import outlook_send as OS
+    monkeypatch.setattr(OS, "_CACHE_BIN", tmp_path / "token-cache.bin")
+    monkeypatch.setattr(OS, "_CACHE_JSON_LEGACY", tmp_path / "token-cache.json")
+    ok, msg = vp.check_delegated_cache()
+    assert not ok
+    assert "No delegated token cache" in msg
+    assert "token-cache.bin" in msg and "token-cache.json" in msg
+
+
+def test_delegated_cache_accepts_legacy_json(monkeypatch, tmp_path):
+    """A legacy token-cache.json (the only cache present, e.g. a blob seeded
+    before the .bin cutover) must NOT false-fail the validator — the auth layer
+    reads it, so the validator must too. It should get PAST the file check and
+    fail later on the empty-account / refresh check instead (the 2026-06-27
+    dispatch regression: it died at the .bin existence check)."""
+    import msal
+    import outlook_send as OS
+    legacy = tmp_path / "token-cache.json"
+    legacy.write_text(msal.SerializableTokenCache().serialize())  # valid, empty
+    monkeypatch.setattr(OS, "_CACHE_BIN", tmp_path / "token-cache.bin")  # absent
+    monkeypatch.setattr(OS, "_CACHE_JSON_LEGACY", legacy)
+    ok, msg = vp.check_delegated_cache()
+    assert not ok                                   # empty cache → no account
+    assert "No delegated token cache" not in msg    # but it got PAST the file check
+    assert "no account" in msg.lower()
+
+
 def test_delegated_cache_check_runs_when_no_app_env(monkeypatch):
     # With no GRAPH_APP_* set, main() must consult the delegated cache,
     # not demand app-only secrets.
