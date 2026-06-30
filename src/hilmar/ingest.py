@@ -231,6 +231,7 @@ _OPERATIONAL_SUBJECT_HINTS = (
     "DISPUTE EBKG", "DISPUTE NAM",
     "PORT DISPUTE",
     "REEFER FREE TIME",        # Lonny status email, not a rate ask
+    "ORIGIN FREE TIME",        # free-time policy note (no destination), not a lane RFQ — 2026-06-30 QC-057
     "UPDATED 20' AND 40' RATE",  # general rate update, no specific lane
     "CMA UPDATES",             # Michael internal
     "NRA AMENDMENT", "CONFIRMATION OF NRA",

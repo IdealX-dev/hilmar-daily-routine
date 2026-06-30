@@ -79,6 +79,9 @@ def test_test_routine_timeout_does_not_block_the_fire(monkeypatch, capsys):
         # 124 = the GNU-timeout convention run_step returns on a killed step.
         return 124 if name == "Test + coverage routine" else 0
 
+    # Force the step to actually run (not the skip path) so we exercise the
+    # best-effort classification on a real timeout.
+    monkeypatch.delenv("HILMAR_SKIP_PIPELINE_TESTS", raising=False)
     monkeypatch.setattr(RP, "run_step", fake_run_step)
     monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
     monkeypatch.setattr(RP, "_sentry", None)
@@ -91,6 +94,44 @@ def test_test_routine_timeout_does_not_block_the_fire(monkeypatch, capsys):
     assert rc == 0, "a test-routine TIMEOUT must not abort the client fire"
     assert "PIPELINE COMPLETE" in out
     assert "Client-blocking failures" not in out
+
+
+def _steps_called(monkeypatch):
+    """Run main() under a no-op run_step and return the list of step names it
+    actually invoked (i.e. did NOT skip)."""
+    called = []
+
+    def fake_run_step(name, cmd, dry_run=False, extra_env=None):
+        called.append(name)
+        return 0
+
+    monkeypatch.setattr(RP, "run_step", fake_run_step)
+    monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
+    monkeypatch.setattr(RP, "_sentry", None)
+    with contextlib.suppress(SystemExit):
+        RP.main()
+    return called
+
+
+def test_test_routine_skipped_when_flag_set(monkeypatch, capsys):
+    """daily.yml sets HILMAR_SKIP_PIPELINE_TESTS=1 on the GitHub fire so the
+    redundant in-pipeline pytest+coverage run (test.yml CI is the real gate) is
+    SKIPPED rather than running the full suite, timing out at 600s, and spamming
+    Sentry every fire (the 2026-06-30 'TIMEOUT @ 600s' ×23 noise)."""
+    monkeypatch.setenv("HILMAR_SKIP_PIPELINE_TESTS", "1")
+    called = _steps_called(monkeypatch)
+    out = capsys.readouterr().out
+    assert "Test + coverage routine" not in called
+    assert "SKIP — Test + coverage routine" in out
+
+
+def test_test_routine_runs_when_flag_unset(monkeypatch):
+    """Without the flag (Cloud PC / dev) the step is still invoked — there
+    pytest may be absent so run_audit_tests skips internally, but run_pipeline
+    must not silently drop it."""
+    monkeypatch.delenv("HILMAR_SKIP_PIPELINE_TESTS", raising=False)
+    called = _steps_called(monkeypatch)
+    assert "Test + coverage routine" in called
 
 
 def test_client_blocking_steps_NOT_in_best_effort():
