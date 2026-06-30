@@ -57,11 +57,40 @@ def test_known_best_effort_steps_classified():
         "Share to client_intelligence",
         "Rate intelligence",
         "Sync to ol-quote-tracker",
+        # Code-health self-audit — a slow run / timeout must never block the
+        # client report (the 2026-06-30 GitHub production-fire abort).
+        "Test + coverage routine",
     }
     assert expected_best_effort.issubset(RP.BEST_EFFORT_STEPS), (
         f"Missing best-effort classification for: "
         f"{expected_best_effort - RP.BEST_EFFORT_STEPS}"
     )
+
+
+def test_test_routine_timeout_does_not_block_the_fire(monkeypatch, capsys):
+    """The exact 2026-06-30 GitHub-fire regression: the 'Test + coverage
+    routine' step TIMED OUT (rc=124, the process is KILLED) and was wrongly
+    treated as client-blocking, aborting the fire before the email/PDF were
+    built. It is a self-audit, not a deliverable, so a timeout there must exit 0
+    (the client report still ships)."""
+    assert "Test + coverage routine" in RP.BEST_EFFORT_STEPS
+
+    def fake_run_step(name, cmd, dry_run=False, extra_env=None):
+        # 124 = the GNU-timeout convention run_step returns on a killed step.
+        return 124 if name == "Test + coverage routine" else 0
+
+    monkeypatch.setattr(RP, "run_step", fake_run_step)
+    monkeypatch.setattr(sys, "argv", ["run_pipeline.py", "--dry-run"])
+    monkeypatch.setattr(RP, "_sentry", None)
+    try:
+        rc = RP.main()
+        rc = 0 if rc is None else rc
+    except SystemExit as e:
+        rc = e.code if e.code is not None else 0
+    out = capsys.readouterr().out
+    assert rc == 0, "a test-routine TIMEOUT must not abort the client fire"
+    assert "PIPELINE COMPLETE" in out
+    assert "Client-blocking failures" not in out
 
 
 def test_client_blocking_steps_NOT_in_best_effort():
