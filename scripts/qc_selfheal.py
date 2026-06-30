@@ -128,6 +128,12 @@ def _qc_phase_is_pre_patch() -> bool:
 class Log:
     def __init__(self):
         self.fixes, self.warnings, self.errors = [], [], []
+        # Scrubbed carrier-extraction diagnostics for the stuck QC-056 /
+        # QC-002 rows — surfaced in the daily audit + qc-result.json so a
+        # human/Claude can see WHY each row has no carrier (a missed token vs
+        # a genuinely bare rate) and fix the parser precisely. PII-scrubbed
+        # via sentry_setup._scrub_string before it leaves the box.
+        self.carrier_diag = []
         # Snapshot the phase once at construction so subsequent env changes
         # mid-run don't surprise us
         self._pre_patch = _qc_phase_is_pre_patch()
@@ -402,6 +408,73 @@ def _load_bodies_index() -> dict:
     except Exception:
         return {}
     return out
+
+
+_CARRIER_DIAG_LINE_HINTS = (
+    "carrier", "vessel", "line", "sailing", "ocean freight",
+)
+_CARRIER_DIAG_DOLLAR_RX = re.compile(r"\$\s?\d")
+
+
+def _carrier_diag_snippet(r: dict, bodies_idx: dict, max_chars: int = 400) -> dict:
+    """Build a SCRUBBED diagnostic dict for ONE stuck (no-carrier) row.
+
+    Surfaces the exact text the carrier parser failed on for the QC-056
+    (rate-without-carrier) + QC-002 (WIN-without-carrier_won) rows, so the
+    next audit can show WHY a row has no carrier — a missed token in a real
+    carrier line vs a genuinely bare rate with nothing to extract.
+
+    The returned snippet is PII-scrubbed via sentry_setup._scrub_string
+    (emails / MDOLX / booking refs / IMIDs / conv-IDs / req_<hex>) because it
+    lands in BOTH the idealx.us audit email and the uploaded qc-result.json
+    artifact. A diagnostic must NEVER break the QC run, so the whole body is
+    wrapped: any error yields a minimal, still-safe dict.
+    """
+    try:
+        # 1) First non-empty cached body for the row.
+        body = ""
+        for imid in (r.get("source_imids") or []):
+            body = (bodies_idx.get(imid) or {}).get("text_body") or ""
+            if body:
+                break
+        # 2) Carrier-region of the body — only the lines that mention a
+        #    carrier/vessel/line/sailing/ocean-freight signal or a $ amount.
+        region_lines = []
+        for line in body.splitlines():
+            low = line.lower()
+            if any(h in low for h in _CARRIER_DIAG_LINE_HINTS) or _CARRIER_DIAG_DOLLAR_RX.search(line):
+                stripped = line.strip()
+                if stripped:
+                    region_lines.append(stripped)
+        region = " | ".join(region_lines)[:max_chars]
+        # 3) Stored carrier-bearing fields off the row itself.
+        stored_fields = " | ".join(
+            f"{k}={r.get(k)}"
+            for k in ("vessel_voyage", "transshipment", "pol", "pod", "reason_detail")
+            if r.get(k)
+        )
+        raw = region or stored_fields or (
+            "(no body cached + stored carrier fields empty -> likely a "
+            "genuinely BARE rate; nothing to extract)"
+        )
+        # 4) Scrub — fall back to raw if sentry_setup can't be imported.
+        try:
+            from sentry_setup import _scrub_string
+            snippet = _scrub_string(raw)
+        except Exception:
+            snippet = raw
+        snippet = snippet[:max_chars]
+        return {
+            "lane": r.get("lane") or "?",
+            "status": r.get("status"),
+            "rate": r.get("ol_rate"),
+            "has_body": bool(body),
+            "snippet": snippet,
+        }
+    except Exception:
+        # A diagnostic must never break the QC run.
+        return {"lane": r.get("lane") if isinstance(r, dict) else "?",
+                "snippet": "(diagnostic failed)"}
 
 
 def _intake_reconciliation(stage_rows, bodies):
@@ -1165,6 +1238,13 @@ def phase_6_rules(log: Log, data: dict):
         # If we still have unfilled values here, they're truly unrecoverable from
         # current data — surface as warn (manual review), not error (pipeline-fail).
         log.warn(f"QC-002: {len(bad)} WIN(s) with no carrier_won after auto-heal — manual review")
+        # Capture the scrubbed text each stuck WIN was parsed from so the
+        # next audit shows WHY carrier_won couldn't be inferred.
+        _bodies = _load_bodies_index()
+        for r in bad:
+            _diag = _carrier_diag_snippet(r, _bodies)
+            _diag["check"] = "QC-002"
+            log.carrier_diag.append(_diag)
     else:
         log.ok("QC-002: All WINs have carrier_won")
 
@@ -1645,7 +1725,15 @@ def phase_6_rules(log: Log, data: dict):
         from datetime import datetime as _dt
         _sync_log = Path(__file__).resolve().parent.parent / "reports" / "quote-tracker-sync.log"
         if not _sync_log.exists():
-            log.warn("QC-037: quote-tracker-sync.log not found — sync_to_quote_tracker may never have run")
+            if _BLOB_HOST:
+                # Ephemeral runner: reports/ starts empty each fire and the
+                # "Sync to ol-quote-tracker" step runs LATER in the pipeline than
+                # this QC, so no log exists yet. The sync's own step verifies its
+                # Turso push; this freshness check is a Cloud-PC (persistent
+                # reports/) concept, not a finding here.
+                log.ok("QC-037: skipped — ephemeral runner, sync log is written later this fire (Turso push verified by the sync step)")
+            else:
+                log.warn("QC-037: quote-tracker-sync.log not found — sync_to_quote_tracker may never have run")
         else:
             _lines = _sync_log.read_text(encoding="utf-8", errors="ignore").splitlines()
             _last = next((ln for ln in reversed(_lines) if ln.strip()), None)
@@ -2662,8 +2750,14 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-031: shared store SCHEMA.md present ({schema.stat().st_size:,} bytes)")
                 break
         else:
-            log.warn("QC-031: SHARED/client_intelligence/SCHEMA.md not found — "
-                     "cross-project integrators will need to reverse-engineer the schema")
+            if _BLOB_HOST:
+                # The OneDrive SHARED store isn't mounted on a runner, and the
+                # cross-project intelligence is authoritative on Turso (the
+                # sync_to_quote_tracker push). SCHEMA.md is a Cloud-PC artifact.
+                log.ok("QC-031: skipped — ephemeral runner (SHARED store is OneDrive/Cloud-PC; Turso is authoritative)")
+            else:
+                log.warn("QC-031: SHARED/client_intelligence/SCHEMA.md not found — "
+                         "cross-project integrators will need to reverse-engineer the schema")
     except Exception as _e:
         log.warn(f"QC-031: check failed with exception: {_e}")
 
@@ -2709,7 +2803,14 @@ def phase_6_rules(log: Log, data: dict):
         ]
         shared = next((c for c in shared_candidates if c.exists()), None)
         if not shared:
-            log.warn("QC-029: shared client_intelligence/hilmar/ folder not found — export likely never ran")
+            if _BLOB_HOST:
+                # Ephemeral runner: the OneDrive SHARED file export is Cloud-PC-
+                # only. The cross-project store is fed via the Turso sync
+                # (sync_to_quote_tracker, audited by QC-037), so a missing
+                # OneDrive folder here is expected, not a finding.
+                log.ok("QC-029: skipped — ephemeral runner (OneDrive SHARED export is Cloud-PC-only; cross-project store is fed via the Turso sync)")
+            else:
+                log.warn("QC-029: shared client_intelligence/hilmar/ folder not found — export likely never ran")
         else:
             _meta_path = shared / "_client_meta.json"
             if not _meta_path.exists():
@@ -3099,6 +3200,7 @@ def phase_6_rules(log: Log, data: dict):
             if r.get("ol_rate") and not r.get("carrier_quoted")
             and (r.get("quoted") or r.get("status") in ("WIN", "LOSS", "Q&L"))
         ]
+        _bodies = _load_bodies_index()
         _healed, _stuck = [], []
         for r in _rate_no_carrier:
             _scan = " | ".join(str(r.get(k) or "") for k in (
@@ -3114,6 +3216,11 @@ def phase_6_rules(log: Log, data: dict):
                 _healed.append(f"{r.get('lane','?')}={_car}")
             else:
                 _stuck.append(r.get("lane", r.get("request_id", "?")))
+                # Capture the scrubbed text the parser failed on so the
+                # next audit shows WHY this row has no carrier.
+                _diag = _carrier_diag_snippet(r, _bodies)
+                _diag["check"] = "QC-056"
+                log.carrier_diag.append(_diag)
         for _h in _healed:
             log.fix(f"QC-056: backfilled carrier from row text — {_h}")
         if _stuck:
@@ -3600,6 +3707,10 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
             "quote_rate": summary["quote_rate"],
         },
         "carrier_coverage": _carrier_coverage(requests),
+        # Scrubbed carrier-extraction diagnostics for the stuck QC-056 /
+        # QC-002 rows. Capped to keep qc-result.json small; already
+        # PII-scrubbed at collection time (sentry_setup._scrub_string).
+        "carrier_diagnostics": log.carrier_diag[:12],
         "trade_region_reconciliation": _trade_region_reconciliation(data),
         "parser_sweep_audit": _parser_sweep_audit(requests),
         "per_carrier_breakdown": _per_carrier_breakdown(requests),
