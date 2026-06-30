@@ -143,6 +143,15 @@ SKIPPABLE = {"Ingest (stage → requests)": "--skip-ingest"}
 # the audit email, AND backup_offline from running. A downstream-bonus step
 # must never gate the upstream client deliverable.
 BEST_EFFORT_STEPS = {
+    # Code-health SELF-AUDIT (writes test-result.json for QC-052). NOT a client
+    # deliverable — the real test gate is CI (test.yml on every push/PR). On the
+    # Cloud PC pytest isn't installed so it skips instantly; on a host where
+    # pytest IS installed (GitHub Actions) it runs the full suite + coverage, so
+    # a slow run or TIMEOUT must never abort the client fire. The "always exits
+    # 0" assumption above breaks on a timeout (rc=124, the process is KILLED),
+    # which is exactly what aborted the 2026-06-30 GitHub production-fire — so
+    # the safety has to be this classification, not the script's own exit code.
+    "Test + coverage routine",
     "Parser backfill (reprocess cache)",  # cache refresh; on failure ingest uses existing cache, QC-059 catches drift
     "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
@@ -182,7 +191,7 @@ STEP_TIMEOUT_S = 300            # 5 minutes default per step
 STEP_TIMEOUTS_S = {
     # Quick steps don't need the full budget; long ones get more.
     "Backup snapshot":            60,
-    "Test + coverage routine":    180,
+    "Test + coverage routine":    600,   # full suite + coverage on a runner is slow; best-effort, so a timeout never blocks the fire
     "Drift check (pre-QC)":       120,
     "QC self-heal (pre-patch)":   180,
     "QC self-heal (post-patch)":  180,
