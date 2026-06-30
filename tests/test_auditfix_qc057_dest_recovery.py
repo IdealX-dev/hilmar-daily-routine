@@ -52,6 +52,32 @@ def test_live_to_port_drop_now_recovers(prod_bp):
     assert dest == "Yokohama", (origin, dest)
 
 
+def test_origin_free_time_is_operational_not_a_dropped_rfq():
+    """QC-057 follow-up (2026-06-30): the recovery branch handles RFQs that name
+    a PORT, but 'Origin Free Time' has no destination anywhere — it's a free-time
+    policy note, not a lane RFQ. Classify it operational so intake reconciliation
+    (qc_selfheal._intake_reconciliation) stops counting it as a silently-dropped
+    RFQ. (The genuinely-ambiguous reefer subjects are LEFT as a WARN on purpose —
+    silencing them could hide a real RFQ; the check should still surface those.)"""
+    import ingest  # scripts/ingest.py
+    assert ingest.is_operational_subject("Origin Free Time") is True
+    assert ingest.is_operational_subject("Re: Origin Free Time update") is True
+    # A real lane RFQ must NOT be swept up by the new hint.
+    assert ingest.is_operational_subject("Oakland to Busan") is False
+
+
+def test_origin_free_time_hint_mirrored_in_both_trees():
+    """_OPERATIONAL_SUBJECT_HINTS is a mirror-by-hand surface — the new hint
+    must land in both trees so the test library and production agree."""
+    import sys
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    import ingest as prod_ingest  # scripts/ingest.py (already on path)
+
+    from hilmar import ingest as lib_ingest  # src/hilmar/ingest.py
+    assert "ORIGIN FREE TIME" in prod_ingest._OPERATIONAL_SUBJECT_HINTS
+    assert "ORIGIN FREE TIME" in lib_ingest._OPERATIONAL_SUBJECT_HINTS
+
+
 def test_bare_port_last_resort_recovers(prod_bp):
     """No 'to', no lane — just a known port token. The absolute last-resort
     bare-token scan recovers it rather than dropping the row."""

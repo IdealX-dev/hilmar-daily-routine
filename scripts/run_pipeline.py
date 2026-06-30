@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -403,6 +404,18 @@ def main():
         if args.skip_ingest and SKIPPABLE.get(name) == "--skip-ingest":
             print()
             print(f"⏭️   SKIP — {name} (--skip-ingest)")
+            continue
+        # The dedicated test.yml CI workflow is the authoritative suite gate
+        # (it runs the full pytest suite on every push/PR). On a CI runner the
+        # in-pipeline coverage run is REDUNDANT and slow: it runs the whole
+        # suite + coverage and TIMES OUT even at 600s, which — though it's
+        # best-effort and no longer aborts the fire (2026-06-30 fix) — still
+        # wastes ~10 min and spams Sentry (pipeline.step_failure ×N) every fire.
+        # daily.yml sets this for the GitHub production-fire; the Cloud PC leaves
+        # it unset (there pytest isn't installed, so the step skips instantly).
+        if name == "Test + coverage routine" and os.environ.get("HILMAR_SKIP_PIPELINE_TESTS") == "1":
+            print()
+            print(f"⏭️   SKIP — {name} (HILMAR_SKIP_PIPELINE_TESTS=1; test.yml CI is the authoritative suite gate)")
             continue
         _rc = run_step(name, cmd, dry_run=args.dry_run, extra_env=extra_env)
         if _rc != 0:

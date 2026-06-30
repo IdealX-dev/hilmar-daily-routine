@@ -228,6 +228,12 @@ jobs:
       # The ~6 PM ET evening fire reports on TODAY's now-complete Pacific
       # business day (set explicitly; "current" is also core.py's default).
       HILMAR_REPORT_WINDOW: "current"
+      # Skip the in-pipeline pytest+coverage routine: the dedicated test.yml CI
+      # workflow already runs the full suite on every push/PR (the authoritative
+      # gate), so re-running it under coverage here is redundant — and on a
+      # runner it times out even at 600s, wasting ~10min and spamming Sentry
+      # (it's best-effort so it never blocked the fire, but it's pure noise).
+      HILMAR_SKIP_PIPELINE_TESTS: "1"
     steps:
       - name: Verify prerequisites — refuse to fire if anything's missing
         # The pipeline silently degrades on missing secrets, so we hard-fail
