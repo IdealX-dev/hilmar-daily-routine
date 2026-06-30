@@ -170,6 +170,22 @@ def test_qc062_preserves_deployed_src(monkeypatch, tmp_path):
     assert all(d.name != "src" for d in stale)
 
 
+# ── QC-029/031/037: OneDrive-SHARED checks skip on the ephemeral runner ───
+def test_onedrive_shared_checks_skip_on_blob_runner(monkeypatch, capsys):
+    """On the GitHub fire (_BLOB_HOST: AZURE_STORAGE_CONNECTION_STRING set) the
+    OneDrive SHARED export + the not-yet-written sync log are expected absences,
+    not findings — the cross-project store is fed via the Turso sync, and
+    reports/ starts empty each fire. These must OK-skip, not WARN (the
+    2026-06-30 post-cutover audit flagged all three)."""
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    log = _run(monkeypatch)
+    out = capsys.readouterr().out
+    for qc in ("QC-029", "QC-031", "QC-037"):
+        offending = [m for m in log.warnings if qc in m]
+        assert not offending, f"{qc} should not WARN on a blob runner: {offending}"
+        assert f"{qc}: skipped — ephemeral runner" in out, f"{qc} missing the runner skip"
+
+
 # ── QC-054: dependency self-heal (no-pip path) ───────────────────────────
 def test_qc054_errors_when_dep_missing_and_pip_disabled(monkeypatch):
     monkeypatch.setattr(q, "RUNTIME_IMPORT_REQUIRED", ["definitely_not_real_mod_xyz"])
