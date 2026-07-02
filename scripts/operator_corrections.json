@@ -14,6 +14,13 @@
       "note": "Linda Echevarria (OL Ocean Export Manager) audit 2026-05-19: 5/14 Oakland to Osaka DID NOT WIN. A send-signal promoted it to WIN but no MDOLX booking confirmation ever arrived.",
       "source": "Linda Echevarria 2026-05-19",
       "added": "2026-05-20"
+    },
+    {
+      "request_id": "stand_260821",
+      "exclude": true,
+      "note": "AgriDairy booking, not a Hilmar-the-client move. The 'HILMAR' token in the booking is the plant/origin reference, not the customer -- only moves booked by Lonny are Hilmar the client. Same Hilmar-as-supplier class as the Numidia leak; 'agridairy' is now an out_of_scope_reason marker so future ones are dropped at intake.",
+      "source": "Michael Deitchman 2026-07-01",
+      "added": "2026-07-01"
     }
   ]
 }

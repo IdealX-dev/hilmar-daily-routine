@@ -212,6 +212,13 @@ def is_operational_subject(subject: str | None) -> bool:
 # out_of_scope_reason() is the single source of truth — the qc_selfheal
 # PHASE 3 backstop imports and reuses it so the two can never drift (QC-040).
 _NUMIDIA_RX  = re.compile(r"numidia", re.IGNORECASE)
+# AgriDairy — another customer shipping product FROM the Hilmar plant, so
+# "HILMAR" appears in its bookings as the ORIGIN/supplier reference and the
+# standalone-WIN gate ("HILMAR in subject") wrongly claims them (the live
+# stand_260821 leak, Michael 2026-07-01: "only moves booked by Lonny are
+# Hilmar the client"). Same class as Numidia: Hilmar-as-supplier, different
+# paying customer.
+_AGRIDAIRY_RX = re.compile(r"agri[\s\-_]?dairy", re.IGNORECASE)
 _TRUCKING_RX = re.compile(r"\bFTL\b|\bLTL\b|truck\s?load|trucking", re.IGNORECASE)
 _RECALL_RX   = re.compile(r"\brecall:", re.IGNORECASE)
 
@@ -219,9 +226,10 @@ _RECALL_RX   = re.compile(r"\brecall:", re.IGNORECASE)
 def out_of_scope_reason(row: dict) -> str | None:
     """Why this staged email is NOT a Hilmar ocean RFQ — or None if it is.
 
-    Returns 'numidia' | 'trucking' | 'recalled' | None. Rows with a reason are
-    dropped from ingest entirely (no request, booking, or win) and are the
-    same set the qc_selfheal PHASE 3 backstop purges from tracking-data-v2.
+    Returns 'numidia' | 'agridairy' | 'trucking' | 'recalled' | None. Rows
+    with a reason are dropped from ingest entirely (no request, booking, or
+    win) and are the same set the qc_selfheal PHASE 3 backstop purges from
+    tracking-data-v2.
     """
     subject = str(row.get("subject") or "")
     preview = str(row.get("summary_preview") or "")
@@ -229,6 +237,10 @@ def out_of_scope_reason(row: dict) -> str | None:
     # Numidia — Hilmar-as-supplier. Per Michael, check subject AND body.
     if _NUMIDIA_RX.search(subject) or _NUMIDIA_RX.search(body) or _NUMIDIA_RX.search(preview):
         return "numidia"
+    # AgriDairy — Hilmar-as-supplier for another customer (see _AGRIDAIRY_RX
+    # note). Subject AND body, same as Numidia.
+    if _AGRIDAIRY_RX.search(subject) or _AGRIDAIRY_RX.search(body) or _AGRIDAIRY_RX.search(preview):
+        return "agridairy"
     # Trucking — the FTL/LTL request type is declared in the subject line.
     if _TRUCKING_RX.search(subject) or _TRUCKING_RX.search(preview):
         return "trucking"
@@ -1252,6 +1264,19 @@ def apply_operator_corrections(requests: list[dict]) -> int:
         rid = corr.get("request_id")
         changes = corr.get("set") or {}
         row = by_id.get(rid)
+        # `exclude: true` — the row is NOT a Hilmar-the-client move at all
+        # (e.g. stand_260821: an AgriDairy booking whose "HILMAR" token is the
+        # plant/origin, not the customer). Remove it from the data entirely —
+        # a `set` override would still count it in Hilmar's wins/TEU. A
+        # missing row is the EXPECTED steady state once excluded (fresh
+        # ingest also drops it), so absence is silent, not a WARN.
+        if corr.get("exclude"):
+            if row is not None:
+                requests.remove(row)
+                applied += 1
+                print(f"Operator correction: EXCLUDED {rid} — "
+                      f"{corr.get('note') or corr.get('source') or 'not a Hilmar-client move'}")
+            continue
         if not row:
             print(f"WARN: operator correction for {rid} has no matching row — skipped")
             continue

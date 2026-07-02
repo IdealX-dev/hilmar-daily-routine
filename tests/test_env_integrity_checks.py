@@ -180,7 +180,13 @@ def test_onedrive_shared_checks_skip_on_blob_runner(monkeypatch, capsys):
     monkeypatch.setattr(q, "_BLOB_HOST", True)
     log = _run(monkeypatch)
     out = capsys.readouterr().out
-    for qc in ("QC-029", "QC-031", "QC-037"):
+    checks = ["QC-029", "QC-031", "QC-037"]
+    # QC-055 reads the wrapper's run-log at a module-file-relative path; only
+    # assert its runner skip when the file is genuinely absent (always true in
+    # CI — reports/ artifacts are gitignored and never created there).
+    if not (ROOT / "reports" / "run-log.txt").exists():
+        checks.append("QC-055")
+    for qc in checks:
         offending = [m for m in log.warnings if qc in m]
         assert not offending, f"{qc} should not WARN on a blob runner: {offending}"
         assert f"{qc}: skipped — ephemeral runner" in out, f"{qc} missing the runner skip"

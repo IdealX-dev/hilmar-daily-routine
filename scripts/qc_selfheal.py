@@ -416,6 +416,60 @@ _CARRIER_DIAG_LINE_HINTS = (
 _CARRIER_DIAG_DOLLAR_RX = re.compile(r"\$\s?\d")
 
 
+def _carrier_from_lane_rate_sibling(r: dict, requests: list, window_days: int = 45):
+    """Infer a stuck row's missing carrier from a SIBLING row: same lane, same
+    ol_rate (to the cent), request_date within ±window_days, that HAS a parsed
+    carrier. Same lane + identical rate is a strong fingerprint — it's the
+    same OL quote line landing in two emails, one of which parsed its carrier
+    cell (the 2026-07-01 diagnostics: the stuck $3,076 Yokohama rows sit next
+    to $3,076 Yokohama rows attributed CMA CGM).
+
+    Deliberately NOT vessel-name inference: alliance slot-sharing means a
+    Yang Ming quote can sail on a ONE-named vessel (the live $425 Busan row —
+    vessel "ONE FANTASTIC", sibling attribution Yang Ming), so a vessel
+    prefix can mislabel the QUOTING carrier; a sibling's parsed carrier
+    cannot. Returns the carrier only when ALL matching siblings agree on
+    exactly ONE carrier — any disagreement returns None (stay blank rather
+    than guess wrong)."""
+    try:
+        from datetime import date as _date
+
+        def _d(row):
+            s = (row.get("request_date") or row.get("date") or "")[:10]
+            try:
+                return _date.fromisoformat(s)
+            except Exception:
+                return None
+
+        lane = (r.get("lane") or "").strip().lower()
+        rate = r.get("ol_rate")
+        if not lane or not isinstance(rate, (int, float)):
+            return None
+        rd = _d(r)
+        carriers = set()
+        for s in requests:
+            if s is r or not s.get("carrier_quoted"):
+                continue
+            if (s.get("lane") or "").strip().lower() != lane:
+                continue
+            srate = s.get("ol_rate")
+            if not isinstance(srate, (int, float)) or abs(srate - rate) > 0.01:
+                continue
+            sd = _d(s)
+            # Both dates known and too far apart → different quote cycles;
+            # a missing date on either side doesn't disqualify (lane+rate
+            # already carry the match).
+            if rd and sd and abs((rd - sd).days) > window_days:
+                continue
+            car = s["carrier_quoted"]
+            with contextlib.suppress(Exception):
+                car = core.normalize_carrier(car) or car
+            carriers.add(car)
+        return carriers.pop() if len(carriers) == 1 else None
+    except Exception:
+        return None
+
+
 def _carrier_diag_snippet(r: dict, bodies_idx: dict, max_chars: int = 400) -> dict:
     """Build a SCRUBBED diagnostic dict for ONE stuck (no-carrier) row.
 
@@ -657,6 +711,22 @@ def phase_3_entries(log: Log, data: dict):
         elif _has_rate and r.get("quoted") is not True:
             r["quoted"] = True
             log.fix(f"{rid_label}: Reconciled quoted=True (rate/carrier present, was {r.get('quoted')!r})")
+
+        # Complete the reconcile: a row that now carries an OL rate can still
+        # hold the PROSE written back when it looked NQ — reason_detail
+        # "OL-USA never responded with a quote" (ingest deliberately never
+        # overwrites a set reason_detail, so the text outlives the flip).
+        # That contradiction ships to the audit + carrier diagnostics as
+        # wrong info (the 2026-07-01 diagnostics showed it on 5 rated rows).
+        # Rewrite it to the aged-Q&L truth, and correct a stale NO_RESPONSE
+        # loss_reason the same way — a rated row WAS quoted; its loss is the
+        # aged kind, not silence.
+        if _has_rate and "never responded" in (r.get("reason_detail") or ""):
+            r["reason_detail"] = "OL quoted (rate on file) — assumed aged; no booking followed"
+            if r.get("status") == "LOSS" and r.get("loss_reason") == "NO_RESPONSE":
+                r["loss_reason"] = "OTHER"
+            log.fix(f"{rid_label}: reason_detail said 'never responded' but a rate "
+                    f"is on file — rewrote to aged-Q&L")
 
         if "has_send" not in r:
             r["has_send"] = False
@@ -3177,6 +3247,13 @@ def phase_6_rules(log: Log, data: dict):
                 )
             else:
                 log.ok("QC-055: Sentry cron heartbeat registered on the recent fire")
+        elif _BLOB_HOST:
+            # Ephemeral runner: run-log.txt is written by the Cloud-PC WRAPPER
+            # (run_daily_laptop.cmd), which never runs here — the GH fire's
+            # heartbeat is emitted directly by daily.yml and verified by
+            # liveness.yml, so an absent wrapper log is expected, not a finding.
+            log.ok("QC-055: skipped — ephemeral runner (wrapper run-log is Cloud-PC-only; "
+                   "the GH fire's heartbeat is emitted by daily.yml, verified by liveness)")
         else:
             log.warn("QC-055: reports/run-log.txt absent — can't verify cron heartbeat")
     except Exception as _e:
@@ -3215,6 +3292,17 @@ def phase_6_rules(log: Log, data: dict):
                     r["carrier_won"] = _car
                 _healed.append(f"{r.get('lane','?')}={_car}")
             else:
+                # Second chance before declaring it stuck: a same-lane,
+                # same-rate sibling row whose carrier DID parse (see
+                # _carrier_from_lane_rate_sibling for why this beats
+                # vessel-name inference).
+                _sib = _carrier_from_lane_rate_sibling(r, requests)
+                if _sib:
+                    r["carrier_quoted"] = _sib
+                    if r.get("status") == "WIN" and not r.get("carrier_won"):
+                        r["carrier_won"] = _sib
+                    _healed.append(f"{r.get('lane','?')}={_sib} (same-lane same-rate sibling)")
+                    continue
                 _stuck.append(r.get("lane", r.get("request_id", "?")))
                 # Capture the scrubbed text the parser failed on so the
                 # next audit shows WHY this row has no carrier.
