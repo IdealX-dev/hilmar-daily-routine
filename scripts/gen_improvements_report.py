@@ -859,10 +859,25 @@ def render_html(red, yellow, suggestions, report_date, qc):
     now_et = datetime.now(timezone.utc).astimezone(core.ET)
     stamp = _strftime(now_et, "%B %-d, %Y at %-I:%M %p ET")
 
+    # Mobile overrides (Michael 2026-07-01 "reading email on phone is poorly
+    # formatted"): the audit is sized for desktop (800px container, 8-9 column
+    # rate tables). iOS Mail / the Gmail app honor <style> @media; desktop
+    # Outlook ignores it — so these rules ONLY change the phone rendering:
+    # full-bleed container with tighter padding + ONE horizontal scroll
+    # surface, and data tables keep readable column geometry (min-width) and
+    # scroll sideways instead of squishing to 3-char columns. Same .hx-*
+    # vocabulary as gen_email so the two emails stay consistent.
+    mobile_style = """<style>
+@media only screen and (max-width:640px) {
+  .hx-wrap { max-width:100% !important; padding:14px 8px !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+  table.hx-data { min-width:640px !important; }
+}
+</style>"""
+
     body = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"></head>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">{mobile_style}</head>
 <body style="margin:0;padding:0;background:#f1f5f9;font-family:{EMAIL_FONT}">
-<div style="max-width:800px;margin:0 auto;background:white;padding:24px">
+<div class="hx-wrap" style="max-width:800px;margin:0 auto;background:white;padding:24px">
   <div style="background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:12px 20px;border-radius:6px 6px 0 0;margin:-24px -24px 0">
     {f'<div style="background:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:4px">{B.logo_html_cid(height=60)}</div>' if B.has_logo() else ''}
     <h1 style="margin:0;font-size:20px">{'' if B.has_logo() else '🔍 '}Hilmar Tracker — Daily Systems Audit</h1>
@@ -1096,7 +1111,7 @@ def _sentry_section_inline():
   </div>
 </div>
 {actions_html}
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px">
   <tr style="background:#0a2350;color:white">
     <th style="padding:5px;text-align:left">Issue</th>
     <th style="padding:5px;text-align:left">Title</th>
@@ -1117,7 +1132,12 @@ def _rate_intel_section_inline():
     section_path = REPORTS / "rate-intelligence-section.html"
     if section_path.exists():
         try:
-            return section_path.read_text(encoding="utf-8")
+            html = section_path.read_text(encoding="utf-8")
+            # Tag the prebuilt section's tables for the mobile @media rules
+            # (min-width + sideways scroll) at embed time — cheaper and safer
+            # than re-plumbing gen_rate_intelligence.py, and a no-op for any
+            # table already carrying a class attribute.
+            return html.replace("<table style=", '<table class="hx-data" style=')
         except Exception:
             return ""
     return ""

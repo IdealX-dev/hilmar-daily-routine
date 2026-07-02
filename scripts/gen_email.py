@@ -391,17 +391,42 @@ def _header_html(today_label, range_label, updated_label):
         f'<div style="background:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:4px">{logo_html}</div>'
         if logo_html else ""
     )
+    # Mobile overrides (Michael 2026-07-01 "reading email on phone is poorly
+    # formatted"): the layout is sized for desktop Outlook (1040px container,
+    # 7-11 column fixed tables), so a phone either crushes the columns or
+    # scales the whole email to unreadable. Phones' clients (iOS Mail, Gmail
+    # app) honor <style> @media; desktop Outlook's Word engine ignores it
+    # entirely — so these rules ONLY change the phone rendering:
+    #   .hx-wrap  full-bleed container (no wasted margin at 390px)
+    #   .hx-pad   tighter padding + ONE horizontal scroll surface for anything
+    #             wider than the screen (-webkit-overflow-scrolling for momentum)
+    #   .hx-kpi   KPI tiles stack 2-up instead of 4-5 crushed across
+    #   .hx-data  data tables KEEP readable column geometry (min-width) and
+    #             scroll sideways inside .hx-pad instead of squishing to
+    #             3-char columns. KPI-tile tables are deliberately NOT .hx-data
+    #             (stacking handles them; a min-width would fight it).
+    mobile_style = """
+<style>
+@media only screen and (max-width:640px) {
+  .hx-wrap { width:100% !important; max-width:100% !important; border-radius:0 !important; }
+  .hx-pad { padding:14px 8px !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+  td.hx-kpi { display:inline-block !important; width:50% !important; }
+  table.hx-data { min-width:640px !important; }
+}
+</style>
+"""
     return f"""
+{mobile_style}
 <!--[if !mso]><!-->
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <!--<![endif]-->
-<div style="max-width:1040px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+<div class="hx-wrap" style="max-width:1040px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
   <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
   </div>
-  <div style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+  <div class="hx-pad" style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
 
 
@@ -419,7 +444,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     """
     # Shared table CSS — Outlook-safe inline styles, no flexbox or grid.
     _TABLE_OPEN = (
-        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
         'margin:4px 0 14px 0;border:1px solid #d1d5db">'
     )
@@ -430,7 +455,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     # and <col width>, so columns get controlled widths and long text WRAPS
     # (cells default to white-space:normal) instead of overflowing.
     _TABLE_OPEN_FIXED = (
-        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
         'table-layout:fixed;margin:4px 0 14px 0;border:1px solid #d1d5db">'
     )
@@ -798,7 +823,7 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
         '<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">&nbsp;</div>'
     )
     return f"""
-<td style="padding:4px;width:{width};vertical-align:top">
+<td class="hx-kpi" style="padding:4px;width:{width};vertical-align:top">
   <div style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
     <div style="font-size:22px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
     <div style="font-size:11px;opacity:0.94;margin-top:4px;line-height:1.25">{_esc(label)}</div>
@@ -1019,7 +1044,7 @@ def _week_block_html(rows):
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📅 This Week vs Last Week</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
-<table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left" title="ISO week range (Mon-Sun) in ET">Week</th>
     <th style="padding:8px;text-align:center" title="Number of requests, with TEU asked-for beneath">Requests (# · TEU)</th>
@@ -1103,7 +1128,7 @@ def _carrier_block_html(rows):
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left">Carrier</th>
     <th style="padding:8px;text-align:center" title="Distinct requests where this carrier was quoted">Times<br>Quoted (#)</th>
@@ -1172,7 +1197,7 @@ def _winning_lanes_html(rows):
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#059669;color:#ffffff">
     <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Lane (origin → destination)</th>
     <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Bookings won on this lane">Wins (#)</th>
@@ -1224,7 +1249,7 @@ def _losing_lanes_html(rows):
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#7f1d1d;color:#ffffff">
     <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Lane (origin → destination)</th>
     <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Q&L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
@@ -1295,7 +1320,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     return f"""
 <h2 style="color:#d97706;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fde68a;padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#d97706;color:white">
     <th style="padding:8px;text-align:left">Date</th>
     <th style="padding:8px;text-align:left">Lonny Sent (PT)</th>
@@ -1368,7 +1393,7 @@ def _pending_ol_html(rows):
     return f"""
 <h2 style="color:#b45309;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fcd34d;padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is wall-clock since the RFQ (green ≤8h, amber ≤24h, red &gt;24h — red rows are chase candidates with the OL desk).</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#b45309;color:white">
     <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Lane</th>
     <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Equipment</th>
@@ -1491,7 +1516,7 @@ def _pending_html(rows):
     return f"""
 <h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#7c3aed;color:white">
     <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Lane</th>
     <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Equipment</th>
@@ -1699,7 +1724,7 @@ def _trade_region_html(data, summary):
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
 <p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">{_esc(recon)}</p>
-<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#1e3a5f;color:white">
     <th style="padding:8px;text-align:left">Region</th>
     <th style="padding:8px;text-align:center" title="Number of distinct requests from Lonny">Requests<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
