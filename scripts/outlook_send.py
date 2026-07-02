@@ -330,6 +330,23 @@ def _sent_today_in_mailbox(subject: str) -> str | None:
         return None
 
 
+def _flag_date(now_et) -> str:
+    """The YYYY-MM-DD the daily idempotency flags are keyed to: the REPORT
+    business day (core.report_business_day), not the wall-clock calendar day.
+
+    They only differ off-hours, and that's exactly when it matters: a
+    12:38 AM Thursday fire REPORTS Wednesday (core's wee-hours rule), so its
+    flag must be Wednesday's — deduping against Wednesday-evening's real send
+    — instead of writing Thursday's flag and blocking Thursday's real evening
+    send before Thursday even happened (live failure, run #76). Falls back to
+    the calendar day if core can't import (minimal auth-only environments)."""
+    try:
+        import core as _core
+        return _core.report_business_day(now_et).strftime("%Y-%m-%d")
+    except Exception:
+        return now_et.strftime("%Y-%m-%d")
+
+
 def cmd_daily(args) -> int:
     subject = Path(args.subject_from_file).read_text(encoding="utf-8").strip()
     body = Path(args.body_from_file).read_text(encoding="utf-8")
@@ -356,9 +373,11 @@ def cmd_daily(args) -> int:
     # Flag dates/timestamps are ET, explicitly — the operational day of the
     # 6 PM ET fire. A GH Actions runner's clock is UTC; bare .now() there
     # would date the flag wrong after 8 PM ET and stamp UTC times labeled
-    # "ET". state_store.py syncs today's flags by the same ET date.
+    # "ET". Keyed to the REPORT business day via _flag_date (wee-hours rule)
+    # so an after-midnight fire dedupes against the evening it belongs to.
+    # state_store.py syncs the same report-day flags.
     _now_et = _dt.now(_zi("America/New_York"))
-    today = _now_et.strftime("%Y-%m-%d")
+    today = _flag_date(_now_et)
     flag_name = "sent" if is_full_distribution else ("improvements-sent" if is_audit else None)
     if getattr(args, "no_flag", False):
         # Verification/test sends must never touch production idempotency

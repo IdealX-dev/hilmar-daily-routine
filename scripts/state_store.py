@@ -74,9 +74,22 @@ def state_paths(today: str | None = None) -> list[str]:
     state and pruning them out keeps the container from accreting.
     """
     today = today or _today_et()
+    days = [today]
+    # Flags are keyed to the REPORT business day (outlook_send._flag_date —
+    # core's wee-hours rule), which differs from the calendar day off-hours:
+    # a 00:40 fire writes the PREVIOUS evening's flag. Sync both names so
+    # cross-machine idempotency holds no matter when a fire lands.
+    try:
+        import core as _core
+        _rd = _core.report_business_day(
+            datetime.now(ZoneInfo("America/New_York"))).isoformat()
+        if _rd not in days:
+            days.append(_rd)
+    except Exception:
+        pass
     return STATE_FILES + [
-        f"reports/sent-{today}.flag",
-        f"reports/improvements-sent-{today}.flag",
+        p for d in days
+        for p in (f"reports/sent-{d}.flag", f"reports/improvements-sent-{d}.flag")
     ]
 
 ENV_CONN = "AZURE_STORAGE_CONNECTION_STRING"

@@ -30,15 +30,25 @@ GEN_IMPROVE = ROOT / "scripts" / "gen_improvements_report.py"
 def test_client_email_has_mobile_media_block():
     src = GEN_EMAIL.read_text(encoding="utf-8")
     assert "@media only screen and (max-width:640px)" in src
-    # The four mobile hooks all exist in the style block.
-    for hook in (".hx-wrap", ".hx-pad", "td.hx-kpi", "table.hx-data"):
+    # The mobile hooks all exist in the style block.
+    for hook in (".hx-wrap", ".hx-pad", "td.hx-kpi", ".hx-kpi-card", "table.hx-data"):
         assert hook in src, f"mobile hook {hook} missing from gen_email"
 
 
-def test_client_email_kpi_tiles_stack_on_mobile():
-    """KPI <td> cells carry hx-kpi so the media rule can stack them 2-up."""
+def test_client_email_kpi_tiles_stack_full_width_on_mobile():
+    """KPI <td> cells stack as FULL-WIDTH blocks. The first ship used
+    inline-block/50% for a 2-up grid and iOS Mail collapsed the cells to
+    narrow overlapping strips (Michael's 2026-07-02 screenshot) — tds pulled
+    out of table layout shrink-wrap unpredictably; display:block is the only
+    stacking that renders reliably. The card's desktop-locked 88px height is
+    released on mobile so wrapped text can't overlap."""
     src = GEN_EMAIL.read_text(encoding="utf-8")
     assert '<td class="hx-kpi"' in src
+    assert "td.hx-kpi { display:block !important; width:100% !important" in src
+    assert '<div class="hx-kpi-card"' in src
+    assert ".hx-kpi-card { height:auto !important; min-height:0 !important; }" in src
+    # The failed 2-up rule must not come back.
+    assert "display:inline-block !important; width:50%" not in src
 
 
 def test_client_email_data_tables_are_classed():

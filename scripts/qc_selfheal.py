@@ -995,7 +995,11 @@ def _check_email_subject_date(log, subj_path, now_et=None):
         if now_et is None:
             now_et = _dt.now(core.ET)
         _now_et = now_et.date()
-        _expected = _expected_report_date(_now_et)
+        # Pass the full DATETIME (not .date()) so core's wee-hours rule
+        # applies here exactly as it does in gen_email — a 00:40 ET fire
+        # reports the PREVIOUS business day, and QC-011 must expect the same
+        # date the renderer used or it false-alarms on every night fire.
+        _expected = _expected_report_date(now_et)
         if not subj_path.exists():
             if _BLOB_HOST:
                 log.ok("QC-011: skipped — ephemeral runner, no stale subject can exist pre-render")
@@ -1234,6 +1238,11 @@ def consecutive_failed_steps(history, n=3):
 QC064_DISPLAY_FIELDS = (
     "carrier_quoted", "carrier_won", "origin", "destination",
     "lane", "pol", "pod", "vessel_voyage", "transshipment",
+    # Equipment cell — the 2026-07-02 client email showed a phone fragment
+    # ("209-656") here. Legit values ("2-40'RF + 1-20'DV") can't trip the
+    # conservative patterns: the phone regex needs a 3-digit group and the
+    # msgid shard needs a long alnum run with an MB anchor.
+    "containers",
 )
 
 # Exchange message-id shard: a long run of uppercase/digits with an embedded
@@ -3026,7 +3035,9 @@ def phase_6_rules(log: Log, data: dict):
     # looping or auto-retrying — investigate.
     try:
         from datetime import datetime as _dt
-        _today = _dt.now().strftime("%Y-%m-%d")
+        # Flags are keyed to the REPORT business day (outlook_send._flag_date
+        # / core's wee-hours rule), so read the same name the sender writes.
+        _today = core.report_business_day(_dt.now(core.ET)).strftime("%Y-%m-%d")
         _flag = Path(__file__).resolve().parent.parent / "reports" / f"sent-{_today}.flag"
         if _flag.exists():
             _lines = [ln for ln in _flag.read_text(encoding="utf-8").splitlines()
