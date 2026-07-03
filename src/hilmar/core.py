@@ -350,6 +350,16 @@ def report_business_day(now_et=None, window=None):
     if now_et is None:
         now_et = datetime.now(timezone.utc).astimezone(ET)
     today = now_et.date() if hasattr(now_et, "date") else now_et
+    # WEE-HOURS RULE (2026-07-02): the fire is an EVENING fire (~6 PM ET). A
+    # run between midnight and 6 AM ET is a very-late cron tick or an
+    # after-hours manual dispatch — either way the calendar day that just
+    # STARTED is empty, and the meaningful report day is the business day
+    # that just ENDED (live failure, run #76: a 12:38 AM Thursday dispatch
+    # reported an all-zero "Thu" and poisoned Thursday's send-flag). Applies
+    # only when a time-of-day is known; date-only inputs are untouched.
+    # Mirrors scripts/core.py (paired surface).
+    if hasattr(now_et, "hour") and now_et.hour < 6:
+        today = today - timedelta(days=1)
     wd = today.weekday()  # Mon=0..Sun=6
     win = (window or REPORT_WINDOW)
     if win == "current":

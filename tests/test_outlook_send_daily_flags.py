@@ -22,7 +22,10 @@ import outlook_send as os_send  # noqa: E402
 
 
 def _today_et() -> str:
-    return datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    """The date the sender keys flags to — the REPORT business day (wee-hours
+    rule), via the same helper the code under test uses. Keeps these tests
+    hermetic whenever CI runs (weekend / after-midnight clocks included)."""
+    return os_send._flag_date(datetime.now(ZoneInfo("America/New_York")))
 
 
 def _args(tmp_path, **over):

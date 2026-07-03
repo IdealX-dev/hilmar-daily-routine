@@ -400,7 +400,13 @@ def _header_html(today_label, range_label, updated_label):
     #   .hx-wrap  full-bleed container (no wasted margin at 390px)
     #   .hx-pad   tighter padding + ONE horizontal scroll surface for anything
     #             wider than the screen (-webkit-overflow-scrolling for momentum)
-    #   .hx-kpi   KPI tiles stack 2-up instead of 4-5 crushed across
+    #   .hx-kpi   KPI tiles stack FULL-WIDTH, one per row. display:block on the
+    #             td is the only stacking that renders reliably in iOS Mail —
+    #             the first ship used inline-block/50% for a 2-up grid and iOS
+    #             collapsed the cells to narrow strips (tds pulled out of table
+    #             layout shrink-wrap unpredictably; Michael's 2026-07-02
+    #             screenshot). Pair with .hx-kpi-card height:auto so the
+    #             desktop-locked 88px can't clip/overlap the wrapped text.
     #   .hx-data  data tables KEEP readable column geometry (min-width) and
     #             scroll sideways inside .hx-pad instead of squishing to
     #             3-char columns. KPI-tile tables are deliberately NOT .hx-data
@@ -410,7 +416,8 @@ def _header_html(today_label, range_label, updated_label):
 @media only screen and (max-width:640px) {
   .hx-wrap { width:100% !important; max-width:100% !important; border-radius:0 !important; }
   .hx-pad { padding:14px 8px !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
-  td.hx-kpi { display:inline-block !important; width:50% !important; }
+  td.hx-kpi { display:block !important; width:100% !important; box-sizing:border-box !important; }
+  .hx-kpi-card { height:auto !important; min-height:0 !important; }
   table.hx-data { min-width:640px !important; }
 }
 </style>
@@ -824,7 +831,7 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
     )
     return f"""
 <td class="hx-kpi" style="padding:4px;width:{width};vertical-align:top">
-  <div style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
+  <div class="hx-kpi-card" style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
     <div style="font-size:22px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
     <div style="font-size:11px;opacity:0.94;margin-top:4px;line-height:1.25">{_esc(label)}</div>
     {sub_html}

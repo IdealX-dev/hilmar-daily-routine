@@ -57,6 +57,17 @@ def test_rate_mismatch_is_not_a_sibling():
     assert q._carrier_from_lane_rate_sibling(stuck, [stuck, near]) is None
 
 
+def test_one_cent_apart_is_not_a_sibling():
+    """Copilot review (PR #84): 'to the cent' means rounded-cents EQUALITY —
+    $3,076.00 vs $3,076.01 are different quotes, not float noise."""
+    stuck = _row(rid="req_stuck", rate=3076.00)
+    near = _row(rid="near", carrier="CMA CGM", rate=3076.01)
+    assert q._carrier_from_lane_rate_sibling(stuck, [stuck, near]) is None
+    # Sub-cent float noise still matches.
+    noisy = _row(rid="noisy", carrier="CMA CGM", rate=3076.0000001)
+    assert q._carrier_from_lane_rate_sibling(stuck, [stuck, noisy]) == "CMA CGM"
+
+
 def test_different_lane_is_not_a_sibling():
     stuck = _row(rid="req_stuck")
     other = _row(rid="other", carrier="CMA CGM", lane="Oakland → Osaka")

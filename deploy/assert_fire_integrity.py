@@ -64,6 +64,26 @@ def _mtime_date(p: Path) -> str:
             p.stat().st_mtime, timezone.utc).date().isoformat()
 
 
+def _flag_day(today: str) -> str:
+    """The day the send-flag is keyed to: the REPORT business day (matches
+    outlook_send._flag_date). Only differs from the calendar day off-hours —
+    e.g. a 00:40 fire reports (and flags) the evening that just ended, so the
+    send proof must be checked under THAT name, not the empty new day's.
+    Falls back to the calendar day if core can't import."""
+    try:
+        from zoneinfo import ZoneInfo as _zi
+
+        import core as _core
+        _now = datetime.now(_zi("America/New_York"))
+        # Trust core only when checking "now"; an explicitly injected test
+        # date is used verbatim.
+        if today == _now.date().isoformat():
+            return _core.report_business_day(_now).isoformat()
+    except Exception:
+        pass
+    return today
+
+
 def check_integrity(*, pipeline_rc: int, require_send: bool = True,
                     today: str | None = None, reports: Path = REPORTS,
                     secrets: Path = SECRETS) -> list[str]:
@@ -85,10 +105,14 @@ def check_integrity(*, pipeline_rc: int, require_send: bool = True,
                 violations.append(f"client artifact STALE: reports/{name} dated {d} (not {today})")
 
     if require_send:
-        flag = reports / f"sent-{today}.flag"
-        if not flag.exists():
+        # The flag is keyed to the REPORT day (see _flag_day / outlook_send's
+        # wee-hours rule); accept the calendar-day name too so proofs written
+        # under either keying (transition, injected test dates) still count.
+        _fd = _flag_day(today)
+        candidates = {_fd, today}
+        if not any((reports / f"sent-{d}.flag").exists() for d in candidates):
             violations.append(
-                f"NO send proof: reports/sent-{today}.flag is absent — the "
+                f"NO send proof: reports/sent-{_fd}.flag is absent — the "
                 f"client email did NOT ship to the full distribution today")
 
     return violations

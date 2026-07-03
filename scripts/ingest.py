@@ -1271,8 +1271,13 @@ def apply_operator_corrections(requests: list[dict]) -> int:
         # missing row is the EXPECTED steady state once excluded (fresh
         # ingest also drops it), so absence is silent, not a WARN.
         if corr.get("exclude"):
-            if row is not None:
+            # Pop from by_id too so a duplicate correction for the same rid
+            # (a second exclude, or an exclude followed by a `set`) sees "no
+            # row" instead of crashing requests.remove() on an already-removed
+            # object or "applying" a set to a row no longer in the dataset.
+            if row is not None and row in requests:
                 requests.remove(row)
+                by_id.pop(rid, None)
                 applied += 1
                 print(f"Operator correction: EXCLUDED {rid} — "
                       f"{corr.get('note') or corr.get('source') or 'not a Hilmar-client move'}")
