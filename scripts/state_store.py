@@ -85,8 +85,11 @@ def state_paths(today: str | None = None) -> list[str]:
             datetime.now(ZoneInfo("America/New_York"))).isoformat()
         if _rd not in days:
             days.append(_rd)
-    except Exception:
-        pass
+    except Exception as _e:
+        # Loud, not silent: omitting the report-day flag from the sync is
+        # exactly the cross-runner double-send hole this exists to close.
+        print(f"WARN state_store: report-day flag name unavailable "
+              f"({type(_e).__name__}: {_e}) — syncing calendar-day flags only")
     return STATE_FILES + [
         p for d in days
         for p in (f"reports/sent-{d}.flag", f"reports/improvements-sent-{d}.flag")

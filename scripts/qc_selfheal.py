@@ -453,7 +453,9 @@ def _carrier_from_lane_rate_sibling(r: dict, requests: list, window_days: int = 
             if (s.get("lane") or "").strip().lower() != lane:
                 continue
             srate = s.get("ol_rate")
-            if not isinstance(srate, (int, float)) or abs(srate - rate) > 0.01:
+            # Rounded-to-cents EQUALITY — float tolerance without widening the
+            # match: $3,076.00 vs $3,076.01 are different quotes, not siblings.
+            if not isinstance(srate, (int, float)) or round(srate, 2) != round(rate, 2):
                 continue
             sd = _d(s)
             # Both dates known and too far apart → different quote cycles;

@@ -94,6 +94,24 @@ def test_exclude_is_idempotent_and_silent_when_gone(tmp_path, monkeypatch, capsy
     assert "no matching row" not in out
 
 
+def test_duplicate_exclude_entries_do_not_crash(tmp_path, monkeypatch):
+    """Copilot review (PR #84): a duplicate correction for the same rid — a
+    second exclude, or exclude followed by a `set` — must not ValueError on
+    requests.remove() of an already-removed row, nor 'apply' a set to a row
+    no longer in the dataset. by_id is popped on exclusion, so later entries
+    see 'no row'."""
+    _corrections_doc(tmp_path, monkeypatch, [
+        {"request_id": "stand_260821", "exclude": True},
+        {"request_id": "stand_260821", "exclude": True},          # dup exclude
+        {"request_id": "stand_260821", "set": {"status": "LOSS"}},  # dup set
+    ])
+    rows = [{"request_id": "stand_260821", "status": "WIN"},
+            {"request_id": "req_keep", "status": "LOSS"}]
+    applied = ingest.apply_operator_corrections(rows)
+    assert applied == 1                       # excluded exactly once, no crash
+    assert [r["request_id"] for r in rows] == ["req_keep"]
+
+
 def test_set_corrections_still_work_alongside_exclude(tmp_path, monkeypatch):
     _corrections_doc(tmp_path, monkeypatch, [
         {"request_id": "stand_260821", "exclude": True},
