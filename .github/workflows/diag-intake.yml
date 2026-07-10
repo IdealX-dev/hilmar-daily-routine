@@ -68,4 +68,21 @@ jobs:
           for d in q._intake_drop_diag(stage, bodies, max_chars=1200):
               print(f"QC-057-DIAG subject={d['subject']!r} has_body={d['has_body']}")
               print(f"  body: {d['snippet']}")
+
+          # The QC-015 "unmapped destination" rows — the ones that render as
+          # 'Lane unresolved' in the daily email. Scrubbed field dump only.
+          import json
+          data = json.load(open("tracking-data-v2.json", encoding="utf-8"))
+          for r in data.get("requests", []):
+              dest = r.get("destination") or "Unknown"
+              lane = r.get("lane") or ""
+              if dest in ("Unknown", "") or lane == "Lane unresolved":
+                  print("UNMAPPED-ROW:",
+                        {k: r.get(k) for k in (
+                            "request_id", "subject", "status", "quoted",
+                            "origin", "destination", "lane", "teu_requested",
+                            "containers", "product", "temperature",
+                            "request_date", "request_timestamp",
+                            "response_timestamp", "carrier_quoted", "ol_rate",
+                            "ol_signer", "loss_reason")})
           EOF
