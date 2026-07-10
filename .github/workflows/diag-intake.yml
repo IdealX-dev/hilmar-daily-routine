@@ -73,10 +73,12 @@ jobs:
           # 'Lane unresolved' in the daily email. Scrubbed field dump only.
           import json
           data = json.load(open("tracking-data-v2.json", encoding="utf-8"))
+          unmapped = []
           for r in data.get("requests", []):
               dest = r.get("destination") or "Unknown"
               lane = r.get("lane") or ""
               if dest in ("Unknown", "") or lane == "Lane unresolved":
+                  unmapped.append(r)
                   print("UNMAPPED-ROW:",
                         {k: r.get(k) for k in (
                             "request_id", "subject", "status", "quoted",
@@ -85,4 +87,37 @@ jobs:
                             "request_date", "request_timestamp",
                             "response_timestamp", "carrier_quoted", "ol_rate",
                             "ol_signer", "loss_reason")})
+
+          # Would TONIGHT's fire self-heal these rows? Re-parse each unmapped
+          # row's cached bodies with the CURRENT body_parser (what
+          # reprocess_bodies will do) and print what the standalone dest
+          # fallback (subject -> body destination -> body pod) would yield.
+          import body_parser as BP
+          import fetch_bodies as FB
+          for r in unmapped:
+              rid = r.get("request_id")
+              for imid in (r.get("source_imids") or []):
+                  rec = bodies.get(imid) or {}
+                  text = rec.get("text_body") or BP.html_to_text(rec.get("html_body") or "")
+                  if not text:
+                      print(f"REPARSE {rid}: (a cached body is empty)")
+                      continue
+                  p = FB._parse_all(text, rec.get("subject", ""),
+                                    rec.get("bucket", ""),
+                                    sent_ts=rec.get("sent_ts")) or {}
+                  print(f"REPARSE {rid}: destination={p.get('destination')!r} "
+                        f"pod={p.get('pod')!r} vessel={p.get('vessel_voyage')!r}")
+                  # If still unresolved, show the scrubbed port-ish lines so
+                  # the parser extension can target the real body shape.
+                  if not (p.get("destination") or p.get("pod")):
+                      hints = ("port", "discharge", "destination", "to :",
+                               "pod", "via", "vessel", "voyage")
+                      lines = [ln.strip() for ln in text.splitlines()
+                               if ln.strip() and any(h in ln.lower() for h in hints)][:12]
+                      try:
+                          from sentry_setup import _scrub_string
+                          lines = [_scrub_string(ln) for ln in lines]
+                      except Exception:
+                          pass
+                      print(f"  PORT-LINES: {' | '.join(lines)[:1200]}")
           EOF
