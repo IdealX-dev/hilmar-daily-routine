@@ -1623,6 +1623,35 @@ def phase_6_rules(log: Log, data: dict):
             log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
         else:
             log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) (within tolerance)")
+        # DISPLAY-IMPACT sub-check (2026-07-09, Michael "there should be zero
+        # lane unresolved"): an Unknown-destination row dated TODAY renders in
+        # the client-visible daily sections. The count tolerance above is for
+        # the historical tail; a TODAY row is a live parser miss — ERROR it
+        # loudly and name it so the fire's audit points straight at the email.
+        # Self-heal path: the standalone builder's body/POD fallback + the
+        # patch_carriers PDF lane pass; if both failed, the subject+body+PDF
+        # genuinely carry no port — flag_for_operator.
+        try:
+            from datetime import datetime as _dt15
+            _today_rd = core.report_business_day(_dt15.now(core.ET)).isoformat()
+        except Exception:
+            _today_rd = None
+        if _today_rd:
+            _fresh_unresolved = [
+                r for r in requests
+                if ((r.get("destination") or "Unknown") in ("Unknown", "")
+                    or (r.get("lane") or "") == "Lane unresolved")
+                and _today_rd in ((r.get("request_date") or ""),
+                                  str(r.get("response_timestamp") or "")[:10])
+            ]
+            if _fresh_unresolved:
+                _ids = ", ".join(str(r.get("request_id", "?")) for r in _fresh_unresolved[:4])
+                log.error(
+                    f"QC-015: {len(_fresh_unresolved)} row(s) created TODAY have an "
+                    f"unresolved lane and WILL render as 'Lane unresolved' in the "
+                    f"daily email: {_ids} — subject+body+PDF yielded no destination; "
+                    f"extend the parser or fix the source row"
+                )
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 

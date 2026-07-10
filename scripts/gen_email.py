@@ -145,9 +145,16 @@ def _today_events(data, today_date):
     for r in data.get("requests", []):
         req_d = _iso_date(r.get("request_date") or r.get("request_timestamp"))
         resp_d = _iso_date(r.get("response_timestamp"))
-        if req_d == today_date:
+        # Standalone bookings (stand_*) are neither a Lonny ask nor a rate
+        # quote — rendering them in New Requests / OL Responses produced the
+        # 2026-07-09 "Lane unresolved" junk rows (no Lonny timestamp, no rate,
+        # 0 TEU). They surface in STATUS CHANGES instead (the builder writes a
+        # PENDING→WIN history entry), which is the honest event: "a booking
+        # confirmed today".
+        _is_standalone = str(r.get("request_id") or "").startswith("stand_")
+        if req_d == today_date and not _is_standalone:
             new_requests.append(r)
-        if resp_d == today_date:
+        if resp_d == today_date and not _is_standalone:
             ol_responses.append(r)
         # status changes today
         for h in (r.get("status_history") or []):
@@ -273,12 +280,16 @@ def _build_lane_buckets(data):
     can display "who beat us"."""
     lanes = defaultdict(lambda: {
         "won": 0, "ql": 0, "nq": 0, "lost": 0, "pending": 0,
-        "total": 0, "teu_won": 0, "teu_lost": 0, "carriers": set(),
+        "total": 0, "teu_won": 0, "teu_lost": 0, "teu_req": 0, "carriers": set(),
     })
     for r in data.get("requests", []):
         lane = r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}"
         b = lanes[lane]
         b["total"] += 1
+        # Total TEU up for offer on the lane (all statuses) — without it the
+        # win-rate % floats with no denominator (Michael 2026-07-09: "shows
+        # percentages but doesn't show total teus and shipments up for offer").
+        b["teu_req"] += int(r.get("teu_requested") or 0)
         st = r.get("status")
         if st == "WIN":
             b["won"] += 1
@@ -1187,6 +1198,7 @@ def _winning_lanes_html(rows):
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600;vertical-align:top">{b['total']} · {b.get('teu_req', 0)}<div {_MICRO}>Offered (# · TEU)</div></td>
   <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold;vertical-align:top">{b['won']}<div {_MICRO}>Wins</div></td>
   <td style="padding:6px 8px;text-align:center;color:#dc2626;vertical-align:top">{ql_count}<div {_MICRO}>Q&amp;L</div></td>
   <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
@@ -1207,6 +1219,7 @@ def _winning_lanes_html(rows):
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#059669;color:#ffffff">
     <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
     <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Bookings won on this lane">Wins (#)</th>
     <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Quoted & Lost — OL responded but Lonny chose elsewhere">Q&amp;L (#)</th>
     <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Not Quoted — OL didn't respond with a rate">NQ (#)</th>
@@ -1243,6 +1256,7 @@ def _losing_lanes_html(rows):
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600;vertical-align:top">{b['total']} · {b.get('teu_req', 0)}<div {_MICRO}>Offered (# · TEU)</div></td>
   <td style="padding:6px 8px;text-align:center;color:#dc2626;font-weight:bold;vertical-align:top">{b['lost']}<div {_MICRO}>Q&amp;L</div></td>
   <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
   <td style="padding:6px 8px;text-align:center;color:#7c3aed;vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
@@ -1259,6 +1273,7 @@ def _losing_lanes_html(rows):
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background-color:#7f1d1d;color:#ffffff">
     <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Lane (origin → destination)</th>
+    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
     <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Q&L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
     <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Not Quoted rows on this lane (OL didn't respond)">NQ (#)</th>
     <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Awaiting Lonny decision">Pending (#)</th>
