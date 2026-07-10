@@ -175,6 +175,30 @@ def _find_related_rate_response(row: dict, by_thread: dict[tuple, str]) -> str |
     return None
 
 
+def _dest_from_pod(pod) -> str | None:
+    """Canonical export destination for a PDF/table POD value, or None.
+
+    A bare booking amendment ("PLEASE UPDATE BKG # ... // HILMAR",
+    stand_260895/stand_260905, 2026-07-10) carries NO lane in subject or
+    body — the ONLY lane source is the attached booking PDF's Port of
+    Discharge. This maps that POD onto the curated KNOWN_DESTINATIONS
+    corpus; anything not in the corpus returns None so a garbled PDF cell
+    can never invent a lane (the row stays honestly Unknown and QC-015
+    keeps flagging it).
+    """
+    if not pod or not isinstance(pod, str):
+        return None
+    cand = BP._norm(pod.strip())
+    lookup = {d.lower(): d for d in BP.KNOWN_DESTINATIONS}
+    hit = lookup.get(cand.lower())
+    if hit:
+        return hit
+    # PDF PODs often carry a trailing country/region ("Singapore Singapore",
+    # "Yokohama, Japan") — try the first token(s) against the corpus.
+    first = cand.split(",")[0].strip()
+    return lookup.get(first.lower())
+
+
 def _index_pdfs_by_mdolx() -> dict[str, Path]:
     """Scan scripts/stage_pdfs/ once and index PDFs by the MDOLX number
     they contain. Cheaper than re-parsing for every row.
@@ -607,6 +631,25 @@ def main():
             r["ol_rate"] = parsed["ol_rate"]
             r["quoted"] = True   # a recovered rate IS a quote — never NQ
             patched_rate += 1
+
+        # PASS 2b: destination + lane from the row's own POD. A bare
+        # booking amendment has no lane in subject/body and no sibling
+        # subject naming one (the earlier LANE-attribution pass misses it)
+        # — but the booking PDF's Port of Discharge, backfilled into
+        # r["pod"]/parsed["pod"] by PASS 2 just above, IS the lane.
+        # Guarded by _dest_from_pod's KNOWN_DESTINATIONS check so a
+        # garbled PDF cell can never invent a lane. Zero 'Lane unresolved'
+        # in the daily email is the standard (Michael, 2026-07-09/10).
+        if (r.get("destination") or "Unknown") in ("Unknown", "") or \
+                (r.get("lane") or "") == "Lane unresolved":
+            _pod_dest = _dest_from_pod(r.get("pod") or parsed.get("pod"))
+            if _pod_dest:
+                r["destination"] = _pod_dest
+                _o = r.get("origin") or "Oakland"
+                r["lane"] = f"{_o} → {_pod_dest}"
+                patched_lane += 1
+                print(f"  PATCH lane    {r.get('request_id', '')[:16]} -> "
+                      f"{r['lane']} (from booking-PDF POD)")
 
     # ─────────────────────────────────────────────────────────────────
     # PASS 4 — Stage-scan for WINs still missing carrier_won

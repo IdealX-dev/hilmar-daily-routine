@@ -1,0 +1,16 @@
+[
+  {
+    "subject": "REEFER NEEDS",
+    "sent_before": "2026-07-11",
+    "reason": "Commercial note, not an RFQ: Lonny pressing for best rate + more domestic free time on future reefer loads (turn times too short). No lane, no shipment to quote.",
+    "source": "QC-057-DIAG run-log diagnostic 2026-07-10",
+    "added": "2026-07-10"
+  },
+  {
+    "subject": "REEFERS",
+    "sent_before": "2026-07-11",
+    "reason": "Commercial note, not an RFQ: standing instruction to include transshipment options in future cheese quotes while inventory is high. No lane, no shipment to quote.",
+    "source": "QC-057-DIAG run-log diagnostic 2026-07-10",
+    "added": "2026-07-10"
+  }
+]
