@@ -578,6 +578,70 @@ def _intake_reconciliation(stage_rows, bodies):
     return expected, dropped
 
 
+#: Body-line hints that mark a lane/equipment-bearing line in a dropped RFQ —
+#: what the operator (or the next parser fix) needs to see to resolve the
+#: destination the parser missed. Lowercase substring match.
+_INTAKE_DIAG_LINE_HINTS = (
+    "x40", "40'", "40ft", "40 ft", " hc", "reefer", "teu", "container",
+    " to ", "->", "→", "port of", "etd", "eta", "free time", "dest",
+)
+
+
+def _intake_drop_diag(stage_rows, bodies, max_emails: int = 5,
+                      max_chars: int = 500) -> list:
+    """PII-scrubbed body diagnostics for QC-057's silently-dropped RFQs.
+
+    QC-057 can only say WHICH subjects dropped; the root fix (a parser
+    extension) needs to see the lane-bearing body text the parser failed on.
+    For each dropped RFQ this returns {subject, has_body, snippet} where
+    snippet is the lane/equipment-hinted lines of the cached body (falling
+    back to the first non-empty lines), scrubbed via sentry_setup's PII
+    scrubber — it lands in the run log and the idealx.us audit email.
+    A diagnostic must never break the QC run: any error yields a safe stub.
+    """
+    import ingest
+
+    bodies = bodies or {}
+    out = []
+    try:
+        for r in stage_rows or []:
+            if len(out) >= max_emails:
+                break
+            if r.get("bucket") != "lonny_outbound":
+                continue
+            subj = r.get("subject") or ""
+            body_rec = bodies.get(r.get("imid")) or {}
+            if ingest.out_of_scope_reason({
+                "subject": subj,
+                "summary_preview": r.get("summary_preview"),
+                "text_body": body_rec.get("text_body"),
+            }) or ingest.is_operational_subject(subj):
+                continue
+            parsed = body_rec.get("parsed") or {}
+            if ingest.clean_destination(subj) or parsed.get("destination"):
+                continue  # resolved — not a drop
+            body = body_rec.get("text_body") or ""
+            lane_lines = [ln.strip() for ln in body.splitlines()
+                          if ln.strip() and any(h in ln.lower()
+                                                for h in _INTAKE_DIAG_LINE_HINTS)]
+            if not lane_lines:  # nothing hinted — first non-empty lines instead
+                lane_lines = [ln.strip() for ln in body.splitlines()
+                              if ln.strip()][:6]
+            raw = " | ".join(lane_lines)[:max_chars] if lane_lines else \
+                "(no body cached — Graph fetch missing for this message)"
+            try:
+                from sentry_setup import _scrub_string
+                raw = _scrub_string(raw)[:max_chars]
+            except Exception:
+                pass
+            out.append({"subject": subj.strip()[:80] or "(no subject)",
+                        "has_body": bool(body), "snippet": raw})
+    except Exception:
+        return out or [{"subject": "(diagnostic failed)", "has_body": False,
+                        "snippet": ""}]
+    return out
+
+
 def phase_3_entries(log: Log, data: dict):
     log.section("PHASE 3: ENTRY-LEVEL HEALING")
     # Cleanup pass: drop stand_* WINs that don't have HILMAR in subject.
@@ -3436,6 +3500,14 @@ def phase_6_rules(log: Log, data: dict):
                     log.error(_m + "  [>=3 -> systemic parser breakage]")
                 else:
                     log.warn(_m)
+                # PII-scrubbed body diagnostics: the root fix is always a
+                # parser extension, and the parser fix needs the lane-bearing
+                # text it failed on — surface it (run log + audit email)
+                # instead of making the operator dig out the raw email.
+                for _dg in _intake_drop_diag(_ingest.load_stage(),
+                                             _ingest.load_bodies_index()):
+                    log.warn(f"QC-057-DIAG: subject='{_dg['subject']}' "
+                             f"has_body={_dg['has_body']} body: {_dg['snippet']}")
     except Exception as _e:
         log.warn(f"QC-057: check failed with exception: {_e}")
 
