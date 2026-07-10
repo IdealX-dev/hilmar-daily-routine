@@ -148,3 +148,57 @@ def test_qc057_diag_lines_reach_the_log(monkeypatch, tmp_path):
     diag = [m for m in warns if "QC-057-DIAG" in m]
     assert diag, warns
     assert "Osaka" in diag[0]
+
+
+# ── acknowledged commercial notes (intake_acknowledged.json) ─────────
+# QC-057 cannot safely auto-classify note-vs-RFQ (both can contain rate
+# language), so classification is an operator decision recorded in the
+# tracked ack file. Entries are DATE-SCOPED (sent_before): a future
+# same-subject email that IS a real RFQ still WARNs.
+
+_ACKS = [{"subject": "REEFER NEEDS", "sent_before": "2026-07-11",
+          "reason": "commercial note"}]
+
+
+def _note_row(subject, sent, imid="a1"):
+    r = _row("lonny_outbound", subject, imid)
+    r["sent"] = sent
+    return r
+
+
+def test_acked_note_is_neither_expected_nor_dropped():
+    stage = [_note_row("REEFER NEEDS", "2026-07-08T17:00:00Z")]
+    expected, dropped = q._intake_reconciliation(stage, {}, acks=_ACKS)
+    assert expected == 0
+    assert dropped == []
+
+
+def test_same_subject_after_ack_cutoff_still_warns():
+    stage = [_note_row("REEFER NEEDS", "2026-07-15T17:00:00Z")]
+    expected, dropped = q._intake_reconciliation(stage, {}, acks=_ACKS)
+    assert expected == 1
+    assert dropped == ["REEFER NEEDS"]
+
+
+def test_missing_sent_date_fails_open_to_warn():
+    stage = [_row("lonny_outbound", "REEFER NEEDS", "a2")]  # no sent field
+    expected, dropped = q._intake_reconciliation(stage, {}, acks=_ACKS)
+    assert dropped == ["REEFER NEEDS"]
+
+
+def test_acked_note_skipped_by_diag_but_surfaced_as_note():
+    stage = [_note_row("RE: REEFER NEEDS", "2026-07-08T17:00:00Z")]
+    assert q._intake_drop_diag(stage, {}, acks=_ACKS) == []
+    notes = q._intake_acked_notes(stage, acks=_ACKS)
+    assert len(notes) == 1
+    assert "commercial note" in notes[0][1]
+
+
+def test_shipped_ack_file_covers_the_two_reefer_notes():
+    # The real tracked file must cover the two 2026-07 emails (date-scoped).
+    acks = q._load_intake_acks()
+    subjects = {q._norm_subject_57(a.get("subject")) for a in acks}
+    assert {"reefer needs", "reefers"} <= subjects
+    for a in acks:
+        assert a.get("sent_before"), "every ack entry must be date-scoped"
+        assert a.get("reason")

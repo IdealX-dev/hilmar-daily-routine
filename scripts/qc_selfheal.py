@@ -533,7 +533,49 @@ def _carrier_diag_snippet(r: dict, bodies_idx: dict, max_chars: int = 400) -> di
                 "snippet": "(diagnostic failed)"}
 
 
-def _intake_reconciliation(stage_rows, bodies):
+#: Operator-acknowledged non-RFQ emails (tracked in git). QC-057 cannot
+#: safely auto-classify "commercial note" vs "real RFQ" — both can contain
+#: rate language (the 2026-07-10 REEFER NEEDS note literally asks for "best
+#: rate") and a wrong auto-classification silently hides a real dropped RFQ,
+#: the exact 2026-06-24 failure QC-057 exists to prevent. So classification
+#: is an OPERATOR decision recorded here after reading the QC-057-DIAG
+#: snippet. Entries are DATE-SCOPED: they only cover emails sent strictly
+#: BEFORE the entry's `sent_before` date, so a future same-subject email
+#: that IS a real RFQ still WARNs.
+INTAKE_ACK_PATH = Path(__file__).resolve().parent / "intake_acknowledged.json"
+
+
+def _load_intake_acks() -> list:
+    try:
+        import json as _json
+        return _json.loads(INTAKE_ACK_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _norm_subject_57(s) -> str:
+    import re as _re
+    s = _re.sub(r"^\s*(re|fw|fwd):\s*", "", (s or "").strip(), flags=_re.IGNORECASE)
+    return " ".join(s.split()).casefold()
+
+
+def _intake_ack_match(subject, sent_iso, acks):
+    """The ack entry covering this email, or None. Subject must match
+    (normalized) AND the email's sent date must be strictly before the
+    entry's sent_before. An email with no parseable sent date is NOT
+    covered — fail open to the WARN, never silently acknowledge."""
+    subj_n = _norm_subject_57(subject)
+    sent_day = str(sent_iso or "")[:10]
+    if not sent_day:
+        return None
+    for a in acks or []:
+        if _norm_subject_57(a.get("subject")) == subj_n and \
+                sent_day < str(a.get("sent_before") or ""):
+            return a
+    return None
+
+
+def _intake_reconciliation(stage_rows, bodies, acks=None):
     """Reconcile staged Lonny RFQs against ingest's OWN drop conditions.
 
     ingest.build_requests silently drops any lonny_outbound email whose
@@ -553,6 +595,7 @@ def _intake_reconciliation(stage_rows, bodies):
     import ingest
 
     bodies = bodies or {}
+    acks = _load_intake_acks() if acks is None else acks
     expected, dropped = 0, []
     for r in stage_rows or []:
         if r.get("bucket") != "lonny_outbound":
@@ -567,6 +610,10 @@ def _intake_reconciliation(stage_rows, bodies):
         }):
             continue
         if ingest.is_operational_subject(subj):
+            continue
+        # Operator-acknowledged commercial note (date-scoped) — not an RFQ,
+        # so it neither counts as expected nor as a silent drop.
+        if _intake_ack_match(subj, r.get("sent") or r.get("received"), acks):
             continue
         expected += 1
         # Exact destination resolution from ingest.build_requests:
@@ -587,8 +634,26 @@ _INTAKE_DIAG_LINE_HINTS = (
 )
 
 
+def _intake_acked_notes(stage_rows, acks=None) -> list:
+    """(subject, reason) for each staged lonny_outbound email covered by an
+    acknowledged-note entry — printed as OK lines so the acknowledgment
+    stays visible in every run log instead of silently vanishing."""
+    acks = _load_intake_acks() if acks is None else acks
+    out, seen = [], set()
+    for r in stage_rows or []:
+        if r.get("bucket") != "lonny_outbound":
+            continue
+        subj = r.get("subject") or ""
+        a = _intake_ack_match(subj, r.get("sent") or r.get("received"), acks)
+        key = _norm_subject_57(subj)
+        if a and key not in seen:
+            seen.add(key)
+            out.append((subj.strip()[:80], a.get("reason") or "(no reason recorded)"))
+    return out
+
+
 def _intake_drop_diag(stage_rows, bodies, max_emails: int = 5,
-                      max_chars: int = 500) -> list:
+                      max_chars: int = 500, acks=None) -> list:
     """PII-scrubbed body diagnostics for QC-057's silently-dropped RFQs.
 
     QC-057 can only say WHICH subjects dropped; the root fix (a parser
@@ -602,6 +667,7 @@ def _intake_drop_diag(stage_rows, bodies, max_emails: int = 5,
     import ingest
 
     bodies = bodies or {}
+    acks = _load_intake_acks() if acks is None else acks
     out = []
     try:
         for r in stage_rows or []:
@@ -617,6 +683,8 @@ def _intake_drop_diag(stage_rows, bodies, max_emails: int = 5,
                 "text_body": body_rec.get("text_body"),
             }) or ingest.is_operational_subject(subj):
                 continue
+            if _intake_ack_match(subj, r.get("sent") or r.get("received"), acks):
+                continue  # acknowledged commercial note — no diag needed
             parsed = body_rec.get("parsed") or {}
             if ingest.clean_destination(subj) or parsed.get("destination"):
                 continue  # resolved — not a drop
@@ -3486,6 +3554,11 @@ def phase_6_rules(log: Log, data: dict):
         else:
             _expected, _dropped = _intake_reconciliation(
                 _ingest.load_stage(), _ingest.load_bodies_index())
+            # Acknowledged commercial notes stay visible every run — an
+            # acknowledgment must never silently disappear an email.
+            for _subj57, _why57 in _intake_acked_notes(_ingest.load_stage()):
+                log.ok(f"QC-057: acknowledged commercial note (not an RFQ): "
+                       f"'{_subj57}' — {_why57}")
             if not _dropped:
                 log.ok(f"QC-057: intake reconciled — all {_expected} staged Lonny "
                        f"RFQ(s) resolved a destination")
