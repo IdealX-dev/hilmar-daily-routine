@@ -379,6 +379,12 @@ def cmd_daily(args) -> int:
     _now_et = _dt.now(_zi("America/New_York"))
     today = _flag_date(_now_et)
     flag_name = "sent" if is_full_distribution else ("improvements-sent" if is_audit else None)
+    # --flag-name overrides the derived name so a NEW send shape can get its
+    # own idempotency namespace (the client-facing email uses "client-sent" —
+    # it must never share a flag with the staff distribution or the audit).
+    # Absent, behavior is exactly as before. --no-flag still wins below.
+    if getattr(args, "flag_name", None):
+        flag_name = args.flag_name
     if getattr(args, "no_flag", False):
         # Verification/test sends must never touch production idempotency
         # state: don't let a flag block the send, don't write one after.
@@ -400,7 +406,13 @@ def cmd_daily(args) -> int:
     # shared source of truth: before any full-distribution send, ask Graph
     # whether a message with this exact subject already left the account
     # today. Best-effort — a Graph hiccup must never block the real send.
-    if is_full_distribution and not getattr(args, "force", False):
+    # The client-facing send (--flag-name client-sent) goes to an EXTERNAL
+    # client recipient, so it gets the same mailbox guard as the staff
+    # distribution — a double-send to the client is worse than one to staff.
+    # Its subject differs from the staff subject, so the Graph lookup keys on
+    # the right message. (Samples use --force --no-flag and skip this.)
+    if (is_full_distribution or flag_name == "client-sent") \
+            and not getattr(args, "force", False):
         prior = _sent_today_in_mailbox(subject)
         if prior:
             print(f"⛔ MAILBOX GUARD: '{subject}' already sent today at {prior}")
@@ -547,6 +559,10 @@ def main() -> int:
     pd.add_argument("--no-flag", action="store_true",
                     help="Don't read or write the idempotency flag (verification/test "
                          "sends must never touch production send state)")
+    pd.add_argument("--flag-name",
+                    help="Override the derived idempotency flag name so a distinct "
+                         "send shape gets its own namespace (e.g. 'client-sent' for "
+                         "the client-facing email). Absent = derived as before.")
     pd.set_defaults(func=cmd_daily)
 
     pn = sub.add_parser("nudge", help="Send a one-off internal nudge")

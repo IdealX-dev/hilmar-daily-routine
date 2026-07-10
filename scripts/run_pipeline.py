@@ -100,6 +100,12 @@ STEPS = [
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),
     ("Email body HTML",          [PY, str(SCRIPTS / "gen_email.py")]),
+    # 2026-07-10: CLIENT-facing daily service update (separate from the staff
+    # email above). Builds reports/client-email-{body.html,subject.txt} every
+    # fire; the wrapper/workflow send step is GATED by config.json
+    # client_report.enabled (false = sample to Michael only; QC-065 pins the
+    # approved recipients + scans the body for internal-analytics leaks).
+    ("Client-facing email HTML", [PY, str(SCRIPTS / "gen_client_email.py")]),
     # 2026-05-13: Cross-project intelligence export + rate-negotiation
     # analytics. share_intel pushes Hilmar's data to the SHARED cross-
     # project store (consumed by rate-tracker for cross-client insights).
@@ -157,6 +163,7 @@ BEST_EFFORT_STEPS = {
     "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
+    "Client-facing email HTML",        # brand-new gated client artifact — must never block the staff email
     "Share to client_intelligence",    # SHARED-folder export; no client impact
     "Rate intelligence",               # idealx.us-only cheat sheet; not in email
     "Sync to ol-quote-tracker",        # downstream registry push; no client impact

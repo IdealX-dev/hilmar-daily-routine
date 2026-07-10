@@ -178,3 +178,77 @@ def test_mailbox_guard_bypassed_by_force(tmp_path, monkeypatch):
     monkeypatch.setattr(os_send, "_sent_today_in_mailbox", _boom)
     assert os_send.cmd_daily(_args(tmp_path, to_from_config=True, force=True)) == 0
     assert len(sends) == 1
+
+
+# ── client-facing send (--flag-name client-sent) ─────────────────────
+# The client email is the most sensitive send shape in the system: it goes
+# to an EXTERNAL client recipient. It must get its own idempotency namespace
+# (never sharing a flag with staff/audit) AND the same cross-host mailbox
+# guard as the full distribution.
+
+def _client_args(tmp_path, **over):
+    return _args(
+        tmp_path,
+        to=["lupfold@hilmaringredients.com"],
+        cc=["michael.deitchman@ol-usa.com"],
+        flag_name="client-sent",
+        **over,
+    )
+
+
+def test_client_send_writes_its_own_flag_namespace(tmp_path, monkeypatch):
+    sends = _wire(tmp_path, monkeypatch)
+    assert os_send.cmd_daily(_client_args(tmp_path)) == 0
+    assert sends == [["lupfold@hilmaringredients.com"]]
+    d = _today_et()
+    assert (tmp_path / "reports" / f"client-sent-{d}.flag").exists()
+    # Must NOT touch the staff or audit namespaces.
+    assert not (tmp_path / "reports" / f"sent-{d}.flag").exists()
+    assert not (tmp_path / "reports" / f"improvements-sent-{d}.flag").exists()
+
+
+def test_client_flag_blocks_client_resend_without_force(tmp_path, monkeypatch):
+    sends = _wire(tmp_path, monkeypatch)
+    assert os_send.cmd_daily(_client_args(tmp_path)) == 0
+    assert os_send.cmd_daily(_client_args(tmp_path)) == 0  # refused, rc=0
+    assert len(sends) == 1
+
+
+def test_client_flag_does_not_block_staff_send(tmp_path, monkeypatch):
+    # Independent namespaces: the client email having shipped must never
+    # suppress the staff distribution (or vice versa).
+    sends = _wire(tmp_path, monkeypatch)
+    assert os_send.cmd_daily(_client_args(tmp_path)) == 0
+    assert os_send.cmd_daily(_args(tmp_path, to_from_config=True)) == 0
+    assert len(sends) == 2
+
+
+def test_client_send_gets_mailbox_guard(tmp_path, monkeypatch):
+    # A double-send to the client is worse than one to staff: the Graph
+    # mailbox guard must cover the client shape too, and leave the marker in
+    # the CLIENT flag namespace.
+    sends = _wire(tmp_path, monkeypatch)
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox",
+                        lambda s: "2026-07-10T22:07:00Z")
+    assert os_send.cmd_daily(_client_args(tmp_path)) == 0
+    assert sends == []  # refused — nothing sent
+    flag = tmp_path / "reports" / f"client-sent-{_today_et()}.flag"
+    assert flag.exists()
+    assert "mailbox guard" in flag.read_text(encoding="utf-8")
+
+
+def test_client_sample_send_skips_guard_and_flags(tmp_path, monkeypatch):
+    # The daily SAMPLE to Michael runs with --force --no-flag: it must never
+    # read/write idempotency state nor consult the mailbox guard, or a sample
+    # could block (or be blocked by) the real client send.
+    sends = _wire(tmp_path, monkeypatch)
+
+    def _boom(s):
+        raise AssertionError("guard must not run for --force sample sends")
+    monkeypatch.setattr(os_send, "_sent_today_in_mailbox", _boom)
+    assert os_send.cmd_daily(_args(
+        tmp_path, to=["michael.deitchman@idealx.us"],
+        force=True, no_flag=True)) == 0
+    assert len(sends) == 1
+    d = _today_et()
+    assert not (tmp_path / "reports" / f"client-sent-{d}.flag").exists()

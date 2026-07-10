@@ -238,6 +238,12 @@ ACTIONS: dict[str, dict] = {
         "comment": "A display field (carrier/origin/destination/lane/pol/pod/vessel_voyage/transshipment) carried a garbage value that would ship to the client — a raw message-id, an email/mailbox name (e.g. the OL responder mailbox), or a phone-number fragment. QC-064 SELF-HEALED by nulling the field (a blank cell beats wrong info), so this is informational. The REAL fix is upstream: a parser leak put the bad token there — find the offending email shape and tighten body_parser / patch_carriers so the field is never populated with it, then re-ingest. WARN-class (never gates the client email).",
         "auto_resolve_safe": True,
     },
+    "QC-065": {
+        "name": "Client-report invariant violation (recipients / content leak)",
+        "action": "flag_for_operator",
+        "comment": "The CLIENT-facing daily email (gen_client_email.py -> reports/client-email-body.html) violated a hard invariant: either config.json client_report carries a recipient other than the ONLY approved pair (to=lupfold@hilmaringredients.com, cc=michael.deitchman@ol-usa.com) — e.g. a staff/full_list address or a 2nd 'to' recipient — or the rendered body leaked an internal-analytics string (win/loss framing, Q&L/NQ taxonomy, carrier-scoreboard/negotiation intel; raw or &amp;-escaped). FIX at the root: correct the config.json client_report block, or fix the renderer so the internal string never enters the client body. NEVER widen the approved-recipient invariant or trim the marker list to make this pass — QC-065 is what stands between internal analytics and the client's inbox.",
+        "auto_resolve_safe": False,
+    },
     "QC-023": {
         "name": "MSAL device-code token near/over expiry",
         "action": "flag_for_operator",

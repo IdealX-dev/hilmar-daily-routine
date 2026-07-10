@@ -92,7 +92,11 @@ def state_paths(today: str | None = None) -> list[str]:
               f"({type(_e).__name__}: {_e}) — syncing calendar-day flags only")
     return STATE_FILES + [
         p for d in days
-        for p in (f"reports/sent-{d}.flag", f"reports/improvements-sent-{d}.flag")
+        # client-sent = the client-facing email's idempotency flag
+        # (outlook_send --flag-name client-sent); it syncs like the staff
+        # flags so cross-machine dedupe holds for that send shape too.
+        for p in (f"reports/sent-{d}.flag", f"reports/improvements-sent-{d}.flag",
+                  f"reports/client-sent-{d}.flag")
     ]
 
 ENV_CONN = "AZURE_STORAGE_CONNECTION_STRING"
