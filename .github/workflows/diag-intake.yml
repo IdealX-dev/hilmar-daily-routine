@@ -1,0 +1,71 @@
+# TEMPORARY diagnostic — QC-057 dropped-RFQ body snippets on demand.
+#
+# The GitHub MCP integration cannot POST workflow dispatches (403), so this
+# fires on push to the dev branch instead. It pulls the staged-email cache
+# from the blob store and prints ONLY the PII-scrubbed QC-057-DIAG output
+# (lane/equipment-hinted lines of the dropped RFQs' bodies) so the parser
+# gap behind the Jul 9 "Lane unresolved" rows can be root-fixed same-day.
+# Read-only: no email send, no Sentry init, no state push-back.
+#
+# DELETE THIS FILE once the parser fix lands (it must not outlive the fix).
+name: Diag intake (temporary)
+
+on:
+  push:
+    branches:
+      - claude/pr-65-passoff-docs-0rjg0y
+
+permissions:
+  contents: read
+
+concurrency:
+  # Reuse the daily-fire group so this can never race a real fire's
+  # state pull/push (read-only here, but serialization is free).
+  group: hilmar-daily-fire
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+  HILMAR_PARSER_FALLBACK_DISABLE: "1"
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests tzdata python-dateutil jsonschema azure-storage-blob
+
+      - name: Pull staged-email cache from blob store
+        run: python3 scripts/state_store.py pull
+
+      - name: Print QC-057 intake diagnostics (PII-scrubbed)
+        run: |
+          python3 - <<'EOF'
+          import sys
+          sys.path.insert(0, "scripts")
+          import ingest
+          import qc_selfheal as q
+
+          stage = ingest.load_stage()
+          bodies = ingest.load_bodies_index()
+          expected, dropped = q._intake_reconciliation(stage, bodies)
+          print(f"QC-057: expected={expected} dropped={len(dropped)}")
+          for s in dropped:
+              print(f"  DROPPED SUBJECT: {s}")
+          for d in q._intake_drop_diag(stage, bodies, max_chars=1200):
+              print(f"QC-057-DIAG subject={d['subject']!r} has_body={d['has_body']}")
+              print(f"  body: {d['snippet']}")
+          EOF
