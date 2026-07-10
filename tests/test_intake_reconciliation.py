@@ -99,3 +99,52 @@ def test_qc057_silent_when_all_resolve(monkeypatch, tmp_path):
              _row("lonny_outbound", "Chicago to HCMC", "i10")]
     warns, errors = _fired(monkeypatch, tmp_path, stage)
     assert not any("QC-057" in m for m in warns + errors), (warns, errors)
+
+
+# ── QC-057-DIAG: scrubbed body diagnostics for dropped RFQs ──────────
+# QC-057 names WHICH subjects dropped; the root fix (a parser extension)
+# needs the lane-bearing body text the parser failed on. The diag helper
+# surfaces it, PII-scrubbed, in the run log + audit email.
+
+def test_drop_diag_surfaces_lane_bearing_body_lines():
+    stage = [_row("lonny_outbound", "REEFER NEEDS", "d1")]
+    bodies = {"d1": {"parsed": {}, "text_body": (
+        "Hi team,\n"
+        "Need 5x40 HC reefers to Singapore, ETD week of 8/1\n"
+        "Also 2x40 to Algeciras with 14d free time\n"
+        "Thanks, Lonny\n"
+        "lupfold@hilmaringredients.com\n")}}
+    diags = q._intake_drop_diag(stage, bodies)
+    assert len(diags) == 1
+    d = diags[0]
+    assert d["subject"] == "REEFER NEEDS"
+    assert d["has_body"] is True
+    assert "Singapore" in d["snippet"]
+    assert "Algeciras" in d["snippet"]
+    # PII scrubbed: the email address must not survive into the snippet.
+    assert "lupfold@hilmaringredients.com" not in d["snippet"]
+    # Non-lane chatter is filtered out by the line hints.
+    assert "Hi team" not in d["snippet"]
+
+
+def test_drop_diag_skips_resolved_and_out_of_scope_rows():
+    stage = [
+        _row("lonny_outbound", "Oakland to Yokohama 2x40HC", "d2"),  # resolves
+        _row("lonny_outbound", "FTL Modesto CA to Sturgis MI", "d3"),  # trucking
+        _row("lonny_reply", _UNPARSEABLE, "d4"),                     # wrong bucket
+        _row("lonny_outbound", _UNPARSEABLE, "d5"),                  # the drop
+    ]
+    diags = q._intake_drop_diag(stage, {})
+    assert [d["subject"] for d in diags] == [_UNPARSEABLE]
+    assert diags[0]["has_body"] is False
+    assert "no body cached" in diags[0]["snippet"]
+
+
+def test_qc057_diag_lines_reach_the_log(monkeypatch, tmp_path):
+    bodies = {"i8": {"parsed": {}, "text_body": "3x40 HC reefers to Osaka pls"}}
+    warns, errors = _fired(monkeypatch, tmp_path,
+                           [_row("lonny_outbound", _UNPARSEABLE, "i8")],
+                           bodies)
+    diag = [m for m in warns if "QC-057-DIAG" in m]
+    assert diag, warns
+    assert "Osaka" in diag[0]
