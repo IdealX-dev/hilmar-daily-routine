@@ -1296,6 +1296,40 @@ def qc064_garbage_reason(value):
     return None
 
 
+# ── QC-065: client-report invariants ─────────────────────────────────
+# The ONLY approved recipients for the CLIENT-facing daily email
+# (gen_client_email.py). The client is Lonny Upfold at Hilmar Ingredients;
+# Michael's ol-usa address rides CC. These tuples are the invariant — the
+# fix for a QC-065 ERROR is always config.json / the renderer, NEVER
+# widening these lists.
+QC065_APPROVED_TO = ("lupfold@hilmaringredients.com",)
+QC065_APPROVED_CC = ("michael.deitchman@ol-usa.com",)
+#: Internal-analytics strings that must NEVER appear in the client email
+#: body — win/loss framing, Q&L/NQ taxonomy, carrier-scoreboard/negotiation
+#: intel. Matched case-insensitively; the &amp;-escaped variants are listed
+#: explicitly so an HTML-escaped leak is caught too.
+QC065_INTERNAL_MARKERS = (
+    "win rate",
+    "quoted & lost",
+    "quoted &amp; lost",
+    "q&l",
+    "q&amp;l",
+    "not quoted",
+    "carrier scoreboard",
+    "negotiation",
+)
+QC065_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
+QC065_CLIENT_BODY_PATH = (
+    Path(__file__).resolve().parent.parent / "reports" / "client-email-body.html")
+
+
+def qc065_internal_leaks(body_text) -> list:
+    """Return the internal-analytics markers present in the rendered client
+    email body (case-insensitive, raw + escaped forms). Empty list = clean."""
+    low = (body_text or "").lower()
+    return [m for m in QC065_INTERNAL_MARKERS if m in low]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Phase 6 — cross-check rules
 # ─────────────────────────────────────────────────────────────────────
@@ -1623,6 +1657,35 @@ def phase_6_rules(log: Log, data: dict):
             log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
         else:
             log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) (within tolerance)")
+        # DISPLAY-IMPACT sub-check (2026-07-09, Michael "there should be zero
+        # lane unresolved"): an Unknown-destination row dated TODAY renders in
+        # the client-visible daily sections. The count tolerance above is for
+        # the historical tail; a TODAY row is a live parser miss — ERROR it
+        # loudly and name it so the fire's audit points straight at the email.
+        # Self-heal path: the standalone builder's body/POD fallback + the
+        # patch_carriers PDF lane pass; if both failed, the subject+body+PDF
+        # genuinely carry no port — flag_for_operator.
+        try:
+            from datetime import datetime as _dt15
+            _today_rd = core.report_business_day(_dt15.now(core.ET)).isoformat()
+        except Exception:
+            _today_rd = None
+        if _today_rd:
+            _fresh_unresolved = [
+                r for r in requests
+                if ((r.get("destination") or "Unknown") in ("Unknown", "")
+                    or (r.get("lane") or "") == "Lane unresolved")
+                and _today_rd in ((r.get("request_date") or ""),
+                                  str(r.get("response_timestamp") or "")[:10])
+            ]
+            if _fresh_unresolved:
+                _ids = ", ".join(str(r.get("request_id", "?")) for r in _fresh_unresolved[:4])
+                log.error(
+                    f"QC-015: {len(_fresh_unresolved)} row(s) created TODAY have an "
+                    f"unresolved lane and WILL render as 'Lane unresolved' in the "
+                    f"daily email: {_ids} — subject+body+PDF yielded no destination; "
+                    f"extend the parser or fix the source row"
+                )
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
@@ -3599,6 +3662,70 @@ def phase_6_rules(log: Log, data: dict):
                      f"scrubbed — manual review; fix the upstream parser")
     except Exception as _e:
         log.warn(f"QC-064: check failed with exception: {_e}")
+
+    # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
+    # (gen_client_email.py → reports/client-email-body.html) goes to THE
+    # CLIENT, so two invariants are hard ERRORs:
+    #   (a) recipients — `to` may never contain a staff/full_list address or
+    #       more than the one approved recipient (checked even while
+    #       disabled: a wrong value goes live the moment the flag flips);
+    #       while ENABLED, to/cc must be EXACTLY the approved pair
+    #       (QC065_APPROVED_TO / QC065_APPROVED_CC).
+    #   (b) content — the rendered body must carry ZERO internal analytics
+    #       (win/loss framing, Q&L/NQ taxonomy, carrier-scoreboard or
+    #       negotiation intel), raw OR &amp;-escaped.
+    # Root fix is always config.json or gen_client_email.py — NEVER widen the
+    # approved-recipient tuples or trim the marker list to make this pass.
+    try:
+        _problems65 = []
+        _cr65 = None
+        if QC065_CONFIG_PATH.exists():
+            import json as _json
+            _cfg65 = _json.loads(QC065_CONFIG_PATH.read_text(encoding="utf-8"))
+            _cr65 = _cfg65.get("client_report")
+            if _cr65 is not None:
+                _full65 = [str(a).lower() for a in
+                           (_cfg65.get("distribution", {}).get("full_list", []) or [])]
+                _to65 = [str(a).lower() for a in (_cr65.get("to") or [])]
+                _cc65 = [str(a).lower() for a in (_cr65.get("cc") or [])]
+                _staff65 = [a for a in _to65 if a in _full65]
+                if _staff65:
+                    _problems65.append(
+                        f"staff/full_list recipient(s) in client_report.to: {_staff65} "
+                        f"(the client email must never go to the internal distribution)")
+                if len(_to65) > 1:
+                    _problems65.append(
+                        f"client_report.to has {len(_to65)} recipients {_to65} — "
+                        f"only 1 approved client recipient allowed")
+                if _cr65.get("enabled"):
+                    if _to65 != [a.lower() for a in QC065_APPROVED_TO]:
+                        _problems65.append(
+                            f"ENABLED with unapproved to={_to65} "
+                            f"(approved: {list(QC065_APPROVED_TO)})")
+                    if _cc65 != [a.lower() for a in QC065_APPROVED_CC]:
+                        _problems65.append(
+                            f"ENABLED with unapproved cc={_cc65} "
+                            f"(approved: {list(QC065_APPROVED_CC)})")
+        if QC065_CLIENT_BODY_PATH.exists():
+            _leaks65 = qc065_internal_leaks(
+                QC065_CLIENT_BODY_PATH.read_text(encoding="utf-8", errors="ignore"))
+            if _leaks65:
+                _problems65.append(
+                    f"internal analytics leaked into client-email-body.html: "
+                    f"{_leaks65} — fix gen_client_email.py, never ship these to the client")
+        if _problems65:
+            log.error("QC-065: client-report invariant violations: "
+                      + "; ".join(_problems65))
+        elif _cr65 is None:
+            log.ok("QC-065: no client_report block in config.json — client email path inert")
+        elif not _cr65.get("enabled"):
+            log.ok("QC-065: client_report disabled — sample-only mode (client receives "
+                   "nothing); recipients + rendered content clean")
+        else:
+            log.ok("QC-065: client_report ENABLED — recipients locked to the approved "
+                   "to/cc pair; rendered content clean")
+    except Exception as _e:
+        log.warn(f"QC-065: check failed with exception: {_e}")
 
     # QC-017: carrier over-attribution. Calibrated 2026-05-08 against actual
     # Hilmar data where CMA CGM legitimately holds ~54% of quotes (CMA is

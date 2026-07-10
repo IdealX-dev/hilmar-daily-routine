@@ -80,6 +80,19 @@
       "michael.deitchman@ol-usa.com"
     ]
   },
+  "client_report": {
+    "enabled": false,
+    "to": [
+      "lupfold@hilmaringredients.com"
+    ],
+    "cc": [
+      "michael.deitchman@ol-usa.com"
+    ],
+    "sample_to": [
+      "michael.deitchman@idealx.us"
+    ],
+    "_note": "CLIENT-facing daily service update (gen_client_email.py). SHIPS GATED OFF: while enabled=false the pipeline still builds reports/client-email-body.html but the send step mails a SAMPLE to sample_to only (--force --no-flag). Lonny receives NOTHING until the operator flips enabled to true. QC-065 pins to/cc to the ONLY approved client recipients and scans the body for internal-analytics leaks — never widen it."
+  },
   "rules": {
     "pending_aging_hours": 24,
     "pending_warn_hours": [

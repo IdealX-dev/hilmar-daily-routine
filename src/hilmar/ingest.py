@@ -916,6 +916,12 @@ def link_bookings_to_requests(
         bk_ts = C.parse_iso(bk_ts_iso)
         raw_subj = bk.get("subject", "") or ""
         s_origin, s_dest = BP.parse_subject_lane(raw_subj)
+        if not s_dest:
+            # Mirrors scripts/ingest.py (2026-07-09 "Lane unresolved" fix):
+            # when the subject carries no lane shape, the booking BODY usually
+            # names the discharge port (destination, else POD).
+            _s_bp = bk.get("body_parsed") or {}
+            s_dest = _s_bp.get("destination") or _s_bp.get("pod")
         s_origin = s_origin or "Oakland"
         s_dest = s_dest or "Unknown"
         lane = f"{s_origin} → {s_dest}" if s_dest != "Unknown" else "Lane unresolved"

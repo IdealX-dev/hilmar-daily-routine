@@ -794,7 +794,17 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         bk_ts_iso = bk.get("sent")
         bk_ts = C.parse_iso(bk_ts_iso)
         raw_subj = bk.get("subject", "") or ""
+        # Body parse comes up FRONT (not just for erd/product below): it also
+        # feeds the destination fallback — the 2026-07-09 client email showed
+        # a "Lane unresolved" standalone whose BODY had parsed fine (product/
+        # temp visible) while the subject carried no lane shape.
+        s_bp = bk.get("body_parsed") or {}
         s_origin, s_dest = BP.parse_subject_lane(raw_subj)
+        if not s_dest:
+            # Subject gave nothing — the booking body usually names the
+            # discharge port (destination, else POD). Same data the row
+            # already displays for product/temperature.
+            s_dest = s_bp.get("destination") or s_bp.get("pod")
         # All Hilmar shipments load at Oakland regardless of cargo source city.
         # Lonny's outbound rate-request model is "Oakland to X" everywhere
         # (per orchestrator.md). NUMIDIA-routed booking confirmations encode
@@ -830,10 +840,8 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         # cargo + 0 TEU columns because we never parsed the subject.
         s_containers = BP.parse_subject_containers(raw_subj)
         s_count, s_teu = C.parse_teu(s_containers) if s_containers else (0, 0)
-        # 2026-05-19 parser-gap fix: pull body-parsed fields from the booking
-        # confirmation so standalone WINs surface erd / free_time / product /
-        # temperature instead of leaving them empty.
-        s_bp = bk.get("body_parsed") or {}
+        # (s_bp — the booking body's parse — is loaded above, where it also
+        # feeds the destination fallback.)
         standalones.append({
             "request_id": f"stand_{mdolx}",
             "status": "WIN",
@@ -863,7 +871,16 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             "olusa_time_et": C.fmt_et(bk_ts) if bk_ts else None,
             "loss_reason": None,
             "reason_detail": f"Standalone booking (pre-window request) — MDOLX{mdolx}, no Lonny ask found in 30-day window",
-            "status_history": [],
+            # A real transition entry so a NEW standalone WIN surfaces in the
+            # daily email's STATUS CHANGES section — its correct home. (The
+            # daily New-Requests / OL-Responses tables exclude stand_* rows:
+            # a booking confirmation is neither a Lonny ask nor a rate quote.)
+            "status_history": [{
+                "at": bk_ts_iso,
+                "from": "PENDING",
+                "to": "WIN",
+                "reason": f"MDOLX{mdolx} standalone booking confirmation",
+            }],
             "source_imids": [bk.get("source_imid")],
             "source_ids": [bk.get("source_id")],
             # 2026-05-19 parser-gap fix: surface booking-body fields on the

@@ -364,6 +364,44 @@ jobs:
               --body-from-file reports/improvements-report.html
           fi
 
+      - name: Send the client-facing email (gated)
+        # The CLIENT-facing daily service update (gen_client_email.py →
+        # reports/client-email-*.{html,txt}). SHIPS GATED OFF: only when
+        # config.json client_report.enabled=true AND this is a full production
+        # send does it go to the client recipients (with --flag-name
+        # client-sent, its own idempotency namespace, synced via state_store).
+        # Otherwise a SAMPLE goes to sample_to (Michael only) with
+        # --force --no-flag so it never touches idempotency state. QC-065 pins
+        # the approved to/cc and scans the body for internal-analytics leaks.
+        # BEST-EFFORT: this step must never fail the job — the staff email has
+        # already shipped by this point; every branch exits 0.
+        run: |
+          set +e
+          ENABLED=$(python3 -c "import json; print(str(json.load(open('config.json')).get('client_report', {}).get('enabled', False)).lower())" 2>/dev/null || echo "false")
+          CLIENT_TO=$(python3 -c "import json; print(' '.join(json.load(open('config.json')).get('client_report', {}).get('to', [])))" 2>/dev/null || echo "")
+          CLIENT_CC=$(python3 -c "import json; print(' '.join(json.load(open('config.json')).get('client_report', {}).get('cc', [])))" 2>/dev/null || echo "")
+          SAMPLE_TO=$(python3 -c "import json; print(' '.join(json.load(open('config.json')).get('client_report', {}).get('sample_to', ['michael.deitchman@idealx.us'])))" 2>/dev/null || echo "michael.deitchman@idealx.us")
+          if [ ! -f reports/client-email-body.html ] || [ ! -f reports/client-email-subject.txt ]; then
+            echo "Client-facing email artifacts missing (best-effort build step failed?) — skipping."
+            exit 0
+          fi
+          if [ "$ENABLED" = "true" ] && [ "$SEND_TO" = "full" ] && [ -n "$CLIENT_TO" ]; then
+            echo "CLIENT send — client_report.enabled=true and send_to=full → TO=$CLIENT_TO CC=$CLIENT_CC"
+            python3 scripts/outlook_send.py daily --to $CLIENT_TO --cc $CLIENT_CC \
+              --flag-name client-sent \
+              --subject-from-file reports/client-email-subject.txt \
+              --body-from-file reports/client-email-body.html \
+              || echo "Client send failed (best-effort — the staff email already shipped; see log above)"
+          else
+            echo "SAMPLE send — client_report disabled or send_to=test → $SAMPLE_TO only. Lonny receives NOTHING."
+            python3 scripts/outlook_send.py daily --to $SAMPLE_TO \
+              --force --no-flag \
+              --subject-from-file reports/client-email-subject.txt \
+              --body-from-file reports/client-email-body.html \
+              || echo "Client SAMPLE send failed (best-effort — never fails the job)"
+          fi
+          exit 0
+
       - name: Prove the fire shipped (integrity gate)
         # Flip from "assume success by reaching the last line" to "prove the
         # deliverable shipped or scream" — mirroring the Cloud PC wrapper's

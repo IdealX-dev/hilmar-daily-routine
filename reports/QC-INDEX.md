@@ -4,11 +4,12 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-06-27. Total active checks: **65**
-(QC-001 through QC-064, including the QC-014a/b and QC-020a/b sub-variants;
+Generated 2026-05-13, updated 2026-07-10. Total active checks: **66**
+(QC-001 through QC-065, including the QC-014a/b and QC-020a/b sub-variants;
 QC-038 retired). Last commit: see `git log scripts/qc_selfheal.py`.
-The newest checks are QC-055..QC-063 (added 2026-06-25) and QC-064
-(garbage display-field guard, 2026-06-27); see the matrix below.
+The newest checks are QC-055..QC-063 (added 2026-06-25), QC-064
+(garbage display-field guard, 2026-06-27), and QC-065 (client-report
+invariants, 2026-07-10); see the matrix below.
 
 **Three drift-prevention + accuracy checks added 2026-05-17 evening** (historical
 note — at the time these were the newest; the current ceiling is QC-063):
@@ -103,6 +104,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-062 | **ERROR** (self-heal) | **Layout hygiene** — no stale duplicate `tests/`+`src/` shadow the real `hilmar-daily-routine/` checkout. A pre-checkout-era flat copy under `PROJECT HILMAR/` caused pytest "import file mismatch" collection errors on the 2026-06-25 fire; the xcopy never cleans them. | **Self-heal** — delete the stale shadow dirs (known-safe: the checkout subdir is authoritative). Returns nothing in dev/CI (REPO_ROOT IS the checkout) so it never deletes the real trees. | 2026-06-25 |
 | QC-063 | WARN | **Consecutive-failure ratchet** — a best-effort/observer step dead for DAYS, not a blip. The 8 best-effort steps + the test routine exit 0 by design, so per-fire a dead step is invisible and a step failing every fire for a week looks identical to a single blip. `run_pipeline` records each fire's failed steps to `reports/step-history.json`; this escalates any step that failed the last 3 CONSECUTIVE fires to a loud WARN **and pages out-of-band** via `fire_alert` (Teams/GitHub-issue/queue, level=warning) so a week-dead step can't rot in the Outlook-routed audit email alone. | **No auto-heal** (the step's own dep/env/config is the fix) — `flag_for_operator` with the dead step(s) named + out-of-band warn page. SKIPS until ≥3 fires of history exist. | 2026-06-25 |
 | QC-064 | WARN | **Garbage in client-visible display fields** — defense-in-depth for the "absolutely wrong info" class: a phone fragment, a raw message-id (`<...@...>` or an Exchange msg-id shard), or the OL responder-mailbox name leaking into `carrier_quoted`/`carrier_won`/`origin`/`destination`/`lane`/`pol`/`pod`/`vessel_voyage`/`transshipment` — fields that ship straight into the client email + PDF. Patterns are conservative (word-boundaried) so a legitimate city/port/carrier is never flagged. | **Self-heal** — null the offending field (a blank cell beats wrong info) and log the field + request id + scrubbed value. WARN-class, NOT an ERROR gate — a false positive must never block the client email, and the heal already removed the bad value. The REAL fix is the upstream parser leak. | 2026-06-27 |
+| QC-065 | **ERROR** | **Client-report invariants** — the CLIENT-facing daily email (`gen_client_email.py` → `reports/client-email-body.html`, gated by `config.json client_report.enabled`) may only ever reach the approved pair (to=`lupfold@hilmaringredients.com`, cc=`michael.deitchman@ol-usa.com`). ERRORs when: a staff/`full_list` address or a 2nd recipient appears in `client_report.to` (checked even while disabled — a wrong value goes live the moment the flag flips); the block is ENABLED with to/cc ≠ the approved pair; or the rendered body leaks internal analytics ("Win Rate", "Quoted & Lost"/"Q&L", "Not Quoted", carrier-scoreboard/negotiation intel — raw or `&amp;`-escaped, case-insensitive). | **No auto-heal** (recipient config + renderer content are operator/code decisions) — `flag_for_operator`. Fix `config.json` or `gen_client_email.py`; NEVER widen the approved-recipient tuples or trim the marker list. While disabled the check confirms sample-only mode. | 2026-07-10 |
 
 ## Self-improvement automations added 2026-05-28 PM (per Michael "do all 7-9")
 
