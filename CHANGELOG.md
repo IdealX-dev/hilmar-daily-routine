@@ -3,6 +3,51 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-11 — Session: client daily email redesigned as a premium service update
+
+Michael reviewed the client-facing daily sample and called it "terrible" —
+`scripts/gen_client_email.py` rebuilt as a premium logistics service update
+for Lonny Upfold (Hilmar Ingredients). All safety invariants preserved:
+same artifacts (`reports/client-email-{body.html,subject.txt}`), same subject
+format, same `--data/--out-dir/--config` CLI, QC-065 leak scan clean, CID
+logo, inline-styles/solid-header Outlook rules, shared gen_email helpers
+(escape-once, Windows-portable strftime, report-day math). gen_email.py,
+outlook_send.py, config.json, QC-065 constants, and workflows untouched.
+
+Shipped (working tree, this branch):
+- **Hero KPI strip** — 4 tiles (Requests received / Quotes delivered /
+  Bookings confirmed / Awaiting your decision, each count + TEU) reusing
+  `gen_email._kpi_card`, so the td.hx-kpi display:block full-width mobile
+  stacking is shared code, not a copy (never inline-block/50%).
+- **Service narrative** — one line under the tiles ("We received 3 rate
+  requests and returned 3 quotes (average 1.4 business hours); 1 booking
+  confirmed."); the avg comes from today's quoted rows'
+  `turnaround_biz_hours` and the parenthetical is omitted when absent.
+- **Active shipments** (new section) — WIN rows from the last 14 days
+  (request_date, fallback response_timestamp): Lane · Carrier · Booking ref
+  (mdolx_ref, else "Confirmation to follow") · Vessel (vessel_voyage) ·
+  ETD · ETA · Doc cutoff, sorted by ETD ascending. stand_* bookings included
+  here (the honest client-facing event).
+- **Upcoming cutoffs callout** (new) — amber box listing active shipments
+  with doc_cutoff (fallback: etd_offered → "vessel departs") within the next
+  7 days; dates parsed defensively, unparseable skipped, box hidden when
+  empty.
+- **Empty-section collapse** — zero-row daily sections render one friendly
+  line ("No new rate requests today.") instead of an empty table; "Awaiting
+  your decision" always tables when it has rows (client's action list). A
+  fully quiet day still composes: tiles (zeros) + narrative + footer.
+- **Polish** — header subtitle tightened to "Prepared by OL-USA · <day> ·
+  Updated <time> ET"; alternating row striping (inline bgcolor, Outlook-safe);
+  nowrap navy headers; footer adds "Questions about a specific shipment?
+  Reply with the booking reference."
+- **Tests**: `tests/test_client_email.py` 20 → 29 (hero tile counts,
+  active-shipments window/sort/refs, cutoff in/out of horizon + junk dates,
+  quiet-day collapse with leak scan, mobile-CSS regression guard pinning
+  display:block and banning inline-block/50%, subject pinned exactly).
+  Full suite: 1610 passed.
+- NOT done deliberately: production `PROJECT HILMAR/scripts/` mirror copy
+  (QC-040) — this session works the repo tree only; mirror on deploy.
+
 ## 2026-07-11 — Session: insights engine wired into the production pipeline
 
 Implements the "Insights engine wired" line item announced under 2026-07-10
