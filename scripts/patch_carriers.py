@@ -650,6 +650,15 @@ def main():
                 patched_lane += 1
                 print(f"  PATCH lane    {r.get('request_id', '')[:16]} -> "
                       f"{r['lane']} (from booking-PDF POD)")
+            elif str(r.get("request_id") or "").startswith("stand_"):
+                # Say WHY the row stays unresolved — pod missing vs pod
+                # unmappable vs no PDF fields at all — so the run log alone
+                # is enough to target the next fix (no ad-hoc diagnostics).
+                _pdf_saw = any(parsed.get(k) for k in
+                               ("erd", "doc_cutoff", "port_cutoff", "product"))
+                print(f"  LANE-DIAG {r.get('request_id')}: unresolved — "
+                      f"pod={(r.get('pod') or parsed.get('pod')) or 'none'}; "
+                      f"pdf_fields_present={'yes' if _pdf_saw else 'no'}")
 
     # ─────────────────────────────────────────────────────────────────
     # PASS 4 — Stage-scan for WINs still missing carrier_won

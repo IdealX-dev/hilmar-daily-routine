@@ -66,6 +66,10 @@ EMAIL_SECTIONS = [
     ("Pending — Hilmar Response", "_pending_html",
      "Quotes waiting on Lonny's decision, with hours-since-quote so you know "
      "when to nudge."),
+    ("AI Insights — Business", "_ai_insights_business_html",
+     "Strategy bullets generated daily by the AI insights engine — carrier "
+     "plays, lane opportunities, win-rate movers. Appears only when the "
+     "narrative was generated the same day; omitted on skipped days."),
 ]
 
 #: Dashboard tab catalog — labels must match gen_dashboard's tabs (drift-guarded).

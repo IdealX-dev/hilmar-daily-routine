@@ -1788,7 +1788,23 @@ def phase_6_rules(log: Log, data: dict):
         elif len(_unmapped) > 5:
             log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
         else:
-            log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) (within tolerance)")
+            # Name the offending ROWS, not just the count — "2 unmapped
+            # (within tolerance)" hid WHICH rows for two days (2026-07-09/10)
+            # and root-causing them needed an ad-hoc diagnostic workflow.
+            # Never again: the run log always says which rows and their pod.
+            _urows = [r for r in data.get("requests", [])
+                      if (r.get("destination") or "Unknown") in ("Unknown", "")
+                      or (r.get("lane") or "") == "Lane unresolved"]
+            if _urows:
+                _det = "; ".join(
+                    f"{r.get('request_id')} pod={r.get('pod') or '—'} "
+                    f"subj='{(r.get('subject') or '')[:60]}'"
+                    for r in _urows[:5])
+                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) "
+                       f"within tolerance — unresolved rows: {_det}")
+            else:
+                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) "
+                       f"(within tolerance); zero unresolved rows")
         # DISPLAY-IMPACT sub-check (2026-07-09, Michael "there should be zero
         # lane unresolved"): an Unknown-destination row dated TODAY renders in
         # the client-visible daily sections. The count tolerance above is for

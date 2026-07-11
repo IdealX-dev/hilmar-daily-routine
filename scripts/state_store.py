@@ -55,6 +55,12 @@ STATE_FILES: list[str] = [
     # on .bin, drop the .json entry AND delete the .json blob + ROTATE the token.
     "secrets/token-cache.bin",
     "secrets/token-cache.json",
+    # The historian's longitudinal quote DB (2026-07-11, Michael "you handle
+    # turso tokens... i cannot read this as it works"): plain sqlite synced
+    # through this store instead of a Turso account — pulled before the fire,
+    # appended to by historian.py, pushed after. Missing file = first run =
+    # clean skip, exactly like every other entry here.
+    "data/quote-history.db",
 ]
 
 

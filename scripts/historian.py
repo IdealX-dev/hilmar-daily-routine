@@ -132,6 +132,13 @@ def _connect():
     sqlite_path = os.environ.get("HILMAR_HISTORIAN_SQLITE")
     if sqlite_path:
         import sqlite3
+        # The production path since 2026-07-11 (Michael "you handle turso
+        # tokens... i cannot read this as it works"): a plain sqlite file
+        # synced through the Azure blob state store — no Turso account, no
+        # tokens, no owner action. First-ever run: the parent dir doesn't
+        # exist on a fresh runner (data/ is gitignored), so create it —
+        # sqlite3.connect errors on a missing directory.
+        Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(sqlite_path)
         return conn
     url, token = _turso_creds()
