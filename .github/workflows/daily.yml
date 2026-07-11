@@ -211,6 +211,14 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       QT_APP_PASSWORD: ${{ secrets.QT_APP_PASSWORD }}
       AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      # Turso historian — the durable longitudinal quote store behind rate
+      # trends and win-rate history. DORMANT until these two secrets are set
+      # (historian.py is a clean no-op without them). Owner action to light
+      # it up: add HILMAR_HISTORIAN_URL + HILMAR_HISTORIAN_TOKEN in repo
+      # secrets (values from `turso db show/tokens create hilmar-quote-history`,
+      # see docs/HISTORIAN.md). Nothing else to deploy.
+      HILMAR_HISTORIAN_URL: ${{ secrets.HILMAR_HISTORIAN_URL }}
+      HILMAR_HISTORIAN_TOKEN: ${{ secrets.HILMAR_HISTORIAN_TOKEN }}
       # Scheduled fires are always the real thing; dispatches honor send_to
       # (default test — Michael only).
       SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
@@ -269,7 +277,7 @@ jobs:
           pip install \
             reportlab msal requests tzdata pdfplumber \
             sentry-sdk jsonschema python-dateutil jinja2 anthropic \
-            azure-storage-blob pytest pytest-cov responses
+            azure-storage-blob libsql-experimental pytest pytest-cov responses
 
       - name: Materialize secret files the pipeline reads from secrets/*.txt
         # Several modules read secrets/<name>.txt directly (sentry_setup,
@@ -330,6 +338,16 @@ jobs:
         # only and use --no-flag so they never touch production idempotency
         # state — a test must never block or unblock the real send.
         run: |
+          # Optional attachments beyond the dashboard + PDF: the auto-updated
+          # user manual (every day, if it built) and the Friday executive
+          # summary — attached ONLY when generated fresh this run, so a stale
+          # copy from a prior Friday can never ride a Monday email.
+          EXTRA_ATTACH=""
+          [ -f reports/user-manual.html ] && EXTRA_ATTACH="reports/user-manual.html"
+          if [ -f reports/weekly-summary.html ] && find reports/weekly-summary.html -mmin -120 | grep -q .; then
+            EXTRA_ATTACH="$EXTRA_ATTACH reports/weekly-summary.html"
+          fi
+          echo "extra attachments: ${EXTRA_ATTACH:-none}"
           if [ "$SEND_TO" = "full" ]; then
             # FORCE_RESEND=true (manual dispatch only) overrides the per-day
             # already-sent flag. We use --force (NOT --no-flag) so the send is
@@ -345,7 +363,7 @@ jobs:
             python3 scripts/outlook_send.py daily --to-from-config $FORCE_FLAG \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
-              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
+              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf $EXTRA_ATTACH
             python3 scripts/gen_improvements_report.py
             python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us $FORCE_FLAG \
               --subject-from-file reports/improvements-subject.txt \
@@ -356,7 +374,7 @@ jobs:
               --force --no-flag \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
-              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf
+              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf $EXTRA_ATTACH
             python3 scripts/gen_improvements_report.py
             python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
               --force --no-flag \

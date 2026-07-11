@@ -106,6 +106,15 @@ STEPS = [
     # client_report.enabled (false = sample to Michael only; QC-065 pins the
     # approved recipients + scans the body for internal-analytics leaks).
     ("Client-facing email HTML", [PY, str(SCRIPTS / "gen_client_email.py")]),
+    # 2026-07-10 (Michael "constantly updated instruction manual for users"):
+    # the consumer manual, rebuilt every fire from live config so it can
+    # never describe a stale system. Attached to the daily staff email.
+    ("User manual HTML",         [PY, str(SCRIPTS / "gen_manual.py")]),
+    # 2026-07-10: restore the Friday executive summary — it previously fired
+    # only from the retired Cloud PC wrapper (run_daily_laptop.cmd), so the
+    # GitHub-Actions cutover silently killed it. The script self-skips (exit
+    # 0) on Mon-Thu; the workflow attaches the PDF only when fresh.
+    ("Weekly executive summary", [PY, str(SCRIPTS / "gen_weekly_summary.py")]),
     # 2026-05-13: Cross-project intelligence export + rate-negotiation
     # analytics. share_intel pushes Hilmar's data to the SHARED cross-
     # project store (consumed by rate-tracker for cross-client insights).
@@ -164,6 +173,8 @@ BEST_EFFORT_STEPS = {
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
     "Client-facing email HTML",        # brand-new gated client artifact — must never block the staff email
+    "User manual HTML",                # consumer manual attachment; email ships without it on failure
+    "Weekly executive summary",        # Friday-only supplemental; must never block the daily
     "Share to client_intelligence",    # SHARED-folder export; no client impact
     "Rate intelligence",               # idealx.us-only cheat sheet; not in email
     "Sync to ol-quote-tracker",        # downstream registry push; no client impact
