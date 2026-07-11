@@ -1768,6 +1768,7 @@ FOOTER_HTML = """
   <h3 style="margin:0 0 8px;color:#1e3a5f;font-size:14px">📎 ATTACHED FILES:</h3>
   <p style="margin:4px 0;font-size:12px">• <b>hilmar-dashboard.html</b> — Open in any browser (works mobile + desktop, no software needed)</p>
   <p style="margin:4px 0;font-size:12px">• <b>hilmar-report.pdf</b> — Printable report</p>
+  <p style="margin:4px 0;font-size:12px">• <b>user-manual.html</b> — How to read every section, status and metric (rebuilt with each run, always current)</p>
   <h3 style="margin:12px 0 8px;color:#1e3a5f;font-size:14px">📖 DASHBOARD TAB GUIDE:</h3>
   <p style="margin:4px 0;font-size:12px">• 📊 <b>Summary</b> — KPIs, confirmed wins with MDOLX, not-quoted requests</p>
   <p style="margin:4px 0;font-size:12px">• ⏱️ <b>Turnaround Timeline</b> — Lonny request time (PT) vs OL response (ET), business-hours adjusted</p>
