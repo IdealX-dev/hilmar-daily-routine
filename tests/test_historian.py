@@ -136,3 +136,18 @@ def test_qc058_ok_when_fresh(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "QC-058" in out and "fresh" in out
     assert not any("QC-058" in m for m in log.warnings + log.errors)
+
+
+def test_sqlite_connect_creates_missing_parent_dir(tmp_path, monkeypatch):
+    # 2026-07-11 production path: sqlite synced through the blob store. On a
+    # fresh runner data/ doesn't exist (gitignored) — _connect must create it
+    # or the first-ever fire dies before the store is seeded.
+    import historian
+    db = tmp_path / "data" / "quote-history.db"   # parent does NOT exist
+    monkeypatch.setenv("HILMAR_HISTORIAN_SQLITE", str(db))
+    conn = historian._connect()
+    assert conn is not None
+    historian.ensure_schema(conn)
+    conn.execute("SELECT 1")
+    conn.close()
+    assert db.exists()

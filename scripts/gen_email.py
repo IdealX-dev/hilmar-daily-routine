@@ -1763,6 +1763,47 @@ def _trade_region_html(data, summary):
 """
 
 
+#: Size ceiling for the embedded AI-insights snippet. The Business section is
+#: 2-5 bullets (~2-4KB rendered); anything past 40KB means the upstream file
+#: is malformed/runaway and must not bloat the staff email.
+INSIGHTS_SNIPPET_MAX_BYTES = 40 * 1024
+
+
+def _ai_insights_business_html(cfg=None):
+    """Inline reports/insights-business.html (written by gen_insights.py,
+    which runs immediately before this script in run_pipeline).
+
+    2026-07-11 wiring of docs/INSIGHTS-DESIGN.md M3.11 + Michael's 2026-04-28
+    directive: the staff daily carries ONLY the Business section — System /
+    Design / Data stay in the private idealx.us audit.
+
+    Guards (all failure modes render nothing — insights can never break the
+    client email):
+      * file absent → skip
+      * mtime not from today → skip (a stale yesterday narrative presented
+        as today's is worse than no narrative)
+      * empty or > INSIGHTS_SNIPPET_MAX_BYTES → skip (trusted internal
+        output, but a runaway file must not ship)
+    """
+    try:
+        paths = (cfg or {}).get("paths") or {}
+        reports_dir = Path(paths["reports"]) if paths.get("reports") else ROOT / "reports"
+        snippet_path = reports_dir / "insights-business.html"
+        if not snippet_path.exists():
+            return ""
+        if datetime.fromtimestamp(snippet_path.stat().st_mtime).date() != datetime.now().date():
+            return ""
+        snippet = snippet_path.read_text(encoding="utf-8").strip()
+        if not snippet or len(snippet.encode("utf-8")) > INSIGHTS_SNIPPET_MAX_BYTES:
+            return ""
+        return f"""
+<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🤖 AI Insights — Business</h2>
+<div style="font-size:13px;line-height:1.6;color:#1f2937">{snippet}</div>
+"""
+    except Exception:
+        return ""
+
+
 FOOTER_HTML = """
 <div style="background:#f0f4f8;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin-bottom:20px">
   <h3 style="margin:0 0 8px;color:#1e3a5f;font-size:14px">📎 ATTACHED FILES:</h3>
@@ -1821,6 +1862,7 @@ def build_body(data, cfg):
         [r for r in pend_rows if core.pending_substate(r) == "PENDING_OL"])
     html_body += _pending_html(
         [r for r in pend_rows if core.pending_substate(r) == "PENDING_HILMAR"])
+    html_body += _ai_insights_business_html(cfg)
     html_body += FOOTER_HTML
     html_body += "</div></div>"
     return html_body

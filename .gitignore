@@ -71,3 +71,8 @@ tests/tmp/
 # bundled skill copy is staged at build time, not kept in git (QC-040).
 plugin-build/hilmar-daily-tracker/skills/
 plugin-build/*.plugin
+
+# Insights-engine runtime state (2026-07-11) — per-run outputs, never committed
+baselines.json
+llm-cost-log.jsonl
+data/quote-history.db

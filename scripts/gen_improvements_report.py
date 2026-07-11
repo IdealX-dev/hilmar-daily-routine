@@ -902,6 +902,7 @@ def render_html(red, yellow, suggestions, report_date, qc):
     To request a new check, ask Claude.
   </div>
 {_rate_intel_section_inline()}
+{_insights_full_section_inline()}
 {_sentry_section_inline()}
 </div>
 </body></html>
@@ -1141,6 +1142,34 @@ def _rate_intel_section_inline():
         except Exception:
             return ""
     return ""
+
+
+def _insights_full_section_inline():
+    """Inline the full AI-insights narrative (System / Design / Data /
+    Business) if it exists. The section is produced by gen_insights.py which
+    runs before this script in the pipeline. Added 2026-07-11 wiring
+    docs/INSIGHTS-DESIGN.md M3.11 — the four-section narrative is
+    operational-internal (parser miss rates, schema advice), so it lands in
+    THIS private idealx.us audit; the staff daily gets Business only.
+    Mirrors _rate_intel_section_inline, plus a freshness guard: a stale
+    yesterday narrative must never render as if it were today's."""
+    section_path = REPORTS / "insights-full.html"
+    try:
+        if not section_path.exists():
+            return ""
+        if datetime.fromtimestamp(section_path.stat().st_mtime).date() != datetime.now().date():
+            return ""
+        html = section_path.read_text(encoding="utf-8").strip()
+        if not html:
+            return ""
+        return (
+            '<h2 style="margin:24px 0 8px;color:#1a3d9c;font-size:16px;'
+            'border-bottom:2px solid #76b82a;padding-bottom:6px">'
+            "🤖 AI Insights — System / Design / Data / Business</h2>"
+            f'<div style="font-size:13px;color:#1f2937">{html}</div>'
+        )
+    except Exception:
+        return ""
 
 
 def build_subject(report_date, red, yellow, suggestions):

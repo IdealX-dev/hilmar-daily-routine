@@ -213,3 +213,11 @@ def test_backup_writes_dated_gzip_and_prunes(tmp_path, monkeypatch):
 
 def test_backup_noop_without_data_file(tmp_path):
     assert ss.backup(tmp_path, container=_FakeContainer()) is None
+
+
+def test_quote_history_db_rides_the_state_sync():
+    # The historian DB must sync like the rest of the mutable state —
+    # without this entry the longitudinal store resets on every ephemeral
+    # runner and the history silently never accumulates.
+    import state_store
+    assert "data/quote-history.db" in state_store.STATE_FILES

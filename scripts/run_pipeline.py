@@ -99,6 +99,15 @@ STEPS = [
     ("Dashboard HTML",           [PY, str(SCRIPTS / "gen_dashboard.py")]),
     ("Client PDF (6-page)",      [PY, str(SCRIPTS / "gen_pdf.py")]),
     ("Carrier scorecard PDFs",   [PY, str(SCRIPTS / "gen_carrier_scorecard_pdf.py")]),
+    # 2026-07-11: wire the M3.10-M3.12 insights engine (docs/INSIGHTS-DESIGN.md)
+    # into the daily fire: rolling baselines → rule-based InsightsContext →
+    # Opus narrative via the model router. Writes reports/insights/<date>.{json,
+    # html} + the two embed snippets (insights-business.html for the staff
+    # email, insights-full.html for the idealx.us audit). MUST run before
+    # "Email body HTML" — gen_email embeds insights-business.html at build
+    # time. The shim itself always exits 0 (missing API key / API down degrade
+    # to a skipped narrative with the rule-based context still written).
+    ("Daily insights (baselines + LLM)", [PY, str(SCRIPTS / "gen_insights.py")]),
     ("Email body HTML",          [PY, str(SCRIPTS / "gen_email.py")]),
     # 2026-07-10: CLIENT-facing daily service update (separate from the staff
     # email above). Builds reports/client-email-{body.html,subject.txt} every
@@ -172,6 +181,7 @@ BEST_EFFORT_STEPS = {
     "Sentry-driven QC actions",        # Sentry housekeeping; no client impact
     "Sentry Seer autofix trigger",     # autofix attempts; no client impact
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
+    "Daily insights (baselines + LLM)",  # supplemental narrative; shim self-degrades + exits 0, email ships without it
     "Client-facing email HTML",        # brand-new gated client artifact — must never block the staff email
     "User manual HTML",                # consumer manual attachment; email ships without it on failure
     "Weekly executive summary",        # Friday-only supplemental; must never block the daily
@@ -216,6 +226,7 @@ STEP_TIMEOUTS_S = {
     "QC self-heal (post-patch)":  180,
     "Sentry-driven QC actions":   240,   # polls 7 issues, 30s each worst-case
     "Sentry Seer autofix trigger": 180,
+    "Daily insights (baselines + LLM)": 480,  # 4 sequential Opus calls + a 429-retry cascade can exceed the 300s default
     "Sync to ol-quote-tracker":   180,
     "Share to client_intelligence": 180,
 }
