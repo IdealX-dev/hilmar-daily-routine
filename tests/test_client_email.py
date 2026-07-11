@@ -12,8 +12,9 @@ tests pin the two things that must never drift:
 from __future__ import annotations
 
 import json
+import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -74,6 +75,22 @@ def _mixed_data():
         _row("r-pend-ol", status="PENDING", quoted=False,
              lane="Oakland → Manila"),
     ]}
+
+
+def _rd():
+    return core.report_business_day(datetime.now(core.ET))
+
+
+def _win(rid, days_ago=0, **kw):
+    """A WIN row `days_ago` days before the report day — the active-shipments
+    window (14 days) and cutoff horizon (7 days) key off these dates."""
+    d = (_rd() - timedelta(days=days_ago)).isoformat()
+    base = _row(rid, status="WIN", quoted=True, ol_rate=4000.0,
+                carrier_quoted="MSC", carrier_won="MSC", mdolx_ref="MDOLX-W",
+                request_date=d, request_timestamp=f"{d}T15:00:00Z",
+                response_timestamp=f"{d}T18:00:00Z")
+    base.update(kw)
+    return base
 
 
 # ── 1. Renderer writes both artifacts; subject shape ─────────────────────
@@ -144,9 +161,168 @@ def test_pending_split_quoted_awaiting_vs_unquoted_in_progress():
     html = gce.build_body(data, {})
     assert "Awaiting your decision (1)" in html
     assert "In progress — quote coming (1)" in html
-    # Empty sections keep the email's stable shape with a friendly row.
+    # "Awaiting your decision" is the client's ACTION LIST — with rows it must
+    # render as a full table (never collapse), immediately after its heading.
+    idx = html.index("Awaiting your decision (1)")
+    assert "<table" in html[idx:idx + 400]
+    # Zero-row day: both pending sections collapse to friendly one-liners.
     empty_html = gce.build_body({"requests": []}, {})
-    assert empty_html.count("None today.") == 5
+    assert "Nothing awaiting your decision" in empty_html
+    assert "Nothing in the pricing queue" in empty_html
+
+
+# ── 4b. Hero KPI strip ────────────────────────────────────────────────────
+
+def _tile_value(html, label):
+    """The big number rendered directly above a KPI tile's label."""
+    m = re.search(r">([^<]*)</div>\s*<div[^>]*>" + re.escape(label) + r"</div>", html)
+    assert m, f"KPI tile {label!r} missing"
+    return m.group(1)
+
+
+def test_hero_kpi_tiles_present_with_correct_counts():
+    html = gce.build_body(_mixed_data(), {})
+    assert _tile_value(html, "Requests received today") == "5"
+    assert _tile_value(html, "Quotes delivered today") == "3"
+    assert _tile_value(html, "Bookings confirmed today") == "1"
+    assert _tile_value(html, "Awaiting your decision") == "1"
+    # Exactly 4 gen_email-style tiles sharing the mobile stacking class.
+    assert html.count('class="hx-kpi"') == 4
+    # Narrative under the tiles — counts + the avg-biz-hours parenthetical
+    # (today's quotes carry no turnaround_biz_hours in this fixture → omitted).
+    assert "We received 5 rate requests and returned 3 quotes" in html
+    assert "1 booking confirmed." in html
+    assert "business hours" not in html
+
+
+def test_narrative_includes_avg_biz_hours_when_present():
+    data = _mixed_data()
+    for r in data["requests"]:
+        if r.get("response_timestamp") and r.get("ol_rate"):
+            r["turnaround_biz_hours"] = 1.4
+    html = gce.build_body(data, {})
+    assert "(average 1.4 business hours)" in html
+
+
+# ── 4c. Active shipments (recent WINs) ────────────────────────────────────
+
+def test_active_shipments_lists_recent_wins_sorted_by_etd():
+    rd = _rd()
+    data = {"requests": [
+        _win("w-late", days_ago=2, mdolx_ref="MDOLX-L8",
+             etd_offered=(rd + timedelta(days=25)).isoformat()),
+        _win("w-early", days_ago=5, mdolx_ref="MDOLX-E1",
+             vessel_voyage="MSC AURORA 331E",
+             etd_offered=(rd + timedelta(days=20)).isoformat()),
+        _win("w-noref", days_ago=1, mdolx_ref=None, etd_offered=None),
+        _win("w-stale", days_ago=30, mdolx_ref="MDOLX-OLD"),
+    ]}
+    html = gce.build_body(data, {})
+    assert "Active shipments (3)" in html
+    assert "MDOLX-E1" in html and "MDOLX-L8" in html
+    assert "MDOLX-OLD" not in html                 # outside the 14-day window
+    assert "Confirmation to follow" in html        # booking ref not yet issued
+    assert "MSC AURORA 331E" in html               # vessel column
+    assert html.index("MDOLX-E1") < html.index("MDOLX-L8")  # ETD ascending
+    assert f'bgcolor="{gce.STRIPE_BG}"' in html    # alternating row striping
+
+
+# ── 4d. Upcoming-cutoffs callout ──────────────────────────────────────────
+
+def test_cutoff_callout_lists_doc_cutoffs_within_seven_days_only():
+    rd = _rd()
+    near = (rd + timedelta(days=3)).isoformat()
+    far = (rd + timedelta(days=20)).isoformat()
+    data = {"requests": [
+        _win("w-near", days_ago=1, lane="Oakland → Kobe", doc_cutoff=near,
+             etd_offered=(rd + timedelta(days=6)).isoformat()),
+        _win("w-far", days_ago=1, lane="Oakland → Laem Chabang", doc_cutoff=far,
+             etd_offered=(rd + timedelta(days=22)).isoformat()),
+    ]}
+    html = gce.build_body(data, {})
+    assert "Upcoming cutoffs" in html
+    box = html[html.index("Upcoming cutoffs"):html.index("Active shipments")]
+    assert "Oakland → Kobe — doc cutoff" in box
+    assert "Laem Chabang" not in box
+    # A shipment with everything outside the horizon renders NO callout.
+    quiet = gce.build_body({"requests": [
+        _win("w-far", days_ago=1, doc_cutoff=far,
+             etd_offered=(rd + timedelta(days=22)).isoformat()),
+    ]}, {})
+    assert "Upcoming cutoffs" not in quiet
+
+
+def test_cutoff_callout_falls_back_to_departure_when_no_doc_cutoff():
+    rd = _rd()
+    html = gce.build_body({"requests": [
+        _win("w-sail", days_ago=1, lane="Oakland → Kaohsiung", doc_cutoff=None,
+             etd_offered=(rd + timedelta(days=5)).isoformat()),
+    ]}, {})
+    assert "Upcoming cutoffs" in html
+    assert "Oakland → Kaohsiung — vessel departs" in html
+    # Unparseable dates are skipped defensively, not rendered or raised.
+    junk = gce.build_body({"requests": [
+        _win("w-junk", days_ago=1, doc_cutoff="TBD", etd_offered="see booking"),
+    ]}, {})
+    assert "Upcoming cutoffs" not in junk
+
+
+# ── 4e. Quiet day — empty sections collapse, email stays composed ─────────
+
+def test_quiet_day_collapses_empty_sections_to_friendly_lines():
+    html = gce.build_body({"requests": []}, {})
+    # Exactly ONE table remains — the hero KPI strip. No empty data tables.
+    assert html.count("<table") == 1
+    assert 'class="hx-data"' not in html
+    for line in (
+        "No shipments currently in transit or awaiting departure.",
+        "No new rate requests today.",
+        "No new quotes today.",
+        "No new bookings confirmed today.",
+        "Nothing awaiting your decision — all caught up.",
+        "Nothing in the pricing queue — every request has been quoted.",
+    ):
+        assert line in html, f"missing friendly line: {line!r}"
+    assert "None today." not in html
+    # Hero tiles still render (zeros) + narrative + footer → composed email.
+    assert html.count('class="hx-kpi"') == 4
+    assert _tile_value(html, "Requests received today") == "0"
+    assert "A quiet day on new activity" in html
+    assert "Reply with the booking reference" in html
+    # And a quiet day is still leak-free.
+    assert q.qc065_internal_leaks(html) == []
+
+
+# ── 4f. Mobile CSS — KPI tiles stack block/full-width, tables scroll ──────
+
+def test_mobile_css_kpi_tiles_stack_block_full_width():
+    html = gce.build_body(_mixed_data(), {})
+    m = re.search(r"<style>(.*?)</style>", html, re.S)
+    assert m, "mobile <style> block missing"
+    css = m.group(1)
+    assert "td.hx-kpi { display:block !important; width:100% !important" in css
+    assert ".hx-kpi-card { height:auto !important" in css
+    assert "table.hx-data { min-width:640px !important; }" in css
+    # Regression guard: the failed first ship stacked tiles inline-block/50%
+    # and iOS Mail collapsed them to strips (Michael 2026-07-02 screenshot).
+    assert "inline-block" not in css
+    assert "50%" not in css
+
+
+# ── 4g. Golden fixture render — leak-free; subject format pinned ──────────
+
+def test_golden_fixture_render_is_leak_free(tmp_path):
+    fixture = ROOT / "tests" / "fixtures" / "golden_day.json"
+    assert gce.main(["--data", str(fixture), "--out-dir", str(tmp_path)]) == 0
+    body = (tmp_path / "client-email-body.html").read_text(encoding="utf-8")
+    assert q.qc065_internal_leaks(body) == []
+
+
+def test_subject_format_unchanged():
+    label = gce._fmt_date(
+        datetime.combine(_rd(), datetime.min.time()), "%b %-d, %Y")
+    assert gce.build_subject({}, {}) == (
+        f"OL-USA — Daily Shipment Update for Hilmar Ingredients ({label})")
 
 
 # ── 5. QC-065 — client-report invariants ──────────────────────────────────

@@ -8,6 +8,21 @@ rates, no "Quoted & Lost"/NQ framing, no carrier scoreboards, no rate-
 negotiation intel, no QC/parser/system language. QC-065 enforces both the
 recipient invariants and this content rule on the rendered body.
 
+LAYOUT (2026-07-11 redesign — Michael: the first client sample was
+"terrible"; rebuilt as a premium service update):
+  1. Branded header — "Prepared by OL-USA · <day> · Updated <time> ET".
+  2. Hero KPI strip — 4 tiles (requests / quotes / bookings / awaiting),
+     reusing gen_email._kpi_card so mobile stacking is identical.
+  3. One-line service narrative (avg business-hours-to-quote when known).
+  4. Amber "Upcoming cutoffs" callout — doc cutoffs / departures ≤ 7 days out.
+  5. Active shipments — confirmed bookings from the last 14 days with
+     booking ref, vessel, ETD/ETA, doc cutoff (the table a client checks
+     daily), sorted by ETD.
+  6. The five daily sections. Empty sections COLLAPSE to one friendly line;
+     non-empty sections render full striped tables ("Awaiting your decision"
+     is the client's action list and always tables when it has rows).
+  7. Contact footer.
+
 SHIPS GATED OFF: config.json `client_report.enabled = false`. While disabled
 the pipeline still builds this artifact every fire, and the send step mails a
 SAMPLE to Michael only (`--force --no-flag`, never touching idempotency
@@ -23,7 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,12 +48,15 @@ import core  # noqa: E402
 
 # Shared helpers from the staff renderer — same escaping (raw strings in,
 # single-escape out; QC-044), same Windows-portable strftime mapping (no
-# bare %-d/%-I; QC-046), same report-day math, same today-bucketing.
+# bare %-d/%-I; QC-046), same report-day math, same today-bucketing, and the
+# SAME KPI tile builder so the .hx-kpi mobile stacking behaves identically.
 from gen_email import (  # noqa: E402
     EMAIL_FONT_STACK,
     EMAIL_TNUM,
     _esc,
     _fmt_date,
+    _iso_date,
+    _kpi_card,
     _report_date,
     _today_events,
 )
@@ -50,13 +68,24 @@ TH_BG = "#1e3a5f"
 HEADER_BG_SOLID = B.HILMAR_NAVY
 HEADER_GRADIENT = f"linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%)"
 
+#: Alternating-row stripe — inline bgcolor attribute (the form desktop
+#: Outlook's Word engine honors most reliably).
+STRIPE_BG = "#f8fafc"
+
+#: "Active shipments" = WIN rows whose request/response date falls within
+#: this many days of the report day.
+ACTIVE_WINDOW_DAYS = 14
+#: Cutoff callout horizon — doc cutoffs / departures within this many days.
+CUTOFF_HORIZON_DAYS = 7
+
 _TH_STYLE = (
-    f'style="padding:6px 8px;background-color:{TH_BG};background:{TH_BG};'
+    f'style="padding:7px 10px;background-color:{TH_BG};background:{TH_BG};'
     'color:#ffffff;font-size:11px;font-weight:600;text-align:left;'
+    'white-space:nowrap;'
     f'border-bottom:1px solid {TH_BG}"'
 )
 _TD_STYLE = (
-    'style="padding:6px 8px;font-size:12px;color:#1f2937;'
+    'style="padding:7px 10px;font-size:12px;color:#1f2937;'
     'border-bottom:1px solid #e5e7eb"'
 )
 _TD_FIRST_STYLE = _TD_STYLE.replace('color:#1f2937', 'color:#1f2937;font-weight:600')
@@ -64,7 +93,10 @@ _TD_FIRST_STYLE = _TD_STYLE.replace('color:#1f2937', 'color:#1f2937;font-weight:
 # Mobile overrides — same .hx-* conventions as gen_email._header_html so the
 # client email renders on phones: .hx-wrap full-bleed, .hx-pad one horizontal
 # scroll surface, .hx-data tables keep readable column geometry and scroll
-# sideways instead of squishing. Desktop Outlook ignores <style> entirely.
+# sideways instead of squishing, and td.hx-kpi stacks FULL-WIDTH via
+# display:block (NEVER inline-block/50% — iOS Mail collapses those cells to
+# narrow strips; Michael's 2026-07-02 screenshot). Desktop Outlook ignores
+# <style> entirely.
 MOBILE_STYLE = """
 <style>
 @media only screen and (max-width:640px) {
@@ -114,6 +146,25 @@ def _teu(r):
     return str(r.get("teu_requested") or 0)
 
 
+def _teu_sum(rows, won=False):
+    """Total TEU across rows — teu_won first for booked rows, defensively int."""
+    total = 0
+    for r in rows:
+        v = (r.get("teu_won") if won else None) or r.get("teu_requested") or 0
+        if isinstance(v, (int, float)):
+            total += int(v)
+    return total
+
+
+def _plural(n, word):
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _day_label(d):
+    """'Wed Apr 9' — portable via the shared _fmt_date mapping."""
+    return _fmt_date(datetime.combine(d, datetime.min.time()), "%a %b %-d")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Day bucketing — reuses gen_email._today_events (stand_* rows are already
 # excluded from the requests/quotes buckets there; they surface only through
@@ -140,22 +191,61 @@ def _client_sections(data, report_date):
     }
 
 
+def _active_shipments(data, report_date):
+    """Confirmed bookings (WIN) from the last ACTIVE_WINDOW_DAYS — dated by
+    request_date, falling back to response_timestamp; rows with no parseable
+    date are skipped (defensive). Sorted by ETD ascending, undated ETDs last.
+    stand_* rows are INCLUDED here: a confirmed standalone booking is exactly
+    what the client tracks daily."""
+    rows = []
+    for r in data.get("requests", []):
+        if r.get("status") != "WIN":
+            continue
+        d = (_iso_date(r.get("request_date") or r.get("request_timestamp"))
+             or _iso_date(r.get("response_timestamp")))
+        if not d or (report_date - d).days > ACTIVE_WINDOW_DAYS:
+            continue
+        rows.append(r)
+    rows.sort(key=lambda r: (_iso_date(r.get("etd_offered")) is None,
+                             _iso_date(r.get("etd_offered")) or date.max))
+    return rows
+
+
+def _upcoming_cutoffs(active, report_date):
+    """'Lane — doc cutoff Wed Apr 9' lines for active shipments whose doc
+    cutoff (or, lacking one, vessel departure) lands within the next
+    CUTOFF_HORIZON_DAYS. Dates parsed defensively; unparseable rows skipped."""
+    horizon = report_date + timedelta(days=CUTOFF_HORIZON_DAYS)
+    items = []
+    for r in active:
+        doc = _iso_date(r.get("doc_cutoff"))
+        etd = _iso_date(r.get("etd_offered"))
+        if doc and report_date <= doc <= horizon:
+            items.append((doc, f"{_lane(r)} — doc cutoff {_day_label(doc)}"))
+        elif etd and report_date <= etd <= horizon:
+            items.append((etd, f"{_lane(r)} — vessel departs {_day_label(etd)}"))
+    items.sort(key=lambda t: t[0])
+    return [text for _, text in items]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # HTML builders
 # ─────────────────────────────────────────────────────────────────────
 
 def _table(headers, rows):
     """Outlook-safe table. Every cell value is escaped HERE (pass RAW strings —
-    QC-044). Empty → a stable friendly one-liner so the email keeps its shape."""
+    QC-044). Even rows get an inline bgcolor stripe. Empty → a stable friendly
+    one-liner (defensive; build_body collapses empty sections before this)."""
     head = "".join(f"<th {_TH_STYLE}>{_esc(h)}</th>" for h in headers)
     if rows:
         body = ""
-        for row in rows:
+        for n, row in enumerate(rows):
+            stripe = f' bgcolor="{STRIPE_BG}"' if n % 2 else ""
             cells = "".join(
                 f"<td {_TD_FIRST_STYLE if i == 0 else _TD_STYLE}>{_esc(v)}</td>"
                 for i, v in enumerate(row)
             )
-            body += f"<tr>{cells}</tr>"
+            body += f"<tr{stripe}>{cells}</tr>"
     else:
         body = (
             f'<tr><td colspan="{len(headers)}" '
@@ -165,7 +255,7 @@ def _table(headers, rows):
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
-        'margin:4px 0 18px 0;border:1px solid #d1d5db">'
+        'margin:6px 0 18px 0;border:1px solid #d1d5db">'
         f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
     )
 
@@ -176,6 +266,78 @@ def _section(title, count, note, table_html):
         f'font-weight:700;letter-spacing:-0.01em">{_esc(title)} ({count})</h2>'
         f'<p style="margin:0 0 6px;font-size:11px;color:#64748b">{_esc(note)}</p>'
         f"{table_html}"
+    )
+
+
+def _quiet_section(title, text):
+    """A zero-row section collapses to ONE composed line instead of an empty
+    table — bolded section name, muted friendly copy, subtle left rule."""
+    return (
+        f'<p style="margin:12px 0 0;padding:8px 12px;font-size:12px;color:#475569;'
+        f'background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 4px 4px 0">'
+        f'<strong style="color:{TH_BG}">{_esc(title)}:</strong> {_esc(text)}</p>'
+    )
+
+
+def _section_or_line(title, note, quiet_text, headers, row_values):
+    if row_values:
+        return _section(title, len(row_values), note, _table(headers, row_values))
+    return _quiet_section(title, quiet_text)
+
+
+def _kpi_strip(s):
+    """Hero KPI strip — 4 tiles via gen_email._kpi_card (same td.hx-kpi /
+    .hx-kpi-card markup, so the mobile display:block stacking is shared).
+    Deliberately NOT class hx-data — a min-width would fight the stacking."""
+    return f"""
+<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:2px 0 8px">
+  <tr>
+    {_kpi_card(len(s["requests"]), "Requests received today", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
+    {_kpi_card(len(s["quotes"]), "Quotes delivered today", "#6366f1", "25%", sublabel=f"{_teu_sum(s['quotes'])} TEU")}
+    {_kpi_card(len(s["bookings"]), "Bookings confirmed today", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
+    {_kpi_card(len(s["awaiting"]), "Awaiting your decision", "#f59e0b", "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
+  </tr>
+</table>
+"""
+
+
+def _narrative(s):
+    """One-line service narrative under the hero tiles. The avg-business-hours
+    parenthetical only appears when today's quoted rows carry
+    turnaround_biz_hours (client-safe responsiveness metric); otherwise it is
+    omitted rather than guessed."""
+    n_req, n_quo, n_book = len(s["requests"]), len(s["quotes"]), len(s["bookings"])
+    if not (n_req or n_quo or n_book):
+        return ("A quiet day on new activity — no new requests, quotes, or "
+                "bookings. Your active shipments are summarized below.")
+    tb = [r.get("turnaround_biz_hours") for r in s["quotes"]]
+    tb = [t for t in tb if isinstance(t, (int, float))]
+    avg = f" (average {sum(tb) / len(tb):.1f} business hours)" if tb else ""
+    line = (f"We received {_plural(n_req, 'rate request')} and returned "
+            f"{_plural(n_quo, 'quote')}{avg}; "
+            f"{_plural(n_book, 'booking')} confirmed.")
+    n_wait = len(s["awaiting"])
+    if n_wait:
+        verb = "awaits" if n_wait == 1 else "await"
+        line += f" {_plural(n_wait, 'quote')} {verb} your decision below."
+    return line
+
+
+def _cutoff_callout(items):
+    """Amber highlight box — the time-sensitive dates a client must not miss."""
+    lines = "".join(
+        f'<p style="margin:3px 0 0;font-size:12px;font-weight:600;color:#78350f">'
+        f'{_esc(t)}</p>'
+        for t in items
+    )
+    return (
+        '<div style="background:#fffbeb;border:1px solid #fcd34d;'
+        'border-left:4px solid #f59e0b;border-radius:6px;'
+        'padding:10px 14px;margin:12px 0 6px">'
+        '<p style="margin:0;font-size:12px;font-weight:700;color:#92400e;'
+        'letter-spacing:0.01em">Upcoming cutoffs — next 7 days</p>'
+        f"{lines}"
+        '</div>'
     )
 
 
@@ -202,7 +364,8 @@ def _header_html(report_label, updated_label):
 
 FOOTER_HTML = """
 <div style="border-top:2px solid #e5e7eb;padding-top:14px;margin-top:24px">
-  <p style="margin:0 0 4px;font-size:12px;color:#374151">Questions? Reply to this email or contact <a href="mailto:MBD_OceanExportBookingShared@ol-usa.com" style="color:#1e3a5f">MBD_OceanExportBookingShared@ol-usa.com</a>.</p>
+  <p style="margin:0 0 4px;font-size:12px;color:#374151">Questions about a specific shipment? Reply with the booking reference and our team will follow up.</p>
+  <p style="margin:0 0 4px;font-size:12px;color:#374151">For anything else, reply to this email or contact <a href="mailto:MBD_OceanExportBookingShared@ol-usa.com" style="color:#1e3a5f">MBD_OceanExportBookingShared@ol-usa.com</a>.</p>
   <p style="margin:0;font-size:11px;color:#6b7280">This daily update is generated automatically by OL-USA for Hilmar Ingredients.</p>
 </div>
 """
@@ -219,101 +382,122 @@ def build_body(data, cfg):
     report_date = _report_date(now_et)
     report_label = _fmt_date(
         datetime.combine(report_date, datetime.min.time()), "%A, %B %-d, %Y")
-    updated_label = _fmt_date(now_et, "%B %-d, %Y at %-I:%M %p ET")
+    updated_label = _fmt_date(now_et, "%-I:%M %p") + " ET"
     s = _client_sections(data, report_date)
+    active = _active_shipments(data, report_date)
+    cutoffs = _upcoming_cutoffs(active, report_date)
 
     html = _header_html(report_label, updated_label)
+
+    # 1. Hero KPI strip + one-line service narrative.
+    html += _kpi_strip(s)
     html += (
-        f'<p style="margin:0 0 10px;font-size:13px;color:#374151">'
-        f'Here is today\'s summary of your ocean shipment activity with OL-USA '
-        f'— requests received, rates provided, and bookings confirmed for '
-        f'{_esc(report_label)}.</p>'
+        f'<p style="margin:6px 2px 14px;font-size:13px;color:#374151;'
+        f'line-height:1.5">{_esc(_narrative(s))}</p>'
     )
 
-    # b. Requests received today — acknowledgment of TODAY's RFQs.
-    html += _section(
-        "Requests received today", len(s["requests"]),
+    # 2. Time-sensitive dates first — amber callout, only when there are any.
+    if cutoffs:
+        html += _cutoff_callout(cutoffs)
+
+    # 3. Active shipments — confirmed bookings from the last 14 days.
+    html += _section_or_line(
+        "Active shipments",
+        "Your confirmed bookings from the last 14 days — booking references, "
+        "vessel details, and cutoff dates, sorted by departure.",
+        "No shipments currently in transit or awaiting departure.",
+        ["Lane", "Carrier", "Booking ref", "Vessel", "ETD", "ETA", "Doc cutoff"],
+        [[
+            _lane(r),
+            r.get("carrier_won") or r.get("carrier_quoted") or "—",
+            r.get("mdolx_ref") or "Confirmation to follow",
+            r.get("vessel_voyage") or "—",
+            r.get("etd_offered") or "—",
+            r.get("eta_offered") or "—",
+            r.get("doc_cutoff") or "—",
+        ] for r in active],
+    )
+
+    # 4. Requests received today — acknowledgment of TODAY's RFQs.
+    html += _section_or_line(
+        "Requests received today",
         "Rate requests we received from your team today — all acknowledged and being worked.",
-        _table(
-            ["Lane", "Equipment", "TEU", "Product", "Temp", "Requested ETA", "Received (PT)"],
-            [[
-                _lane(r),
-                r.get("containers") or "—",
-                _teu(r),
-                r.get("product") or "—",
-                r.get("temperature") or "—",
-                r.get("eta_requested") or r.get("etd_requested") or "—",
-                r.get("lonny_time_pt") or _short_pt(r.get("request_timestamp")),
-            ] for r in s["requests"]],
-        ),
+        "No new rate requests today.",
+        ["Lane", "Equipment", "TEU", "Product", "Temp", "Requested ETA", "Received (PT)"],
+        [[
+            _lane(r),
+            r.get("containers") or "—",
+            _teu(r),
+            r.get("product") or "—",
+            r.get("temperature") or "—",
+            r.get("eta_requested") or r.get("etd_requested") or "—",
+            r.get("lonny_time_pt") or _short_pt(r.get("request_timestamp")),
+        ] for r in s["requests"]],
     )
 
-    # c. Quotes provided today — TODAY's rate responses.
-    html += _section(
-        "Quotes provided today", len(s["quotes"]),
+    # 5. Quotes provided today — TODAY's rate responses.
+    html += _section_or_line(
+        "Quotes provided today",
         "Rates our booking team sent you today.",
-        _table(
-            ["Lane", "Equipment", "TEU", "Carrier", "Rate ($/container)",
-             "Quoted at (ET)", "ETD offered", "ETA offered"],
-            [[
-                _lane(r),
-                r.get("containers") or "—",
-                _teu(r),
-                r.get("carrier_quoted") or "—",
-                _rate(r),
-                _short_et(r.get("response_timestamp")),
-                r.get("etd_offered") or "—",
-                r.get("eta_offered") or "—",
-            ] for r in s["quotes"]],
-        ),
+        "No new quotes today.",
+        ["Lane", "Equipment", "TEU", "Carrier", "Rate ($/container)",
+         "Quoted at (ET)", "ETD offered", "ETA offered"],
+        [[
+            _lane(r),
+            r.get("containers") or "—",
+            _teu(r),
+            r.get("carrier_quoted") or "—",
+            _rate(r),
+            _short_et(r.get("response_timestamp")),
+            r.get("etd_offered") or "—",
+            r.get("eta_offered") or "—",
+        ] for r in s["quotes"]],
     )
 
-    # d. Bookings confirmed today — →WIN transitions on the report day.
-    html += _section(
-        "Bookings confirmed today", len(s["bookings"]),
+    # 6. Bookings confirmed today — →WIN transitions on the report day.
+    html += _section_or_line(
+        "Bookings confirmed today",
         "Shipments confirmed today. Booking references are listed once carrier confirmation arrives.",
-        _table(
-            ["Lane", "Equipment / TEU", "Carrier", "Booking ref", "ETD", "ETA"],
-            [[
-                _lane(r),
-                f"{r.get('containers') or '—'} / {_teu(r)} TEU",
-                r.get("carrier_won") or r.get("carrier_quoted") or "—",
-                r.get("mdolx_ref") or "Confirmation to follow",
-                r.get("etd_offered") or "—",
-                r.get("eta_offered") or "—",
-            ] for r in s["bookings"]],
-        ),
+        "No new bookings confirmed today.",
+        ["Lane", "Equipment / TEU", "Carrier", "Booking ref", "ETD", "ETA"],
+        [[
+            _lane(r),
+            f"{r.get('containers') or '—'} / {_teu(r)} TEU",
+            r.get("carrier_won") or r.get("carrier_quoted") or "—",
+            r.get("mdolx_ref") or "Confirmation to follow",
+            r.get("etd_offered") or "—",
+            r.get("eta_offered") or "—",
+        ] for r in s["bookings"]],
     )
 
-    # e. Awaiting your decision — quotes on the table (OL quoted, no booking yet).
-    html += _section(
-        "Awaiting your decision", len(s["awaiting"]),
+    # 7. Awaiting your decision — quotes on the table (OL quoted, no booking
+    # yet). This is the client's ACTION LIST — always a table when it has rows.
+    html += _section_or_line(
+        "Awaiting your decision",
         "Quotes on the table — reply to book, or let us know if the dates or rates need adjusting.",
-        _table(
-            ["Lane", "Carrier", "Rate ($/container)", "Quoted at (ET)", "ETD offered"],
-            [[
-                _lane(r),
-                r.get("carrier_quoted") or "—",
-                _rate(r),
-                _short_et(r.get("response_timestamp")),
-                r.get("etd_offered") or "—",
-            ] for r in s["awaiting"]],
-        ),
+        "Nothing awaiting your decision — all caught up.",
+        ["Lane", "Carrier", "Rate ($/container)", "Quoted at (ET)", "ETD offered"],
+        [[
+            _lane(r),
+            r.get("carrier_quoted") or "—",
+            _rate(r),
+            _short_et(r.get("response_timestamp")),
+            r.get("etd_offered") or "—",
+        ] for r in s["awaiting"]],
     )
 
-    # f. In progress — requests we're still pricing.
-    html += _section(
-        "In progress — quote coming", len(s["in_progress"]),
+    # 8. In progress — requests we're still pricing.
+    html += _section_or_line(
+        "In progress — quote coming",
         "We're working on these and will have rates to you shortly.",
-        _table(
-            ["Lane", "Equipment", "TEU", "Received (PT)"],
-            [[
-                _lane(r),
-                r.get("containers") or "—",
-                _teu(r),
-                r.get("lonny_time_pt") or _short_pt(r.get("request_timestamp")),
-            ] for r in s["in_progress"]],
-        ),
+        "Nothing in the pricing queue — every request has been quoted.",
+        ["Lane", "Equipment", "TEU", "Received (PT)"],
+        [[
+            _lane(r),
+            r.get("containers") or "—",
+            _teu(r),
+            r.get("lonny_time_pt") or _short_pt(r.get("request_timestamp")),
+        ] for r in s["in_progress"]],
     )
 
     html += FOOTER_HTML
