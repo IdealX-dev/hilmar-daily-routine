@@ -412,9 +412,16 @@ jobs:
               || echo "Client send failed (best-effort — the staff email already shipped; see log above)"
           else
             echo "SAMPLE send — client_report disabled or send_to=test → $SAMPLE_TO only. Lonny receives NOTHING."
+            # Label the sample UNMISTAKABLY (2026-07-11, Michael mistook the
+            # sample for a gutted daily tracker). Also load-bearing: an
+            # unprefixed sample shares the real client subject, so a sample
+            # sent earlier the same day would trip the mailbox guard and
+            # BLOCK the real client send once the gate is enabled.
+            printf '[SAMPLE - internal preview, Lonny does NOT receive this] %s' \
+              "$(cat reports/client-email-subject.txt)" > reports/client-email-subject-sample.txt
             python3 scripts/outlook_send.py daily --to $SAMPLE_TO \
               --force --no-flag \
-              --subject-from-file reports/client-email-subject.txt \
+              --subject-from-file reports/client-email-subject-sample.txt \
               --body-from-file reports/client-email-body.html \
               || echo "Client SAMPLE send failed (best-effort — never fails the job)"
           fi
