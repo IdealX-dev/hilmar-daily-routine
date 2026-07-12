@@ -185,10 +185,20 @@ def _dest_from_pod(pod) -> str | None:
     corpus; anything not in the corpus returns None so a garbled PDF cell
     can never invent a lane (the row stays honestly Unknown and QC-015
     keeps flagging it).
+
+    2026-07-12 (run 29174327034): the literal placeholder "Unknown" /
+    "unknown" / "" is ABSENT, not a port — rows written by older parses
+    stored it verbatim. Return None fast and EXPLICITLY. (A corpus miss
+    already returned None, but the intent must be pinned so a future
+    corpus entry or normalizer change can never make the placeholder
+    match.)
     """
     if not pod or not isinstance(pod, str):
         return None
-    cand = BP._norm(pod.strip())
+    cleaned = pod.strip()
+    if not cleaned or cleaned.lower() == "unknown":
+        return None
+    cand = BP._norm(cleaned)
     lookup = {d.lower(): d for d in BP.KNOWN_DESTINATIONS}
     hit = lookup.get(cand.lower())
     if hit:
@@ -197,6 +207,29 @@ def _dest_from_pod(pod) -> str | None:
     # "Yokohama, Japan") — try the first token(s) against the corpus.
     first = cand.split(",")[0].strip()
     return lookup.get(first.lower())
+
+
+#: POD-shaped keys tried, in order, when recovering a destination — the row
+#: first, then this run's parsed body/PDF fields. pdf_parser emits "pod";
+#: the aliases cover table/LLM parses so a field rename can't silently kill
+#: lane recovery. "pol" is deliberately EXCLUDED — that's the ORIGIN port
+#: (2026-07-12 deeper-recovery fix, run 29174327034).
+_POD_FIELD_ALIASES = (
+    "pod", "port_of_discharge", "discharge_port", "destination_port", "dest_port",
+)
+
+
+def _dest_from_row_pod(row: dict, parsed: dict) -> str | None:
+    """First corpus-mappable destination among the row's / the parse's
+    POD-shaped fields (see _POD_FIELD_ALIASES). _dest_from_pod treats the
+    literal "Unknown" as absent, so a row that stored the placeholder
+    falls through to the parsed candidates instead of dead-ending."""
+    for src in (row or {}, parsed or {}):
+        for key in _POD_FIELD_ALIASES:
+            hit = _dest_from_pod(src.get(key))
+            if hit:
+                return hit
+    return None
 
 
 def _index_pdfs_by_mdolx() -> dict[str, Path]:
@@ -600,37 +633,35 @@ def main():
                     canon = C.normalize_carrier(pdf_parsed["carrier_quoted"]) or pdf_parsed["carrier_quoted"]
                     parsed.setdefault("carrier_quoted", canon)
 
-        if not parsed:
-            continue
+        if parsed:
+            # PASS 1: carrier+rate (only on Q&L + PENDING)
+            target_status = (r.get("status") == "LOSS" and r.get("quoted")) or (r.get("status") == "PENDING")
+            if target_status and not r.get("carrier_quoted") and parsed.get("carrier_quoted"):
+                canon = parsed["carrier_quoted"]
+                r["carrier_quoted"] = canon
+                patched_ql_carrier += 1
+                body_hits.append(f"{r.get('request_id')}->{canon}")
+                if parsed.get("ol_rate") is not None and not r.get("ol_rate"):
+                    r["ol_rate"] = parsed["ol_rate"]
+                    r["quoted"] = True   # a recovered rate IS a quote — never NQ
+                    patched_rate += 1
+                status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
+                print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
+                      + (f" @ ${parsed['ol_rate']:.0f}" if parsed.get('ol_rate') else ""))
 
-        # PASS 1: carrier+rate (only on Q&L + PENDING)
-        target_status = (r.get("status") == "LOSS" and r.get("quoted")) or (r.get("status") == "PENDING")
-        if target_status and not r.get("carrier_quoted") and parsed.get("carrier_quoted"):
-            canon = parsed["carrier_quoted"]
-            r["carrier_quoted"] = canon
-            patched_ql_carrier += 1
-            body_hits.append(f"{r.get('request_id')}->{canon}")
-            if parsed.get("ol_rate") is not None and not r.get("ol_rate"):
+            # PASS 2: structured-table fields on ALL rows (regardless of status).
+            # Only fill if the row doesn't already have the value and the parse
+            # produced one. Never overwrite existing data.
+            for k in BACKFILL_KEYS:
+                if not r.get(k) and parsed.get(k):
+                    r[k] = parsed[k]
+                    patched_fields += 1
+                    field_hits[k] = field_hits.get(k, 0) + 1
+            # ol_rate on WIN/PENDING rows too (PASS 1 only does it during carrier patch)
+            if not r.get("ol_rate") and parsed.get("ol_rate") is not None:
                 r["ol_rate"] = parsed["ol_rate"]
                 r["quoted"] = True   # a recovered rate IS a quote — never NQ
                 patched_rate += 1
-            status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
-            print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
-                  + (f" @ ${parsed['ol_rate']:.0f}" if parsed.get('ol_rate') else ""))
-
-        # PASS 2: structured-table fields on ALL rows (regardless of status).
-        # Only fill if the row doesn't already have the value and the parse
-        # produced one. Never overwrite existing data.
-        for k in BACKFILL_KEYS:
-            if not r.get(k) and parsed.get(k):
-                r[k] = parsed[k]
-                patched_fields += 1
-                field_hits[k] = field_hits.get(k, 0) + 1
-        # ol_rate on WIN/PENDING rows too (PASS 1 only does it during carrier patch)
-        if not r.get("ol_rate") and parsed.get("ol_rate") is not None:
-            r["ol_rate"] = parsed["ol_rate"]
-            r["quoted"] = True   # a recovered rate IS a quote — never NQ
-            patched_rate += 1
 
         # PASS 2b: destination + lane from the row's own POD. A bare
         # booking amendment has no lane in subject/body and no sibling
@@ -640,9 +671,18 @@ def main():
         # Guarded by _dest_from_pod's KNOWN_DESTINATIONS check so a
         # garbled PDF cell can never invent a lane. Zero 'Lane unresolved'
         # in the daily email is the standard (Michael, 2026-07-09/10).
+        #
+        # 2026-07-12 (run 29174327034): this block — and the LANE-DIAG
+        # breadcrumb below — now runs OUTSIDE the `if parsed:` guard. The
+        # old `if not parsed: continue` short-circuit skipped every row
+        # whose bodies parsed to nothing, so stand_260905 stayed
+        # unresolved with NO diagnostic line in the run log, even though
+        # r["pod"] can already sit on the row from a prior fire's PASS 2.
+        # _dest_from_row_pod also tries the parse's POD-shaped aliases
+        # and treats the literal "Unknown" as absent.
         if (r.get("destination") or "Unknown") in ("Unknown", "") or \
                 (r.get("lane") or "") == "Lane unresolved":
-            _pod_dest = _dest_from_pod(r.get("pod") or parsed.get("pod"))
+            _pod_dest = _dest_from_row_pod(r, parsed)
             if _pod_dest:
                 r["destination"] = _pod_dest
                 _o = r.get("origin") or "Oakland"

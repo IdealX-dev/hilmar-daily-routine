@@ -188,20 +188,38 @@ def test_hero_kpi_tiles_present_with_correct_counts():
     assert _tile_value(html, "Awaiting your decision") == "1"
     # Exactly 4 gen_email-style tiles sharing the mobile stacking class.
     assert html.count('class="hx-kpi"') == 4
-    # Narrative under the tiles — counts + the avg-biz-hours parenthetical
-    # (today's quotes carry no turnaround_biz_hours in this fixture → omitted).
+    # Narrative under the tiles — counts + the PACIFIC reply-speed clause
+    # (2026-07-12: today's quotes carry request/response timestamps, so the
+    # PT-window metric renders; all three land on the same PT calendar day).
     assert "We received 5 rate requests and returned 3 quotes" in html
     assert "1 booking confirmed." in html
-    assert "business hours" not in html
+    assert "all the same business day" in html
+    assert "business hours, Pacific)" in html
 
 
-def test_narrative_includes_avg_biz_hours_when_present():
+def test_narrative_uses_pt_window_not_stored_et_metric():
+    """2026-07-12 (Michael 2026-07-11 "lonny is uswc and we are usec"): the
+    reply-speed clause is computed request→response in the PACIFIC window
+    (core.biz_hours_between_pt) — the stored turnaround_biz_hours is the
+    ET staff-desk SLA and must never drive the client narrative."""
     data = _mixed_data()
     for r in data["requests"]:
         if r.get("response_timestamp") and r.get("ol_rate"):
-            r["turnaround_biz_hours"] = 1.4
+            r["turnaround_biz_hours"] = 99.9   # ET metric — must NOT render
     html = gce.build_body(data, {})
-    assert "(average 1.4 business hours)" in html
+    assert "business hours, Pacific)" in html
+    assert "99.9" not in html
+
+
+def test_narrative_omits_reply_speed_without_timestamps():
+    """No request/response timestamps on today's quotes → the parenthetical
+    is omitted, never guessed (and never fed from turnaround_biz_hours)."""
+    data = _mixed_data()
+    for r in data["requests"]:
+        r.pop("request_timestamp", None)
+        r["turnaround_biz_hours"] = 1.4
+    html = gce.build_body(data, {})
+    assert "business hours" not in html
 
 
 # ── 4c. Active shipments (recent WINs) ────────────────────────────────────

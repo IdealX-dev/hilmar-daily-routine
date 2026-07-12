@@ -3,6 +3,79 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-12 — Session: four fixes from the Friday-evening fire (run 29174327034)
+
+Michael's review of the Friday-evening production fire (run 29174327034,
+~8:50 PM ET — the runner's UTC clock already into Saturday) surfaced four
+defects. All four fixed at the root; gates green (compileall, ruff, pytest
+1641 passed — was 1610 + 30 new tests + 1 net in test_client_email.py).
+
+- **Client email subject report-day derivation hardened**
+  (`scripts/gen_client_email.py`): the sample's subject dated the wrong
+  day. `build_subject` and `build_body` each read the wall clock
+  SEPARATELY and neither accepted an injected instant, so the subject
+  could drift from the body and the UTC-vs-ET shift around midnight was
+  untestable. Both now derive from ONE aware instant (new `_now_et`
+  helper, `now=` keyword; `main()` passes a single shared instant)
+  through `gen_email._report_date → core.report_business_day` — the exact
+  staff-email path (wee-hours rollback + weekend→Friday). Pinned by
+  tests: evening-ET/next-day-UTC, 00:40 ET wee-hours, weekend roll, and
+  staff-email parity. CALENDAR NOTE, logged honestly: in the proleptic
+  Gregorian calendar Python uses, 2026-07-11 is a Saturday (Friday that
+  week is 2026-07-10), so the fire instant Michael reported as "Friday
+  Jul 11" evaluates as a Saturday-ET run and the weekend roll (Sat→Fri
+  Jul 10) explains the "(Jul 10, 2026)" subject; tests pin the intended
+  scenario shapes on the real-calendar dates.
+- **Weekly summary Friday gate is now ET + injectable**
+  (`scripts/gen_weekly_summary.py`): the gate is evaluated on the
+  America/New_York fire day derived from one aware instant (new
+  `_fire_day_et` + `should_generate`), never the runner's UTC/local
+  date, and honors the same midnight–6 AM ET wee-hours rollback as
+  `core.report_business_day` (a 1 AM ET Saturday run is Friday's
+  very-late fire and now generates instead of skipping). `--force`
+  behavior kept; `main(argv, now)` is test-injectable. Tests: Fri-evening
+  ET/Sat-UTC must not skip, actual Saturday ET skips, force overrides.
+- **POD literal "Unknown" + PASS 2b short-circuit**
+  (`scripts/patch_carriers.py`, `scripts/pdf_parser.py`): the run log had
+  NO LANE-DIAG line for stand_260905 because `if not parsed: continue`
+  skipped the PASS 2b block (and its diagnostic) for every row whose
+  bodies parse to nothing. PASS 1/2 now run under `if parsed:` and PASS
+  2b + LANE-DIAG run for ALL rows (r["pod"] can already sit on the row
+  from a prior fire). `_dest_from_pod` explicitly treats
+  "Unknown"/"unknown"/"" as absent; new `_dest_from_row_pod` also tries
+  the parse's POD-shaped aliases (port_of_discharge/discharge_port/
+  destination_port/dest_port — "pol" excluded, that's the origin). At
+  the source, `pdf_parser.parse_booking_pdf` (new `_clean_port`) never
+  emits the literal "Unknown" as a POL/POD value — a placeholder
+  "UNKNOWN" cell title-cased to exactly that string. Tests: placeholder
+  variants → None, no-parsed-still-diagnoses (capsys LANE-DIAG), lane
+  recovery from the row's own pod, pdf_parser synthetic-text fixtures.
+- **Client reply-speed metric moved to the Pacific business window** —
+  trigger: Michael's timezone report, 2026-07-11: "lonny is uswc and we
+  are usec". `core.biz_hours_between` (8:30–17:30 ET) is the STAFF desk
+  SLA and is unchanged for all callers; the client email's narrative now
+  reflects Lonny's experienced wait. New `core.biz_hours_between_pt`
+  (8:30–17:30 America/Los_Angeles, Mon–Fri, DST-safe) shares the loop via
+  `_biz_hours_between_window(tz, win_start, win_end)`; **paired change
+  mirrored byte-for-byte into `src/hilmar/core.py`** (QC-040; a test now
+  locks source parity via inspect.getsource). `gen_client_email`
+  narrative computes request→response PT-window hours for TODAY's quotes
+  (never the stored turnaround_biz_hours) plus the same-PT-calendar-day
+  share: "… — all the same business day (average 1.4 business hours,
+  Pacific)"; parenthetical omitted when no timestamps.
+  `gen_manual.METRIC_DEFINITIONS`: "Time to Quote" now states the ET desk
+  window; new "Client reply time (PT)" entry (drift-guard tests green).
+  Cross-coast expected values verified against the real constants:
+  request 2026-07-08T23:30Z (4:30 PM PT / 7:30 PM ET Wed) → response
+  2026-07-09T12:45Z (5:45 AM PT / 8:45 AM ET Thu) gives ET-window
+  **0.25 h** (Wed after ET close; Thu 8:30→8:45) and PT-window **1.0 h**
+  (Wed 4:30→5:30 PM PT; Thu before PT open); same-day share false for
+  that pair, true for a mid-day pair.
+- New tests: `tests/test_auditfix_fri_evening_fire_tz.py` (30);
+  `tests/test_client_email.py` narrative tests rewritten for the PT
+  metric (+1 net). Untouched per scope: outlook_send.py, config.json,
+  QC-065 constants, workflows, gen_email.py staff Time-to-Quote.
+
 ## 2026-07-11 — Session: client daily email redesigned as a premium service update
 
 Michael reviewed the client-facing daily sample and called it "terrible" —

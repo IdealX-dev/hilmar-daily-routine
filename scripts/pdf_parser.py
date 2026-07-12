@@ -129,6 +129,25 @@ def _normalize_date(s: str) -> str:
     return s
 
 
+def _clean_port(value: str | None) -> str | None:
+    """Title-cased port city from a PDF cell, or None for a placeholder.
+
+    Strips a ",COUNTRY" suffix ("TOKYO,JAPAN" → "Tokyo"). NEVER returns the
+    literal "Unknown": a placeholder POL/POD cell ("UNKNOWN" /
+    "UNKNOWN,XX") title-cases to exactly the string every downstream
+    consumer treats as absent, and on the 2026-07-11 fire (run
+    29174327034) it shipped as a value — the stand_* row's lane recovery
+    then "matched" nothing while the field looked populated. Placeholders
+    are OMITTED (parse_booking_pdf's contract: empty fields absent, so
+    dict.update() merges stay safe)."""
+    if not value or not isinstance(value, str):
+        return None
+    city = value.split(",")[0].strip()
+    if not city or city.lower() == "unknown":
+        return None
+    return city.title()
+
+
 def parse_booking_pdf(pdf_path: str | Path, *, allow_llm: bool = True) -> dict:
     """Extract booking fields from an OL booking-confirmation PDF.
 
@@ -206,25 +225,32 @@ def parse_booking_pdf(pdf_path: str | Path, *, allow_llm: bool = True) -> dict:
                             vessel_idx = idx
                             break
                     if vessel_idx is not None and vessel_idx > 0:
-                        out["pol"] = " ".join(prefix_words[:vessel_idx]).title()
+                        pol_city = _clean_port(" ".join(prefix_words[:vessel_idx]))
+                        if pol_city:
+                            out["pol"] = pol_city
                         vessel = " ".join(prefix_words[vessel_idx:])
                         out["vessel_voyage"] = f"{vessel} {voyage}".strip()
                     elif prefix_words:
                         # Fallback: take first word as POL
-                        out["pol"] = prefix_words[0].title()
+                        pol_city = _clean_port(prefix_words[0])
+                        if pol_city:
+                            out["pol"] = pol_city
         elif "Port of Discharge" in line:
             m = _DATE_PAT.search(line)
             if m:
                 out["eta_offered"] = _normalize_date(m.group(1))
             if i + 1 < len(lines):
                 nxt = lines[i + 1]
-                # POD is the city name, often "TOKYO,JAPAN" or just "TOKYO"
+                # POD is the city name, often "TOKYO,JAPAN" or just "TOKYO".
+                # _clean_port strips the ",COUNTRY" suffix AND drops
+                # placeholder cells ("UNKNOWN") — the literal "Unknown"
+                # must never ship as a POD value (2026-07-12 fix, run
+                # 29174327034: it originated HERE via .title()).
                 pod_m = re.match(r"^([A-Z]+(?:,[A-Z]+)?)", nxt)
                 if pod_m:
-                    pod_raw = pod_m.group(1)
-                    # Strip country suffix like ",JAPAN" — keep just the city
-                    pod_city = pod_raw.split(",")[0]
-                    out["pod"] = pod_city.title()
+                    pod_city = _clean_port(pod_m.group(1))
+                    if pod_city:
+                        out["pod"] = pod_city
         # Direct sailing indicator
         elif "DIRECT SAILING" in line.upper():
             out["transshipment"] = "DIRECT"
