@@ -487,10 +487,13 @@ def test_no_flag_beats_flag_name_override(tmp_path, monkeypatch):
 
 # ── 7. config.json ships gated off with the exact approved recipients ─────
 
-def test_config_client_report_ships_gated_off():
+def test_config_client_report_live_state():
+    # Go-live approved by Michael Deitchman 2026-07-12 (recorded in the
+    # config _note + CHANGELOG). This test pins the LIVE state: enabled,
+    # and recipients EXACTLY the QC-065-approved pair — any drift is red.
     cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     cr = cfg["client_report"]
-    assert cr["enabled"] is False
+    assert cr["enabled"] is True
     assert cr["to"] == APPROVED_TO
     assert cr["cc"] == APPROVED_CC
     assert cr["sample_to"] == ["michael.deitchman@idealx.us"]

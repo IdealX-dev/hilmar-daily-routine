@@ -3,6 +3,19 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-12 — Client report GO-LIVE (operator decision)
+
+Michael Deitchman approved go-live via the session decision prompt
+(option "Client report go-live"), after explicitly declining the request
+to add lupfold@hilmaringredients.com to the internal staff full_list
+(that would have sent OL's negotiation analytics to the client; refused,
+QC-065 continues to enforce the separation). One-line reversible config
+flip: client_report.enabled false -> true. From the next production fire
+Lonny receives the redesigned client service report daily (cc
+michael.deitchman@ol-usa.com, own client-sent idempotency flag + mailbox
+guard); samples to sample_to stop. Rollback = flip enabled back to false.
+Gate-pinning test updated to lock the LIVE state.
+
 ## 2026-07-12 — Session: four fixes from the Friday-evening fire (run 29174327034)
 
 Michael's review of the Friday-evening production fire (run 29174327034,

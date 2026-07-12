@@ -81,7 +81,7 @@
     ]
   },
   "client_report": {
-    "enabled": false,
+    "enabled": true,
     "to": [
       "lupfold@hilmaringredients.com"
     ],
@@ -91,7 +91,7 @@
     "sample_to": [
       "michael.deitchman@idealx.us"
     ],
-    "_note": "CLIENT-facing daily service update (gen_client_email.py). SHIPS GATED OFF: while enabled=false the pipeline still builds reports/client-email-body.html but the send step mails a SAMPLE to sample_to only (--force --no-flag). Lonny receives NOTHING until the operator flips enabled to true. QC-065 pins to/cc to the ONLY approved client recipients and scans the body for internal-analytics leaks — never widen it."
+    "_note": "CLIENT-facing daily service update (gen_client_email.py). ENABLED 2026-07-12 by Michael Deitchman (go-live approval via session prompt). Sends to the approved pair only; QC-065 pins to/cc and scans the body for internal-analytics leaks - never widen it. Roll back = set enabled back to false (samples to sample_to resume)."
   },
   "rules": {
     "pending_aging_hours": 24,
@@ -111,15 +111,15 @@
   },
   "data_range": {
     "start": "2026-04-01",
-    "description": "Fresh rebuild from April 1, 2026 forward \u2014 Michael approved 2026-04-19"
+    "description": "Fresh rebuild from April 1, 2026 forward — Michael approved 2026-04-19"
   },
   "dry_run": {
     "enabled_default": false,
-    "description": "Live send enabled 2026-05-04 by Michael \u2014 Plan B path"
+    "description": "Live send enabled 2026-05-04 by Michael — Plan B path"
   },
   "mcp_connectors": {
-    "outlook_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_cmwfm46nq9kv3fvfw240 \u2014 verify at execution time.",
-    "onedrive_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_348a80a5d8gkyvvgss3j \u2014 verify at execution time."
+    "outlook_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_cmwfm46nq9kv3fvfw240 — verify at execution time.",
+    "onedrive_note": "Connector ID assigned at runtime by Claude. Prior prompt referenced conn_348a80a5d8gkyvvgss3j — verify at execution time."
   },
   "tz": {
     "eastern": "America/New_York",
@@ -137,7 +137,12 @@
   },
   "alerts": {
     "teams_webhook_url": "",
-    "events": ["win", "pending_overdue", "qc_error", "big_day"],
+    "events": [
+      "win",
+      "pending_overdue",
+      "qc_error",
+      "big_day"
+    ],
     "min_teu_for_big_day": 30,
     "_note": "SECURE setup (keep this field EMPTY): the webhook URL stays OUT of this committed file. Box side -> put it in secrets/teams-webhook-url.txt (gitignored) or the TEAMS_WEBHOOK_URL env var. GitHub Actions side -> repo secret TEAMS_WEBHOOK_URL (Settings > Secrets and variables > Actions). fire_alert.py + liveness.yml + heartbeat.yml all read the secret; this field is only a discouraged last-resort fallback (anything pasted here lands in git history). Create the webhook: Teams channel > ... > Connectors > Incoming Webhook > copy URL. Empty teams_webhook_url = alerts still queue to reports/alerts-queue.json."
   },
@@ -159,6 +164,6 @@
     "mailbox_folder": "Hilmar Tracker",
     "rule_filter": "from:lupfold@hilmaringredients.com OR to:lupfold@hilmaringredients.com",
     "updated": "2026-04-30",
-    "updated_by": "Michael \u2014 'stop searching idealx, ignore MBD_Export_Pricing'"
+    "updated_by": "Michael — 'stop searching idealx, ignore MBD_Export_Pricing'"
   }
 }
