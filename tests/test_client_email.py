@@ -533,8 +533,8 @@ def test_pdf_lane_performance_carriers_wrap_not_overflow():
     from pathlib import Path as _P
     _sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "scripts"))
     import gen_pdf as G
-    from reportlab.platypus import Paragraph
     from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph
 
     data = {"lane_summary": {
         "Oakland → Xingang": {
