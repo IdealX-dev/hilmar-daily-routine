@@ -407,36 +407,73 @@ def is_after_hours_et(dt: datetime | None) -> bool:
     return t < BIZ_START or t >= BIZ_END
 
 
+def _biz_hours_between_window(
+    start: datetime | None,
+    end: datetime | None,
+    tz: ZoneInfo,
+    win_start: time,
+    win_end: time,
+) -> float | None:
+    """Shared business-window loop behind biz_hours_between (ET) and
+    biz_hours_between_pt (PT): counts hours inside the ``win_start``–
+    ``win_end`` window on Mon–Fri in ``tz``, DST-safe.
+
+    Added 2026-07-12 (Michael 2026-07-11: "lonny is uswc and we are usec")
+    — the client email needs the SAME 8:30–17:30 window counted on the
+    Pacific clock. Parameterized instead of copied so the two windows can
+    never drift. Mirrored byte-for-byte in the paired core (QC-040);
+    tests/test_auditfix_fri_evening_fire_tz.py locks source parity.
+    """
+    if not start or not end:
+        return None
+    start_local = start.astimezone(tz)
+    end_local = end.astimezone(tz)
+    if end_local <= start_local:
+        return None
+
+    total = 0.0
+    cursor = start_local
+    while cursor < end_local:
+        day = cursor.date()
+        biz_open = datetime.combine(day, win_start, tzinfo=tz)
+        biz_close = datetime.combine(day, win_end, tzinfo=tz)
+
+        if cursor.weekday() < 5:  # Mon-Fri, evaluated on the window's own clock
+            window_start = max(cursor, biz_open)
+            window_end = min(end_local, biz_close)
+            if window_end > window_start:
+                total += (window_end - window_start).total_seconds() / 3600.0
+
+        # Advance to next day at 00:00 local
+        next_day = datetime.combine(day + timedelta(days=1), time(0, 0), tzinfo=tz)
+        cursor = next_day
+
+    return round(total, 2) if total > 0 else 0.0
+
+
 def biz_hours_between(start: datetime | None, end: datetime | None) -> float | None:
     """
     Business-hours delta in ET (8:30–17:30 Mon-Fri), DST-safe.
     Returns None if inputs invalid or end <= start.
+
+    This is the STAFF desk SLA (OL-USA's East-coast window) — the stored
+    turnaround_biz_hours metric and gen_email's Time to Quote. Semantics
+    unchanged by the 2026-07-12 refactor onto the shared window loop.
     """
-    if not start or not end:
-        return None
-    start_et = to_et(start)
-    end_et = to_et(end)
-    if end_et <= start_et:
-        return None
+    return _biz_hours_between_window(start, end, ET, BIZ_START, BIZ_END)
 
-    total = 0.0
-    cursor = start_et
-    while cursor < end_et:
-        day = cursor.date()
-        biz_open = datetime.combine(day, BIZ_START, tzinfo=ET)
-        biz_close = datetime.combine(day, BIZ_END, tzinfo=ET)
 
-        if is_biz_day_et(cursor):
-            window_start = max(cursor, biz_open)
-            window_end = min(end_et, biz_close)
-            if window_end > window_start:
-                total += (window_end - window_start).total_seconds() / 3600.0
+def biz_hours_between_pt(start: datetime | None, end: datetime | None) -> float | None:
+    """
+    Business-hours delta in PT (8:30–17:30 America/Los_Angeles, Mon-Fri),
+    DST-safe. Returns None if inputs invalid or end <= start.
 
-        # Advance to next day at 00:00 ET
-        next_day = datetime.combine(day + timedelta(days=1), time(0, 0), tzinfo=ET)
-        cursor = next_day
-
-    return round(total, 2) if total > 0 else 0.0
+    CLIENT-facing reply-speed metric (added 2026-07-12; Michael 2026-07-11:
+    "lonny is uswc and we are usec"): Lonny's desk is Pacific, so the
+    client email narrates HIS experienced wait on HIS clock. Never swap
+    this into the staff Time-to-Quote — that stays biz_hours_between (ET).
+    """
+    return _biz_hours_between_window(start, end, PT, BIZ_START, BIZ_END)
 
 
 def clock_hours_between(start: datetime | None, end: datetime | None) -> float | None:

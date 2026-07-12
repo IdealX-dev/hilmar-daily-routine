@@ -25,7 +25,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +44,30 @@ def _week_bounds(today=None):
     mon = today - timedelta(days=today.weekday())
     fri = mon + timedelta(days=4)
     return mon, fri
+
+
+def _fire_day_et(now=None):
+    """The America/New_York calendar day this fire belongs to.
+
+    2026-07-12 fix (run 29174327034): the Friday-evening ~8:50 PM ET fire
+    runs when the runner's UTC clock has ALREADY rolled into Saturday, and
+    the Friday gate skipped the weekly summary. The gate must never see a
+    UTC (or runner-local) date — it derives from ONE aware instant
+    converted to ET. A run between midnight and 6 AM ET is the previous
+    evening's very-late fire and counts as that day — the same wee-hours
+    rule as core.report_business_day (2026-07-02, run #76)."""
+    now_et = (now or datetime.now(timezone.utc)).astimezone(core.ET)
+    day = now_et.date()
+    if now_et.hour < 6:
+        day -= timedelta(days=1)
+    return day
+
+
+def should_generate(now=None, force=False):
+    """Friday-only gate, evaluated on the ET fire day (see _fire_day_et).
+    ``--force`` keeps its override. Extracted so tests can pin the
+    UTC-shift cases without touching the wall clock."""
+    return bool(force) or _fire_day_et(now).weekday() == 4  # 4 = Friday
 
 
 def _filter_rows(rows, start_date, end_date):
@@ -284,15 +308,20 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 </div></body></html>"""
 
 
-def main():
+def main(argv=None, now=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true",
                     help="Generate even if today isn't Friday (default: Friday-only)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    today = datetime.now(core.ET).date()
-    if not args.force and today.weekday() != 4:  # 4 = Friday
-        print(f"Today is {today.strftime('%A')}, not Friday — skipping (use --force to override)")
+    # ONE aware instant drives both the Friday gate and the week bounds —
+    # the gate is ET (wee-hours aware), never the runner's UTC/local date
+    # (2026-07-12, run 29174327034: Fri 8:50 PM ET fire = Saturday UTC).
+    now = now or datetime.now(timezone.utc)
+    today = _fire_day_et(now)
+    if not should_generate(now=now, force=args.force):
+        print(f"Fire day is {today.strftime('%A')} ET, not Friday — skipping "
+              f"(use --force to override)")
         return 0
 
     data = json.loads(DATA.read_text(encoding="utf-8"))

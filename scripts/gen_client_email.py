@@ -13,7 +13,9 @@ LAYOUT (2026-07-11 redesign — Michael: the first client sample was
   1. Branded header — "Prepared by OL-USA · <day> · Updated <time> ET".
   2. Hero KPI strip — 4 tiles (requests / quotes / bookings / awaiting),
      reusing gen_email._kpi_card so mobile stacking is identical.
-  3. One-line service narrative (avg business-hours-to-quote when known).
+  3. One-line service narrative (PT-window reply speed + same-business-day
+     share when today's quotes carry timestamps — Lonny's desk is Pacific,
+     Michael 2026-07-11 "lonny is uswc and we are usec").
   4. Amber "Upcoming cutoffs" callout — doc cutoffs / departures ≤ 7 days out.
   5. Active shipments — confirmed bookings from the last 14 days with
      booking ref, vessel, ETD/ETA, doc cutoff (the table a client checks
@@ -301,20 +303,53 @@ def _kpi_strip(s):
 """
 
 
+def _pt_reply_stats(quotes):
+    """(avg_pt_biz_hours, same_day_count, n) across today's quoted rows,
+    computed request_timestamp→response_timestamp in the PACIFIC business
+    window (core.biz_hours_between_pt). 2026-07-12 fix (Michael 2026-07-11
+    "lonny is uswc and we are usec"): Lonny's desk is West-coast, so the
+    client narrative reflects HIS experienced wait — NOT the stored
+    turnaround_biz_hours, which is the ET staff-desk SLA and stays
+    untouched everywhere else. A quote counts same-day when request and
+    response fall on the same America/Los_Angeles calendar day. Returns
+    None when no quote carries both timestamps (narrative omits the
+    parenthetical rather than guessing)."""
+    hours, same_day = [], 0
+    for r in quotes:
+        req = core.parse_iso(r.get("request_timestamp"))
+        resp = core.parse_iso(r.get("response_timestamp"))
+        if not req or not resp:
+            continue
+        h = core.biz_hours_between_pt(req, resp)
+        if h is None:
+            continue
+        hours.append(h)
+        if req.astimezone(core.PT).date() == resp.astimezone(core.PT).date():
+            same_day += 1
+    if not hours:
+        return None
+    return sum(hours) / len(hours), same_day, len(hours)
+
+
 def _narrative(s):
-    """One-line service narrative under the hero tiles. The avg-business-hours
-    parenthetical only appears when today's quoted rows carry
-    turnaround_biz_hours (client-safe responsiveness metric); otherwise it is
-    omitted rather than guessed."""
+    """One-line service narrative under the hero tiles. The reply-speed
+    clause is the Pacific-window metric from _pt_reply_stats (see there);
+    it is omitted rather than guessed when today's quotes carry no usable
+    request/response timestamps."""
     n_req, n_quo, n_book = len(s["requests"]), len(s["quotes"]), len(s["bookings"])
     if not (n_req or n_quo or n_book):
         return ("A quiet day on new activity — no new requests, quotes, or "
                 "bookings. Your active shipments are summarized below.")
-    tb = [r.get("turnaround_biz_hours") for r in s["quotes"]]
-    tb = [t for t in tb if isinstance(t, (int, float))]
-    avg = f" (average {sum(tb) / len(tb):.1f} business hours)" if tb else ""
+    stats = _pt_reply_stats(s["quotes"])
+    if stats:
+        avg_h, same_day, n = stats
+        share = "all" if same_day == n else f"{same_day} of {n}"
+        speed = (f" — {share} the same business day "
+                 f"(average {avg_h:.1f} business hours, Pacific)")
+    else:
+        speed = ""
     line = (f"We received {_plural(n_req, 'rate request')} and returned "
-            f"{_plural(n_quo, 'quote')}{avg}; "
+            f"{_plural(n_quo, 'quote')}{speed}; "
             f"{_plural(n_book, 'booking')} confirmed.")
     n_wait = len(s["awaiting"])
     if n_wait:
@@ -371,14 +406,30 @@ FOOTER_HTML = """
 """
 
 
-def build_subject(data, cfg):
-    report = _report_date()
+def _now_et(now=None):
+    """The single ET "now" behind a client-email render.
+
+    2026-07-12 root fix (run 29174327034 — the Friday-evening fire whose
+    sample subject carried the wrong report day): build_subject and
+    build_body each read the wall clock SEPARATELY and neither accepted an
+    injected instant, so the subject's report-day derivation could drift
+    from the body's and could not be pinned by tests (a UTC-vs-ET shift
+    around midnight was unverifiable). Both entry points now derive from
+    ONE aware instant (any tz; tests inject UTC) converted to ET, then go
+    through gen_email._report_date → core.report_business_day — the exact
+    staff-email path (wee-hours rollback + weekend→Friday rules), never a
+    naive/UTC date and never a data-derived date."""
+    return (now or datetime.now(timezone.utc)).astimezone(core.ET)
+
+
+def build_subject(data, cfg, now=None):
+    report = _report_date(_now_et(now))
     label = _fmt_date(datetime.combine(report, datetime.min.time()), "%b %-d, %Y")
     return f"OL-USA — Daily Shipment Update for Hilmar Ingredients ({label})"
 
 
-def build_body(data, cfg):
-    now_et = datetime.now(timezone.utc).astimezone(core.ET)
+def build_body(data, cfg, now=None):
+    now_et = _now_et(now)
     report_date = _report_date(now_et)
     report_label = _fmt_date(
         datetime.combine(report_date, datetime.min.time()), "%A, %B %-d, %Y")
@@ -523,8 +574,11 @@ def main(argv=None) -> int:
     cfg = core.load_config(args.config)
     data_path = Path(args.data) if args.data else Path(cfg["paths"]["data"])
     data = json.loads(data_path.read_text(encoding="utf-8"))
-    body = build_body(data, cfg)
-    subject = build_subject(data, cfg)
+    # ONE instant for both artifacts — a render that straddles midnight ET
+    # must never date the subject and the body differently (2026-07-12).
+    now = datetime.now(timezone.utc)
+    body = build_body(data, cfg, now=now)
+    subject = build_subject(data, cfg, now=now)
     out_dir = Path(args.out_dir) if args.out_dir else Path(cfg["paths"]["email_body"]).parent
     out_dir.mkdir(parents=True, exist_ok=True)
     body_path = out_dir / "client-email-body.html"

@@ -105,9 +105,18 @@ METRIC_DEFINITIONS = [
                  "Not-quoted requests are excluded — they show in Quote Rate "
                  "instead."),
     ("Quote Rate", "Share of Lonny's requests that received an OL rate."),
-    ("Time to Quote", "Business hours from Lonny's email (PT) to OL's rate "
-                      "reply (ET). Color-coded: green ≤ 4h, amber ≤ 24h, red "
-                      "beyond."),
+    ("Time to Quote", "Business hours from Lonny's email to OL's rate reply, "
+                      "counted in the OL DESK window: 8:30 AM–5:30 PM Eastern, "
+                      "Mon–Fri (the staff SLA metric). Color-coded: green ≤ 4h, "
+                      "amber ≤ 24h, red beyond."),
+    ("Client reply time (PT)", "The client email's reply-speed narrative: the "
+                               "same 8:30 AM–5:30 PM window counted in Pacific "
+                               "time, because Hilmar's desk is West-coast "
+                               "(Michael 2026-07-11: \"lonny is uswc and we are "
+                               "usec\"). Includes the share of quotes returned "
+                               "the same Pacific business day. Distinct from "
+                               "Time to Quote, which stays the Eastern desk "
+                               "metric."),
     ("ETD Fit", "Days between the sailing Lonny asked for and the one OL "
                 "offered — a negotiation lever when a carrier consistently "
                 "misses the ask."),
