@@ -521,3 +521,35 @@ def test_state_paths_include_client_sent_flags():
     assert staff_days
     for d in staff_days:
         assert f"reports/client-sent-{d}.flag" in paths
+
+
+def test_pdf_lane_performance_carriers_wrap_not_overflow():
+    """gen_pdf Lane Performance: the Winning Carriers cell is a wrapping
+    Paragraph inside its column, never a raw string that overflows the page
+    margin (Michael 2026-07-12 "poor formatting" — multi-carrier lists spilled
+    past the 1.0in column). Pins: cells are Paragraphs, and the worst-case
+    3-carrier list stays within the widened column width."""
+    import sys as _sys
+    from pathlib import Path as _P
+    _sys.path.insert(0, str(_P(__file__).resolve().parent.parent / "scripts"))
+    import gen_pdf as G
+    from reportlab.platypus import Paragraph
+    from reportlab.lib.units import inch
+
+    data = {"lane_summary": {
+        "Oakland → Xingang": {
+            "requests": 31, "wins": 5, "quoted_lost": 26, "not_quoted": 0,
+            "pending": 0, "teu_requested": 130, "teu_won": 30,
+            "winning_carriers": "CMA CGM, HMM, Hapag-Lloyd"},
+    }}
+    styles = G.make_styles()
+    story = []
+    G.build_lanes(story, styles, data)
+    table = story[-1]
+    # Last column of the data row must be a Paragraph (wraps), not a str.
+    carriers_cell = table._cellvalues[1][-1]
+    assert isinstance(carriers_cell, Paragraph), \
+        "Winning Carriers must be a wrapping Paragraph, not a raw string"
+    # And it fits inside the carriers column (1.75in) — no margin overflow.
+    w, _h = carriers_cell.wrap(1.75 * inch, 100)
+    assert w <= 1.75 * inch
