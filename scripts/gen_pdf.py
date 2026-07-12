@@ -441,6 +441,17 @@ def build_lanes(story, styles, data):
         story.append(Paragraph("No lane data yet.", styles["Body"]))
         return
 
+    # 2026-07-12 (Michael "poor formatting"): the Winning Carriers cells are
+    # multi-carrier lists ("CMA CGM, HMM, Hapag-Lloyd") — as raw strings
+    # reportlab does NOT wrap them, so they overflowed the narrow column into
+    # the page margin and collided with the TEU-Won bars. Render them as a
+    # wrapping Paragraph (left-aligned, escaped) so the text flows inside the
+    # column; the column is also widened below.
+    def _carriers_cell(txt):
+        safe = (str(txt).replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;"))
+        return Paragraph(safe, styles["Tiny"])
+
     rows = [["Lane", "Requests\n(#)", "Wins\n(#)", "Q&L\n(#)", "NQ\n(#)", "Pending\n(#)", "TEU\nRequested", "TEU\nWon", "Winning Carriers"]]
     for lane, lm in sorted(lanes.items(), key=lambda x: x[1].get("teu_requested", 0), reverse=True)[:20]:
         rows.append([
@@ -452,7 +463,7 @@ def build_lanes(story, styles, data):
             _fmt_int(lm.get("pending", 0)),
             _fmt_int(lm.get("teu_requested", 0)),
             _fmt_int(lm.get("teu_won", 0)),
-            lm.get("winning_carriers", "") or "—",
+            _carriers_cell(lm.get("winning_carriers", "") or "—"),
         ])
     # Compute win % per row for heatmap and replace TEU Won (col 7) with bars
     max_teu_won = max((int(str(r[7]).replace(",","")) for r in rows[1:] if str(r[7]).replace(",","").isdigit()), default=1) or 1
@@ -474,12 +485,19 @@ def build_lanes(story, styles, data):
                 win_pct_cmds.append(("BACKGROUND", (2, r_idx), (2, r_idx), c))
         except (ValueError, TypeError):
             pass
-    t = Table(rows, colWidths=[1.9*inch, 0.45*inch, 0.4*inch, 0.45*inch, 0.4*inch,
-                               0.5*inch, 0.7*inch, 0.85*inch, 1.0*inch])
+    # Usable width = 7.5" (LETTER − 0.5" margins). Widths sum to 7.4": the
+    # numeric columns stay tight and centered; Winning Carriers gets 1.75" so
+    # a 3-carrier list wraps to two lines instead of overflowing.
+    t = Table(rows, colWidths=[1.8*inch, 0.5*inch, 0.45*inch, 0.45*inch, 0.4*inch,
+                               0.55*inch, 0.7*inch, 0.8*inch, 1.75*inch])
     t.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
-        ("ALIGN",(1,0),(-1,-2),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
+        # Numeric columns (1..7) centered; the carriers column (last) is a
+        # left-aligned wrapping Paragraph. VALIGN MIDDLE keeps the numbers and
+        # bars centered against a carriers cell that may run to two lines.
+        ("ALIGN",(1,0),(7,-1),"CENTER"),("ALIGN",(8,1),(8,-1),"LEFT"),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("GRID",(0,0),(-1,-1),0.3,BORDER),
         ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
     ] + win_pct_cmds + teu_bar_cmds))
