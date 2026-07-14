@@ -3,6 +3,58 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-14 — Zero unresolved/unmapped lanes (run 29292014093 root cause)
+
+Michael: "your qc doesn't work and isn't working properly" + "there should be
+zero unresolved lanes / unmapped." Production log:
+`LANE-DIAG stand_260905: unresolved — pod=Unknown; pdf_fields_present=no`.
+Root cause: the row carried the LITERAL string "Unknown" in `pod`, persisted
+in tracking-data-v2.json from a fire BEFORE the pdf_parser `_clean_port`
+source-fix. It re-derived unresolved every fire (the recurring drift), rendered
+"Lane unresolved" in the staff email AND the now-live client email to Lonny,
+and produced an "Unmapped" trade-region row — while QC-015 printed GREEN
+"within tolerance". Four structural fixes, all at the root; gates green
+(compileall, ruff, pytest 1652 passed — was 1642 + 10 new tests).
+
+- **FIX 1 — heal the poisoned literal on load** (`scripts/qc_selfheal.py`
+  phase_3_entries; mirrored byte-consistently into `src/hilmar/qc.py`
+  phase_3_entries per QC-040 spirit). New `_GARBAGE_PLACEHOLDERS` frozenset +
+  `_is_placeholder(v)`. For every request, a placeholder literal
+  ("unknown"/"n/a"/"na"/"none"/"null"/"tbd"/"-"/"—"/"") in `pod`/`destination`/
+  `origin` (case-insensitive) is coerced to None BEFORE lane derivation, so it
+  can never display, defeat `patch_carriers._dest_from_row_pod`/`_dest_from_pod`
+  (a truthy "Unknown" looked resolved), or bucket the row "Unmapped". Logs a
+  `log.fix` naming the row id + field. Kills the drift at the source.
+- **FIX 2 — client report never renders an unresolved row**
+  (`scripts/gen_client_email.py`). New module-level `_lane_resolved(r)`; every
+  section bucket in `_client_sections` and `_active_shipments` filters through
+  it. A row with no displayable lane (placeholder destination AND no real lane,
+  or lane == "Lane unresolved") is excluded from ALL client sections. Empty
+  sections use the existing collapse. Lonny sees only resolved shipments.
+- **FIX 3 — QC-015 fails LOUDLY on a rendered unresolved row**
+  (`scripts/qc_selfheal.py`). Contract rewritten: ERRORs when ANY unresolved
+  row WOULD render client-facing — a WIN inside the client email's 14-day
+  active-shipments window (mirrors `gen_client_email._active_shipments`) OR any
+  today-dated staff-section row. "within tolerance" GREEN is reachable ONLY
+  when every unresolved row is a non-rendered historical-tail row; the count-
+  based WARN/ERROR map tiers survive for that tail. Error names the offending
+  row ids + pod/dest/subject. QC-INDEX.md row updated.
+- **FIX 4 — exclude unresolved-destination rows from the CLIENT trade-region
+  rollup** (`scripts/core.py` + `scripts/gen_pdf.py`). New
+  `is_unresolved_destination(dest)` + `aggregate_trade_regions(...,
+  include_unresolved=True)`. Default keeps rows (STAFF/QC totals reconcile to
+  summary exactly as before); gen_pdf (client-facing) passes
+  `include_unresolved=False` so a healed None/placeholder destination never
+  renders a mystery "Unmapped" region, reconciled by a "+N pending lane
+  assignment" footnote. gen_email (staff) and gen_dashboard (internal)
+  intentionally keep the reconciling default — staff MAY surface the needs-lane
+  count.
+
+DEFERRED BY DESIGN: stand_260905's TRUE lane is genuinely underivable from
+in-window data — a separate operator task, out of scope. It correctly remains
+unresolved in the STAFF view; it no longer appears in the CLIENT email/PDF, and
+QC-015 now ERRORs on it so the operator is flagged to assign the real lane.
+
 ## 2026-07-12 — Client report GO-LIVE (operator decision)
 
 Michael Deitchman approved go-live via the session decision prompt

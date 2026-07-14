@@ -20,7 +20,7 @@ Plus the lane tables now carry the Offered (# · TEU) denominator (Michael:
 "shows percentages but doesn't show total teus and shipments up for offer").
 """
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -144,3 +144,95 @@ def test_lane_buckets_accumulate_total_teu_offered():
 def test_lane_tables_render_offered_column():
     src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
     assert src.count("Offered (# · TEU)") >= 4  # header + row micro-label × 2 tables
+
+
+# ── 5. FIX 1 (2026-07-14, run 29292014093): phase_3 heals poisoned literals ─
+def test_phase3_heals_poisoned_pod_destination_origin_to_none():
+    """A row persisted with the LITERAL 'Unknown'/'N/A'/… in pod/destination/
+    origin is coerced to None at entry-heal, BEFORE lane derivation — killing
+    the recurring 'pod=Unknown re-derives unresolved every fire' drift at the
+    source. A real port is never touched."""
+    data = {"requests": [
+        {"request_id": "r-poison", "subject": "HILMAR rate request",
+         "pod": "Unknown", "destination": "unknown", "origin": "N/A",
+         "status": "PENDING"},
+        {"request_id": "r-clean", "subject": "HILMAR rate request",
+         "pod": "Yokohama", "destination": "Tokyo", "origin": "Oakland",
+         "status": "PENDING"},
+    ]}
+    log = q.Log()
+    q.phase_3_entries(log, data)
+    poison = next(r for r in data["requests"] if r["request_id"] == "r-poison")
+    assert poison["pod"] is None
+    assert poison["destination"] is None
+    assert poison["origin"] is None
+    assert any("poisoned placeholder" in f and "r-poison" in f for f in log.fixes)
+    clean = next(r for r in data["requests"] if r["request_id"] == "r-clean")
+    assert clean["destination"] == "Tokyo" and clean["pod"] == "Yokohama"
+
+
+def test_phase3_placeholder_heal_mirrored_in_src_hilmar():
+    """QC-040 spirit: the paired src/hilmar/qc.phase_3_entries heals the same
+    placeholder literals so the two trees can't drift."""
+    sys.path.insert(0, str(ROOT / "src"))
+    from hilmar import qc as hq
+    data = {"requests": [
+        {"request_id": "r-poison", "subject": "HILMAR rate request",
+         "pod": "TBD", "destination": "None", "origin": "—", "status": "PENDING"},
+    ]}
+    log = hq.Log()
+    hq.phase_3_entries(log, data)
+    r0 = data["requests"][0]
+    assert r0["pod"] is None and r0["destination"] is None and r0["origin"] is None
+    assert any("poisoned placeholder" in f for f in log.fixes)
+
+
+# ── 6. FIX 3: QC-015 ERRORs on ANY unresolved row that WOULD render ────────
+def _qc015_data(row):
+    return {"version": "2", "requests": [row],
+            "summary": {"wins": 0, "quoted_lost": 0, "not_quoted": 0,
+                        "pending_hilmar": 0, "win_rate": 0.0, "quote_rate": 0.0,
+                        "teu_requested": 0, "teu_won": 0, "teu_quoted_lost": 0,
+                        "teu_not_quoted": 0, "teu_pending": 0, "total_entries": 0}}
+
+
+def test_qc015_errors_on_win_inside_active_window_not_today(monkeypatch):
+    """A WIN dated 5 days back (inside the client email's 14-day active-
+    shipments window) with an unresolved lane ERRORs even though it is NOT
+    today-dated — the old check only caught today-dated rows and otherwise
+    printed GREEN 'within tolerance' while the row shipped to Lonny."""
+    monkeypatch.setenv("HILMAR_QC_NO_PIP", "1")
+    d5 = (core.report_business_day(datetime.now(core.ET))
+          - timedelta(days=5)).isoformat()
+    row = {"request_id": "stand_win5", "status": "WIN", "destination": None,
+           "lane": "Lane unresolved", "request_date": d5,
+           "response_timestamp": f"{d5}T18:00:00Z", "quoted": True}
+    log = q.Log()
+    q.phase_6_rules(log, _qc015_data(row))
+    assert any("QC-015" in m and "Lane unresolved" in m for m in log.errors), log.errors
+
+
+def test_qc015_errors_on_healed_none_destination_today(monkeypatch):
+    """After FIX 1 nulls the poisoned 'Unknown', destination is None; the
+    today-dated unresolved WIN must still ERROR (destination-None counts as
+    unresolved, not just the literal 'Unknown')."""
+    monkeypatch.setenv("HILMAR_QC_NO_PIP", "1")
+    today = core.report_business_day(datetime.now(core.ET)).isoformat()
+    row = {"request_id": "stand_none", "status": "WIN", "destination": None,
+           "lane": "Lane unresolved", "request_date": today, "quoted": True}
+    log = q.Log()
+    q.phase_6_rules(log, _qc015_data(row))
+    assert any("QC-015" in m for m in log.errors), log.errors
+
+
+def test_qc015_win_outside_window_stays_quiet(monkeypatch):
+    """A WIN 40 days back is a non-rendered historical-tail row — QC-015 keeps
+    its count tolerance and does NOT ERROR."""
+    monkeypatch.setenv("HILMAR_QC_NO_PIP", "1")
+    d40 = (core.report_business_day(datetime.now(core.ET))
+           - timedelta(days=40)).isoformat()
+    row = {"request_id": "stand_old40", "status": "WIN", "destination": "Unknown",
+           "lane": "Lane unresolved", "request_date": d40, "quoted": True}
+    log = q.Log()
+    q.phase_6_rules(log, _qc015_data(row))
+    assert not any("QC-015" in m for m in log.errors), log.errors

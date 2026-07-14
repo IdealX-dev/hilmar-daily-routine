@@ -360,15 +360,24 @@ def build_carriers(story, styles, data):
     story.append(t)
 
 def build_trade_regions(story, styles, data):
-    """Volume by Trade Region — must reconcile to summary totals."""
-    regions = core.aggregate_trade_regions(data.get("requests", []) or [])
+    """Volume by Trade Region — CLIENT-facing, so unresolved-destination rows
+    are excluded (2026-07-14, run 29292014093): a placeholder/None destination
+    (e.g. a poisoned "Unknown" pod healed to None by qc_selfheal FIX 1) must
+    NOT surface as a mystery "Unmapped" region in front of Lonny. Those rows
+    are counted separately and reconciled in the footnote (+N unresolved) so
+    the region totals + unresolved = summary totals still holds."""
+    requests = data.get("requests", []) or []
+    regions = core.aggregate_trade_regions(requests, include_unresolved=False)
     if not regions:
         return
+    n_unresolved = sum(1 for r in requests
+                       if core.is_unresolved_destination(r.get("destination")))
     summary = data.get("summary", {}) or {}
     story.append(PageBreak())
     story.append(Paragraph("Volume by Trade Region", styles["H1"]))
     story.append(Paragraph(
-        "Destinations grouped by trade region. Totals reconcile to summary KPIs. "
+        "Destinations grouped by trade region. Region totals plus any rows "
+        "pending lane assignment reconcile to summary KPIs. "
         "&quot;Unmapped&quot; rows = destinations not in core._TRADE_REGION_MAP.",
         styles["BodyMuted"]))
     story.append(Spacer(1, 10))
@@ -421,12 +430,15 @@ def build_trade_regions(story, styles, data):
     ] + win_pct_cmds))
     story.append(t)
     story.append(Spacer(1, 6))
+    _unresolved_note = (
+        f" plus {n_unresolved} row(s) pending lane assignment (excluded above)"
+        if n_unresolved else "")
     story.append(Paragraph(
         f"Reconciliation check: summary reports "
         f"{summary.get('total_entries',0)} reqs / "
         f"{summary.get('wins',0)} W / {summary.get('quoted_lost',0)} Q&amp;L / "
         f"{summary.get('not_quoted',0)} NQ / {summary.get('pending_hilmar',0)} P. "
-        f"Region totals must match.",
+        f"Region totals{_unresolved_note} must match.",
         styles["BodyMuted"]))
 
 

@@ -144,6 +144,23 @@ def _lane(r):
     return r.get("lane") or f"{r.get('origin', '?')} → {r.get('destination', '?')}"
 
 
+def _lane_resolved(r) -> bool:
+    """True when the row carries a lane fit to show the CLIENT — the hard
+    guarantee for Lonny (2026-07-14, run 29292014093): an unresolvable booking
+    is an OL-internal cleanup, surfaced only in the staff audit (QC-015), never
+    in the client email. A row is UNRESOLVED (returns False, excluded) when it
+    has no displayable lane: destination is a placeholder (None/""/"Unknown",
+    case-insensitive) AND there is no real `lane` string — or the lane is the
+    literal "Lane unresolved" marker. A genuine lane string ("Oakland → Tokyo")
+    is resolved even when the `destination` FIELD is unset, because the lane is
+    exactly the value _lane(r) renders."""
+    lane = (r.get("lane") or "").strip()
+    if lane and lane.lower() != "lane unresolved":
+        return True
+    dest = (r.get("destination") or "").strip()
+    return bool(dest) and dest.lower() != "unknown"
+
+
 def _teu(r):
     return str(r.get("teu_requested") or 0)
 
@@ -184,12 +201,16 @@ def _client_sections(data, report_date):
             bookings.append(r)
     awaiting = [r for r in pending if core.pending_substate(r) == "PENDING_HILMAR"]
     in_progress = [r for r in pending if core.pending_substate(r) == "PENDING_OL"]
+    # HARD GUARANTEE (2026-07-14): the client sees only resolved shipments.
+    # Every bucket is filtered through _lane_resolved so a "Lane unresolved" /
+    # placeholder-destination row can never render in any section. If this
+    # empties a section, the existing empty-section collapse handles it.
     return {
-        "requests": new_req,
-        "quotes": quotes,
-        "bookings": bookings,
-        "awaiting": awaiting,
-        "in_progress": in_progress,
+        "requests": [r for r in new_req if _lane_resolved(r)],
+        "quotes": [r for r in quotes if _lane_resolved(r)],
+        "bookings": [r for r in bookings if _lane_resolved(r)],
+        "awaiting": [r for r in awaiting if _lane_resolved(r)],
+        "in_progress": [r for r in in_progress if _lane_resolved(r)],
     }
 
 
@@ -202,6 +223,9 @@ def _active_shipments(data, report_date):
     rows = []
     for r in data.get("requests", []):
         if r.get("status") != "WIN":
+            continue
+        # Never surface an unresolved-lane booking to the client (2026-07-14).
+        if not _lane_resolved(r):
             continue
         d = (_iso_date(r.get("request_date") or r.get("request_timestamp"))
              or _iso_date(r.get("response_timestamp")))

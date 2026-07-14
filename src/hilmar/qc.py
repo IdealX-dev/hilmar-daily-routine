@@ -60,6 +60,31 @@ NON_WIN_CARRIER_FIELDS = (
 )
 
 # ─────────────────────────────────────────────────────────────────────
+# Poisoned-placeholder healing (2026-07-14, run 29292014093 root cause).
+# Mirror of scripts/qc_selfheal.py's entry-heal (QC-040 spirit — the paired
+# phase_3_entries must not drift). A row persisted before the
+# pdf_parser._clean_port source-fix can carry the LITERAL string "Unknown" (or
+# other placeholder junk) in a lane-defining field — pod / destination /
+# origin. Left as a string it (a) DISPLAYS as a real value in the staff AND
+# client emails, (b) defeats the POD→destination recovery (a truthy "Unknown"
+# pod looks resolved), and (c) lands the row in the "Unmapped" trade region.
+# Coercing it to None at entry-heal time — BEFORE lane derivation — kills all
+# three at the source and stops the drift re-deriving unresolved every fire.
+_GARBAGE_PLACEHOLDERS = frozenset({
+    "unknown", "n/a", "na", "none", "null", "tbd", "-", "—", "",
+})
+#: Lane-defining fields swept for the poisoned placeholder above.
+_PLACEHOLDER_FIELDS = ("pod", "destination", "origin")
+
+
+def _is_placeholder(v) -> bool:
+    """True when `v` is a garbage placeholder (case-insensitive) that must be
+    coerced to None rather than treated as a real port/lane value. Non-strings
+    (None, ints) are NOT placeholders here — None is already the target
+    state, and a numeric field is out of scope for this heal."""
+    return isinstance(v, str) and v.strip().lower() in _GARBAGE_PLACEHOLDERS
+
+# ─────────────────────────────────────────────────────────────────────
 # Backup
 # ─────────────────────────────────────────────────────────────────────
 
@@ -189,6 +214,18 @@ def phase_3_entries(log: Log, data: dict) -> None:
 
     for i, r in enumerate(requests):
         rid_label = f"[{i}] {r.get('request_date') or r.get('date','?')} {r.get('destination','?')}"
+        # HEAL poisoned placeholder literals in lane-defining fields BEFORE any
+        # lane derivation (2026-07-14, run 29292014093). A persisted
+        # "Unknown"/"N/A"/… in pod/destination/origin becomes None so it can
+        # never display, defeat POD→destination recovery, or bucket the row as
+        # "Unmapped". Mirror of scripts/qc_selfheal.py phase_3_entries.
+        for _pf in _PLACEHOLDER_FIELDS:
+            if _is_placeholder(r.get(_pf)):
+                _bad = r.get(_pf)
+                r[_pf] = None
+                log.fix(f"{r.get('request_id') or rid_label}: cleaned poisoned "
+                        f"placeholder {_pf}={_bad!r} → None (garbage literal, "
+                        f"pre lane-derivation)")
 
         if not r.get("request_id"):
             r["request_id"] = core.request_id(
