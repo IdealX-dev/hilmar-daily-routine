@@ -134,3 +134,42 @@ def test_stand_260821_exclusion_is_recorded():
     assert entry is not None, "stand_260821 verdict missing from operator_corrections.json"
     assert entry.get("exclude") is True
     assert "AgriDairy" in entry.get("note", "")
+
+
+def test_stand_260905_lane_correction_resolves_oakland_tokyo():
+    """stand_260905 (OOCL booking 2329180920) is Oakland → Tokyo per Michael
+    2026-07-14 — its lane aged out of the ingest window and was unresolvable.
+    The tracked operator correction must resolve it durably (every fire), so
+    the row shows as a real Oakland → Tokyo booking, not 'Lane unresolved'."""
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "scripts"))
+    import ingest
+
+    rows = [{"request_id": "stand_260905", "status": "WIN",
+             "destination": "Unknown", "pod": "Unknown", "origin": "Oakland",
+             "lane": "Lane unresolved", "carrier_won": "OOCL",
+             "mdolx_ref": "260905"}]
+    ingest.apply_operator_corrections(rows)
+    r = rows[0]
+    assert r["destination"] == "Tokyo"
+    assert r["origin"] == "Oakland"
+    assert r["lane"] == "Oakland → Tokyo"
+    assert r.get("manual_locked") is True
+    # And it is now client-renderable (no longer suppressed).
+    import gen_client_email as gce
+    assert gce._lane_resolved(r) is True
+
+
+def test_stand_260905_correction_present_in_tracked_file():
+    """The correction must live in the tracked JSON (durable across fires),
+    not only in a test — pins that the operator entry shipped."""
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    doc = json.loads((root / "scripts" / "operator_corrections.json").read_text(encoding="utf-8"))
+    entry = next((c for c in doc["corrections"]
+                  if c.get("request_id") == "stand_260905"), None)
+    assert entry is not None, "stand_260905 correction missing from tracked file"
+    assert entry["set"]["lane"] == "Oakland → Tokyo"
