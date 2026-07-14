@@ -191,10 +191,46 @@ def trade_region_for(destination: str | None) -> str:
     return "Unmapped"
 
 
-def aggregate_trade_regions(requests: list[dict]) -> dict[str, dict]:
-    """Roll requests up by trade region. Counts must reconcile to summary."""
+# Destinations that name no real port — a row still PENDING lane assignment,
+# NOT a genuine "not in the region map" signal. Kept distinct from Unmapped so
+# the CLIENT-facing rollup (gen_pdf) can drop them: after qc_selfheal FIX 1
+# nulls a poisoned "Unknown" pod/destination, the row must not surface as a
+# mystery "Unmapped" region in Lonny's PDF (2026-07-14, run 29292014093).
+_UNRESOLVED_DEST_PLACEHOLDERS = frozenset({
+    "", "unknown", "n/a", "na", "none", "null", "tbd", "-", "—",
+})
+
+
+def is_unresolved_destination(destination) -> bool:
+    """True when `destination` names no real port — None, empty, or a garbage
+    placeholder ("Unknown"/"N/A"/…). Such a row is pending lane assignment and
+    is excluded from the CLIENT-facing trade-region rollup (see
+    aggregate_trade_regions' ``include_unresolved``)."""
+    if destination is None:
+        return True
+    if not isinstance(destination, str):
+        return False
+    return destination.strip().lower() in _UNRESOLVED_DEST_PLACEHOLDERS
+
+
+def aggregate_trade_regions(requests: list[dict],
+                            include_unresolved: bool = True) -> dict[str, dict]:
+    """Roll requests up by trade region. Counts must reconcile to summary.
+
+    ``include_unresolved`` (default True) keeps every row — an unresolved
+    destination (None/""/"Unknown"/…) buckets to "Unmapped" via
+    ``trade_region_for``, so the STAFF/QC totals reconcile to summary exactly
+    as before. Pass ``False`` for CLIENT-facing surfaces (gen_pdf): rows with
+    no real destination are DROPPED so a poisoned/placeholder row never renders
+    as a mystery "Unmapped" region in front of the client. The caller
+    reconciles the drop with a "+N unresolved" footnote (see
+    ``is_unresolved_destination``). A real-but-unmapped destination string is
+    NOT dropped — it still buckets to "Unmapped" as the extend-the-map signal.
+    """
     out: dict[str, dict] = {}
     for r in requests:
+        if not include_unresolved and is_unresolved_destination(r.get("destination")):
+            continue
         region = trade_region_for(r.get("destination"))
         m = out.setdefault(region, {
             "region": region,

@@ -151,6 +151,46 @@ def test_bookings_section_shows_today_win():
     assert [r["request_id"] for r in s["bookings"]] == ["r-win"]
 
 
+# ── 3b. FIX 2: unresolved-lane rows NEVER reach the client ────────────────
+
+def test_unresolved_lane_row_excluded_from_client_body():
+    """HARD GUARANTEE for Lonny (2026-07-14, run 29292014093): a booking whose
+    lane is unresolved (destination Unknown/None OR lane 'Lane unresolved') is
+    an OL-internal cleanup — it must not appear in ANY client section. A
+    resolved booking on the same day still renders, and the body stays
+    leak-free."""
+    d = _rd().isoformat()
+    data = {"requests": [
+        _row("stand_bad", status="WIN", quoted=True, ol_rate=5100.0,
+             carrier_won="ZIM", carrier_quoted="ZIM", mdolx_ref="MDOLX-BADLANE",
+             lane="Lane unresolved", destination="Unknown",
+             request_date=d, request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z",
+             status_history=[{"from": "PENDING", "to": "WIN",
+                              "at": f"{d}T18:00:00Z", "reason": "standalone"}]),
+        _row("r-good", status="WIN", quoted=True, ol_rate=4200.0,
+             carrier_won="MSC", carrier_quoted="MSC", mdolx_ref="MDOLX-GOODLANE",
+             lane="Oakland → Tokyo",
+             request_date=d, request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z",
+             status_history=[{"from": "PENDING", "to": "WIN",
+                              "at": f"{d}T18:00:00Z", "reason": "booked"}]),
+    ]}
+    html = gce.build_body(data, {})
+    assert "MDOLX-BADLANE" not in html          # unresolvable booking hidden
+    assert "ZIM" not in html                     # ...and its carrier
+    assert "Lane unresolved" not in html
+    assert "MDOLX-GOODLANE" in html              # resolved booking shown
+    assert q.qc065_internal_leaks(html) == []
+
+
+def test_unresolved_row_excluded_from_every_section_bucket():
+    unres = _row("u1", status="PENDING", quoted=False, lane="Lane unresolved",
+                 destination="Unknown")
+    s = gce._client_sections({"requests": [unres]}, _rd())
+    assert all(unres not in bucket for bucket in s.values())
+
+
 # ── 4. PENDING split ──────────────────────────────────────────────────────
 
 def test_pending_split_quoted_awaiting_vs_unquoted_in_progress():
@@ -553,3 +593,59 @@ def test_pdf_lane_performance_carriers_wrap_not_overflow():
     # And it fits inside the carriers column (1.75in) — no margin overflow.
     w, _h = carriers_cell.wrap(1.75 * inch, 100)
     assert w <= 1.75 * inch
+
+
+# ── 10. FIX 4: client-facing trade-region rollup drops unresolved rows ─────
+
+def test_aggregate_trade_regions_excludes_unresolved_when_flagged():
+    """include_unresolved=False (CLIENT surfaces) drops None/placeholder-
+    destination rows so no mystery 'Unmapped' region shows; the default keeps
+    them so STAFF/QC totals still reconcile to summary. A real-but-unmapped
+    string is NOT dropped — it stays the extend-the-map signal."""
+    rows = [
+        {"status": "WIN", "destination": None, "teu_requested": 2, "teu_won": 2,
+         "request_id": "x"},
+        {"status": "WIN", "destination": "Unknown", "teu_requested": 2,
+         "teu_won": 2, "request_id": "y"},
+        {"status": "WIN", "destination": "Yokohama", "teu_requested": 2,
+         "teu_won": 2, "request_id": "z"},
+    ]
+    assert "Unmapped" in core.aggregate_trade_regions(rows)          # staff/QC default
+    client = core.aggregate_trade_regions(rows, include_unresolved=False)
+    assert "Unmapped" not in client
+    assert "Far East" in client                                     # real dest kept
+
+
+def test_is_unresolved_destination_predicate():
+    assert core.is_unresolved_destination(None)
+    assert core.is_unresolved_destination("Unknown")
+    assert core.is_unresolved_destination("  n/a ")
+    assert core.is_unresolved_destination("")
+    assert not core.is_unresolved_destination("Yokohama")
+    # A real-but-unmapped string is NOT unresolved (keeps the map-gap signal).
+    assert not core.is_unresolved_destination("Totally Fake Port 9000")
+
+
+def test_pdf_trade_regions_no_unmapped_row_for_placeholder_dest():
+    """gen_pdf (client-facing) must not render an 'Unmapped' region for a
+    healed None/placeholder destination; the excluded rows are reconciled in
+    the footnote, never silently dropped."""
+    import gen_pdf as G
+    from reportlab.platypus import Paragraph, Table
+
+    data = {"requests": [
+        {"status": "WIN", "destination": None, "teu_requested": 2, "teu_won": 2,
+         "request_id": "x", "lane": "Lane unresolved"},
+        {"status": "WIN", "destination": "Yokohama", "teu_requested": 4,
+         "teu_won": 4, "request_id": "z"},
+    ], "summary": {"total_entries": 2, "wins": 2, "quoted_lost": 0,
+                   "not_quoted": 0, "pending_hilmar": 0}}
+    styles = G.make_styles()
+    story: list = []
+    G.build_trade_regions(story, styles, data)
+    table = next(s for s in story if isinstance(s, Table))
+    region_col = [str(row[0]) for row in table._cellvalues]
+    assert "Unmapped" not in region_col
+    assert "Far East" in region_col                                 # Yokohama's region
+    footnotes = " ".join(s.text for s in story if isinstance(s, Paragraph))
+    assert "pending lane assignment" in footnotes

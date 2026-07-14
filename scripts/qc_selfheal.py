@@ -57,6 +57,31 @@ _COVERED_HINTS = ("covered", "competitor", "another forwarder", "going with",
                   "going with another", "used another")
 
 # ─────────────────────────────────────────────────────────────────────
+# Poisoned-placeholder healing (2026-07-14, run 29292014093 root cause).
+# A row persisted before the pdf_parser._clean_port source-fix can carry the
+# LITERAL string "Unknown" (or other placeholder junk) in a lane-defining
+# field — pod / destination / origin. Left as a string it (a) DISPLAYS as a
+# real value in the staff AND client emails, (b) defeats
+# patch_carriers._dest_from_row_pod / _dest_from_pod (a truthy "Unknown" pod
+# looks resolved, so the recovery pass stops before finding the real port),
+# and (c) lands the row in the "Unmapped" trade region. Coercing it to None at
+# entry-heal time — BEFORE lane derivation — kills all three at the source and
+# stops the drift re-deriving unresolved every fire.
+_GARBAGE_PLACEHOLDERS = frozenset({
+    "unknown", "n/a", "na", "none", "null", "tbd", "-", "—", "",
+})
+#: Lane-defining fields swept for the poisoned placeholder above.
+_PLACEHOLDER_FIELDS = ("pod", "destination", "origin")
+
+
+def _is_placeholder(v) -> bool:
+    """True when `v` is a garbage placeholder (case-insensitive) that must be
+    coerced to None rather than treated as a real port/lane value. Non-strings
+    (None, ints) are NOT placeholders here — None is already the target
+    state, and a numeric field is out of scope for this heal."""
+    return isinstance(v, str) and v.strip().lower() in _GARBAGE_PLACEHOLDERS
+
+# ─────────────────────────────────────────────────────────────────────
 # Backup
 # ─────────────────────────────────────────────────────────────────────
 
@@ -795,6 +820,20 @@ def phase_3_entries(log: Log, data: dict):
 
     for i, r in enumerate(requests):
         rid_label = f"[{i}] {r.get('request_date') or r.get('date','?')} {r.get('destination','?')}"
+        # HEAL poisoned placeholder literals in lane-defining fields BEFORE any
+        # lane derivation (2026-07-14, run 29292014093). A persisted
+        # "Unknown"/"N/A"/… in pod/destination/origin becomes None so it can
+        # never display, defeat _dest_from_row_pod/_dest_from_pod, or bucket
+        # the row as "Unmapped". Root cause: tracking-data-v2.json rows written
+        # before pdf_parser._clean_port (log: stand_260905 pod=="Unknown"
+        # re-derived unresolved every fire — "drift that keeps occurring").
+        for _pf in _PLACEHOLDER_FIELDS:
+            if _is_placeholder(r.get(_pf)):
+                _bad = r.get(_pf)
+                r[_pf] = None
+                log.fix(f"{r.get('request_id') or rid_label}: cleaned poisoned "
+                        f"placeholder {_pf}={_bad!r} → None (garbage literal, "
+                        f"pre lane-derivation)")
         # Hygiene healers — run on every record regardless of status/lock.
         _heal_containers(log, rid_label, r, bodies_idx)
         _heal_missing_rate(log, rid_label, r, bodies_idx)
@@ -1774,12 +1813,86 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-014: check failed with exception: {_e}")
 
-    # QC-015: unmapped trade-region destinations are bounded. Lonny ships to
-    # the same handful of trade lanes; Unmapped should stay near zero. >5
-    # means TRADE_REGION_MAP needs extension (see core._TRADE_REGION_MAP).
+    # QC-015: NO unresolved row may render in a client-facing surface.
+    # CONTRACT (2026-07-14 rewrite, run 29292014093 — Michael "your qc doesn't
+    # work"; the old check printed GREEN "within tolerance" while an unresolved
+    # standalone shipped in BOTH the staff daily email AND Lonny's now-live
+    # client email). A row is "unresolved" when the client would see it as
+    # "Lane unresolved": destination is a placeholder (None/""/"Unknown", case-
+    # insensitive — FIX 1 nulls the poisoned literal at entry-heal, but a fresh
+    # parser miss can still arrive Unknown/None here) OR the lane carries the
+    # explicit "Lane unresolved" marker. QC-015 ERRORs when ANY such row WOULD
+    # render client-facing — (a) a WIN inside the client email's active-
+    # shipments window (last 14 days, the EXACT rows
+    # gen_client_email._active_shipments gathers) or (b) any TODAY-dated staff-
+    # section row. "within tolerance" GREEN is permissible ONLY when every
+    # unresolved row is a non-rendered historical-tail row. The count-based
+    # WARN/ERROR tiers still bound the pure historical tail (map-extension
+    # signal). stand_* rows whose true lane is genuinely underivable stay
+    # unresolved in the STAFF view by design — this ERROR is the standing flag
+    # for the operator to assign the real lane; the CLIENT never sees them
+    # (FIX 2 excludes them from the client email, FIX 4 from the region table).
     try:
         _tr = _trade_region_reconciliation(data)
         _unmapped = _tr.get("unmapped_destinations", []) if isinstance(_tr, dict) else []
+
+        def _qc015_unresolved(r):
+            dest = (r.get("destination") or "").strip().lower()
+            return dest in ("", "unknown") or (r.get("lane") or "") == "Lane unresolved"
+
+        _urows = [r for r in requests if _qc015_unresolved(r)]
+
+        # Report day + the client email's active-shipments window. Mirrors
+        # gen_client_email.ACTIVE_WINDOW_DAYS=14 and its date derivation
+        # (request_date→request_timestamp→response_timestamp); replicated (not
+        # imported) to keep the QC engine free of the renderer import.
+        _ACTIVE_WINDOW_DAYS = 14
+
+        def _qc015_iso_date(s):
+            if not s:
+                return None
+            try:
+                return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+            except Exception:
+                return None
+
+        try:
+            _report_day = core.report_business_day(datetime.now(core.ET))
+            _today_rd = _report_day.isoformat()
+        except Exception:
+            _report_day, _today_rd = None, None
+
+        def _qc015_renders(r):
+            """Why an unresolved row would surface client-facing, or None."""
+            if _today_rd and _today_rd in (
+                    (r.get("request_date") or ""),
+                    str(r.get("response_timestamp") or "")[:10]):
+                return "today-dated"
+            if _report_day is not None and r.get("status") == "WIN":
+                d = (_qc015_iso_date(r.get("request_date") or r.get("request_timestamp"))
+                     or _qc015_iso_date(r.get("response_timestamp")))
+                if d is not None and (_report_day - d).days <= _ACTIVE_WINDOW_DAYS:
+                    return "active-shipments window"
+            return None
+
+        _rendered = [(r, _why) for r in _urows if (_why := _qc015_renders(r))]
+
+        if _rendered:
+            _det = "; ".join(
+                f"{r.get('request_id')} ({_why}) pod={r.get('pod') or '—'} "
+                f"dest={r.get('destination') or '—'} "
+                f"subj='{(r.get('subject') or '')[:50]}'"
+                for r, _why in _rendered[:5])
+            log.error(
+                f"QC-015: {len(_rendered)} unresolved row(s) WOULD render "
+                f"client-facing as 'Lane unresolved' (active-shipments window / "
+                f"today's daily sections): {_det} — every client-visible row must "
+                f"carry a resolved lane; extend the parser or assign the true "
+                f"lane on the source row (stand_* rows)."
+            )
+
+        # Historical-tail tiers — map-extension signal. "within tolerance"
+        # GREEN is only reachable when NOTHING rendered above.
         if len(_unmapped) > 10:
             log.error(
                 f"QC-015: {len(_unmapped)} unmapped destinations — extend "
@@ -1787,53 +1900,21 @@ def phase_6_rules(log: Log, data: dict):
             )
         elif len(_unmapped) > 5:
             log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
-        else:
+        elif not _rendered:
             # Name the offending ROWS, not just the count — "2 unmapped
             # (within tolerance)" hid WHICH rows for two days (2026-07-09/10)
             # and root-causing them needed an ad-hoc diagnostic workflow.
-            # Never again: the run log always says which rows and their pod.
-            _urows = [r for r in data.get("requests", [])
-                      if (r.get("destination") or "Unknown") in ("Unknown", "")
-                      or (r.get("lane") or "") == "Lane unresolved"]
             if _urows:
                 _det = "; ".join(
                     f"{r.get('request_id')} pod={r.get('pod') or '—'} "
                     f"subj='{(r.get('subject') or '')[:60]}'"
                     for r in _urows[:5])
-                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) "
-                       f"within tolerance — unresolved rows: {_det}")
+                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) within "
+                       f"tolerance — {len(_urows)} unresolved row(s), all "
+                       f"non-rendered historical tail: {_det}")
             else:
                 log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) "
                        f"(within tolerance); zero unresolved rows")
-        # DISPLAY-IMPACT sub-check (2026-07-09, Michael "there should be zero
-        # lane unresolved"): an Unknown-destination row dated TODAY renders in
-        # the client-visible daily sections. The count tolerance above is for
-        # the historical tail; a TODAY row is a live parser miss — ERROR it
-        # loudly and name it so the fire's audit points straight at the email.
-        # Self-heal path: the standalone builder's body/POD fallback + the
-        # patch_carriers PDF lane pass; if both failed, the subject+body+PDF
-        # genuinely carry no port — flag_for_operator.
-        try:
-            from datetime import datetime as _dt15
-            _today_rd = core.report_business_day(_dt15.now(core.ET)).isoformat()
-        except Exception:
-            _today_rd = None
-        if _today_rd:
-            _fresh_unresolved = [
-                r for r in requests
-                if ((r.get("destination") or "Unknown") in ("Unknown", "")
-                    or (r.get("lane") or "") == "Lane unresolved")
-                and _today_rd in ((r.get("request_date") or ""),
-                                  str(r.get("response_timestamp") or "")[:10])
-            ]
-            if _fresh_unresolved:
-                _ids = ", ".join(str(r.get("request_id", "?")) for r in _fresh_unresolved[:4])
-                log.error(
-                    f"QC-015: {len(_fresh_unresolved)} row(s) created TODAY have an "
-                    f"unresolved lane and WILL render as 'Lane unresolved' in the "
-                    f"daily email: {_ids} — subject+body+PDF yielded no destination; "
-                    f"extend the parser or fix the source row"
-                )
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
