@@ -228,7 +228,7 @@ def collect_red_flags(data, qc, drift):
         resp_dt = core.parse_iso(r.get("response_timestamp"))
         if resp_dt is None:
             continue
-        if core.is_business_stale(resp_dt, now, hours=core.PENDING_WINDOW_HOURS):
+        if core.pending_hilmar_stale(resp_dt, now):
             h = (now - resp_dt).total_seconds() / 3600.0
             overdue.append((r, h))
     for r, h in overdue:

@@ -136,25 +136,21 @@ def test_quoted_aged_is_loss():
 
 
 def test_quoted_friday_not_stale_monday_morning():
-    """Friday/weekend carve-out per Michael 2026-06-04: Friday quote not
-    LOSS until Tuesday 18:00 ET. Monday morning is still PENDING."""
-    fri_quote = "2026-04-24T20:00:00Z"   # Fri ~16:00 ET
-    mon_morning = datetime(2026, 4, 27, 18, 0, tzinfo=UTC)  # Mon 14:00 ET
+    """Michael 2026-07-14 (supersedes the 2026-06-04 Tuesday-18:00 rule): a
+    Friday quote gets 72 CLOCK hours. Fri 4 PM ET + 72h = Mon 4 PM ET, so it
+    is still PENDING Monday MORNING (~66h) — but aged out by Monday evening."""
+    fri_quote = "2026-04-24T20:00:00Z"                       # Fri 16:00 ET
+    mon_morning = datetime(2026, 4, 27, 14, 0, tzinfo=UTC)   # Mon 10:00 ET (~66h)
     d = SC.decide_status(has_send=False, mdolx_ref=None,
                          response_timestamp=fri_quote, quoted=True,
                          etd_fit_days=0, now=mon_morning)
-    assert d.status == "PENDING", "Friday quote must survive the weekend"
-
-
-def test_quoted_friday_not_stale_monday_evening():
-    """Per Michael 2026-06-04 rule: Friday quote stays PENDING through
-    Monday — Lonny gets BOTH Monday and Tuesday to reply."""
-    fri_quote = "2026-04-24T20:00:00Z"
-    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=UTC)  # Mon 19:00 ET
-    d = SC.decide_status(has_send=False, mdolx_ref=None,
-                         response_timestamp=fri_quote, quoted=True,
-                         etd_fit_days=0, now=mon_evening)
-    assert d.status == "PENDING", "Friday quote still alive Monday evening"
+    assert d.status == "PENDING", "Friday quote still within 72h Monday morning"
+    # ...and past the 72h mark (Mon 5 PM ET) it flips to Q&L.
+    mon_evening = datetime(2026, 4, 27, 21, 30, tzinfo=UTC)  # Mon 17:30 ET (~73.5h)
+    d2 = SC.decide_status(has_send=False, mdolx_ref=None,
+                          response_timestamp=fri_quote, quoted=True,
+                          etd_fit_days=0, now=mon_evening)
+    assert d2.status == "LOSS", "Friday quote aged out after 72h"
 
 
 def test_quoted_friday_stale_tuesday_evening():
