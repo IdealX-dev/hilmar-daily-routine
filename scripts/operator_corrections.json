@@ -3,14 +3,20 @@
   "corrections": [
     {
       "request_id": "req_37936a4d93d12ea1",
-      "set": { "status": "LOSS", "loss_reason": "SEND_NO_BOOKING" },
+      "set": {
+        "status": "LOSS",
+        "loss_reason": "SEND_NO_BOOKING"
+      },
       "note": "Linda Echevarria (OL Ocean Export Manager) audit 2026-05-19: 4/16 Oakland to HCMC DID NOT WIN. A send-signal promoted it to WIN but no MDOLX booking confirmation ever arrived.",
       "source": "Linda Echevarria 2026-05-19",
       "added": "2026-05-20"
     },
     {
       "request_id": "req_0456878ac1d606e7",
-      "set": { "status": "LOSS", "loss_reason": "SEND_NO_BOOKING" },
+      "set": {
+        "status": "LOSS",
+        "loss_reason": "SEND_NO_BOOKING"
+      },
       "note": "Linda Echevarria (OL Ocean Export Manager) audit 2026-05-19: 5/14 Oakland to Osaka DID NOT WIN. A send-signal promoted it to WIN but no MDOLX booking confirmation ever arrived.",
       "source": "Linda Echevarria 2026-05-19",
       "added": "2026-05-20"
@@ -21,6 +27,18 @@
       "note": "AgriDairy booking, not a Hilmar-the-client move. The 'HILMAR' token in the booking is the plant/origin reference, not the customer -- only moves booked by Lonny are Hilmar the client. Same Hilmar-as-supplier class as the Numidia leak; 'agridairy' is now an out_of_scope_reason marker so future ones are dropped at intake.",
       "source": "Michael Deitchman 2026-07-01",
       "added": "2026-07-01"
+    },
+    {
+      "request_id": "stand_260905",
+      "set": {
+        "origin": "Oakland",
+        "destination": "Tokyo",
+        "lane": "Oakland → Tokyo",
+        "pod": "Tokyo"
+      },
+      "note": "MDOLX260905 (OOCL booking 2329180920) is Oakland to Tokyo. The lane lived in an email now aged out of the 14-day ingest window, so it is not auto-derivable (LANE-DIAG: pod=Unknown, pdf_fields_present=no); it rendered 'Lane unresolved'. Operator-authoritative lane so it resolves permanently every fire.",
+      "source": "Michael Deitchman 2026-07-14",
+      "added": "2026-07-14"
     }
   ]
 }
