@@ -44,7 +44,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-004 | ERROR | NQ contamination (NQ entries with quoted flag) | Auto-fix to LOSS | 2026-04 baseline |
 | QC-005 | WARN | Suspicious business-hours math (turnaround anomaly) | None | 2026-04 baseline |
 | QC-006 | WARN | Suspiciously-large TEU on a single row | None | 2026-04 baseline |
-| QC-007 | ERROR | PENDING past 24h SLA — state machine failure | Auto-age to LOSS via state machine | 2026-04 baseline |
+| QC-007 | ERROR | PENDING-Hilmar past the decision window (48 clock-hrs, 72 if OL quoted Friday ET; Michael 2026-07-14) — state machine should have aged it to Q&L | Auto-age to LOSS via `core.pending_hilmar_stale` in the state machine | 2026-07-14 |
 | QC-008 | WARN | Stage file > 36h old (refresh_stage stale) | None | 2026-05-05 |
 | QC-009 | WARN | Stage bucket distribution drift (one bucket silent 7d) | None | 2026-05-05 |
 | QC-010 | WARN | preserved_from_prior WIN count > 10 (refresh missing emails) | None | 2026-05-05 |

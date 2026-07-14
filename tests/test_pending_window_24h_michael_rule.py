@@ -127,10 +127,11 @@ def _row(rid, status, resp_offset_hours, now):
 
 
 def test_audit_pending_red_flag_aligns_with_state_machine_normal_day(monkeypatch):
-    """Wednesday quote 26h ago → state machine says LOSS, audit must too."""
-    # Pin "now" to a Thursday afternoon
+    """Non-Friday quote past 48 CLOCK hours (Michael 2026-07-14) → state
+    machine says Q&L, audit red flag must agree. 50h > 48h."""
+    # Pin "now" to a Thursday afternoon; the quote 50h earlier is a Tuesday.
     fake_now = datetime(2026, 4, 23, 16, 0, tzinfo=UTC)
-    rows = [_row("r-stale", "PENDING", 26, fake_now)]
+    rows = [_row("r-stale", "PENDING", 50, fake_now)]
     data = {"requests": rows}
     monkeypatch.setattr(
         gir, "datetime",
@@ -146,11 +147,11 @@ def test_audit_pending_red_flag_aligns_with_state_machine_normal_day(monkeypatch
 
 
 def test_audit_pending_red_flag_respects_friday_carve_out(monkeypatch):
-    """Friday quote, viewed Monday evening — was firing a false red flag
-    under the old wall-clock >24h check; under the new predicate it MUST
-    stay quiet because the state machine left it PENDING (deadline Tue 18 ET)."""
-    fri_quote = datetime(2026, 4, 24, 20, 0, tzinfo=UTC)
-    mon_evening = datetime(2026, 4, 27, 23, 0, tzinfo=UTC)  # Mon 19:00 ET
+    """Friday quote gets 72 CLOCK hours (Michael 2026-07-14). Viewed Monday
+    MORNING (~66h) it must stay quiet — still inside the 72h window — so the
+    audit red flag agrees with the state machine (which left it PENDING)."""
+    fri_quote = datetime(2026, 4, 24, 20, 0, tzinfo=UTC)   # Fri 16:00 ET
+    mon_morning = datetime(2026, 4, 27, 14, 0, tzinfo=UTC)  # Mon 10:00 ET (~66h)
     rows = [{
         "request_id": "r-fri",
         "status": "PENDING",
@@ -160,14 +161,14 @@ def test_audit_pending_red_flag_respects_friday_carve_out(monkeypatch):
     monkeypatch.setattr(
         gir, "datetime",
         type("_D", (), {
-            "now": staticmethod(lambda tz=None: mon_evening),
+            "now": staticmethod(lambda tz=None: mon_morning),
         }),
     )
     flags = gir.collect_red_flags({"requests": rows}, qc={}, drift={})
     pending_flags = [f for f in flags if "Pending past" in f.get("title", "")]
     assert not pending_flags, (
-        "Friday quote viewed Monday evening must NOT be red-flagged — "
-        "the Friday→Tuesday carve-out keeps it PENDING per Michael's rule."
+        "Friday quote viewed Monday morning (~66h) must NOT be red-flagged — "
+        "still within the 72h Friday window per Michael 2026-07-14."
     )
 
 

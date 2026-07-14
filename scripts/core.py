@@ -35,14 +35,23 @@ BIZ_START = time(8, 30)   # 8:30 AM ET
 BIZ_END   = time(17, 30)  # 5:30 PM ET
 BIZ_DAY_HOURS = 9.0
 
-#: Window before a QUOTED-but-not-booked PENDING row ages out to Q&L.
-#: Per Michael 2026-06-04 (restated rule, "i've said this fifty times"):
-#:   - Normal biz week: 24 wall-hours from OL response → LOSS if no reply.
-#:   - Friday quote (or weekend): not LOSS until Tuesday 18:00 ET, applied
-#:     via is_business_stale's weekend carve-out.
+#: Window used by the SEND-signal aging branch (send received, MDOLX not yet
+#: → SEND_NO_BOOKING) and by is_business_stale's default. NOT the pending-
+#: Hilmar quote window — that's PENDING_HILMAR_LOSS_HOURS below.
 #: Mirrored in src/hilmar/core.py — tests/test_core_parity.py + QC-040
 #: enforce parity.
 PENDING_WINDOW_HOURS = 24
+
+#: PENDING_HILMAR quote-decision window (Michael 2026-07-14, supersedes the
+#: 2026-06-04 "Tuesday 18:00 ET" carve-out FOR QUOTED ROWS): a quote awaiting
+#: Lonny's decision is Quoted & Lost after 48 CLOCK hours — 72 if OL quoted on
+#: a FRIDAY (ET), to carry the weekend so a Friday quote lands Monday, not
+#: Sunday. Measured from the OL quote (response_timestamp). This changed the
+#: prior behavior on two counts: 24→48h normal, and Friday no longer runs to
+#: Tuesday 6 PM (that left 73–78h Friday quotes stuck PENDING). The SEND-signal
+#: aging (is_business_stale) is deliberately unchanged.
+PENDING_HILMAR_LOSS_HOURS = 48
+PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
@@ -882,6 +891,27 @@ def is_business_stale(
 send_signal_stale = is_business_stale
 
 
+def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) -> bool:
+    """True when a QUOTED PENDING-Hilmar row has aged out to Quoted & Lost.
+
+    Michael 2026-07-14: "pending hilmar is 48 hours most, then it's lost if we
+    don't win.. except fridays, it's 72 hours." Pure CLOCK hours from the OL
+    quote (response_timestamp): >= 48h → Q&L, or >= 72h when OL quoted on a
+    Friday (ET) so the weekend lands Lonny on Monday. Distinct from the SEND-
+    signal aging (is_business_stale), which is unchanged.
+
+    Kept byte-for-byte identical to src/hilmar/core.pending_hilmar_stale —
+    tests/test_core_parity.py fails if they drift.
+    """
+    if resp_dt is None:
+        return False
+    now = now or now_utc()
+    resp_et = resp_dt.astimezone(ET)
+    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if resp_et.weekday() == 4
+                else PENDING_HILMAR_LOSS_HOURS)
+    return (now - resp_dt).total_seconds() / 3600.0 >= deadline
+
+
 def decide_status(
     *,
     has_send: bool,
@@ -978,12 +1008,16 @@ def decide_status(
         return StatusDecision("LOSS", True, False, "OTHER", "Quoted but response_timestamp unparseable — assumed aged")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
-    # Use the business-hours staleness helper so a Friday quote isn't
-    # flipped to Q&L over the weekend before Lonny's Monday workday.
-    if not is_business_stale(resp_dt, now, hours=PENDING_WINDOW_HOURS):
+    # PENDING-Hilmar quote-decision window (Michael 2026-07-14): 48 CLOCK
+    # hours from the OL quote → Q&L, 72 when OL quoted on a Friday (ET) so the
+    # weekend lands Lonny on Monday, not Sunday. Supersedes the prior
+    # 24h-biz + Tuesday-18:00 carve-out (which left 73–78h Friday quotes stuck
+    # PENDING). SEND-signal aging above still uses is_business_stale.
+    if not pending_hilmar_stale(resp_dt, now):
+        _win = PENDING_HILMAR_LOSS_HOURS_FRIDAY if resp_dt.astimezone(ET).weekday() == 4 else PENDING_HILMAR_LOSS_HOURS
         return StatusDecision("PENDING", True, False, None,
                               f"Quoted {hours_since:.1f}h ago — Lonny still within "
-                              f"{PENDING_WINDOW_HOURS}h biz window (weekend-aware)")
+                              f"the {_win}h decision window")
 
     # Quoted & Lost. Try to tag a reason.
     detail = f"Quoted {hours_since:.1f}h ago, no Send — Quoted & Lost"

@@ -3,6 +3,31 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-14 — Pending-Hilmar decision window: 48h clock, 72h if Friday
+
+Michael: "pending hilmar is 48 hours most.. then it's lost if we don't win..
+except fridays.. it's 72 hours." Two Friday-quoted rows sat at 73–78h still
+PENDING because the prior rule (2026-06-04) aged QUOTED rows on 24 BUSINESS
+hours with a Friday→Tuesday-18:00-ET carve-out (~101h for a Friday quote).
+Superseded for quoted rows:
+- **core.pending_hilmar_stale(resp_dt, now)** (new; mirrored byte-consistently
+  into src/hilmar/core.py, parity-tested): pure CLOCK hours from the OL quote
+  — >=48h → Q&L, >=72h when OL quoted on a Friday (ET) so the weekend lands
+  Lonny Monday. New constants PENDING_HILMAR_LOSS_HOURS=48 /
+  PENDING_HILMAR_LOSS_HOURS_FRIDAY=72.
+- **decide_status** quote-window aging now calls it (was is_business_stale +
+  PENDING_WINDOW_HOURS). The SEND-signal aging is deliberately unchanged
+  (still is_business_stale; PENDING_WINDOW_HOURS=24 retained for it).
+- **qc_selfheal QC-007** + **gen_improvements_report** aging both switched to
+  pending_hilmar_stale so audit + QC + state machine agree. QC-INDEX QC-007
+  row updated.
+- Legacy 24h/Tuesday tests updated to the new rule; +7 new window tests
+  (incl. the exact Jul-13 screenshot rows aging out). Suite 1660 passed.
+
+NOTE for Michael: the rule is implemented literally — only FRIDAY quotes get
+72h. A Thursday-evening quote still ages at 48h (lands Saturday). Say the word
+if Thursday should also carry the weekend.
+
 ## 2026-07-14 — Zero unresolved/unmapped lanes (run 29292014093 root cause)
 
 Michael: "your qc doesn't work and isn't working properly" + "there should be

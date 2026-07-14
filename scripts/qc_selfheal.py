@@ -1567,10 +1567,10 @@ def phase_6_rules(log: Log, data: dict):
         # them PENDING. Same drift class the parity test catches between
         # scripts/core ↔ src/hilmar/core — now also between qc_selfheal
         # ↔ core.is_business_stale.
-        if rt and core.is_business_stale(rt, now, hours=core.PENDING_WINDOW_HOURS):
-            log.error(f"QC-007: {r['request_id']} still PENDING past "
-                      f"{core.PENDING_WINDOW_HOURS}h biz-window — state "
-                      f"machine should have aged this")
+        if rt and core.pending_hilmar_stale(rt, now):
+            log.error(f"QC-007: {r['request_id']} still PENDING past the "
+                      f"{core.PENDING_HILMAR_LOSS_HOURS}h/{core.PENDING_HILMAR_LOSS_HOURS_FRIDAY}h-Friday "
+                      f"decision window — state machine should have aged this to Q&L")
 
     # ─────────────────────────────────────────────────────────────────
     # QC-008/009/010 — paired with refresh_stage.py and the additive
