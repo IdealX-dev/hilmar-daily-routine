@@ -3,6 +3,35 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-15 — ONE combined daily PDF replaces the 3-email model (staff list)
+
+Michael: "the 3 reports should be made into one and emailed to everyone as
+pdfs." Confirmed via question: merge the 3 daily emails; "everyone" = the
+10-recipient staff list (distribution.full_list). Lonny's client email is
+UNCHANGED and separate — QC-065 boundary holds.
+
+- New **scripts/gen_combined_pdf.py** → reports/hilmar-combined.pdf:
+  Part 1 = the 6-page tracker report (gen_pdf builders, imported not copied);
+  Part 2 = client service update copy (gen_client_email buckets + the
+  _lane_resolved filter, imported — the PDF can never show more than the
+  client email does); Part 3 = systems audit (gen_improvements_report
+  collectors: red flags / observations / suggestions + QC status line).
+- **daily.yml send step**: audit generated FIRST, then the combined PDF; ONE
+  staff email attaches dashboard + hilmar-combined.pdf. The separate audit
+  email is gone. FALLBACK: if gen_combined_pdf fails, the run degrades to the
+  old model (hilmar-report.pdf attached + separate audit email) so a rendering
+  bug can never cost the daily deliverable.
+- gen_pdf/gen_improvements_report/gen_client_email untouched (source of the
+  parts + the fallback path + Lonny's email).
+- +6 tests (tests/test_gen_combined_pdf.py): end-to-end build with all three
+  part markers, missing-data exit, resolved-lane inheritance, and daily.yml
+  contracts (ordering, fallback wiring, client-email step untouched).
+- Verified: 9-page sample rendered from the golden fixture; sample sent to
+  Michael in-session.
+- NOTE: the Cloud PC wrapper (fallback fire host) still sends the old 3-email
+  model — updating its .cmd chain needs a Windows validation pass; flagged as
+  follow-up.
+
 ## 2026-07-15 — Sentry cron "missed check-in" false page (HILMAR-DAILY-TRACKER-A)
 
 Michael forwarded the Sentry alert "Cron failure: hilmar-daily-pipeline —
