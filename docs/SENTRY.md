@@ -121,10 +121,13 @@ Then:
 6. If a finish/heartbeat status=error → "run failed" alert.
 
 **Why emitter B exists (HILMAR-DAILY-TRACKER-A, 2026-07-15):** emitter A is
-coupled to run_pipeline's Sentry init on whichever host fires. On a day the
-Cloud PC fired the report (heartbeat = success, report shipped) but its
-in-process check-in never reached Sentry, the monitor **false-paged** "missed
-check-in" at ~10:57 PM ET. Emitter B ties the check-in to the same signal
+coupled to run_pipeline's Sentry init on whichever host fires. On 2026-07-14
+the **GitHub Actions** fire shipped the report (heartbeat = success,
+dispatched by `github-actions[bot]`) but the in-process check-in never
+registered with Sentry, so the monitor **false-paged** "missed check-in" at
+~10:57 PM ET. (First diagnosis blamed the Cloud PC — wrong: the heartbeat
+workflow's old hardcoded name displayed "Cloud PC fired" for every host; the
+dispatch actor proves the host. Name fixed to "Heartbeat — daily fire".) Emitter B ties the check-in to the same signal
 liveness trusts: any host that heartbeats also checks in, so the monitor pages
 only on a genuine no-fire day — in agreement with liveness. A missed check-in
 now means the fire truly did not run (verify with `gh run list
