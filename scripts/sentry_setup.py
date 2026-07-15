@@ -483,6 +483,50 @@ def finish_cron_checkin(check_in_id: str | None, success: bool) -> None:
         pass
 
 
+def heartbeat_checkin(success: bool) -> bool:
+    """Single terminal cron check-in for the HEARTBEAT model — the
+    host-agnostic 'the daily fire ran' signal.
+
+    Why (2026-07-15, HILMAR-DAILY-TRACKER-A false page): the cron check-in
+    used to be sent ONLY from inside run_pipeline.py (start + finish), which
+    couples the monitor to one code path's Sentry init on whichever host
+    fires. On a day the Cloud PC fired the report (heartbeat = success) but
+    its in-process check-in never reached Sentry, the monitor false-paged
+    'missed check-in' at ~10:57 PM ET even though the report shipped.
+
+    liveness.yml already treats heartbeat.yml — dispatched by EVERY firing
+    host at the end of a fire — as the source of truth for 'did the fire
+    run'. This lets the Sentry monitor read the SAME signal: heartbeat.yml
+    calls this, so a successful fire ALWAYS yields an 'ok' check-in
+    regardless of host, and a true no-fire day yields none → the monitor
+    pages only on a real miss, in agreement with liveness.
+
+    A lone ``status='ok'`` check-in (no preceding ``in_progress``) is a
+    valid, complete Sentry Crons check-in. Best-effort: never raises.
+    Returns True if a check-in was sent, False on no-op (no DSN / no SDK).
+    """
+    if not init(component="heartbeat"):
+        return False
+    try:
+        import sentry_sdk
+        sentry_sdk.crons.capture_checkin(
+            monitor_slug=MONITOR_SLUG,
+            status="ok" if success else "error",
+            monitor_config=_MONITOR_CONFIG,
+        )
+        # Keep the live monitor's schedule aligned from this path too, so
+        # schedule drift self-heals even on days the in-pipeline check-in
+        # (which also aligns it) never runs.
+        with contextlib.suppress(Exception):
+            ensure_monitor_schedule()
+        sentry_sdk.flush(timeout=5)
+        return True
+    except Exception as _e:
+        with contextlib.suppress(Exception):
+            print(f"⚠️  heartbeat_checkin failed (non-fatal): {_e}")
+        return False
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Custom metrics — time-series KPIs (parser accuracy, durations, counts)
 # ─────────────────────────────────────────────────────────────────────

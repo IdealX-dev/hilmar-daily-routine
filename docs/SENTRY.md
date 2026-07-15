@@ -99,16 +99,36 @@ can't catch this because no code is running to report.
 **Margin:** 290 min — alert if the start check-in doesn't arrive within 290 min of the scheduled fire (~10:57 PM ET). The wide margin absorbs GitHub-cron lateness (observed 30 min–4.5h) plus the full evening liveness-backstop window, so Sentry only pages when the pipeline truly never ran all day.
 **Max runtime:** 60 min — alert if pipeline runs >60 min (typical is 30-60s)
 
-How it works:
-1. `run_pipeline.py main()` calls `sentry_setup.start_cron_checkin()` at the
-   start of every fire → returns a check_in_id.
-2. Pipeline runs.
-3. `run_pipeline.py main()` calls `sentry_setup.finish_cron_checkin(id, ok=True/False)`
-   at the end with success/error status.
-4. If Sentry doesn't see the start check-in within 290 min of 6:07 PM ET on
-   any weekday → "missed check-in" alert.
+How it works — TWO independent check-in emitters (2026-07-15):
+
+A. **In-pipeline** (start + finish, timing detail):
+   1. `run_pipeline.py main()` calls `sentry_setup.start_cron_checkin()` at the
+      start of every fire → returns a check_in_id.
+   2. Pipeline runs.
+   3. `run_pipeline.py main()` calls `sentry_setup.finish_cron_checkin(id, ok=…)`
+      at the end with success/error status.
+
+B. **Heartbeat model** (host-agnostic, the reliable emitter):
+   `heartbeat.yml` — dispatched by EVERY firing host (Cloud PC or GitHub
+   Actions) at the end of a fire, and already liveness.yml's source of truth —
+   runs `scripts/sentry_cron_checkin.py --status <success|failed>`, which calls
+   `sentry_setup.heartbeat_checkin()` → a single `ok`/`error` check-in.
+
+Then:
+4. If Sentry sees NEITHER emitter within 290 min of 6:07 PM ET on a weekday →
+   "missed check-in" alert.
 5. If Sentry sees a start but no finish within 60 min → "max runtime exceeded".
-6. If finish status=error → "run failed" alert.
+6. If a finish/heartbeat status=error → "run failed" alert.
+
+**Why emitter B exists (HILMAR-DAILY-TRACKER-A, 2026-07-15):** emitter A is
+coupled to run_pipeline's Sentry init on whichever host fires. On a day the
+Cloud PC fired the report (heartbeat = success, report shipped) but its
+in-process check-in never reached Sentry, the monitor **false-paged** "missed
+check-in" at ~10:57 PM ET. Emitter B ties the check-in to the same signal
+liveness trusts: any host that heartbeats also checks in, so the monitor pages
+only on a genuine no-fire day — in agreement with liveness. A missed check-in
+now means the fire truly did not run (verify with `gh run list
+--workflow=heartbeat.yml --status=success`).
 
 The monitor auto-provisions on first check-in — no Sentry UI setup
 needed. Configuration lives in `sentry_setup.py:_MONITOR_CONFIG`.
