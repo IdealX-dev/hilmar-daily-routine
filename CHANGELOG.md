@@ -3,6 +3,38 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-15 — Status-change transition read backwards ("PENDING HILMAR → QUOTED")
+
+Michael (screenshot, two rows): "status is waiting ol quote then after quote
+is pending hilmar response — check your steps." The staff-email STATUS CHANGES
+table rendered a rate response as **PENDING HILMAR → QUOTED**, which is the
+lifecycle inverted. Correct reading: **PENDING OL → PENDING HILMAR** (RFQ was
+waiting on OL to quote → OL delivered a rate → ball now in Hilmar's court).
+
+Root cause (display only — the data was fine): `gen_email._sc_pill` resolved
+the transition's *from* end from the row's CURRENT substate. A just-quoted row
+is `quoted=True`, so `pending_substate` returns PENDING_HILMAR — which describes
+where the row is NOW, mislabeling the BEFORE end. And the *to* end printed the
+raw internal enum `QUOTED`. The function's own docstring already described the
+correct rule ("a move INTO QUOTED means was PENDING_OL"), but the `cur ==
+PENDING` branch short-circuited before it ran.
+
+Fix:
+- Promoted `_sc_pill` → module-level **`_status_change_pill`** (now unit-
+  testable) and rewrote it to resolve each end from the TRANSITION DIRECTION,
+  not the row's present state: a QUOTED end → PENDING_HILMAR (post-quote wait);
+  a PENDING-into-QUOTED end → PENDING_OL; a PENDING-into-outcome end →
+  PENDING_HILMAR if quoted else PENDING_OL (an NQ OL never answered).
+- Raw `status_history` unchanged (`to="QUOTED"` still the internal marker
+  QC-019 keys on) — this was purely a label bug on one surface.
+- New **tests/test_auditfix_status_change_direction.py** (6 tests) pins
+  PENDING OL → PENDING HILMAR for a rate response and the correct from-end for
+  WIN / NQ-loss / Q&L-loss. Suite 1666 passed; ruff clean.
+- Only live surface affected: `gen_email.py` (staff email). Dashboard diff
+  records top-level status changes only (a rate response stays PENDING→PENDING,
+  so it never appeared there); `gen_email_new.py` renders raw from/to but is
+  dead (referenced by nothing). Both left as-is.
+
 ## 2026-07-14 — Pending-Hilmar decision window: 48h clock, 72h if Friday
 
 Michael: "pending hilmar is 48 hours most.. then it's lost if we don't win..
