@@ -448,6 +448,42 @@ def _header_html(today_label, range_label, updated_label):
 """
 
 
+def _status_change_pill(status, r, other_status=None):
+    """Status-change pill in operational 'who do we chase' terms, so a
+    transition reads as the real-world wait — not the internal enum.
+
+    Michael 2026-07-15: "status is waiting ol quote, then after quote is
+    pending hilmar response." A rate response must therefore read
+    'PENDING OL → PENDING HILMAR', never 'PENDING HILMAR → QUOTED'.
+
+    Each end is resolved from the TRANSITION (its direction is unambiguous),
+    NOT the row's CURRENT substate — the current substate describes where the
+    row sits NOW, which mislabels the BEFORE end of the move (the old bug: a
+    just-quoted row is now PENDING_HILMAR, so the pre-quote 'from' end wrongly
+    showed PENDING HILMAR):
+      • QUOTED end            → PENDING_HILMAR. OL delivered a rate; the ball is
+        now in Hilmar's court. QUOTED is only ever a transition TARGET, so it is
+        always this post-quote 'pending Hilmar' state.
+      • PENDING → into QUOTED → PENDING_OL. OL had not quoted yet → chase OL.
+      • PENDING → into an outcome (WIN/LOSS/…) → the wait that was resolved:
+        PENDING_HILMAR if the row was quoted, else PENDING_OL (an NQ that OL
+        never answered)."""
+    s = (status or "").upper()
+    o = (other_status or "").upper()
+    if s == "QUOTED":
+        return V.pending_pill("PENDING_HILMAR")
+    if s != "PENDING":
+        return V.status_pill(status)
+    if o == "QUOTED":
+        sub = "PENDING_OL"
+    elif o in ("WIN", "LOSS", "BOOKING_CANCELED"):
+        sub = "PENDING_HILMAR" if r.get("quoted") else "PENDING_OL"
+    else:
+        cur = (r.get("status") or "").upper()
+        sub = core.pending_substate(r) if cur == "PENDING" else "PENDING_HILMAR"
+    return V.pending_pill(sub)
+
+
 def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     """Render the 'What Happened on <day>' block. The label `report_label` is
     TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
@@ -636,23 +672,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     # the reason strings from ingest.py are stored as "rate=3450.0" —
     # reformat at render time to "$3,450". Same regex used for any "rate=N"
     # substring across all status-change reasons.
-    def _sc_pill(status, r, other_status=None):
-        """Status-change pill with pending CLARITY: a plain amber 'PENDING'
-        doesn't say who to chase. Resolve the substate — amber 'OL QUOTE' vs
-        violet 'LONNY' — from the row's current state, or (for a historical
-        'from PENDING') infer it from the transition target: a move INTO QUOTED
-        means OL just quoted (was PENDING_OL); a move into a decision/outcome
-        means Lonny decided (was PENDING_HILMAR)."""
-        if (status or "").upper() != "PENDING":
-            return V.status_pill(status)
-        cur = (r.get("status") or "").upper()
-        if cur == "PENDING":
-            sub = core.pending_substate(r)
-        elif (other_status or "").upper() == "QUOTED":
-            sub = "PENDING_OL"
-        else:
-            sub = "PENDING_HILMAR"
-        return V.pending_pill(sub)
+    _sc_pill = _status_change_pill
 
     import re as _re_sc
     def _fmt_rate_in_reason(reason):
