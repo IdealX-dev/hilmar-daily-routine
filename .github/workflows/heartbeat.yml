@@ -54,6 +54,36 @@ jobs:
       contents: read
       issues: write     # the env-drift sentinel files/closes a labeled issue
     steps:
+      # Sentry cron check-in FIRST, from the host-agnostic heartbeat signal —
+      # BEFORE the status gate below (which exits non-zero on a failed fire).
+      # This is the fix for HILMAR-DAILY-TRACKER-A: the in-pipeline check-in
+      # false-paged when a firing host's Sentry init didn't reach Sentry even
+      # though the report shipped. Now every fire that heartbeats (any host)
+      # produces an 'ok' check-in; a true no-fire day produces none → the
+      # monitor pages only on a real miss, agreeing with liveness. Best-effort:
+      # sentry_cron_checkin.py always exits 0, so it never fails the heartbeat.
+      # All three steps are continue-on-error: a Sentry-checkin infra hiccup
+      # (network, pip, a bad DSN) must NEVER fail the heartbeat job, whose
+      # success/failure IS the liveness signal for 'did the fire ship'.
+      - name: Sentry cron check-in — checkout
+        continue-on-error: true
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - name: Sentry cron check-in — Python
+        continue-on-error: true
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Send the Sentry cron check-in
+        continue-on-error: true
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet sentry-sdk
+          python scripts/sentry_cron_checkin.py --status "${{ github.event.inputs.status || 'success' }}"
+
       - name: Echo heartbeat payload + FAIL the job on a non-success fire
         run: |
           echo "Hilmar daily fire heartbeat received"

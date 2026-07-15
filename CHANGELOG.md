@@ -3,6 +3,38 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-15 — Sentry cron "missed check-in" false page (HILMAR-DAILY-TRACKER-A)
+
+Michael forwarded the Sentry alert "Cron failure: hilmar-daily-pipeline —
+missed check-in", seen 25×, last 10:57 PM ET (= 6:07 PM + the 290-min margin).
+**Diagnosis: false page — the report DID ship** (heartbeat.yml succeeded that
+day), but the Sentry cron check-in never reached Sentry.
+
+Root cause: the check-in was emitted ONLY from inside `run_pipeline.py`
+(start/finish), which couples the monitor to that code path's Sentry init on
+whichever host fires. On a Cloud-PC-fired day whose in-process check-in didn't
+land, the monitor paged even though the deliverable shipped — while liveness
+(which reads heartbeat.yml) stayed correctly green. The two observability
+systems disagreed because they read different signals.
+
+Root fix — tie the cron check-in to the SAME host-agnostic signal liveness
+trusts (the heartbeat):
+- New `sentry_setup.heartbeat_checkin(success)` — a single terminal `ok`/`error`
+  check-in for the `hilmar-daily-pipeline` monitor, reusing MONITOR_SLUG +
+  _MONITOR_CONFIG, self-healing the schedule, best-effort (never raises).
+- New `scripts/sentry_cron_checkin.py` CLI (always exits 0).
+- `heartbeat.yml` now runs it (continue-on-error on all added steps, so a
+  Sentry hiccup can never fail the heartbeat job / liveness signal). Every host
+  that heartbeats now also checks in → the monitor pages only on a genuine
+  no-fire day.
+- In-pipeline emitter A kept (belt-and-suspenders + timing detail).
+- Docs: docs/SENTRY.md rewritten to document the two emitters. +7 tests
+  (tests/test_sentry_cron_checkin.py).
+
+NOT verifiable from this session (no SENTRY_DSN / Sentry access here): the
+end-to-end check-in round-trip. Unit-tested with a mocked SDK; the live
+round-trip confirms on the next real fire's heartbeat.
+
 ## 2026-07-15 — Status-change transition read backwards ("PENDING HILMAR → QUOTED")
 
 Michael (screenshot, two rows): "status is waiting ol quote then after quote
