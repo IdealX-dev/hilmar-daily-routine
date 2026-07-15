@@ -337,6 +337,15 @@ jobs:
         # (synced through the blob store). Verification sends go to Michael
         # only and use --no-flag so they never touch production idempotency
         # state — a test must never block or unblock the real send.
+        #
+        # ONE-EMAIL MODEL (Michael 2026-07-15: "the 3 reports should be made
+        # into one and emailed to everyone as pdfs"): the audit is generated
+        # FIRST, then gen_combined_pdf merges tracker + client-copy + audit
+        # into reports/hilmar-combined.pdf, and ONE email carries it to the
+        # staff list — no separate audit email. FALLBACK: if the combined PDF
+        # fails to build, ship the old way (tracker PDF attached + separate
+        # audit email) so a rendering bug can never cost the daily deliverable.
+        # Lonny's client email (next step) is unchanged either way — QC-065.
         run: |
           # Optional attachments beyond the dashboard + PDF: the auto-updated
           # user manual (every day, if it built) and the Friday executive
@@ -348,6 +357,16 @@ jobs:
             EXTRA_ATTACH="$EXTRA_ATTACH reports/weekly-summary.html"
           fi
           echo "extra attachments: ${EXTRA_ATTACH:-none}"
+          # Audit BEFORE the send so its content can ride the combined PDF.
+          python3 scripts/gen_improvements_report.py
+          COMBINED_OK=false
+          if python3 scripts/gen_combined_pdf.py; then
+            COMBINED_OK=true
+            MAIN_PDF="reports/hilmar-combined.pdf"
+          else
+            echo "::warning::gen_combined_pdf failed — falling back to the 3-email model this run"
+            MAIN_PDF="reports/hilmar-report.pdf"
+          fi
           if [ "$SEND_TO" = "full" ]; then
             # FORCE_RESEND=true (manual dispatch only) overrides the per-day
             # already-sent flag. We use --force (NOT --no-flag) so the send is
@@ -359,27 +378,29 @@ jobs:
               FORCE_FLAG="--force"
               echo "⚠️  FORCE_RESEND=true — overriding today's already-sent idempotency flag"
             fi
-            echo "FULL distribution send (config.json distribution.full_list)"
+            echo "FULL distribution send (config.json distribution.full_list) — PDF=$MAIN_PDF"
             python3 scripts/outlook_send.py daily --to-from-config $FORCE_FLAG \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
-              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf $EXTRA_ATTACH
-            python3 scripts/gen_improvements_report.py
-            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us $FORCE_FLAG \
-              --subject-from-file reports/improvements-subject.txt \
-              --body-from-file reports/improvements-report.html
+              --attach reports/hilmar-dashboard.html "$MAIN_PDF" $EXTRA_ATTACH
+            if [ "$COMBINED_OK" != "true" ]; then
+              python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us $FORCE_FLAG \
+                --subject-from-file reports/improvements-subject.txt \
+                --body-from-file reports/improvements-report.html
+            fi
           else
-            echo "VERIFICATION send — michael.deitchman@idealx.us only (send_to=test)"
+            echo "VERIFICATION send — michael.deitchman@idealx.us only (send_to=test) — PDF=$MAIN_PDF"
             python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
               --force --no-flag \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
-              --attach reports/hilmar-dashboard.html reports/hilmar-report.pdf $EXTRA_ATTACH
-            python3 scripts/gen_improvements_report.py
-            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
-              --force --no-flag \
-              --subject-from-file reports/improvements-subject.txt \
-              --body-from-file reports/improvements-report.html
+              --attach reports/hilmar-dashboard.html "$MAIN_PDF" $EXTRA_ATTACH
+            if [ "$COMBINED_OK" != "true" ]; then
+              python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+                --force --no-flag \
+                --subject-from-file reports/improvements-subject.txt \
+                --body-from-file reports/improvements-report.html
+            fi
           fi
 
       - name: Send the client-facing email (gated)
