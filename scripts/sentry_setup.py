@@ -490,9 +490,12 @@ def heartbeat_checkin(success: bool) -> bool:
     Why (2026-07-15, HILMAR-DAILY-TRACKER-A false page): the cron check-in
     used to be sent ONLY from inside run_pipeline.py (start + finish), which
     couples the monitor to one code path's Sentry init on whichever host
-    fires. On a day the Cloud PC fired the report (heartbeat = success) but
-    its in-process check-in never reached Sentry, the monitor false-paged
-    'missed check-in' at ~10:57 PM ET even though the report shipped.
+    fires. On 2026-07-14 the GitHub Actions fire shipped the report
+    (heartbeat = success, dispatched by github-actions[bot]) but the
+    in-process check-in never registered with Sentry, so the monitor
+    false-paged 'missed check-in' at ~10:57 PM ET even though the report
+    shipped. (Initially misattributed to the Cloud PC — the heartbeat
+    workflow's old hardcoded name said "Cloud PC fired" for every host.)
 
     liveness.yml already treats heartbeat.yml — dispatched by EVERY firing
     host at the end of a fire — as the source of truth for 'did the fire

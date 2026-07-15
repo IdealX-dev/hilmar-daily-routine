@@ -1,4 +1,12 @@
-name: Heartbeat — Cloud PC fired
+# NAME IS HOST-AGNOSTIC (2026-07-15). The old name "Heartbeat — Cloud PC
+# fired" was hardcoded from pre-cutover days, so EVERY heartbeat — including
+# ones dispatched by the GitHub Actions production fire — displayed "Cloud PC
+# fired" in the run list and read as the Cloud PC being mysteriously alive
+# after the cutover (Michael 2026-07-15: "we turned off cloud pc didn't
+# we... what's going on"). The real firing host is the `host` input, echoed
+# in the job log; the dispatch ACTOR also tells the truth (github-actions[bot]
+# = the GH fire; IdealX-dev = the Cloud PC's PAT).
+name: Heartbeat — daily fire
 
 # Pure observability signal. Whoever performed the daily fire triggers this
 # workflow at the END of a successful run, via

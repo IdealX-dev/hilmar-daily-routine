@@ -3,6 +3,26 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-15 — "Cloud PC fired"?? No — misleading hardcoded workflow name
+
+Michael (seeing the run list): "we turned off cloud pc didn't we... what's
+going on?????" Verified: the Cloud PC did NOT fire. The 2026-07-14 heartbeat
+run (23:09 UTC) was dispatched by **github-actions[bot]** — daily.yml's own
+token — i.e. the GitHub Actions production fire. A Cloud PC dispatch would
+show actor IdealX-dev (its PAT). The alarm came from heartbeat.yml's
+HARDCODED display name "Heartbeat — Cloud PC fired" (pre-cutover relic),
+which every heartbeat run displays regardless of host.
+
+- Renamed the workflow to **"Heartbeat — daily fire"** (host is the `host`
+  input, echoed in the log; the dispatch actor identifies the host). liveness
+  queries by FILENAME (`--workflow=heartbeat.yml`), so nothing breaks.
+- Corrected the record in sentry_setup.heartbeat_checkin docstring +
+  docs/SENTRY.md: yesterday's HILMAR-DAILY-TRACKER-A diagnosis said "the
+  Cloud PC fired" — wrong inference from this same name. The fire host was
+  GitHub Actions; the false-page mechanism and the #101 fix stand unchanged
+  (the in-process check-in failed to register from ANY host; the heartbeat
+  emitter covers all hosts).
+
 ## 2026-07-15 — ONE combined daily PDF replaces the 3-email model (staff list)
 
 Michael: "the 3 reports should be made into one and emailed to everyone as
