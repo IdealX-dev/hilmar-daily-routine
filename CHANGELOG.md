@@ -3,6 +3,43 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-16 — Jul-15 staff email vanished in Exchange + Sentry env root cause
+
+**Missing staff report (Michael: "only lonny got a report").** Verified from
+the Jul-15 fire job log: the staff email WAS sent — Graph accepted it
+(request-id ab7a24da, 10 recipients, combined PDF attached) 2 seconds before
+the client email (request-id 9f6c1d4f) that DID deliver. The loss is
+DOWNSTREAM of Graph (Exchange transport/quarantine/junk), not the pipeline —
+integrity honestly passed because the send really happened. Recovery: forced
+production-fire dispatched 2026-07-16 10:36 AM ET; staff email re-sent
+(request-id b9cdb5b5, all 10, --force past the flag+guard); client email also
+sent (its Jul-16 flag didn't exist yet — Lonny gets his one update early
+today). CONSEQUENCE: today's sent-flags now exist, so the 6 PM scheduled fire
+would NO-OP both sends — a forced evening dispatch (~6:25 PM ET) covers
+tonight; back to normal tomorrow. If the morning re-send ALSO fails to arrive,
+the cause is an Exchange-side rule (check quarantine.microsoft.com for the
+"Daily Shipment Tracker Update" subject) — not fixable from this repo.
+
+**Sentry HILMAR-DAILY-TRACKER-A — TRUE root cause (26 daily pages).** The
+Jul-15 heartbeat check-in verifiably reached Sentry ("OK Sentry cron check-in
+sent", 7:11 PM ET) yet the monitor still paged at 10:57 PM ET. Sentry Crons
+alerts PER ENVIRONMENT: _detect_environment only recognized the Cloud PC
+hostname as 'production', so post-cutover check-ins landed in 'manual' while
+the Cloud-PC-era 'production' environment sat check-in-less and paged every
+weekday. Fix: GITHUB_ACTIONS=true now maps to 'production' (GH Actions IS the
+production host); ensure_monitor_schedule now DETECTS orphaned monitor
+environments and prints the manual fix — it deliberately does NOT auto-delete
+monitoring config (operator decision; an auto-prune draft was rejected in
+review 2026-07-16). OPERATOR ACTION (Michael, one-time): Sentry UI → Crons →
+hilmar-daily-pipeline → delete the stale environment(s) (e.g. 'manual') once
+the first 'production' check-in lands after this deploys — otherwise the
+orphan keeps paging. +6 tests (tests/test_sentry_env_root_fix.py).
+
+**Also observed in the Jul-15/16 fire logs (separate issues):** Anthropic API
+credit balance exhausted — insights LLM narrative skipped, rule-based only
+(needs billing top-up; feeds task #21); ol-quote-tracker-prod sync hit a
+30s ReadTimeout on the Jul-16 morning fire (best-effort, pipeline continued).
+
 ## 2026-07-15 — "Cloud PC fired"?? No — misleading hardcoded workflow name
 
 Michael (seeing the run list): "we turned off cloud pc didn't we... what's

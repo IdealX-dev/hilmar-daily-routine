@@ -152,6 +152,12 @@ class SentryAPI:
             res = self._request("POST", f"/organizations/{self.org}/monitors/", json=body)
         return res is not None
 
+    def get_monitor(self, slug: str) -> dict | None:
+        """Fetch a cron monitor's detail — includes its `environments` list
+        (each with name + lastCheckIn), which Sentry tracks SEPARATELY for
+        missed-check-in alerting. Returns None on any failure."""
+        return self._request("GET", f"/organizations/{self.org}/monitors/{slug}/")
+
     # ─────────────────────────────────────────────────────────────────
     # Issues
     # ─────────────────────────────────────────────────────────────────
