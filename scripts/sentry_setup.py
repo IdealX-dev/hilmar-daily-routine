@@ -205,11 +205,23 @@ def _git_sha_short() -> str:
 
 
 def _detect_environment() -> str:
-    """Production = Cloud PC scheduled fire. Manual = anywhere else."""
-    # Cloud PC's hostname is CPC-micha-E552L per the README. Treat anything
-    # else as manual / dev. Also respect SENTRY_ENVIRONMENT env if set.
+    """Production = the scheduled daily fire host. Manual = anywhere else.
+
+    2026-07-15 ROOT CAUSE of the recurring HILMAR-DAILY-TRACKER-A pages: this
+    only recognized the CLOUD PC hostname as production, so after the GitHub
+    Actions cutover every check-in (cron heartbeat included) landed in the
+    'manual' monitor ENVIRONMENT while the monitor's 'production' environment
+    — seeded by the Cloud PC era — sat check-in-less and paged 'missed
+    check-in' every weekday at 22:57 ET (26 straight). Sentry Crons tracks
+    each environment separately. GitHub Actions IS the production fire host,
+    so it must report as 'production'.
+    """
+    # Explicit override always wins.
     if "SENTRY_ENVIRONMENT" in os.environ:
         return os.environ["SENTRY_ENVIRONMENT"]
+    # GitHub Actions — the production daily-fire host since the cutover.
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return "production"
     try:
         import socket
         h = socket.gethostname().lower()
@@ -430,6 +442,30 @@ def ensure_monitor_schedule() -> bool:
                   f"({_monitor_config_rest()['schedule']} "
                   f"{_monitor_config_rest()['timezone']}, "
                   f"margin {_monitor_config_rest()['checkin_margin']}m)")
+        # DETECT (never delete) orphaned monitor environments — 2026-07-15
+        # root cause of the daily HILMAR-DAILY-TRACKER-A pages: Sentry alerts
+        # missed check-ins PER ENVIRONMENT. When the fire host changes (Cloud
+        # PC → GH Actions) the abandoned environment stops receiving check-ins
+        # and pages 'missed check-in' every scheduled day, forever. Deleting
+        # monitoring config automatically is an operator decision, so this
+        # only WARNS loudly with the exact manual fix (Sentry UI: Crons →
+        # hilmar-daily-pipeline → delete the orphaned environment). Best-effort.
+        with contextlib.suppress(Exception):
+            current_env = _detect_environment()
+            detail = api.get_monitor(MONITOR_SLUG) or {}
+            orphans = [
+                (e or {}).get("name") for e in detail.get("environments") or []
+                if (e or {}).get("name") and (e or {}).get("name") != current_env
+            ]
+            if orphans:
+                print(
+                    f"⚠️  Sentry monitor '{MONITOR_SLUG}' has orphaned "
+                    f"environment(s) {orphans} — this host reports "
+                    f"'{current_env}', so those will page 'missed check-in' "
+                    f"every scheduled day. MANUAL FIX (operator): Sentry UI → "
+                    f"Crons → {MONITOR_SLUG} → delete the orphaned "
+                    f"environment(s)."
+                )
         return ok
     except Exception as _e:
         with contextlib.suppress(Exception):
