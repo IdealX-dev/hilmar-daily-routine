@@ -4,9 +4,9 @@ Root-cause regression test for the 2026-06-25 reconciliation. The daily fire
 time is declared in FOUR places that have to encode the SAME wall-clock ET
 time, or monitoring false-alerts:
 
-  1. Cloud-PC Task Scheduler trigger  — deploy/setup_cloudpc.ps1   (`-At 6:07pm`)
-  2. Sentry cron monitor              — scripts/sentry_setup.py    (`7 18 * * 1-5`, tz America/New_York)
-  3. GitHub schedule                  — .github/workflows/daily.yml (`7 22`/`7 23 * * 1-5`, the two DST-season UTC crons)
+  1. Cloud-PC Task Scheduler trigger  — deploy/setup_cloudpc.ps1   (`-At 8:07am`)
+  2. Sentry cron monitor              — scripts/sentry_setup.py    (`7 8 * * *`, tz America/New_York)
+  3. GitHub schedule                  — .github/workflows/daily.yml (`7 12`/`7 13 * * *`, the two DST-season UTC crons)
   4. Liveness backstops               — .github/workflows/liveness.yml (must run AFTER the fire)
 
 Before this guard, the box silently fired at 10 AM while the Sentry monitor
@@ -14,6 +14,10 @@ expected 6:07 PM — so Sentry paged a false "missed check-in" every weekday.
 This test parses the files textually (no project imports, no sentry_sdk
 dependency) and fails CI if surfaces 1–3 disagree, or if a liveness tick
 would race the fire.
+
+The fire is a MORNING fire (2026-07-16): ~8:07 AM ET EVERY calendar day,
+reporting the PRIOR business day. The crons run daily (`* * *`); weekend runs
+no-op on the report-day sent-flag.
 
 To change the fire time, update all four surfaces AND `FIRE_ET_HOUR` /
 `FIRE_ET_MINUTE` below — the test makes that a single, deliberate edit.
@@ -26,7 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # The one canonical fire time, in Eastern Time.
-FIRE_ET_HOUR = 18      # 6 PM ET
+FIRE_ET_HOUR = 8       # 8 AM ET (morning fire; reports the prior business day)
 FIRE_ET_MINUTE = 7     # :07 — an off-:00 minute, matched by the box + the monitor
 
 # ET → UTC offsets by DST season (ET is behind UTC).
@@ -93,14 +97,15 @@ def test_sentry_monitor_is_fire_time_in_eastern():
 # --- Surface 3: GitHub daily.yml schedule (UTC, both DST seasons) ------------
 
 def test_daily_yml_crons_map_to_fire_time_both_seasons():
-    weekday = [(mi, hr) for (mi, hr, dow) in _crons(_read(".github/workflows/daily.yml")) if dow == "1-5"]
-    assert weekday, "no weekday (`* * 1-5`) cron found in daily.yml schedule"
+    # Morning fire runs EVERY day (dow field `*`), not just weekdays.
+    daily = [(mi, hr) for (mi, hr, dow) in _crons(_read(".github/workflows/daily.yml")) if dow == "*"]
+    assert daily, "no daily (`* * *`) cron found in daily.yml schedule"
     # Every minute must be the canonical fire minute.
-    assert all(mi == FIRE_ET_MINUTE for mi, _ in weekday), (
-        f"daily.yml crons must all fire at minute :{FIRE_ET_MINUTE:02d}, got {sorted(weekday)}"
+    assert all(mi == FIRE_ET_MINUTE for mi, _ in daily), (
+        f"daily.yml crons must all fire at minute :{FIRE_ET_MINUTE:02d}, got {sorted(daily)}"
     )
     # The two UTC hours must be the EDT and EST encodings of the same ET hour.
-    utc_hours = {hr for _, hr in weekday}
+    utc_hours = {hr for _, hr in daily}
     expected = {(FIRE_ET_HOUR + EDT_OFFSET) % 24, (FIRE_ET_HOUR + EST_OFFSET) % 24}
     assert utc_hours == expected, (
         f"daily.yml UTC cron hours {utc_hours} do not encode {FIRE_ET_HOUR}:00 ET "
@@ -122,21 +127,19 @@ def test_all_surfaces_agree_on_one_fire_time():
 # --- Surface 4: liveness backstops must run AFTER the fire, not race it ------
 
 def test_liveness_backstops_run_after_the_fire():
-    weekday_utc_hours = [
+    liveness_utc_hours = [
         hr for (_, hr, dow) in _crons(_read(".github/workflows/liveness.yml"))
-        # liveness ticks span into the next UTC day (dow 2-6); both seasons count.
-        if dow in ("1-5", "2-6")
+        if dow == "*"   # daily backstops (morning fire runs every day)
     ]
-    assert weekday_utc_hours, "no weekday liveness cron found"
-    fire_utc_edt = (FIRE_ET_HOUR + EDT_OFFSET) % 24  # 22 for 6 PM ET
-    # Every liveness tick must be at or after the EDT fire hour on the same UTC
-    # day, OR in the early-UTC-morning next-day window (hour < fire) — i.e. it
-    # must never land in the pre-fire afternoon-UTC window that would dispatch a
-    # duplicate before the scheduled fire has had its chance.
-    for hr in weekday_utc_hours:
-        in_evening = hr >= fire_utc_edt          # same-day, after the fire
-        in_next_day_early = hr < EDT_OFFSET      # wee hours UTC = previous ET evening/night
-        assert in_evening or in_next_day_early, (
+    assert liveness_utc_hours, "no daily liveness cron found"
+    fire_utc_edt = (FIRE_ET_HOUR + EDT_OFFSET) % 24  # 12 for 8 AM ET
+    fire_utc_est = (FIRE_ET_HOUR + EST_OFFSET) % 24  # 13 for 8 AM ET
+    # Every liveness tick must be at or after the fire hour (in BOTH DST
+    # encodings) so it never races a not-yet-fired scheduled run and dispatches
+    # a duplicate. The morning fire + its backstops all sit in the same UTC day,
+    # so no next-day wraparound to consider.
+    for hr in liveness_utc_hours:
+        assert hr >= max(fire_utc_edt, fire_utc_est), (
             f"liveness cron at {hr}:00 UTC could fire BEFORE the {FIRE_ET_HOUR}:00 ET "
             "scheduled fire and dispatch a duplicate; move it later."
         )

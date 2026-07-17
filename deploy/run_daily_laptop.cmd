@@ -1,9 +1,11 @@
 @echo off
 REM run_daily_laptop.cmd — Pinned Hilmar daily run for Cloud PC + MBD-TRAVEL.
 REM
-REM Fired by Windows Task Scheduler at 6:07 PM ET weekdays (aligned to the
-REM Sentry cron monitor + daily.yml/liveness.yml schedules; 6 PM ET = 3 PM PT,
-REM after Lonny's Pacific workday so the report captures the current PT day).
+REM Fired by Windows Task Scheduler at 8:07 AM ET every day (aligned to the
+REM Sentry cron monitor + daily.yml/liveness.yml schedules). 2026-07-16 move
+REM to a MORNING fire that reports the PRIOR business day (Michael: "fire off
+REM at 8am new york time every day and report on the day prior"); the report
+REM window is set to "previous" below so this fallback host matches GH Actions.
 REM
 REM Daily flow:
 REM   1. refresh_stage.py — pull new Lonny↔OL emails + HILMAR booking
@@ -34,6 +36,11 @@ REM Fail FAST + LOUD on a stale MSAL token instead of hanging on an unanswered
 REM interactive device-code prompt until Task Scheduler kills the job (a silent
 REM stop). outlook_send honors this; GH Actions already sets it.
 set HILMAR_NONINTERACTIVE=1
+
+REM Morning fire reports the PRIOR business day (2026-07-16). Matches the
+REM HILMAR_REPORT_WINDOW=previous env in .github/workflows/daily.yml so the
+REM Cloud PC fallback and GH Actions produce the SAME report day + sent-flag.
+set HILMAR_REPORT_WINDOW=previous
 set LOG=%ROOT%\reports\run-log.txt
 
 REM Never let git block the daily fire on an interactive credential prompt.

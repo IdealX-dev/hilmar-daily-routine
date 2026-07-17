@@ -381,20 +381,20 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
-    # 18:07 ET is the GH Actions cron (offset minute — see daily.yml). The
-    # margin must absorb BOTH GitHub's cron jitter (observed 30min-4.5h on this
-    # repo) AND the WHOLE evening liveness backstop, whose last auto-recovery
-    # tick is ~10:30 PM ET (liveness.yml) and can dispatch a fire that checks
-    # in ~10:45 PM ET. With a tight 95-min margin (→7:42 PM ET) a perfectly
-    # healthy fire that the backstop recovered at 9–10 PM still tripped a false
-    # "missed check-in" — that is the recurring HILMAR-DAILY-TRACKER-9 noise.
-    # 290 min (18:07 → ~10:57 PM ET) means the alert fires ONLY when the 6 PM
-    # cron AND every liveness recovery failed — a true "pipeline never ran
-    # today", which is exactly when a page is warranted (2026-06-16).
-    "schedule": {"type": "crontab", "value": "7 18 * * 1-5"},
+    # 08:07 ET is the GH Actions cron (offset minute — see daily.yml), EVERY
+    # calendar day (2026-07-16 morning-fire move: fire 8 AM ET daily, report
+    # the PRIOR business day; weekend runs no-op on the report-day sent-flag
+    # but still fire + check in, so the monitor stays 7-day). The margin must
+    # absorb BOTH GitHub's cron jitter (observed 30min-4.5h on this repo) AND
+    # the late-morning liveness backstop, whose last auto-recovery tick is
+    # ~11:30 AM ET (liveness.yml) and can dispatch a fire that checks in
+    # ~11:45 AM ET. 290 min (08:07 → ~12:57 PM ET) means the alert fires ONLY
+    # when the 8 AM cron AND every liveness recovery failed — a true
+    # "pipeline never ran today", which is exactly when a page is warranted.
+    "schedule": {"type": "crontab", "value": "7 8 * * *"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
-    "checkin_margin": 290,   # alert ~10:57 PM ET — only after the full backstop fails
+    "checkin_margin": 290,   # alert ~12:57 PM ET — only after the full backstop fails
     "max_runtime": 60,       # alert if pipeline runs >60 min (typical = 30-60s, lots of headroom)
     "failure_issue_threshold": 1,   # 1 missed/failed run = create issue immediately
     "recovery_threshold": 1,        # 1 successful run = resolve the issue

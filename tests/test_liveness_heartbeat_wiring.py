@@ -96,26 +96,23 @@ def test_liveness_creates_cloud_pc_down_label_idempotently():
     assert "gh label create cloud-pc-down" in text
 
 
-def test_liveness_runs_on_weekday_evening():
-    """The fire moved to ~6 PM ET (2026-06-16), so the backstop must fire in
-    the evening AFTER it. The first tick is ~7:30 PM EDT (23:30 UTC) on
-    weekdays; the later ticks cross midnight UTC so they carry day-of-week
-    2-6 (Tue-Sat UTC) to still land Mon-Fri ET."""
+def test_liveness_runs_after_the_morning_fire():
+    """The fire moved to ~8 AM ET EVERY day (2026-07-16, reports the prior
+    business day), so the backstop must fire late-morning AFTER it — the first
+    tick ~9:30 AM EDT (13:30 UTC), a later one ~11:30 AM EDT (15:30 UTC)."""
     spec = yaml.safe_load((WORKFLOWS / "liveness.yml").read_text())
     triggers = spec.get(True) or spec.get("on")
     schedule = triggers["schedule"]
     crons = [s.get("cron", "") for s in schedule]
-    # The anchor evening tick — ~7:30 PM EDT, same-UTC-day so weekdays = 1-5.
-    assert "30 23 * * 1-5" in crons, (
-        "liveness must fire the ~7:30 PM ET evening tick (after the 6 PM ET fire)"
+    # The anchor tick — ~9:30 AM EDT, right after the 8 AM ET fire window.
+    assert "30 13 * * *" in crons, (
+        "liveness must fire the ~9:30 AM ET tick (after the 8 AM ET fire)"
     )
-    # Every tick must restrict to weekdays — either same-UTC-day (1-5) or the
-    # post-midnight-UTC form (2-6) that still maps to Mon-Fri ET.
+    # Every tick is daily now (the fire runs every calendar day).
     assert crons, "liveness has no scheduled crons"
-    assert all(
-        c.endswith("* 1-5") or c.endswith("* 2-6")
-        for c in crons
-    ), f"every liveness cron must restrict to weekday ET ticks; got {crons}"
+    assert all(c.endswith("* * *") for c in crons), (
+        f"every liveness cron must be daily (`* * *`); got {crons}"
+    )
 
 
 # ── wrapper dispatches the heartbeat ─────────────────────────────────────

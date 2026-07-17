@@ -43,20 +43,26 @@ name: Daily
 #      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
 
 on:
-  # ONCE A DAY, right at report time (~6 PM ET). ONE GitHub cron per DST
+  # ONCE A DAY, at ~8:07 AM ET (Michael 2026-07-16: "fire off at 8am new york
+  # time every day and report on the day prior"). ONE GitHub cron per DST
   # season is the RELIABLE trigger — it's runner-backed and doesn't depend on
   # the Cloud PC. (Removing the schedule entirely on 2026-06-19 silently killed
-  # the daily fire for 4 weekdays: the Cloud PC dispatch + liveness were NOT
-  # actually firing, and the schedule was the only working trigger. Lesson:
-  # "once a day" needs one reliable trigger, not zero.) GitHub cron can land
-  # 2-4h late, which is fine for an EVENING fire (Lonny's PT day is already
-  # complete). liveness.yml remains the backstop; the Cloud PC trigger, if it
-  # ever fires, is de-duped by the same-day sent-flag (no double client email).
-  # The gate accepts the tick whose HOUR matches 6 PM ET for the current DST
-  # offset (22 UTC in EDT, 23 in EST) and skips the other, so DST never doubles.
+  # the daily fire for 4 weekdays. Lesson: "once a day" needs one reliable
+  # trigger, not zero.) GitHub cron can land 2-4h late — acceptable for a
+  # MORNING fire reporting the PRIOR business day (that day is long complete).
+  #
+  # Runs EVERY calendar day. The report day is the PRIOR business day
+  # (HILMAR_REPORT_WINDOW=previous → Sat reports Fri; Sun and Mon roll to Fri
+  # too), and the sent-flag is keyed to the REPORT day — so Saturday's fire
+  # sends Friday's report, then Sunday's and Monday's fires see Friday's flag
+  # and NO-OP. Net: every business day is reported exactly once, the morning
+  # after, with no duplicate weekend emails.
+  #
+  # The gate accepts the tick whose HOUR matches 8 AM ET for the current DST
+  # offset (12 UTC in EDT, 13 in EST) and skips the other, so DST never doubles.
   schedule:
-    - cron: "7 22 * * 1-5"    # ~6:07 PM EDT
-    - cron: "7 23 * * 1-5"    # ~6:07 PM EST (gated out in EDT)
+    - cron: "7 12 * * *"    # ~8:07 AM EDT
+    - cron: "7 13 * * *"    # ~8:07 AM EST (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -103,11 +109,10 @@ jobs:
       proceed: ${{ steps.decide.outputs.proceed }}
     steps:
       - id: decide
-        # A tick proceeds iff its HOUR field is the UTC hour of 6 PM ET for
-        # the current DST offset (22 in EDT, 23 in EST) — minute-agnostic, so
-        # the several evening ticks all proceed in-season and the off-season
-        # set is skipped. Keying on offset (not wall-clock now) means GitHub's
-        # multi-hour cron lateness can never skip a day or run the wrong set.
+        # A tick proceeds iff its HOUR field is the UTC hour of 8 AM ET for
+        # the current DST offset (12 in EDT, 13 in EST) — minute-agnostic.
+        # Keying on offset (not wall-clock now) means GitHub's multi-hour
+        # cron lateness can never skip a day or run the wrong set.
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "Manual dispatch — gate open."
@@ -116,10 +121,10 @@ jobs:
           fi
           offset=$(TZ=America/New_York date +%z)   # -0400 in EDT, -0500 in EST
           cron="${{ github.event.schedule }}"
-          cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * 1-5"
+          cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * *"
           proceed=false
-          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "22" ]; then proceed=true; fi
-          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "23" ]; then proceed=true; fi
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "12" ]; then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "13" ]; then proceed=true; fi
           echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 
@@ -233,9 +238,11 @@ jobs:
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
       HILMAR_NONINTERACTIVE: "1"
-      # The ~6 PM ET evening fire reports on TODAY's now-complete Pacific
-      # business day (set explicitly; "current" is also core.py's default).
-      HILMAR_REPORT_WINDOW: "current"
+      # The ~8 AM ET morning fire reports on the PRIOR business day (Michael
+      # 2026-07-16). "previous": Tue 8 AM → Monday's report; Sat → Friday;
+      # Sun/Mon roll to Friday and no-op on Friday's sent-flag. core.py's
+      # default stays "current" — this env var IS the morning-fire switch.
+      HILMAR_REPORT_WINDOW: "previous"
       # Skip the in-pipeline pytest+coverage routine: the dedicated test.yml CI
       # workflow already runs the full suite on every push/PR (the authoritative
       # gate), so re-running it under coverage here is redundant — and on a

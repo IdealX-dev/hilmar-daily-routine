@@ -181,7 +181,7 @@ if (-not (Test-Path $wrapperPath)) {
 }
 $TaskName = "Hilmar Daily Tracker - CloudPC"
 $action = New-ScheduledTaskAction -Execute $wrapperPath
-$trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 6:07pm
+$trigger = New-ScheduledTaskTrigger -Daily -At 8:07am
 # -WakeToRun nudges the box if it ever sleeps at fire time.
 # ExecutionTimeLimit raised 15 -> 50 min (2026-06-26): run_pipeline's per-step
 # timeouts alone sum to ~25 min worst case, plus refresh_stage + 2x outlook_send
@@ -201,7 +201,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 50) `
     -MultipleInstances IgnoreNew `
     -RestartCount 0
-$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 6:07 PM ET weekdays whether logged on or not (S4U). 6 PM ET = 3 PM PT, after Lonny's Pacific workday; aligned to the Sentry cron monitor + daily.yml schedule."
+$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC at 8:07 AM ET every day whether logged on or not (S4U). Morning fire reports the PRIOR business day (2026-07-16); aligned to the Sentry cron monitor + daily.yml schedule."
 # Register to run WHETHER OR NOT THE USER IS LOGGED ON (S4U). Root cause of the
 # 2026-06 silent miss: an INTERACTIVE task quietly skipped 10 straight fires
 # once the RDP session stopped staying logged on. S4U needs an ELEVATED shell;
@@ -230,7 +230,7 @@ Write-Host "=== Setup complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "What this Cloud PC will do:"
 Write-Host "  Wake:  N/A - always on"
-Write-Host "  When:  6:07 PM Cloud PC local time (ET), weekdays"
+Write-Host "  When:  8:07 AM Cloud PC local time (ET), every day (reports prior business day)"
 Write-Host "  What:  refresh_stage.py, run_pipeline.py, outlook_send.py daily"
 Write-Host "  To:    Currently test_list (Michael only) until wrapper flipped"
 Write-Host ""
