@@ -1,13 +1,13 @@
 # Hilmar Daily Tracker — the pipeline
 
 `scripts/run_pipeline.py` defines the ordered `STEPS` list. It fires every
-weekday at **6:07 PM ET** on the Windows Cloud PC. Each step is a separate
+day at **8:07 AM ET** (reporting the PRIOR business day) via GitHub Actions (Cloud PC fallback). Each step is a separate
 Python script invoked as a subprocess; the orchestrator wraps the whole run
 in a Sentry Cron heartbeat + per-step performance spans.
 
-## Why 6 PM ET (and what business day the email reports)
+## Why 8 AM ET (and what business day the email reports)
 
-6:07 PM ET is ~3 PM Pacific, so the fire lands near the end of Lonny's
+8:07 AM ET reports the PRIOR business day — that day is complete, Lonny's
 California (Pacific Time) workday — most of *today's* RFQs and OL responses
 are already in the window. So the daily email reports the **current**
 Pacific business day plus period-to-date rollups (`HILMAR_REPORT_WINDOW`
@@ -16,9 +16,10 @@ morning behavior, where the fire ran before Lonny's day and the email
 reported the previous business day). Never label cumulative numbers as
 "today".
 
-The fire moved from 10 AM ET to 6:07 PM ET (2026-06). The time is one
+The fire moved to 8:07 AM ET reporting the prior business day (2026-07-16;
+was a 6:07 PM ET same-day fire 2026-06 to 2026-07). The time is one
 canonical value shared across the Cloud-PC task trigger, the Sentry cron
-monitor (`7 18 * * 1-5`), and the GitHub `daily.yml` schedule — see
+monitor (`7 8 * * *`), and the GitHub `daily.yml` schedule — see
 `tests/test_fire_time_consistency.py`, which fails CI if they drift apart.
 
 ## The 18 steps (in order)

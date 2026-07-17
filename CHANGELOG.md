@@ -3,6 +3,41 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-16 — Fire moved to 8 AM ET, reports the PRIOR business day
+
+Michael: "rework the system to fire off at 8am new york time every day and
+report on the day prior — rather than end of day for that day." The fire was a
+~6 PM ET same-day evening fire (HILMAR_REPORT_WINDOW=current); it is now an
+~8:07 AM ET MORNING fire that reports the prior business day
+(HILMAR_REPORT_WINDOW=previous). core.report_business_day already had the
+"previous" window (Tue→Mon, Sat/Sun/Mon→Fri) — this flips which one the fire
+uses; core.py's default stays "current".
+
+All FOUR fire-time surfaces moved together (test_fire_time_consistency guards
+them as one canonical time — now FIRE_ET_HOUR=8):
+- **daily.yml**: crons `7 12`/`7 13 * * *` (8:07 AM EDT/EST), gate keys on UTC
+  hour 12/13, HILMAR_REPORT_WINDOW=previous. Runs EVERY calendar day now (was
+  Mon-Fri): Saturday's fire sends Friday's report, Sun/Mon fires no-op on the
+  report-day sent-flag → each business day reported once, the morning after
+  (Friday's lands Saturday).
+- **sentry_setup._MONITOR_CONFIG**: schedule `7 8 * * *`, tz America/New_York,
+  margin unchanged (290 min → ~12:57 PM ET deadline).
+- **liveness.yml**: backstop ticks `30 13`/`30 15 * * *` (~9:30/11:30 AM ET),
+  daily; weekend-skip removed; recovery gate now "before 10:00 ET → wait".
+- **Cloud PC (fallback)**: setup_cloudpc.ps1 trigger `-Daily -At 8:07am`;
+  run_daily_laptop.cmd sets HILMAR_REPORT_WINDOW=previous.
+- Tests updated (fire-time consistency, sentry schedule, cloudpc trigger,
+  liveness wiring) + docs/SENTRY.md + the hilmar-daily-tracker skill. 1685 pass.
+
+OPEN — flagged to Michael (needs a decision, not code-blocked):
+1. Weekend cadence: implemented literally ("every day") — Friday's report
+   arrives SATURDAY morning. If no weekend emails are wanted, switch daily.yml +
+   liveness back to Mon-Fri (then Friday's report arrives Monday).
+2. Weekly exec-summary (gen_weekly_summary) still gates on the Friday fire, so
+   under the morning cadence it now covers Mon-Thu + an empty Friday. To ride
+   the full week it should move to the Saturday fire (gate on report-day ==
+   Friday). Left unchanged pending #1's answer.
+
 ## 2026-07-16 — Jul-15 staff email vanished in Exchange + Sentry env root cause
 
 **Missing staff report (Michael: "only lonny got a report").** Verified from
