@@ -1,11 +1,11 @@
 @echo off
 REM run_daily_laptop.cmd — Pinned Hilmar daily run for Cloud PC + MBD-TRAVEL.
 REM
-REM Fired by Windows Task Scheduler at 8:07 AM ET every day (aligned to the
-REM Sentry cron monitor + daily.yml/liveness.yml schedules). 2026-07-16 move
-REM to a MORNING fire that reports the PRIOR business day (Michael: "fire off
-REM at 8am new york time every day and report on the day prior"); the report
-REM window is set to "previous" below so this fallback host matches GH Actions.
+REM Fired by Windows Task Scheduler Mon-Thu 8:07 AM ET + Fri 4:30 PM ET
+REM (Michael 2026-07-16: "monday through thursday at 8am; friday at 430pm est
+REM … no weekend emails"). Mon-Thu report the PRIOR business day; Friday's
+REM 4:30 PM close reports Friday itself. The report window is set per
+REM day-of-week below so this fallback host matches the daily.yml gate.
 REM
 REM Daily flow:
 REM   1. refresh_stage.py — pull new Lonny↔OL emails + HILMAR booking
@@ -37,10 +37,12 @@ REM interactive device-code prompt until Task Scheduler kills the job (a silent
 REM stop). outlook_send honors this; GH Actions already sets it.
 set HILMAR_NONINTERACTIVE=1
 
-REM Morning fire reports the PRIOR business day (2026-07-16). Matches the
-REM HILMAR_REPORT_WINDOW=previous env in .github/workflows/daily.yml so the
-REM Cloud PC fallback and GH Actions produce the SAME report day + sent-flag.
-set HILMAR_REPORT_WINDOW=previous
+REM Report window by day-of-week (2026-07-16), matching daily.yml's gate:
+REM Friday = "current" (the 4:30 PM close reports Friday itself, feeding the
+REM Monday weekly); Mon-Thu = "previous" (report the prior business day). .NET
+REM DayOfWeek: Sunday=0 .. Friday=5 .. Saturday=6.
+for /f %%d in ('powershell -NoProfile -Command "[int](Get-Date).DayOfWeek"') do set DOW=%%d
+if "%DOW%"=="5" (set HILMAR_REPORT_WINDOW=current) else (set HILMAR_REPORT_WINDOW=previous)
 set LOG=%ROOT%\reports\run-log.txt
 
 REM Never let git block the daily fire on an interactive credential prompt.

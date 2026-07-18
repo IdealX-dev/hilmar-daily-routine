@@ -93,41 +93,46 @@ def test_client_report_day_derives_exactly_like_the_staff_email(now):
     assert long in gce.build_body({"requests": []}, {}, now=now)
 
 
-# ── 2. weekly summary Friday gate ─────────────────────────────────────────
+# ── 2. weekly summary MONDAY gate (2026-07-16: Monday 5 AM ET, prev week) ──
+# Week of 2026-07-13: Mon=07-13, Tue=07-14 … Fri=07-17, Sat=07-18, Sun=07-19.
 
-def test_weekly_gate_runs_on_friday_evening_et_despite_saturday_utc():
-    """The production miss: Fri 8:50 PM ET == Saturday UTC must NOT skip."""
-    assert GWS.should_generate(now=datetime(2026, 7, 11, 0, 50, tzinfo=UTC)) is True
-
-
-def test_weekly_gate_skips_an_actual_saturday_et():
-    assert GWS.should_generate(now=datetime(2026, 7, 11, 20, 0, tzinfo=UTC)) is False
+def test_weekly_gate_runs_on_monday_morning_et():
+    """Monday ~5 AM ET fires the weekly (for the previous week)."""
+    # 2026-07-13 09:07 UTC = 5:07 AM EDT Monday.
+    assert GWS.should_generate(now=datetime(2026, 7, 13, 9, 7, tzinfo=UTC)) is True
 
 
-def test_weekly_gate_wee_hours_saturday_is_still_fridays_fire():
-    # 01:50 ET Saturday = Friday's very-late fire (report_business_day rule).
-    assert GWS.should_generate(now=datetime(2026, 7, 11, 5, 50, tzinfo=UTC)) is True
+def test_weekly_gate_wee_hours_monday_is_NOT_rolled_back_to_sunday():
+    """A legitimate 5 AM Monday fire must NOT roll back to Sunday (the old
+    <6 AM wee-hours rule is gone for the weekly). 01:00 ET Monday = Monday."""
+    # 2026-07-13 05:00 UTC = 1:00 AM EDT Monday.
+    assert GWS.should_generate(now=datetime(2026, 7, 13, 5, 0, tzinfo=UTC)) is True
 
 
-def test_weekly_gate_midweek_skips_and_force_overrides():
-    wed_evening = datetime(2026, 7, 8, 22, 0, tzinfo=UTC)
-    assert GWS.should_generate(now=wed_evening) is False
-    assert GWS.should_generate(now=wed_evening, force=True) is True
+def test_weekly_gate_skips_a_non_monday_et():
+    # 2026-07-15 (Wednesday) afternoon ET.
+    assert GWS.should_generate(now=datetime(2026, 7, 15, 18, 0, tzinfo=UTC)) is False
+
+
+def test_weekly_gate_friday_skips_and_force_overrides():
+    fri = datetime(2026, 7, 17, 18, 0, tzinfo=UTC)   # Friday ET
+    assert GWS.should_generate(now=fri) is False
+    assert GWS.should_generate(now=fri, force=True) is True
 
 
 def test_weekly_main_skip_message_names_the_et_day(capsys):
-    rc = GWS.main([], now=datetime(2026, 7, 11, 20, 0, tzinfo=UTC))  # Sat ET
+    rc = GWS.main([], now=datetime(2026, 7, 15, 18, 0, tzinfo=UTC))  # Wed ET
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Saturday" in out and "skipping" in out
+    assert "Wednesday" in out and "skipping" in out
 
 
-def test_weekly_main_force_generates_even_off_friday(tmp_path, monkeypatch):
+def test_weekly_main_force_generates_even_off_monday(tmp_path, monkeypatch):
     data = tmp_path / "tracking-data-v2.json"
     data.write_text(json.dumps({"requests": []}), encoding="utf-8")
     monkeypatch.setattr(GWS, "DATA", data)
     monkeypatch.setattr(GWS, "REPORTS", tmp_path / "reports")
-    rc = GWS.main(["--force"], now=datetime(2026, 7, 11, 20, 0, tzinfo=UTC))
+    rc = GWS.main(["--force"], now=datetime(2026, 7, 15, 18, 0, tzinfo=UTC))
     assert rc == 0
     assert (tmp_path / "reports" / "weekly-summary.html").exists()
 

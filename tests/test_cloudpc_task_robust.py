@@ -60,14 +60,18 @@ def test_settings_are_resilient():
         assert flag in PS1, f"task settings must include {flag} (sleep/missed-run resilience)"
 
 
-def test_trigger_is_the_canonical_morning_fire():
-    # 2026-07-16: morning fire at 8:07 AM ET EVERY day, reporting the prior
-    # business day. -Daily (not -Weekly) so weekend runs happen too (they
-    # no-op on the report-day sent-flag).
-    assert re.search(r"New-ScheduledTaskTrigger[^\n]*-Daily[^\n]*-At\s+8:07am", PS1), (
-        "the task trigger must be -Daily -At 8:07am (the canonical morning fire "
-        "time; see tests/test_fire_time_consistency.py)."
-    )
+def test_triggers_are_the_canonical_fire_times():
+    # 2026-07-16: TWO triggers, no weekend — Mon-Thu 8:07 AM ET (report prior
+    # business day) + Friday 4:30 PM ET (report Friday). See
+    # tests/test_fire_time_consistency.py for the cross-surface guard.
+    assert re.search(
+        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Monday,Tuesday,Wednesday,Thursday[^\n]*-At\s+8:07am",
+        PS1,
+    ), "missing the Mon-Thu 8:07am trigger"
+    assert re.search(
+        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Friday[^\n]*-At\s+4:30pm",
+        PS1,
+    ), "missing the Friday 4:30pm trigger"
 
 
 def test_execution_time_limit_exceeds_worst_case_pipeline():
