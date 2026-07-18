@@ -1,9 +1,9 @@
 """
-gen_weekly_summary.py — Friday EOD executive summary PDF.
+gen_weekly_summary.py — Monday-morning executive summary for the PREVIOUS week.
 
-Per Michael 2026-05-13 Tier 2.4. Auto-generated each Friday afternoon and
-sent to michael.deitchman@idealx.us. Designed for Slack-sharing,
-exec-briefing distribution, or print.
+Per Michael 2026-05-13 Tier 2.4; moved to Monday 5 AM ET / previous-week
+(2026-07-16). Emailed to the staff distribution by weekly.yml. Designed for
+Slack-sharing, exec-briefing distribution, or print.
 
 Sections:
   - Week at a glance (Mon-Fri totals + WoW delta)
@@ -17,7 +17,8 @@ Output:
   reports/weekly-summary-<YYYY-MM-DD>.pdf
   reports/weekly-summary.html       (latest)
 
-Fired by wrapper Step 6 on Fridays only (or any day via CLI --force).
+Fired by .github/workflows/weekly.yml Monday ~5 AM ET (or any day via CLI
+  --force). Covers + labels the PREVIOUS (just-completed) Mon-Fri week.
 """
 from __future__ import annotations
 
@@ -47,27 +48,23 @@ def _week_bounds(today=None):
 
 
 def _fire_day_et(now=None):
-    """The America/New_York calendar day this fire belongs to.
+    """The America/New_York calendar day this weekly fire belongs to.
 
-    2026-07-12 fix (run 29174327034): the Friday-evening ~8:50 PM ET fire
-    runs when the runner's UTC clock has ALREADY rolled into Saturday, and
-    the Friday gate skipped the weekly summary. The gate must never see a
-    UTC (or runner-local) date — it derives from ONE aware instant
-    converted to ET. A run between midnight and 6 AM ET is the previous
-    evening's very-late fire and counts as that day — the same wee-hours
-    rule as core.report_business_day (2026-07-02, run #76)."""
-    now_et = (now or datetime.now(timezone.utc)).astimezone(core.ET)
-    day = now_et.date()
-    if now_et.hour < 6:
-        day -= timedelta(days=1)
-    return day
+    2026-07-16: the weekly runs MONDAY ~5 AM ET (for the previous week). Unlike
+    the evening daily fire, there is NO wee-hours rollback — 5 AM Monday IS
+    Monday. (The old rule subtracted a day before 6 AM ET to attribute a
+    very-late evening fire to the prior day; a legitimate 5 AM Monday fire must
+    not roll back to Sunday.) Derives from ONE aware instant → ET date, so the
+    runner's UTC/local date never leaks in."""
+    return (now or datetime.now(timezone.utc)).astimezone(core.ET).date()
 
 
 def should_generate(now=None, force=False):
-    """Friday-only gate, evaluated on the ET fire day (see _fire_day_et).
-    ``--force`` keeps its override. Extracted so tests can pin the
-    UTC-shift cases without touching the wall clock."""
-    return bool(force) or _fire_day_et(now).weekday() == 4  # 4 = Friday
+    """Monday-only gate, evaluated on the ET fire day (see _fire_day_et). The
+    weekly exec summary runs Monday 5 AM ET for the PREVIOUS (just-completed)
+    week. ``--force`` overrides. Extracted so tests can pin cases without
+    touching the wall clock."""
+    return bool(force) or _fire_day_et(now).weekday() == 0  # 0 = Monday
 
 
 def _filter_rows(rows, start_date, end_date):
@@ -272,7 +269,7 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 </style></head><body><div class="container">
 {f'<div style="margin-bottom:12px">{B.logo_html(height=42)}</div>' if B.has_logo() else ''}
 <h1>{'' if B.has_logo() else '🗓 '}Hilmar Weekly Summary</h1>
-<p style="margin:0 0 16px;color:#64748b">Week of <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
+<p style="margin:0 0 16px;color:#64748b">Previous week: <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
 
 <h2>Week at a glance</h2>
 <div style="margin-bottom:8px">
@@ -304,30 +301,32 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 {trend_rows}
 </table>
 
-<p style="margin-top:20px;font-size:11px;color:#94a3b8">Auto-generated weekly summary · scripts/gen_weekly_summary.py · Friday EOD</p>
+<p style="margin-top:20px;font-size:11px;color:#94a3b8">Auto-generated weekly summary · scripts/gen_weekly_summary.py · Monday 5 AM ET · previous week</p>
 </div></body></html>"""
 
 
 def main(argv=None, now=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true",
-                    help="Generate even if today isn't Friday (default: Friday-only)")
+                    help="Generate even if today isn't Monday (default: Monday-only)")
     args = ap.parse_args(argv)
 
-    # ONE aware instant drives both the Friday gate and the week bounds —
-    # the gate is ET (wee-hours aware), never the runner's UTC/local date
-    # (2026-07-12, run 29174327034: Fri 8:50 PM ET fire = Saturday UTC).
+    # ONE aware instant drives both the Monday gate and the week bounds — ET,
+    # never the runner's UTC/local date.
     now = now or datetime.now(timezone.utc)
     today = _fire_day_et(now)
     if not should_generate(now=now, force=args.force):
-        print(f"Fire day is {today.strftime('%A')} ET, not Friday — skipping "
+        print(f"Fire day is {today.strftime('%A')} ET, not Monday — skipping "
               f"(use --force to override)")
         return 0
 
     data = json.loads(DATA.read_text(encoding="utf-8"))
     rows = data.get("requests", []) or []
 
-    mon, fri = _week_bounds(today)
+    # The Monday fire summarizes the PREVIOUS (just-completed) week — anchor the
+    # week bounds on 7 days ago so "this week" in the report is LAST Mon-Fri.
+    report_anchor = today - timedelta(days=7)
+    mon, fri = _week_bounds(report_anchor)
     prev_mon, prev_fri = mon - timedelta(weeks=1), fri - timedelta(weeks=1)
     this_rows = _filter_rows(rows, mon, fri)
     prev_rows = _filter_rows(rows, prev_mon, prev_fri)
@@ -336,7 +335,7 @@ def main(argv=None, now=None):
     top_win = top_lanes_by_teu_won(this_rows)
     top_loss = top_lanes_losing(this_rows)
     cow = carrier_of_week(this_rows)
-    trend = four_week_trend(rows, today)
+    trend = four_week_trend(rows, report_anchor)
 
     html = render_html((mon, fri), this_metrics, prev_metrics, top_win, top_loss, cow, trend)
     REPORTS.mkdir(parents=True, exist_ok=True)

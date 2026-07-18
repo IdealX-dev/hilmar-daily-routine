@@ -1,0 +1,142 @@
+name: Weekly exec summary
+
+# Michael 2026-07-16: "exec summary monday 5am by time and mark for previous
+# week." A standalone Monday ~5:07 AM ET fire that builds the executive summary
+# for the PREVIOUS (just-completed) Mon-Fri week and emails it to the INTERNAL
+# staff distribution (config.json distribution.full_list). It is internal
+# analytics (win rates, carrier scoreboard, Q&L negotiation candidates) and
+# NEVER goes to the client — there is no client recipient in this workflow.
+#
+# Separate from daily.yml on purpose: the daily fire is Mon-Thu 8 AM / Fri
+# 4:30 PM; this is its own cadence + deliverable. Friday's 4:30 PM daily fire
+# captures Friday's data (window=current), so by Monday the previous week is
+# complete for this summary.
+#
+# DST: 5:07 AM ET = 09:07 UTC (EDT) / 10:07 UTC (EST); the gate proceeds on the
+# one matching the current ET offset so DST never doubles. dow 1 = Monday.
+
+on:
+  schedule:
+    - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
+    - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
+  workflow_dispatch:
+    inputs:
+      send_to:
+        description: "Recipients (test = Michael only)"
+        required: false
+        default: "test"
+        type: choice
+        options:
+          - test
+          - full
+
+concurrency:
+  group: hilmar-weekly
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: "1"
+
+jobs:
+  weekly:
+    name: Weekly exec summary (Mon 5 AM ET, previous week)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      QT_APP_PASSWORD: ${{ secrets.QT_APP_PASSWORD }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+      HILMAR_NONINTERACTIVE: "1"
+      # Scheduled runs go to the full staff list; a manual dispatch honors
+      # send_to (default test = Michael only).
+      SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
+    steps:
+      - id: gate
+        # Proceed only on the DST-correct Monday tick (manual dispatch always
+        # proceeds). Keying on offset (not wall-clock) survives GitHub's
+        # multi-hour cron lateness.
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Manual dispatch — gate open."; echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          offset=$(TZ=America/New_York date +%z)
+          cron_hour=$(echo "${{ github.event.schedule }}" | awk '{print $2}')
+          proceed=false
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "9" ];  then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "10" ]; then proceed=true; fi
+          echo "offset=$offset cron_hour=$cron_hour → proceed=$proceed"
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse if secrets missing
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          for v in AZURE_STORAGE_CONNECTION_STRING; do
+            if [ -z "${!v}" ]; then echo "::error::Secret $v not set — weekly blocked"; exit 1; fi
+          done
+
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.proceed == 'true'
+
+      - name: Set up Python 3.12
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install reportlab msal requests tzdata jinja2 sentry-sdk azure-storage-blob
+
+      - name: Materialize secret files
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          mkdir -p secrets
+          printf '%s' "$SENTRY_DSN"      > secrets/sentry-dsn.txt
+          printf '%s' "$QT_APP_PASSWORD" > secrets/quote-tracker-pwd.txt
+
+      - name: Pull pipeline state from blob store
+        if: steps.gate.outputs.proceed == 'true'
+        # tracking-data-v2.json + the delegated token cache the send needs.
+        run: python3 scripts/state_store.py pull
+
+      - name: Build the previous-week exec summary
+        if: steps.gate.outputs.proceed == 'true'
+        # --force: this workflow IS the Monday trigger, so always generate;
+        # gen_weekly_summary anchors on the prior week regardless of the exact
+        # weekday it runs.
+        run: python3 scripts/gen_weekly_summary.py --force
+
+      - name: Send the weekly exec summary (INTERNAL staff list only)
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          if [ ! -f reports/weekly-summary.html ]; then
+            echo "::error::weekly-summary.html not generated — nothing to send"; exit 1
+          fi
+          LABEL=$(date -u -d 'last monday -7 days' +'%b %-d' 2>/dev/null || date +'%b %-d')
+          SUBJECT="Hilmar — Weekly Executive Summary (week of $LABEL)"
+          printf '%s' "$SUBJECT" > reports/weekly-subject.txt
+          if [ "$SEND_TO" = "full" ]; then
+            echo "FULL staff distribution (config.json distribution.full_list)"
+            python3 scripts/outlook_send.py daily --to-from-config \
+              --flag-name weekly-sent \
+              --subject-from-file reports/weekly-subject.txt \
+              --body-from-file reports/weekly-summary.html
+          else
+            echo "VERIFICATION send — michael.deitchman@idealx.us only"
+            python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
+              --force --no-flag \
+              --subject-from-file reports/weekly-subject.txt \
+              --body-from-file reports/weekly-summary.html
+          fi
+
+      - name: Push state back (weekly-sent flag)
+        if: steps.gate.outputs.proceed == 'true' && env.SEND_TO == 'full'
+        run: python3 scripts/state_store.py push

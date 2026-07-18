@@ -381,17 +381,16 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
-    # 08:07 ET is the GH Actions cron (offset minute — see daily.yml), EVERY
-    # calendar day (2026-07-16 morning-fire move: fire 8 AM ET daily, report
-    # the PRIOR business day; weekend runs no-op on the report-day sent-flag
-    # but still fire + check in, so the monitor stays 7-day). The margin must
-    # absorb BOTH GitHub's cron jitter (observed 30min-4.5h on this repo) AND
-    # the late-morning liveness backstop, whose last auto-recovery tick is
-    # ~11:30 AM ET (liveness.yml) and can dispatch a fire that checks in
-    # ~11:45 AM ET. 290 min (08:07 → ~12:57 PM ET) means the alert fires ONLY
-    # when the 8 AM cron AND every liveness recovery failed — a true
-    # "pipeline never ran today", which is exactly when a page is warranted.
-    "schedule": {"type": "crontab", "value": "7 8 * * *"},
+    # Mon-Thu 08:07 ET (2026-07-16: fire Mon-Thu 8 AM reporting the prior
+    # business day; Fri fires at 4:30 PM ET and is covered by liveness.yml, not
+    # this cron monitor — a single crontab can't express two daily times, and
+    # the Friday check-in still lands harmlessly). No weekend fire, so the
+    # schedule is dow 1-4. The margin absorbs GitHub's cron jitter (observed
+    # 30min-4.5h) AND the late-morning liveness backstop (~11:30 AM ET last
+    # tick → check-in ~11:45 AM ET). 290 min (08:07 → ~12:57 PM ET) means the
+    # alert fires ONLY when the 8 AM cron AND every liveness recovery failed —
+    # a true "pipeline never ran today", which is exactly when a page is warranted.
+    "schedule": {"type": "crontab", "value": "7 8 * * 1-4"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
     "checkin_margin": 290,   # alert ~12:57 PM ET — only after the full backstop fails

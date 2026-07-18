@@ -3,6 +3,46 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-16 — Final fire cadence: Mon-Thu 8 AM / Fri 4:30 PM + Mon 5 AM weekly
+
+Michael: "monday through thursday at 8am; friday at 430pm est … no weekend
+emails" + "exec summary monday 5am … mark for previous week." Supersedes the
+earlier same-day "8 AM every day" move.
+
+DAILY (daily.yml) — two fire times, NO weekend fire:
+- **Mon-Thu ~8:07 AM ET** → reports the PRIOR business day (window=previous:
+  Mon→Fri, Tue→Mon, Wed→Tue, Thu→Wed).
+- **Fri ~4:30 PM ET** → reports FRIDAY ITSELF (window=current), so the week's
+  last day is captured Friday for the Monday weekly.
+- The gate now emits the report window per ET day-of-week (Friday=current,
+  else=previous) as a job output, consumed by production-fire's
+  HILMAR_REPORT_WINDOW. crons: `7 12`/`7 13 * * 1-4` (8 AM) + `30 20`/`30 21
+  * * 5` (4:30 PM), both DST seasons.
+- COVERAGE NOTE: with 5 fires and no weekend email, **Thursday's dedicated
+  day-over-day callout is the one casualty** — Thu 8 AM reports Wednesday, Fri
+  4:30 reports Friday, so Thursday never gets its own daily section (its
+  activity is still in the period rollups + the weekly). Flagged to Michael;
+  a Friday 8 AM fire (reporting Thu) would close it if wanted.
+
+WEEKLY (new weekly.yml + gen_weekly_summary) — **Monday ~5:07 AM ET**, builds
+the exec summary for the PREVIOUS (just-completed) week, labeled "Previous
+week: …", emailed to the INTERNAL staff list only (never the client). The
+gate moved Friday→Monday; the <6 AM wee-hours rollback was removed (a real
+5 AM Monday fire must not roll back to Sunday); week bounds anchor on today-7.
+
+MONITORS + FALLBACK, all realigned + guarded by test_fire_time_consistency
+(rewritten for the two-time schedule; FIRE times are data now):
+- Sentry monitor → `7 8 * * 1-4` (Mon-Thu 8 AM; Friday covered by liveness,
+  since one crontab can't express two daily times).
+- liveness.yml → Mon-Thu ~9:30/11:30 AM + Fri ~7:30 PM backstops, weekday-only,
+  day-aware recovery gate (Fri waits past 17:00, else 10:00), weekend-skip
+  restored.
+- Cloud PC (setup_cloudpc.ps1) → two triggers (Mon-Thu 8:07 AM + Fri 4:30 PM);
+  run_daily_laptop.cmd picks HILMAR_REPORT_WINDOW by day-of-week.
+- Tests: fire-time-consistency (two times + weekly), sentry-schedule,
+  cloudpc-trigger, liveness-wiring, weekly-gate all updated. Suite 1687 passed;
+  ruff clean; all workflows parse; weekly renders + labels the prior week.
+
 ## 2026-07-16 — Fire moved to 8 AM ET, reports the PRIOR business day
 
 Michael: "rework the system to fire off at 8am new york time every day and
