@@ -1,11 +1,12 @@
 @echo off
 REM run_daily_laptop.cmd — Pinned Hilmar daily run for Cloud PC + MBD-TRAVEL.
 REM
-REM Fired by Windows Task Scheduler Mon-Thu 8:07 AM ET + Fri 4:30 PM ET
-REM (Michael 2026-07-16: "monday through thursday at 8am; friday at 430pm est
-REM … no weekend emails"). Mon-Thu report the PRIOR business day; Friday's
-REM 4:30 PM close reports Friday itself. The report window is set per
-REM day-of-week below so this fallback host matches the daily.yml gate.
+REM Fired by Windows Task Scheduler Mon-Fri 8:07 AM ET + Fri 4:30 PM ET
+REM (Michael 2026-07-16/18: "monday through thursday at 8am; friday at 430pm
+REM est … run a friday morning for thursday then friday night a wrap up … no
+REM weekend emails"). The morning fire (Mon-Fri) reports the PRIOR business day;
+REM Friday's 4:30 PM wrap-up reports Friday itself. The report window is set per
+REM TIME OF DAY below so this fallback host matches the daily.yml gate.
 REM
 REM Daily flow:
 REM   1. refresh_stage.py — pull new Lonny↔OL emails + HILMAR booking
@@ -37,12 +38,14 @@ REM interactive device-code prompt until Task Scheduler kills the job (a silent
 REM stop). outlook_send honors this; GH Actions already sets it.
 set HILMAR_NONINTERACTIVE=1
 
-REM Report window by day-of-week (2026-07-16), matching daily.yml's gate:
-REM Friday = "current" (the 4:30 PM close reports Friday itself, feeding the
-REM Monday weekly); Mon-Thu = "previous" (report the prior business day). .NET
-REM DayOfWeek: Sunday=0 .. Friday=5 .. Saturday=6.
-for /f %%d in ('powershell -NoProfile -Command "[int](Get-Date).DayOfWeek"') do set DOW=%%d
-if "%DOW%"=="5" (set HILMAR_REPORT_WINDOW=current) else (set HILMAR_REPORT_WINDOW=previous)
+REM Report window by TIME OF DAY (2026-07-18), matching daily.yml's gate: the
+REM MORNING fire (8 AM ET, Mon-Fri) reports the PRIOR business day
+REM (window=previous); the Friday 4:30 PM WRAP-UP reports Friday itself
+REM (window=current). Friday has BOTH fires, so the HOUR — not the weekday —
+REM decides: before noon ET = previous, noon-on = current. (Get-Date).Hour is
+REM 0-23 local time; the box runs on ET.
+for /f %%h in ('powershell -NoProfile -Command "(Get-Date).Hour"') do set HOUR=%%h
+if %HOUR% LSS 12 (set HILMAR_REPORT_WINDOW=previous) else (set HILMAR_REPORT_WINDOW=current)
 set LOG=%ROOT%\reports\run-log.txt
 
 REM Never let git block the daily fire on an interactive credential prompt.
@@ -234,7 +237,7 @@ REM big-day). No-op if webhook not configured in config.json.
 echo --- teams_alerts --- >> "%LOG%"
 "%PY%" scripts\teams_alert.py scan >> "%LOG%" 2>&1
 
-REM Step 4.7 — weekly executive summary (Friday only — script self-gates)
+REM Step 4.7 — weekly executive summary (Monday only — script self-gates)
 echo --- weekly_summary --- >> "%LOG%"
 "%PY%" scripts\gen_weekly_summary.py >> "%LOG%" 2>&1
 

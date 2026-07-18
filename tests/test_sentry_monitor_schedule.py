@@ -1,7 +1,7 @@
 """Sentry cron-monitor schedule alignment — 2026-06-17 stale-schedule fix.
 
 The live monitor stayed pinned to the old 10 AM ET / 95-min config while the
-code moved to Mon-Thu 8 AM ET / 290 — because the SDK check-in's monitor_config does
+code moved to Mon-Fri 8 AM ET / 290 — because the SDK check-in's monitor_config does
 NOT reliably update an existing monitor's schedule. So Sentry paged 'missed
 check-in' every day at 11:42 AM ET (= 10:07 + 95). ensure_monitor_schedule()
 force-aligns the monitor via the auth-token REST API instead.
@@ -22,7 +22,7 @@ def test_monitor_config_rest_shape():
     c = SS._monitor_config_rest()
     # REST shape = flat schedule string + schedule_type (not the SDK's nested form)
     assert c["schedule_type"] == "crontab"
-    assert c["schedule"] == "7 8 * * 1-4"
+    assert c["schedule"] == "7 8 * * 1-5"
     assert c["timezone"] == "America/New_York"
     assert c["checkin_margin"] == 290
     assert c["max_runtime"] == 60
@@ -46,7 +46,7 @@ def test_update_monitor_put_then_post_fallback(monkeypatch):
     body = calls[0][2]
     assert body["type"] == "cron_job"
     assert body["slug"] == "hilmar-daily-pipeline"
-    assert body["config"]["schedule"] == "7 8 * * 1-4"
+    assert body["config"]["schedule"] == "7 8 * * 1-5"
     assert body["config"]["checkin_margin"] == 290
 
 

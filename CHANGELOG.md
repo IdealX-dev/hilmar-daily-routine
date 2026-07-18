@@ -3,6 +3,44 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-18 — Close the Thursday gap: add a Friday morning fire
+
+Michael, on the coverage note in the prior entry: "no incorrect — run a friday
+morning for thursday then friday night a wrap up." The prior schedule dropped
+Thursday's own daily and double-reported Friday. This fixes both by making the
+MORNING fire run **Mon-Fri** (not Mon-Thu) and keeping the Friday evening
+wrap-up.
+
+WHAT CHANGED (supersedes the coverage design in the 2026-07-16 entry below):
+- **Morning fire is now Mon-Fri ~8:07 AM ET** → each reports the PRIOR business
+  day (Mon→Fri, Tue→Mon, Wed→Tue, Thu→Wed, **Fri→Thu**). The Friday morning fire
+  closes the Thursday gap — Thursday now gets its own daily section.
+- **Friday ~4:30 PM ET wrap-up** unchanged → reports Friday itself
+  (window=current), still feeding the Monday 5 AM weekly.
+- **The report window now keys off the fire TIME, not the day-of-week**: morning
+  = previous, evening = current. Friday has one of each, so day alone can't
+  decide — the gate reads the cron's hour (manual dispatch / the Cloud PC read
+  the current ET hour: before noon = previous, noon-on = current).
+- Coverage is now gap-free: every business day gets exactly one morning daily
+  (Mon→Fri's Friday, Tue→Mon, …, Fri→Thu) and Friday also gets its evening
+  wrap-up. Monday's morning fire still reports Friday as its prior business day
+  (Friday's numbers land both Friday evening and Monday morning) — intended, per
+  "friday night a wrap up."
+
+SURFACES REALIGNED (all guarded by test_fire_time_consistency):
+- daily.yml → morning crons `7 12`/`7 13 * * 1-5`; gate window by cron hour.
+- Sentry monitor → `7 8 * * 1-5` (Mon-Fri; the morning fire now covers Friday,
+  so Sentry can too — only the 4:30 PM wrap-up stays liveness-covered).
+- liveness.yml → morning backstops `30 13`/`30 15 * * 1-5`; recovery guard is a
+  flat "wait past 10:00 ET" (was Friday-only 17:00), since Friday now has a
+  morning fire to recover; the dispatched fire's window is inferred from the ET
+  hour so a morning recovery reports the prior day and an evening recovery
+  reports Friday.
+- Cloud PC (setup_cloudpc.ps1) → morning trigger DaysOfWeek adds Friday;
+  run_daily_laptop.cmd picks the window by HOUR, not weekday.
+- Tests updated: fire-time consistency, sentry schedule, cloud-PC triggers,
+  liveness wiring. Full suite green.
+
 ## 2026-07-16 — Final fire cadence: Mon-Thu 8 AM / Fri 4:30 PM + Mon 5 AM weekly
 
 Michael: "monday through thursday at 8am; friday at 430pm est … no weekend
