@@ -97,23 +97,24 @@ def test_liveness_creates_cloud_pc_down_label_idempotently():
 
 
 def test_liveness_runs_after_each_fire():
-    """Two fire times (2026-07-16): Mon-Thu ~8 AM ET, Fri ~4:30 PM ET, no
-    weekend. Backstops must land after each — Mon-Thu ~9:30 AM EDT (13:30 UTC),
-    Friday ~7:30 PM EDT (23:30 UTC) — and be weekday-scoped (no weekend fire)."""
+    """Fire times (2026-07-18): a MORNING fire Mon-Fri ~8 AM ET plus a Friday
+    ~4:30 PM ET wrap-up, no weekend. Backstops must land after each — Mon-Fri
+    ~9:30 AM EDT (13:30 UTC), Friday ~7:30 PM EDT (23:30 UTC) — and be
+    weekday-scoped (no weekend fire)."""
     spec = yaml.safe_load((WORKFLOWS / "liveness.yml").read_text())
     triggers = spec.get(True) or spec.get("on")
     crons = [s.get("cron", "") for s in triggers["schedule"]]
-    assert "30 13 * * 1-4" in crons, (
-        "liveness must fire the ~9:30 AM ET Mon-Thu tick (after the 8 AM fire)"
+    assert "30 13 * * 1-5" in crons, (
+        "liveness must fire the ~9:30 AM ET Mon-Fri tick (after the 8 AM fire)"
     )
     assert "30 23 * * 5" in crons, (
-        "liveness must fire the ~7:30 PM ET Friday tick (after the 4:30 PM fire)"
+        "liveness must fire the ~7:30 PM ET Friday tick (after the 4:30 PM wrap-up)"
     )
-    # Every tick restricts to weekdays — Mon-Thu (1-4) or Friday (5). No
+    # Every tick restricts to weekdays — Mon-Fri (1-5) or Friday (5). No
     # weekend backstop, because there is no weekend fire.
     assert crons, "liveness has no scheduled crons"
-    assert all(c.endswith("* 1-4") or c.endswith("* 5") for c in crons), (
-        f"every liveness cron must be Mon-Thu or Friday; got {crons}"
+    assert all(c.endswith("* 1-5") or c.endswith("* 5") for c in crons), (
+        f"every liveness cron must be Mon-Fri or Friday; got {crons}"
     )
 
 

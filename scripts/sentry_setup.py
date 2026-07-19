@@ -381,16 +381,18 @@ def capture_step_failure(step_name: str, error: Exception, **extras) -> None:
 MONITOR_SLUG = "hilmar-daily-pipeline"
 
 _MONITOR_CONFIG = {
-    # Mon-Thu 08:07 ET (2026-07-16: fire Mon-Thu 8 AM reporting the prior
-    # business day; Fri fires at 4:30 PM ET and is covered by liveness.yml, not
-    # this cron monitor — a single crontab can't express two daily times, and
-    # the Friday check-in still lands harmlessly). No weekend fire, so the
-    # schedule is dow 1-4. The margin absorbs GitHub's cron jitter (observed
-    # 30min-4.5h) AND the late-morning liveness backstop (~11:30 AM ET last
-    # tick → check-in ~11:45 AM ET). 290 min (08:07 → ~12:57 PM ET) means the
-    # alert fires ONLY when the 8 AM cron AND every liveness recovery failed —
-    # a true "pipeline never ran today", which is exactly when a page is warranted.
-    "schedule": {"type": "crontab", "value": "7 8 * * 1-4"},
+    # Mon-Fri 08:07 ET (2026-07-18: the MORNING fire now runs Mon-Fri, each
+    # reporting the prior business day — Friday morning reports Thursday and
+    # closes the old Thursday coverage gap. Friday ALSO fires a 4:30 PM wrap-up
+    # of Friday itself, covered by liveness.yml not this monitor — a single
+    # crontab can't express two daily times, and the wrap-up check-in still
+    # lands harmlessly). No weekend fire, so the schedule is dow 1-5. The margin
+    # absorbs GitHub's cron jitter (observed 30min-4.5h) AND the late-morning
+    # liveness backstop (~11:30 AM ET last tick → check-in ~11:45 AM ET). 290 min
+    # (08:07 → ~12:57 PM ET) means the alert fires ONLY when the 8 AM cron AND
+    # every liveness recovery failed — a true "pipeline never ran today", which
+    # is exactly when a page is warranted.
+    "schedule": {"type": "crontab", "value": "7 8 * * 1-5"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
     "checkin_margin": 290,   # alert ~12:57 PM ET — only after the full backstop fails

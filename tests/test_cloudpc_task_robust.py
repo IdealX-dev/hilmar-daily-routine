@@ -61,17 +61,18 @@ def test_settings_are_resilient():
 
 
 def test_triggers_are_the_canonical_fire_times():
-    # 2026-07-16: TWO triggers, no weekend — Mon-Thu 8:07 AM ET (report prior
-    # business day) + Friday 4:30 PM ET (report Friday). See
-    # tests/test_fire_time_consistency.py for the cross-surface guard.
+    # 2026-07-18: TWO triggers, no weekend — a MORNING fire Mon-Fri 8:07 AM ET
+    # (report prior business day; Friday morning reports Thursday) + a Friday
+    # 4:30 PM ET wrap-up (report Friday). See tests/test_fire_time_consistency.py
+    # for the cross-surface guard.
     assert re.search(
-        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Monday,Tuesday,Wednesday,Thursday[^\n]*-At\s+8:07am",
+        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Monday,Tuesday,Wednesday,Thursday,Friday[^\n]*-At\s+8:07am",
         PS1,
-    ), "missing the Mon-Thu 8:07am trigger"
+    ), "missing the Mon-Fri 8:07am morning trigger"
     assert re.search(
         r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Friday[^\n]*-At\s+4:30pm",
         PS1,
-    ), "missing the Friday 4:30pm trigger"
+    ), "missing the Friday 4:30pm wrap-up trigger"
 
 
 def test_execution_time_limit_exceeds_worst_case_pipeline():

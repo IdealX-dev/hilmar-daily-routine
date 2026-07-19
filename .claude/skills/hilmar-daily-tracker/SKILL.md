@@ -6,7 +6,7 @@ description: >-
   shipment-tracker email + dashboard + PDF + private audit. Use this skill
   WHENEVER Michael mentions Hilmar, the Hilmar tracker, the daily shipment
   tracker, Lonny Upfold, the OL-USA booking pipeline, MDOLX bookings, the
-  daily fire (Mon-Thu 8 AM / Fri 4:30 PM ET), Hilmar parser accuracy, the Hilmar QC checks
+  daily fire (Mon-Fri 8 AM / Fri 4:30 PM wrap-up ET), Hilmar parser accuracy, the Hilmar QC checks
   (QC-001..QC-050), or Sentry/Seer for Hilmar — or wants to run, check, debug,
   explain, or report on the Hilmar pipeline from ANY device including the
   iPhone Claude app. Also trigger on "run the Hilmar pipeline", "check Hilmar
@@ -18,8 +18,8 @@ description: >-
 
 # Hilmar Daily Shipment Tracker
 
-The Hilmar Daily Shipment Tracker is a production pipeline that runs every
-**Mon-Thu 8:07 AM ET** (reporting the prior business day) and **Fri 4:30 PM ET** (reporting Friday), plus a **Monday 5 AM ET** weekly exec summary — via GitHub Actions (Cloud PC fallback). No weekend emails. It ingests the Outlook
+The Hilmar Daily Shipment Tracker is a production pipeline that runs a
+**Mon-Fri 8:07 AM ET** morning fire (reporting the prior business day — Friday morning reports Thursday) plus a **Fri 4:30 PM ET** wrap-up (reporting Friday itself), plus a **Monday 5 AM ET** weekly exec summary — via GitHub Actions (Cloud PC fallback). No weekend emails. It ingests the Outlook
 email thread between **Lonny Upfold** (Logistics Coordinator, Hilmar
 Ingredients) and **OL-USA** (the ocean freight forwarder), and produces:
 
@@ -143,7 +143,7 @@ email) that you must not skip.
 
 - **Repo:** `github.com/IdealX-dev/hilmar-daily-routine` (branch `main`)
 - **Pipeline entry point:** `scripts/run_pipeline.py`
-- **Schedule:** Mon-Thu 8:07 AM ET (reports prior business day) + Fri 4:30 PM ET (reports Friday) + Mon 5 AM ET weekly exec summary; no weekend. GitHub Actions (Cloud PC fallback)
+- **Schedule:** Mon-Fri 8:07 AM ET morning fire (reports prior business day; Friday morning reports Thursday) + Fri 4:30 PM ET wrap-up (reports Friday) + Mon 5 AM ET weekly exec summary; no weekend. GitHub Actions (Cloud PC fallback)
 - **Data file:** `tracking-data-v2.json` (155-170 request rows)
 - **Backups:** `data-backups/` (timestamped snapshots, retention-pruned)
 - **Observability:** Sentry (org `idealx-llc`, project `hilmar-daily-tracker`)

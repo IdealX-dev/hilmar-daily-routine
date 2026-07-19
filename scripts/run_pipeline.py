@@ -119,10 +119,12 @@ STEPS = [
     # the consumer manual, rebuilt every fire from live config so it can
     # never describe a stale system. Attached to the daily staff email.
     ("User manual HTML",         [PY, str(SCRIPTS / "gen_manual.py")]),
-    # 2026-07-10: restore the Friday executive summary — it previously fired
-    # only from the retired Cloud PC wrapper (run_daily_laptop.cmd), so the
-    # GitHub-Actions cutover silently killed it. The script self-skips (exit
-    # 0) on Mon-Thu; the workflow attaches the PDF only when fresh.
+    # 2026-07-10: restore the executive summary — it previously fired only from
+    # the retired Cloud PC wrapper (run_daily_laptop.cmd), so the GitHub-Actions
+    # cutover silently killed it. As of 2026-07-16 the summary covers the PREVIOUS
+    # week and its own cadence is Monday 5 AM ET (see weekly.yml); this inline run
+    # self-skips (exit 0) on every day except Monday. The workflow attaches the
+    # PDF only when fresh.
     ("Weekly executive summary", [PY, str(SCRIPTS / "gen_weekly_summary.py")]),
     # 2026-05-13: Cross-project intelligence export + rate-negotiation
     # analytics. share_intel pushes Hilmar's data to the SHARED cross-
