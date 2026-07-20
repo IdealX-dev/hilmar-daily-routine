@@ -9,7 +9,9 @@ Sections:
   - Week at a glance (Mon-Fri totals + WoW delta)
   - Top 3 winning lanes by TEU
   - Top 3 losing lanes (Q&L) — negotiation candidates
-  - Carrier of the week (highest win rate)
+  - Carrier of the week (most wins, then TEU won; a win always qualifies so the
+    winner can't be benched by the min-quote floor — relabeled "Most Active
+    Carrier" on a no-win week so a 0-win carrier is never crowned)
   - 4-week trend sparklines (volume, win rate, quote rate)
   - This week's red flags from QC + improvements report
 
@@ -140,18 +142,37 @@ def top_lanes_losing(rows, n=3):
 def carrier_of_week(rows):
     by_c = defaultdict(lambda: {"quotes": 0, "wins": 0, "teu_won": 0})
     for r in rows:
-        c = r.get("carrier_quoted") or r.get("carrier_won")
+        won = r.get("status") == "WIN"
+        # Attribute a WIN to the carrier that actually won it (carrier_won) and a
+        # quote to the carrier quoted; fall back so a row carrying only one of the
+        # two fields still counts.
+        c = (r.get("carrier_won") if won else r.get("carrier_quoted")) \
+            or r.get("carrier_quoted") or r.get("carrier_won")
         if not c:
             continue
-        if r.get("quoted") or r["status"] == "WIN":
+        if r.get("quoted") or won:
             by_c[c]["quotes"] += 1
-        if r["status"] == "WIN":
+        if won:
             by_c[c]["wins"] += 1
             by_c[c]["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
-    candidates = [(c, s) for c, s in by_c.items() if s["quotes"] >= 2]
+    if not by_c:
+        return None
+    # "Carrier of the Week" = who won the most business this week. A carrier that
+    # WON any deal ALWAYS qualifies (a win is the strongest signal), so the
+    # min-sample floor (>=2 quotes) can never bench the actual winner and hand the
+    # trophy to a 0-win carrier. That floor-benches-the-winner bug is exactly why
+    # CMA CGM (6 quotes, 0 wins) was crowned for the week of Jul 13-17 while a
+    # different carrier won the week's one deal on a single quote. Only when
+    # NOBODY won all week do we fall back to the most-active quoter (>=2 quotes);
+    # the caller relabels that case so a 0-win carrier is never called "the week's
+    # winner."
+    candidates = [(c, s) for c, s in by_c.items() if s["wins"] >= 1 or s["quotes"] >= 2]
     if not candidates:
         return None
-    candidates.sort(key=lambda x: (-x[1]["wins"] / max(x[1]["quotes"], 1), -x[1]["teu_won"]))
+    # Rank: most wins, then most TEU won, then best win rate, then most quotes.
+    candidates.sort(key=lambda x: (
+        -x[1]["wins"], -x[1]["teu_won"],
+        -(x[1]["wins"] / max(x[1]["quotes"], 1)), -x[1]["quotes"]))
     name, s = candidates[0]
     return {"carrier": name, "quotes": s["quotes"], "wins": s["wins"],
             "teu_won": s["teu_won"],
@@ -244,11 +265,20 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend):
 
     cow_html = ""
     if cow:
+        # A 0-win week has no "winner" — never crown a carrier that won nothing.
+        # Relabel to "Most Active Carrier" so the box is honest either way.
+        _won_any = cow["wins"] >= 1
+        _cow_title = "🏆 Carrier of the Week" if _won_any else "📊 Most Active Carrier"
+        _cow_line = (
+            f'<b>{cow["carrier"]}</b> — {cow["wins"]} wins / {cow["quotes"]} quotes '
+            f'({cow["win_rate"]}% win rate, {cow["teu_won"]} TEU)'
+            if _won_any else
+            f'<b>{cow["carrier"]}</b> — {cow["quotes"]} quotes, no wins this week'
+        )
         cow_html = f"""
 <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0">
-  <h2 style="margin:0 0 6px;color:#92400e;font-size:16px">🏆 Carrier of the Week</h2>
-  <p style="margin:0;font-size:14px"><b>{cow["carrier"]}</b> — {cow["wins"]} wins / {cow["quotes"]} quotes
-  ({cow["win_rate"]}% win rate, {cow["teu_won"]} TEU)</p>
+  <h2 style="margin:0 0 6px;color:#92400e;font-size:16px">{_cow_title}</h2>
+  <p style="margin:0;font-size:14px">{_cow_line}</p>
 </div>"""
 
     return f"""<!DOCTYPE html>
