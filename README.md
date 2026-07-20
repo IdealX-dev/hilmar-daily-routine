@@ -95,10 +95,12 @@ Standing rule: every new code pattern ships with its QC counterpart in the same 
 
 ## Distribution list
 
-Defined in `config.json` `distribution.full_list`. Currently 10 recipients:
+Defined in `config.json` `distribution.full_list`. Currently 9 recipients:
 - `michael.deitchman@ol-usa.com`
 - `michael.deitchman@idealx.us`
-- 8 additional OL operators (alan.baer, carrie.murphy, seada.sabic, caren.tobel, linda.echevarria, steve.petriccione, MBD_Export_Pricing, MBD_OceanExportBookingShared)
+- 7 additional OL operators (alan.baer, carrie.murphy, seada.sabic, linda.echevarria, steve.petriccione, MBD_Export_Pricing, MBD_OceanExportBookingShared)
+
+  (caren.tobel removed 2026-07-20 per Michael — she remains a *sender* exclusion in `ingest_scope.mailboxes_excluded`, unrelated to who receives the report.)
 
 QC-022 ERROR-gates accidental edits to this list (catches missing idealx.us, external domains, wrong count).
 

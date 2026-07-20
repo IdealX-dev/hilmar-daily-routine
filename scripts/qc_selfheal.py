@@ -1988,9 +1988,10 @@ def phase_6_rules(log: Log, data: dict):
         log.warn(f"QC-021: check failed with exception: {_e}")
 
     # QC-022: distribution list invariants — must include michael.deitchman@idealx.us,
-    # must be exactly 10 recipients (normal mode) OR 1 recipient (iteration mode),
-    # must NOT include external (non-ol-usa, non-idealx) domains. Catches
-    # accidental edits to config.json that could leak emails.
+    # must be 8-12 recipients (normal mode; 9 as of 2026-07-20 after caren.tobel
+    # was removed) OR 1 recipient (iteration mode), must NOT include external
+    # (non-ol-usa, non-idealx) domains. Catches accidental edits to config.json
+    # that could leak emails.
     #
     # 2026-05-19 PM iteration mode: when config has `_iteration_mode_note` at
     # top level, the full_list is locked to just michael.deitchman@idealx.us

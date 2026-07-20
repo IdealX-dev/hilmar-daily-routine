@@ -3,6 +3,36 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-20 — Weekly "Carrier of the Week" bug + remove Caren from distribution
+
+Two report fixes from Michael's review of the Jul 20 weekly summary.
+
+**Carrier of the Week crowned a 0-win carrier.** The Jul 13-17 summary named
+CMA CGM "🏆 Carrier of the Week" with 6 quotes / 0 wins / 0.0% win rate — while
+the week HAD a win (1 win, 4 TEU) that a different carrier took. Root cause in
+`gen_weekly_summary.carrier_of_week`: candidates were filtered to `quotes >= 2`
+BEFORE ranking, which benched the actual winner (its only quote that week was
+the winning one) and left only 0-win carriers, then crowned the most-active of
+those. Fix:
+- A carrier that WON any deal always qualifies (a win is the strongest signal),
+  so the min-quote floor can never bench the winner.
+- Rank by wins, then TEU won, then win rate, then quotes.
+- Win attribution now credits `carrier_won` (not `carrier_quoted`) on WIN rows.
+- On a genuine no-win week the render relabels the box "📊 Most Active Carrier"
+  so a 0-win carrier is never literally called the week's winner.
+- Added `tests/test_weekly_carrier_of_week.py` (the function had ZERO coverage —
+  which is how this shipped): reproduces the CMA scenario + locks the fix, unit
+  and end-to-end. The actual winner for that week is shown in the report's own
+  "Top 3 Winning Lanes (by TEU)" table (carrier + lane + 4 TEU).
+
+**Removed Caren Tobel from the reports.** Michael: "remove caren tobel from all
+reports." Removed `caren.tobel@ol-usa.com` from `config.json`
+`distribution.full_list` (10 → 9 recipients). She REMAINS a sender exclusion in
+`ingest_scope.mailboxes_excluded` — that filters her rate-desk emails out of
+ingest and is unrelated to who receives the report. QC-022 already allows 8-12
+recipients so 9 is valid (its "exactly 10" comment was stale and is corrected).
+README + a new `tests/test_distribution_recipients.py` lock the change.
+
 ## 2026-07-18 — Close the Thursday gap: add a Friday morning fire
 
 Michael, on the coverage note in the prior entry: "no incorrect — run a friday
