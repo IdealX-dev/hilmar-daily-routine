@@ -103,19 +103,17 @@ def _week_bucket(d):
 
 
 def _report_date(now_et=None):
-    """Return the date this email REPORTS ON.
+    """Return the date this email REPORTS ON — the PRIOR business day.
 
-    Why: the pipeline now runs ~6 PM ET each weekday evening (moved from the
-    old 10 AM ET morning fire on 2026-06-16, Michael "move this to end of
-    every day"). At that time Lonny's California (PT) office has finished its
-    business day (~3 PM PT), so today's quotes and bookings are complete. The
-    email therefore reports on TODAY's now-finished activity, not yesterday's.
-
-    Single source of truth is core.report_business_day (window="current"):
-      Mon–Fri: report = today
-      Sat:     report = Friday (today − 1)
-      Sun:     report = Friday (today − 2)
-    Set HILMAR_REPORT_WINDOW=previous to restore the old morning behavior.
+    Michael 2026-07-21: "get rid of the recaps and just do daily at 8am est for
+    the day before." The fire runs ~8 AM ET each weekday and reports the
+    business day that just finished, so its quotes/bookings are complete. The
+    production fire sets HILMAR_REPORT_WINDOW=previous, so
+    core.report_business_day yields:
+      Tue–Fri: report = the prior weekday (Mon..Thu)
+      Mon:     report = Friday (today − 3)
+    core.py's default window stays "current"; the fire's env flips it to
+    "previous". The email header + section labels say "the prior business day".
     """
     return core.report_business_day(now_et)
 
@@ -442,7 +440,7 @@ def _header_html(today_label, range_label, updated_label):
   <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
-    <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">{_esc(range_label)} | Updated: {_esc(updated_label)}</p>
+    <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Reporting {_esc(today_label)} — the prior business day · {_esc(range_label)} | Updated: {_esc(updated_label)}</p>
   </div>
   <div class="hx-pad" style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
@@ -819,7 +817,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
     return f"""
 <div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:20px;margin-bottom:24px">
   <h2 style="margin:0 0 8px;color:#1e40af;font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
-  <p style="margin:0 0 14px;font-size:11px;color:#64748b">Today's activity through end of day. The tracker runs ~6 PM ET — after Lonny's California (PT) business day — so today's quotes and bookings are captured.</p>
+  <p style="margin:0 0 14px;font-size:11px;color:#64748b">Activity for {_esc(report_label)} — the prior business day. The tracker runs ~8 AM ET the next business morning, after that day's California (PT) business is complete, so its quotes and bookings are final.</p>
 
   <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
   {new_table}
@@ -980,7 +978,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity today (through end of day). Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
     {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=f"{day.get('total',0)} entries")}
@@ -1023,7 +1021,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   Q&amp;L are the times Lonny picked a competitor). NQ (OL never gave a rate)
   is NOT in the denominator — we never actually competed on those, so they
   show as a separate "No-Response Rate" KPI. Pending (not decided yet) is
-  also excluded. Today: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
+  also excluded. That day: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
 </div>
 """
 

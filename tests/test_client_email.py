@@ -146,7 +146,7 @@ def test_standalone_rows_excluded_from_requests_and_quotes():
 
 def test_bookings_section_shows_today_win():
     html = gce.build_body(_mixed_data(), {})
-    assert "Bookings confirmed today (1)" in html
+    assert "Bookings confirmed (1)" in html
     s = gce._client_sections(_mixed_data(), core.report_business_day(datetime.now(core.ET)))
     assert [r["request_id"] for r in s["bookings"]] == ["r-win"]
 
@@ -222,9 +222,9 @@ def _tile_value(html, label):
 
 def test_hero_kpi_tiles_present_with_correct_counts():
     html = gce.build_body(_mixed_data(), {})
-    assert _tile_value(html, "Requests received today") == "5"
-    assert _tile_value(html, "Quotes delivered today") == "3"
-    assert _tile_value(html, "Bookings confirmed today") == "1"
+    assert _tile_value(html, "Requests received") == "5"
+    assert _tile_value(html, "Quotes delivered") == "3"
+    assert _tile_value(html, "Bookings confirmed") == "1"
     assert _tile_value(html, "Awaiting your decision") == "1"
     # Exactly 4 gen_email-style tiles sharing the mobile stacking class.
     assert html.count('class="hx-kpi"') == 4
@@ -334,17 +334,17 @@ def test_quiet_day_collapses_empty_sections_to_friendly_lines():
     assert 'class="hx-data"' not in html
     for line in (
         "No shipments currently in transit or awaiting departure.",
-        "No new rate requests today.",
-        "No new quotes today.",
-        "No new bookings confirmed today.",
+        "No new rate requests that day.",
+        "No new quotes that day.",
+        "No new bookings confirmed that day.",
         "Nothing awaiting your decision — all caught up.",
         "Nothing in the pricing queue — every request has been quoted.",
     ):
         assert line in html, f"missing friendly line: {line!r}"
-    assert "None today." not in html
+    assert "None that day." not in html
     # Hero tiles still render (zeros) + narrative + footer → composed email.
     assert html.count('class="hx-kpi"') == 4
-    assert _tile_value(html, "Requests received today") == "0"
+    assert _tile_value(html, "Requests received") == "0"
     assert "A quiet day on new activity" in html
     assert "Reply with the booking reference" in html
     # And a quiet day is still leak-free.

@@ -7,8 +7,7 @@ name: Liveness monitor
 #
 # This workflow runs on GitHub-hosted Ubuntu (always available, free,
 # independent of the Cloud PC). Fires after each morning fire (Mon-Fri
-# ~9:30 AM ET) and after the Friday wrap-up (~7:30 PM ET) and posts a GitHub
-# issue if no successful heartbeat arrived.
+# ~9:30 AM ET) and posts a GitHub issue if no successful heartbeat arrived.
 #
 # Heartbeat mechanism (2026-06-01 redesign):
 #   Whoever performed the daily fire dispatches `heartbeat.yml` at the end
@@ -27,20 +26,17 @@ name: Liveness monitor
 
 on:
   schedule:
-    # Backstop checks AFTER each daily fire (2026-07-18: MORNING fire Mon-Fri
-    # ~8:07 AM ET + Friday ~4:30 PM ET wrap-up, NO weekend fire). Each re-checks
-    # "did a fire happen today?" and dispatches production-fire if not —
-    # idempotent (skips once a heartbeat exists) and the mailbox guard blocks any
-    # double-send.
+    # Backstop checks AFTER the daily fire (2026-07-21: ONE fire, Mon-Fri
+    # ~8:07 AM ET, no wrap-up, no weekend fire). Each re-checks "did a fire
+    # happen today?" and dispatches production-fire if not — idempotent (skips
+    # once a heartbeat exists) and the mailbox guard blocks any double-send.
     #   Mon-Fri: ~9:30 AM ET (right after the 8 AM window) + ~11:30 AM ET
     #            (catch a multi-hour-late fire).
-    #   Fri:     ~7:30 PM ET (after the 4:30 PM wrap-up + its late-cron window).
-    # Weekday-only (dow 1-5 / 5): no weekend fire → no weekend backstop, so the
-    # long Fri-evening→Mon-morning heartbeat gap is only evaluated Monday, when
-    # a fresh Monday heartbeat should already exist.
+    # Weekday-only (dow 1-5): no weekend fire → no weekend backstop, so the long
+    # Fri-morning→Mon-morning heartbeat gap is only evaluated Monday, when a
+    # fresh Monday heartbeat should already exist.
     - cron: "30 13 * * 1-5"   # ~9:30 AM EDT / 8:30 AM EST, Mon-Fri
     - cron: "30 15 * * 1-5"   # ~11:30 AM EDT / 10:30 AM EST, Mon-Fri
-    - cron: "30 23 * * 5"     # ~7:30 PM EDT / 6:30 PM EST, Friday wrap-up
   workflow_dispatch:
 
 # Serialize so overlapping late ticks don't both dispatch; the heartbeat
@@ -162,16 +158,11 @@ jobs:
           if [ -n "$created" ] && [ "$(TZ=America/New_York date -d "$created" +%F)" = "$today_et" ]; then
             echo "Today's heartbeat present ($created) — no recovery needed."; exit 0
           fi
-          # Give the MORNING fire (8 AM ET, Mon-Fri) its window before dispatching
-          # a recovery — wait past 10:00 ET. The dispatched fire's report window is
-          # inferred from the ET hour at dispatch (before noon = previous / prior
-          # business day; noon-on = current / same-day), so a late-morning recovery
-          # reports the prior day and an evening recovery (Friday, after a fully
-          # dead day) reports Friday itself. Racing a late cron is safe — the
-          # mailbox guard refuses a second full-distribution send regardless of
-          # which host got there first. (Friday's 4:30 PM wrap-up is non-critical:
-          # if only it was missed, the morning heartbeat is already present so no
-          # recovery fires, and Monday's morning fire reports Friday anyway.)
+          # Give the 8 AM ET fire its window before dispatching a recovery — wait
+          # past 10:00 ET. The dispatched fire always reports the prior business
+          # day (window=previous), matching the scheduled fire. Racing a late cron
+          # is safe — the mailbox guard refuses a second full-distribution send
+          # regardless of which host got there first.
           if [ "$hour_et" -lt 10 ]; then
             echo "Before 10:00 ET — leaving room for the morning fire."; exit 0
           fi
@@ -210,7 +201,7 @@ jobs:
             Actions tab for today's run + its artifacts
           - The job succeeded but its heartbeat dispatch step failed
           If the fire runs from the Cloud PC:
-          - Cloud PC asleep / network down at fire time (8 AM Mon-Fri / 4:30 PM Fri wrap-up ET)
+          - Cloud PC asleep / network down at fire time (8 AM Mon-Fri ET)
           - Cloud PC wrapper completed fire but heartbeat dispatch failed
             (gh CLI auth, PAT expired, network glitch)
           - Windows Task Scheduler missed the fire trigger

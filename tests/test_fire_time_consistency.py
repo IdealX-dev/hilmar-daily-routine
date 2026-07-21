@@ -1,32 +1,25 @@
 """Fire-time consistency guard — the daily fire and its monitors must agree.
 
 Root-cause regression test for the 2026-06-25 reconciliation. The fire time is
-declared in several places that must encode the SAME wall-clock ET times, or
+declared in several places that must encode the SAME wall-clock ET time, or
 monitoring false-alerts. Before this guard, the box silently fired at 10 AM
 while the Sentry monitor expected 6:07 PM — Sentry paged a false "missed
 check-in" every weekday.
 
-The schedule (Michael 2026-07-16/18: "monday through thursday at 8am; friday at
-430pm est … run a friday morning for thursday then friday night a wrap up … no
-weekend emails") is a MORNING fire Mon-Fri PLUS a Friday-evening wrap-up, no
-weekend:
+The schedule (Michael 2026-07-21: "get rid of the recaps and just do daily at
+8am est for the day before") is now ONE fire, no wrap-up, no weekend:
 
-  • MORNING  — 8:07 AM ET, Mon-Fri (reports the prior business day; Friday
-              morning reports Thursday and closes the old Thursday gap)
-  • FRIDAY   — 4:30 PM ET, Friday wrap-up (reports Friday itself; feeds the
-              Monday 5 AM weekly)
+  • MORNING — 8:07 AM ET, Mon-Fri (reports the PRIOR business day; Mon→Fri,
+             Tue→Mon, Wed→Tue, Thu→Wed, Fri→Thu)
 
 Surfaces checked (parsed textually — no project imports, no sentry_sdk dep):
-  1. Cloud-PC Task Scheduler triggers — deploy/setup_cloudpc.ps1  (both -At)
-  2. Sentry cron monitor             — scripts/sentry_setup.py    (Mon-Fri 8 AM
-     morning fire; the Friday 4:30 PM wrap-up is covered by liveness, not this
-     single-crontab monitor)
-  3. GitHub schedule                 — .github/workflows/daily.yml (2 DST crons
-     per fire time)
-  4. Liveness backstops              — .github/workflows/liveness.yml (each tick
-     must run AFTER its day's fire)
+  1. Cloud-PC Task Scheduler trigger — deploy/setup_cloudpc.ps1  (-At)
+  2. Sentry cron monitor            — scripts/sentry_setup.py    (Mon-Fri 8 AM)
+  3. GitHub schedule                — .github/workflows/daily.yml (2 DST crons)
+  4. Liveness backstops             — .github/workflows/liveness.yml (each tick
+     must run AFTER the fire)
 
-To change a fire time, update all surfaces AND the constants below.
+To change the fire time, update all surfaces AND the constant below.
 """
 from __future__ import annotations
 
@@ -35,9 +28,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The canonical fire times, in Eastern Time.
-MORNING_ET = (8, 7)     # 8:07 AM ET, Mon-Fri (dow 1-5)
-FRIDAY_ET = (16, 30)    # 4:30 PM ET, Friday wrap-up (dow 5)
+# The canonical fire time, in Eastern Time. ONE fire, Mon-Fri (dow 1-5).
+MORNING_ET = (8, 7)     # 8:07 AM ET, Mon-Fri
+FRIDAY_WRAPUP = (16, 30)  # the RETIRED 4:30 PM wrap-up — must NOT appear anywhere
 
 # ET → UTC offsets by DST season (ET is behind UTC).
 EDT_OFFSET = 4          # Mar–Nov: ET = UTC-4
@@ -62,7 +55,7 @@ def _utc_hour(et_hour: int, offset: int) -> int:
     return (et_hour + offset) % 24
 
 
-# --- Surface 1: Cloud-PC Task Scheduler triggers ----------------------------
+# --- Surface 1: Cloud-PC Task Scheduler trigger -----------------------------
 
 def _ps_triggers_hm() -> set[tuple[int, int]]:
     """Every `-At H:MM(am|pm)` trigger in setup_cloudpc.ps1, as 24h (hour, min)."""
@@ -78,15 +71,14 @@ def _ps_triggers_hm() -> set[tuple[int, int]]:
     return out
 
 
-def test_cloud_pc_has_both_fire_triggers():
+def test_cloud_pc_has_only_the_morning_fire_trigger():
     triggers = _ps_triggers_hm()
     assert MORNING_ET in triggers, (
-        f"Cloud-PC is missing the Mon-Thu {MORNING_ET[0]:02d}:{MORNING_ET[1]:02d} "
+        f"Cloud-PC is missing the Mon-Fri {MORNING_ET[0]:02d}:{MORNING_ET[1]:02d} "
         f"ET trigger; found {sorted(triggers)}"
     )
-    assert FRIDAY_ET in triggers, (
-        f"Cloud-PC is missing the Friday {FRIDAY_ET[0]:02d}:{FRIDAY_ET[1]:02d} "
-        f"ET trigger; found {sorted(triggers)}"
+    assert FRIDAY_WRAPUP not in triggers, (
+        "the Friday 4:30 PM wrap-up trigger is retired — it must not be on the box"
     )
 
 
@@ -111,16 +103,16 @@ def test_sentry_monitor_is_the_morning_fire_mon_fri():
         f"{MORNING_ET[0]:02d}:{MORNING_ET[1]:02d} ET; got {hour:02d}:{minute:02d}."
     )
     assert dow == "1-5", (
-        f"Sentry monitor must be Mon-Fri (dow 1-5) — the morning fire now runs "
-        f"Friday too; the 4:30 PM wrap-up is covered by liveness. Got dow={dow!r}."
+        f"Sentry monitor must be Mon-Fri (dow 1-5) — the daily fire runs every "
+        f"weekday morning. Got dow={dow!r}."
     )
 
 
 # --- Surface 3: GitHub daily.yml schedule (UTC, both DST seasons) ------------
 
-def test_daily_yml_crons_encode_both_fire_times_both_seasons():
+def test_daily_yml_encodes_the_morning_fire_both_seasons_and_no_wrapup():
     crons = _crons(_read(".github/workflows/daily.yml"))
-    # Morning: Mon-Fri (dow 1-5) at the UTC hours of 8:07 AM ET.
+    # Morning: Mon-Fri (dow 1-5) at the UTC hours of 8:07 AM ET, both seasons.
     morning = {(mi, hr) for (mi, hr, dow) in crons if dow == "1-5"}
     assert morning, "no Mon-Fri (dow 1-5) cron found in daily.yml"
     assert all(mi == MORNING_ET[1] for mi, _ in morning), (
@@ -130,24 +122,18 @@ def test_daily_yml_crons_encode_both_fire_times_both_seasons():
         _utc_hour(MORNING_ET[0], EDT_OFFSET), _utc_hour(MORNING_ET[0], EST_OFFSET)
     }, f"morning UTC hours {sorted(h for _, h in morning)} don't encode 8 AM ET both seasons"
 
-    # Friday: dow 5 at the UTC hours of 4:30 PM ET.
-    friday = {(mi, hr) for (mi, hr, dow) in crons if dow == "5"}
-    assert friday, "no Friday (dow 5) cron found in daily.yml"
-    assert all(mi == FRIDAY_ET[1] for mi, _ in friday), (
-        f"Friday crons must fire at minute :{FRIDAY_ET[1]:02d}, got {sorted(friday)}"
-    )
-    assert {hr for _, hr in friday} == {
-        _utc_hour(FRIDAY_ET[0], EDT_OFFSET), _utc_hour(FRIDAY_ET[0], EST_OFFSET)
-    }, f"Friday UTC hours {sorted(h for _, h in friday)} don't encode 4:30 PM ET both seasons"
+    # The retired Friday wrap-up (dow 5) must be GONE.
+    friday = [(mi, hr) for (mi, hr, dow) in crons if dow == "5"]
+    assert not friday, f"Friday wrap-up crons must be removed; found {sorted(friday)}"
 
 
-# --- Cross-surface: the box morning trigger == the Sentry monitor -----------
+# --- Cross-surface: the box trigger == the Sentry monitor -------------------
 
-def test_cloud_pc_morning_trigger_matches_sentry_monitor():
+def test_cloud_pc_trigger_matches_sentry_monitor():
     s_min, s_hour, _, _ = _sentry_cron_and_tz()
     assert MORNING_ET in _ps_triggers_hm(), "Cloud-PC morning trigger missing"
     assert (s_hour, s_min) == MORNING_ET, (
-        f"Sentry monitor {(s_hour, s_min)} must equal the morning fire {MORNING_ET} "
+        f"Sentry monitor {(s_hour, s_min)} must equal the fire {MORNING_ET} "
         "so the box's check-in lands in the monitor's expected slot."
     )
 
@@ -180,11 +166,10 @@ def test_weekly_summary_never_targets_the_client():
     )
 
 
-# --- Surface 4: liveness backstops must run AFTER each day's fire ------------
+# --- Surface 4: liveness backstops must run AFTER the fire -------------------
 
-def test_liveness_backstops_run_after_each_fire():
+def test_liveness_backstops_run_after_the_fire_and_no_weekend():
     crons = _crons(_read(".github/workflows/liveness.yml"))
-    # Mon-Thu backstops must be after the morning fire (both DST encodings).
     morning_fire_utc = max(
         _utc_hour(MORNING_ET[0], EDT_OFFSET), _utc_hour(MORNING_ET[0], EST_OFFSET)
     )
@@ -195,14 +180,6 @@ def test_liveness_backstops_run_after_each_fire():
             f"Mon-Fri liveness cron at {hr}:00 UTC races the morning fire "
             f"({morning_fire_utc}:00 UTC latest); move it later."
         )
-    # Friday backstop must be after the 4:30 PM fire (both DST encodings).
-    friday_fire_utc = max(
-        _utc_hour(FRIDAY_ET[0], EDT_OFFSET), _utc_hour(FRIDAY_ET[0], EST_OFFSET)
-    )
+    # No Friday-only (dow 5) evening backstop — the wrap-up is retired.
     fri = [hr for (_, hr, dow) in crons if dow == "5"]
-    assert fri, "no Friday liveness cron found"
-    for hr in fri:
-        assert hr >= friday_fire_utc, (
-            f"Friday liveness cron at {hr}:00 UTC races the 4:30 PM fire "
-            f"({friday_fire_utc}:00 UTC latest); move it later."
-        )
+    assert not fri, f"Friday-evening liveness backstop must be removed; found {fri}"

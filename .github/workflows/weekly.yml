@@ -7,10 +7,11 @@ name: Weekly exec summary
 # analytics (win rates, carrier scoreboard, Q&L negotiation candidates) and
 # NEVER goes to the client — there is no client recipient in this workflow.
 #
-# Separate from daily.yml on purpose: the daily fire is a Mon-Fri 8 AM morning
-# fire plus a Fri 4:30 PM wrap-up; this is its own cadence + deliverable.
-# Friday's 4:30 PM wrap-up captures Friday's data (window=current), so by Monday
-# the previous week is complete for this summary.
+# Separate from daily.yml on purpose: the daily fire is a single Mon-Fri 8 AM
+# fire (2026-07-21 — the Friday wrap-up was removed); this is its own cadence +
+# deliverable. It reads tracking-data-v2.json from the blob store, which the
+# daily fires keep current (each ingests the last 14 days), so the previous
+# Mon-Fri week is present by the time this runs.
 #
 # DST: 5:07 AM ET = 09:07 UTC (EDT) / 10:07 UTC (EST); the gate proceeds on the
 # one matching the current ET offset so DST never doubles. dow 1 = Monday.
