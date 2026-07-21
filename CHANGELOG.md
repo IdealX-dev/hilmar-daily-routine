@@ -3,6 +3,25 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-21 — Post-#111 review fixes: won-later orphan + two label/comment nits
+
+Automated review on #111 (post-merge) found one real regression + two nits; all
+three verified and fixed:
+1. 🔴 A row REQUESTED on the report day whose →WIN transition is dated a
+   DIFFERENT day (asked late Monday, confirmed Tuesday morning) vanished from
+   every KPI bucket while still counting in total. Fix: surfaced as
+   "booked a later day" on the Requests tile (new won_later field). The
+   reviewer's own suggested fix (credit it to the request day's Won tile) was
+   REJECTED — it double-counts the win across two day tiles and inflates the
+   7-day sparkline; attribution stays exactly-once on the win's event day.
+   Tests lock exactly-once + no-orphan.
+2. Win-rate explainer said "That day: <period totals>" — period numbers labeled
+   as one day. Now "This period:".
+3. daily.yml env-block comment still described the deleted Friday-4:30 window
+   branching. Rewritten: gate always emits previous.
+
+Suite 1709 passed.
+
 ## 2026-07-21 — Day-KPI "Won" counts by win-event date (sent-report contradiction)
 
 Michael, on the Jul-21 sent report (reporting Mon Jul 20): "firstly data

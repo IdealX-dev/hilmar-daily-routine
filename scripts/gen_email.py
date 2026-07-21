@@ -911,6 +911,16 @@ def _today_summary(requests, report_date=None):
     day_wins += [r for r in day_reqs
                  if r.get("status") == "WIN" and not _has_dated_win(r)]
 
+    # Rows REQUESTED this day whose win landed on a DIFFERENT day (e.g. asked
+    # late Monday, booking confirmed Tuesday morning before the fire). The win
+    # itself is credited to ITS day's tile — counting it here too would double
+    # count it across day tiles and inflate the 7-day sparkline — but the row
+    # still belongs to this day's intake, so it's surfaced as "booked a later
+    # day" rather than silently vanishing from every bucket (post-#111 review
+    # finding: total exceeded the bucket sum for exactly this shape).
+    won_later = [r for r in day_reqs
+                 if r.get("status") == "WIN" and _has_dated_win(r) and not _won_on(r)]
+
     return {
         "wins":         len(day_wins),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
@@ -918,6 +928,7 @@ def _today_summary(requests, report_date=None):
         "quoted_lost":  sum(1 for r in day_reqs if r.get("status") == "LOSS" and r.get("quoted")),
         "not_quoted":   sum(1 for r in day_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
         "pending":      sum(1 for r in day_reqs if r.get("status") == "PENDING"),
+        "won_later":    len(won_later),
         "total":        len(day_reqs),
         "as_of_label":  f"{rd_iso} (ET)",
         "report_date":  rd_iso,
@@ -1013,7 +1024,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
-    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=f"{day.get('total',0)} entries")}
+    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=(f"{day.get('total',0)} entries" + (f" · {day['won_later']} booked a later day" if day.get('won_later') else "")))}
     {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU · booked that day")}
     {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%", sublabel="OL quoted; not booked")}
     {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%", sublabel="OL did not respond")}
@@ -1053,7 +1064,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   Q&amp;L are the times Lonny picked a competitor). NQ (OL never gave a rate)
   is NOT in the denominator — we never actually competed on those, so they
   show as a separate "No-Response Rate" KPI. Pending (not decided yet) is
-  also excluded. That day: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
+  also excluded. This period: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
 </div>
 """
 
