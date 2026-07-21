@@ -3,6 +3,35 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-21 — Day-KPI "Won" counts by win-event date (sent-report contradiction)
+
+Michael, on the Jul-21 sent report (reporting Mon Jul 20): "firstly data
+missing … NO.. CHECK YOUR REPORT." Verified from the actual sent email: "What
+Happened — STATUS CHANGES" showed 2 wins on Jul 20 (Jul-16 request's MDOLX260963
+booking confirmed + a same-day win via Lonny reply), while the day KPI tile said
+"0 Won — Mon Jul 20 / 0 TEU won" — the report contradicted itself.
+
+Root cause: gen_email._today_summary bucketed wins by request_date == report
+day, so a win that HAPPENED on the report day for an older request was invisible
+in the day tile (and in the 7-day win sparkline).
+
+Fix: wins (and TEU won) now count →WIN status_history transitions dated the
+report day — the same source as the Status Changes section, so the two can no
+longer disagree. WIN rows with no dated →WIN transition fall back to
+request_date bucketing (legacy rows), attributed exactly once. Requests / Q&L /
+NQ / Pending stay request-date-bucketed (that day's intake by current status);
+the KPI sub-line states the split. New tests/test_day_kpi_win_event_date.py
+reproduces the Jul-20 shape. Suite 1707 passed.
+
+NOTE: the Jul-21 send also still showed the old "today" labels — it fired at
+07:22 ET, before #110 (prior-business-day labels) merged. Next fire carries the
+new copy.
+
+OPEN: the same sent report lists the won 2-20' HCMC row in "PENDING HILMAR"
+while its win shows in Status Changes — suggests a duplicate row (request row
+still PENDING + standalone WIN row) in production data. Needs the live
+tracking-data-v2.json to confirm; not reproducible from this clone.
+
 ## 2026-07-21 — One daily fire at 8 AM for the prior day; label KPIs "prior business day"
 
 Michael: "get rid of the recaps and just do daily at 8am est for the day before

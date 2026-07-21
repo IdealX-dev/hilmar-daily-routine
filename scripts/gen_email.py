@@ -870,19 +870,51 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
 
 
 def _today_summary(requests, report_date=None):
-    """Compute wins/losses/etc for the report date (= TODAY's now-complete
-    business day for the ~6 PM ET evening fire). The function name `_today_summary`
-    is now literally accurate again — see _report_date for rationale.
+    """Compute the report day's KPI buckets.
+
+    WINS COUNT BY EVENT DATE, not request date (Michael 2026-07-21 "firstly
+    data missing … CHECK YOUR REPORT"): the Jul-20 report showed 2 wins in
+    "What Happened" (a Jul-16 request booking-confirmed on Jul 20, plus a
+    same-day win) while the day KPI said "0 Won" — because this bucketed by
+    request_date == report day, so a win that HAPPENED on the report day for
+    an older request was invisible. A win belongs to the day Lonny booked it:
+    count →WIN status_history transitions dated the report day, falling back
+    to request_date for WIN rows with no dated →WIN transition (legacy rows),
+    deduped. This matches the "What Happened — STATUS CHANGES" section, so the
+    email can no longer contradict itself.
+
+    Requests / Q&L / NQ / Pending stay request-date-bucketed: "Requests" means
+    RECEIVED that day, and pending/loss states are the CURRENT status of that
+    day's intake. The reconciliation identity therefore covers those four; the
+    Won tile is event-dated and labeled as such by the caller.
     """
     if report_date is None:
         report_date = _report_date()
     rd_iso = report_date.isoformat()
     day_reqs = [r for r in requests
                 if (r.get("request_date") == rd_iso) or (r.get("date") == rd_iso)]
+
+    def _won_on(r):
+        """True if this row transitioned →WIN on the report day."""
+        for h in (r.get("status_history") or []):
+            if h.get("to") == "WIN" and _iso_date(h.get("at")) == report_date:
+                return True
+        return False
+
+    def _has_dated_win(r):
+        return any(h.get("to") == "WIN" and _iso_date(h.get("at"))
+                   for h in (r.get("status_history") or []))
+
+    day_wins = [r for r in requests if r.get("status") == "WIN" and _won_on(r)]
+    # Legacy fallback: WIN rows with no dated →WIN transition count under their
+    # request_date (the old behavior), so they are attributed exactly once.
+    day_wins += [r for r in day_reqs
+                 if r.get("status") == "WIN" and not _has_dated_win(r)]
+
     return {
-        "wins":         sum(1 for r in day_reqs if r.get("status") == "WIN"),
+        "wins":         len(day_wins),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
-                            for r in day_reqs if r.get("status") == "WIN"),
+                            for r in day_wins),
         "quoted_lost":  sum(1 for r in day_reqs if r.get("status") == "LOSS" and r.get("quoted")),
         "not_quoted":   sum(1 for r in day_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
         "pending":      sum(1 for r in day_reqs if r.get("status") == "PENDING"),
@@ -978,11 +1010,11 @@ def _kpi_block_html(summary, requests=None, report_date=None):
 
     return f"""
 <h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. Math reconciliation: Requests = Won + Quoted&Lost + Not Quoted + Pending.</p>
+<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
     {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=f"{day.get('total',0)} entries")}
-    {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU won")}
+    {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU · booked that day")}
     {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%", sublabel="OL quoted; not booked")}
     {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%", sublabel="OL did not respond")}
     {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel=f"{day_pend_ol} Pending OL · {day_pend_hil} Pending Hilmar")}
