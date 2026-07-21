@@ -33,6 +33,41 @@ ingest and is unrelated to who receives the report. QC-022 already allows 8-12
 recipients so 9 is valid (its "exactly 10" comment was stale and is corrected).
 README + a new `tests/test_distribution_recipients.py` lock the change.
 
+## 2026-07-21 — Integrity gate: tell a fresh send from an idempotency-suppressed no-send
+
+Michael: "no daily tracker went out yesterday." Diagnosed from the run logs:
+Monday Jul 20's fire ran clean but shipped NOTHING — it reported Friday Jul 17
+(window=previous), found `sent-2026-07-17.flag` (written 2026-07-18 09:45 ET by a
+stray weekend fire — the old "8 AM every day" schedule was briefly still live
+that Saturday), and idempotency-suppressed the send. Yet
+`assert_fire_integrity` printed "✅ fresh report shipped" and the heartbeat
+reported success — a silent no-send read as green.
+
+Root cause: the gate only proved the report-day sent-flag EXISTS, not that THIS
+fire wrote it. A flag from any earlier fire satisfied it.
+
+Fix (`deploy/assert_fire_integrity.py`):
+- New `send_freshness(today)` parses the flag's `Sent <date> …` lines and
+  classifies the fire as **fresh** (a send dated today), **suppressed** (flag
+  exists but its newest send predates today → shipped nothing new), or
+  **absent** (no flag — still a hard violation, unchanged).
+- `main()` now prints the honest outcome: a suppressed no-send reads
+  "ℹ️ Fire ran clean but shipped NOTHING NEW …", never "fresh report shipped".
+- Suppression is NOT failed — it's legitimate (e.g. Monday re-reporting a Friday
+  already sent by the wrap-up) — so it doesn't false-alarm; it's just truthful.
+- `check_integrity`'s contract is unchanged; new `tests/test_fire_integrity_freshness.py`
+  reproduces the Jul-20 case. Suite 1702 passed.
+
+Also: forced a production-fire on 2026-07-21 07:22 ET to ship Monday's tracker
+(reported Monday, wrote a fresh `sent-2026-07-20.flag`, full 9-recipient list +
+client copy).
+
+OPEN — flagged to Michael, needs a decision (not code-blocked): under the Friday
+4:30 PM wrap-up design, Monday's 8 AM fire reports Friday, which the wrap-up
+already sent Friday evening — so **Monday morning is structurally a no-send every
+week**. If a Monday recap of Friday is wanted, Monday must force past the
+wrap-up flag (a deliberate re-send).
+
 ## 2026-07-18 — Close the Thursday gap: add a Friday morning fire
 
 Michael, on the coverage note in the prior entry: "no incorrect — run a friday
