@@ -43,33 +43,23 @@ name: Daily
 #      BOTH send to the client (see docs/MOVE-OFF-CLOUDPC.md).
 
 on:
-  # Michael 2026-07-16/18: "monday through thursday at 8am; friday at 430pm est
-  # … run a friday morning for thursday then friday night a wrap up … no weekend
-  # emails." A MORNING fire Mon-Fri PLUS a Friday-evening wrap-up, NO weekend:
-  #   • Mon-Fri ~8:07 AM ET — reports the PRIOR business day (window=previous:
-  #     Mon→Fri, Tue→Mon, Wed→Tue, Thu→Wed, Fri→Thu). The Friday morning fire
-  #     closes what used to be a Thursday coverage gap.
-  #   • Fri ~4:30 PM ET — a same-day WRAP-UP of Friday itself (window=current),
-  #     so the week's final day is captured before Monday's 5 AM weekly exec
-  #     summary (see weekly.yml). (Monday's morning fire independently reports
-  #     Friday as its prior business day; the wrap-up is the intended
-  #     Friday-evening close so nothing waits over the weekend.)
-  # GitHub cron is runner-backed (doesn't depend on the Cloud PC) and can land
-  # 2-4h late — fine for both a morning fire (prior day is complete) and the
-  # Friday wrap-up (Friday's PT day is winding down at 1:30 PM PT).
+  # Michael 2026-07-21: "get rid of the recaps and just do daily at 8am est for
+  # the day before." ONE fire: Mon-Fri ~8:07 AM ET, each reporting the PRIOR
+  # business day (window=previous: Mon→Fri, Tue→Mon, Wed→Tue, Thu→Wed, Fri→Thu).
+  # No Friday wrap-up, no weekend fire — every business day is reported exactly
+  # once, the next business morning. The email labels its KPIs "for <prior day>".
+  # Supersedes the 2026-07-18 morning+wrap-up cadence (which left Monday morning
+  # structurally empty, since the Friday wrap-up pre-covered Friday).
   #
-  # DST: each fire time has a cron for BOTH UTC encodings; the gate proceeds on
-  # exactly the one matching the current ET offset, so DST never doubles or
-  # skips. Morning = dow 1-5; Friday wrap-up = dow 5. The REPORT WINDOW keys off
-  # the fire TIME, not the day: morning=previous, evening=current — so Friday's
-  # two fires resolve to previous @ 8 AM and current @ 4:30 PM.
-  #   8 AM ET  = 12 UTC (EDT) / 13 UTC (EST)
-  #   4:30 PM ET = 20:30 UTC (EDT) / 21:30 UTC (EST)
+  # GitHub cron is runner-backed (doesn't depend on the Cloud PC) and can land
+  # 2-4h late — fine for a morning fire, since the prior day is already complete.
+  #
+  # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
+  # the one matching the current ET offset, so DST never doubles or skips.
+  #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
   schedule:
     - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
     - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
-    - cron: "30 20 * * 5"     # ~4:30 PM EDT, Friday wrap-up
-    - cron: "30 21 * * 5"     # ~4:30 PM EST, Friday wrap-up (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -109,7 +99,7 @@ env:
 
 jobs:
   gate:
-    name: Schedule gate (8 AM Mon-Fri / 4:30 PM Fri wrap-up ET)
+    name: Schedule gate (8 AM Mon-Fri ET, reports the prior business day)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
@@ -117,41 +107,26 @@ jobs:
       window: ${{ steps.decide.outputs.window }}
     steps:
       - id: decide
-        # A scheduled tick proceeds iff its UTC HOUR matches this ET DST
-        # season for its fire time — 8 AM ET (12 EDT / 13 EST) on the Mon-Fri
-        # morning crons, 4:30 PM ET (20 EDT / 21 EST) on the Friday wrap-up
-        # crons. Keying on offset (not wall-clock now) means GitHub's multi-hour
-        # cron lateness can never skip a day or run the wrong DST set.
-        #
-        # It also emits the REPORT WINDOW, keyed off the fire TIME (not the day):
-        # the MORNING fire reports the prior business day (window=previous); the
-        # Friday 4:30 PM WRAP-UP reports Friday itself (window=current). Friday
-        # has one of each, so day-of-week alone can't decide — the cron's hour
-        # (or, for a manual dispatch, the current ET hour) does.
+        # The daily fire ALWAYS reports the prior business day (window=previous)
+        # — there is no evening wrap-up anymore. A scheduled tick proceeds iff
+        # its UTC HOUR matches the current ET DST season (12 EDT / 13 EST);
+        # keying on offset, not wall-clock, so GitHub's multi-hour cron lateness
+        # can never skip a day or run the wrong DST set. Manual dispatch always
+        # proceeds (and also reports the prior business day).
         run: |
+          echo "window=previous" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" != "schedule" ]; then
-            # Manual dispatch: no cron hour — infer from the current ET hour.
-            # Before noon behaves like the morning fire (previous); noon-on
-            # behaves like the evening wrap-up (current).
-            et_hour=$(TZ=America/New_York date +%-H)
-            if [ "$et_hour" -lt 12 ]; then window="previous"; else window="current"; fi
-            echo "Manual dispatch — gate open (ET hour=$et_hour → window=$window)."
-            echo "window=$window" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — gate open (window=previous)."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           offset=$(TZ=America/New_York date +%z)   # -0400 in EDT, -0500 in EST
           cron="${{ github.event.schedule }}"
           cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * D"
-          # Window by fire time: morning crons (12/13 UTC) = previous; the
-          # Friday wrap-up crons (20/21 UTC) = current.
-          window="previous"
-          if [ "$cron_hour" = "20" ] || [ "$cron_hour" = "21" ]; then window="current"; fi
           proceed=false
-          if [ "$offset" = "-0400" ] && { [ "$cron_hour" = "12" ] || [ "$cron_hour" = "20" ]; }; then proceed=true; fi
-          if [ "$offset" = "-0500" ] && { [ "$cron_hour" = "13" ] || [ "$cron_hour" = "21" ]; }; then proceed=true; fi
-          echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed window=$window"
-          echo "window=$window" >> "$GITHUB_OUTPUT"
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "12" ]; then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "13" ]; then proceed=true; fi
+          echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed window=previous"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 
   audit:

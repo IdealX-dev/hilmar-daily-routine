@@ -1,12 +1,11 @@
 @echo off
 REM run_daily_laptop.cmd — Pinned Hilmar daily run for Cloud PC + MBD-TRAVEL.
 REM
-REM Fired by Windows Task Scheduler Mon-Fri 8:07 AM ET + Fri 4:30 PM ET
-REM (Michael 2026-07-16/18: "monday through thursday at 8am; friday at 430pm
-REM est … run a friday morning for thursday then friday night a wrap up … no
-REM weekend emails"). The morning fire (Mon-Fri) reports the PRIOR business day;
-REM Friday's 4:30 PM wrap-up reports Friday itself. The report window is set per
-REM TIME OF DAY below so this fallback host matches the daily.yml gate.
+REM Fired by Windows Task Scheduler Mon-Fri 8:07 AM ET (Michael 2026-07-21: "get
+REM rid of the recaps and just do daily at 8am est for the day before"). ONE fire
+REM per business day; it reports the PRIOR business day (window=previous). No
+REM wrap-up, no weekend fire. The report window is fixed to previous below so
+REM this fallback host matches the daily.yml gate.
 REM
 REM Daily flow:
 REM   1. refresh_stage.py — pull new Lonny↔OL emails + HILMAR booking
@@ -38,14 +37,10 @@ REM interactive device-code prompt until Task Scheduler kills the job (a silent
 REM stop). outlook_send honors this; GH Actions already sets it.
 set HILMAR_NONINTERACTIVE=1
 
-REM Report window by TIME OF DAY (2026-07-18), matching daily.yml's gate: the
-REM MORNING fire (8 AM ET, Mon-Fri) reports the PRIOR business day
-REM (window=previous); the Friday 4:30 PM WRAP-UP reports Friday itself
-REM (window=current). Friday has BOTH fires, so the HOUR — not the weekday —
-REM decides: before noon ET = previous, noon-on = current. (Get-Date).Hour is
-REM 0-23 local time; the box runs on ET.
-for /f %%h in ('powershell -NoProfile -Command "(Get-Date).Hour"') do set HOUR=%%h
-if %HOUR% LSS 12 (set HILMAR_REPORT_WINDOW=previous) else (set HILMAR_REPORT_WINDOW=current)
+REM Report window (2026-07-21), matching daily.yml's gate: the single 8 AM ET
+REM fire always reports the PRIOR business day. No wrap-up, so no time-of-day
+REM branching — the window is fixed to previous.
+set HILMAR_REPORT_WINDOW=previous
 set LOG=%ROOT%\reports\run-log.txt
 
 REM Never let git block the daily fire on an interactive credential prompt.

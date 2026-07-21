@@ -181,14 +181,11 @@ if (-not (Test-Path $wrapperPath)) {
 }
 $TaskName = "Hilmar Daily Tracker - CloudPC"
 $action = New-ScheduledTaskAction -Execute $wrapperPath
-# Two triggers (2026-07-18): a MORNING fire Mon-Fri 8:07 AM ET (report prior
-# business day - Friday morning reports Thursday, closing the old Thursday gap) +
-# a Friday 4:30 PM ET wrap-up (report Friday itself). No weekend trigger. The
-# wrapper picks HILMAR_REPORT_WINDOW by TIME OF DAY (before noon=previous,
-# noon-on=current) to match daily.yml - so Friday's two fires resolve correctly.
+# One trigger (2026-07-21): a single fire Mon-Fri 8:07 AM ET that reports the
+# PRIOR business day. No wrap-up, no weekend trigger. The wrapper always sets
+# HILMAR_REPORT_WINDOW=previous to match daily.yml's gate.
 $triggerMorning = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 8:07am
-$triggerFriday  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Friday -At 4:30pm
-$trigger = @($triggerMorning, $triggerFriday)
+$trigger = @($triggerMorning)
 # -WakeToRun nudges the box if it ever sleeps at fire time.
 # ExecutionTimeLimit raised 15 -> 50 min (2026-06-26): run_pipeline's per-step
 # timeouts alone sum to ~25 min worst case, plus refresh_stage + 2x outlook_send
@@ -208,7 +205,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 50) `
     -MultipleInstances IgnoreNew `
     -RestartCount 0
-$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC Mon-Fri 8:07 AM ET + Fri 4:30 PM ET whether logged on or not (S4U). The morning fire (Mon-Fri) reports the prior business day (Friday morning reports Thursday); Friday 4:30 PM wraps up Friday itself. No weekend fire. Aligned to daily.yml + the Sentry cron monitor."
+$desc = "Hilmar daily shipment-tracker email - runs on Cloud PC Mon-Fri 8:07 AM ET whether logged on or not (S4U). Reports the prior business day (Mon->Fri, Tue->Mon, ... Fri->Thu). No wrap-up, no weekend fire. Aligned to daily.yml + the Sentry cron monitor."
 # Register to run WHETHER OR NOT THE USER IS LOGGED ON (S4U). Root cause of the
 # 2026-06 silent miss: an INTERACTIVE task quietly skipped 10 straight fires
 # once the RDP session stopped staying logged on. S4U needs an ELEVATED shell;
@@ -237,7 +234,7 @@ Write-Host "=== Setup complete ===" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "What this Cloud PC will do:"
 Write-Host "  Wake:  N/A - always on"
-Write-Host "  When:  8:07 AM ET Mon-Fri (reports prior business day) + 4:30 PM ET Fri wrap-up (reports Friday)"
+Write-Host "  When:  8:07 AM ET Mon-Fri (reports the prior business day)"
 Write-Host "  What:  refresh_stage.py, run_pipeline.py, outlook_send.py daily"
 Write-Host "  To:    Currently test_list (Michael only) until wrapper flipped"
 Write-Host ""

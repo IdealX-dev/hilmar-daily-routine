@@ -276,7 +276,7 @@ def _table(headers, rows):
         body = (
             f'<tr><td colspan="{len(headers)}" '
             f'{_TD_STYLE.replace("text-align:left", "text-align:center")}>'
-            f'<em style="color:#64748b">None today.</em></td></tr>'
+            f'<em style="color:#64748b">None that day.</em></td></tr>'
         )
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
@@ -318,9 +318,9 @@ def _kpi_strip(s):
     return f"""
 <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:2px 0 8px">
   <tr>
-    {_kpi_card(len(s["requests"]), "Requests received today", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
-    {_kpi_card(len(s["quotes"]), "Quotes delivered today", "#6366f1", "25%", sublabel=f"{_teu_sum(s['quotes'])} TEU")}
-    {_kpi_card(len(s["bookings"]), "Bookings confirmed today", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
+    {_kpi_card(len(s["requests"]), "Requests received", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
+    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=f"{_teu_sum(s['quotes'])} TEU")}
+    {_kpi_card(len(s["bookings"]), "Bookings confirmed", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
     {_kpi_card(len(s["awaiting"]), "Awaiting your decision", "#f59e0b", "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
   </tr>
 </table>
@@ -415,7 +415,7 @@ def _header_html(report_label, updated_label):
   <div style="padding:16px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:21px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">Daily Shipment Update — Hilmar Ingredients</h1>
-    <p style="margin:4px 0 0;font-size:13px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Prepared by OL-USA · {_esc(report_label)} · Updated {_esc(updated_label)}</p>
+    <p style="margin:4px 0 0;font-size:13px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Prepared by OL-USA · Activity for {_esc(report_label)} (prior business day) · Updated {_esc(updated_label)}</p>
   </div>
   <div class="hx-pad" style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
@@ -493,11 +493,11 @@ def build_body(data, cfg, now=None):
         ] for r in active],
     )
 
-    # 4. Requests received today — acknowledgment of TODAY's RFQs.
+    # 4. Requests received — acknowledgment of the report day's RFQs.
     html += _section_or_line(
-        "Requests received today",
-        "Rate requests we received from your team today — all acknowledged and being worked.",
-        "No new rate requests today.",
+        "Requests received",
+        "Rate requests we received from your team that day — all acknowledged and being worked.",
+        "No new rate requests that day.",
         ["Lane", "Equipment", "TEU", "Product", "Temp", "Requested ETA", "Received (PT)"],
         [[
             _lane(r),
@@ -510,11 +510,11 @@ def build_body(data, cfg, now=None):
         ] for r in s["requests"]],
     )
 
-    # 5. Quotes provided today — TODAY's rate responses.
+    # 5. Quotes provided — the report day's rate responses.
     html += _section_or_line(
-        "Quotes provided today",
-        "Rates our booking team sent you today.",
-        "No new quotes today.",
+        "Quotes provided",
+        "Rates our booking team sent you that day.",
+        "No new quotes that day.",
         ["Lane", "Equipment", "TEU", "Carrier", "Rate ($/container)",
          "Quoted at (ET)", "ETD offered", "ETA offered"],
         [[
@@ -529,11 +529,11 @@ def build_body(data, cfg, now=None):
         ] for r in s["quotes"]],
     )
 
-    # 6. Bookings confirmed today — →WIN transitions on the report day.
+    # 6. Bookings confirmed — →WIN transitions on the report day.
     html += _section_or_line(
-        "Bookings confirmed today",
-        "Shipments confirmed today. Booking references are listed once carrier confirmation arrives.",
-        "No new bookings confirmed today.",
+        "Bookings confirmed",
+        "Shipments confirmed that day. Booking references are listed once carrier confirmation arrives.",
+        "No new bookings confirmed that day.",
         ["Lane", "Equipment / TEU", "Carrier", "Booking ref", "ETD", "ETA"],
         [[
             _lane(r),

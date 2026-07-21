@@ -95,7 +95,7 @@ SCHEDULER itself breaks (Cloud PC offline, task scheduler crashes,
 wrapper crashes before any Python code runs). Plain error-event capture
 can't catch this because no code is running to report.
 
-**Schedule:** `7 8 * * 1-5` America/New_York (Mon-Fri 8:07 AM ET morning fire; reports the prior business day — Friday morning reports Thursday). Friday's 4:30 PM wrap-up is covered by liveness, not this single-crontab monitor.
+**Schedule:** `7 8 * * 1-5` America/New_York (Mon-Fri 8:07 AM ET; the single daily fire, reporting the prior business day — Mon→Fri, Tue→Mon, … Fri→Thu). No wrap-up, no weekend fire.
 **Margin:** 290 min — alert if the start check-in doesn't arrive within 290 min of the scheduled fire (8:07 AM + 290 = ~12:57 PM ET). The wide margin absorbs GitHub-cron lateness (observed 30 min–4.5h) plus the full late-morning liveness-backstop window, so Sentry only pages when the pipeline truly never ran all day.
 **Max runtime:** 60 min — alert if pipeline runs >60 min (typical is 30-60s)
 

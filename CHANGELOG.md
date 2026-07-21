@@ -3,6 +3,50 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-21 — One daily fire at 8 AM for the prior day; label KPIs "prior business day"
+
+Michael: "get rid of the recaps and just do daily at 8am est for the day before
+and indicate the stats and kpis are for day before." Also: "throughout the report
+you show the word today when it was actually yesterday."
+
+SCHEDULE — collapsed to a SINGLE fire (supersedes the 2026-07-18 morning +
+Friday-wrap-up cadence, which left Monday morning structurally empty):
+- daily.yml: one fire, Mon-Fri ~8:07 AM ET (`7 12`/`7 13 * * 1-5`), always
+  window=previous. The Friday 4:30 PM wrap-up crons + the gate's fire-time
+  window branching are removed; the gate now always emits window=previous.
+- Coverage is uniform and gap-free: every business day is reported exactly once,
+  the next business morning (Mon→Fri, Tue→Mon, Wed→Tue, Thu→Wed, Fri→Thu). No
+  more Monday-empty, no double-report.
+- liveness.yml: dropped the Friday ~7:30 PM backstop; Mon-Fri ~9:30/11:30 AM
+  backstops only; recovery always dispatches window=previous.
+- Cloud PC: setup_cloudpc.ps1 back to ONE 8:07 AM Mon-Fri trigger;
+  run_daily_laptop.cmd fixes HILMAR_REPORT_WINDOW=previous (no time-of-day
+  branch). Sentry monitor unchanged (already `7 8 * * 1-5`).
+
+LABELS — the report now says the KPIs are for the prior day, not "today":
+- Staff email (gen_email.py): header sub-line "Reporting <day> — the prior
+  business day"; "What Happened" + KPI sub-lines reworded off "today"; stale
+  ~6 PM/"today" copy corrected; _report_date docstring rewritten (window=previous).
+- Client email (gen_client_email.py): header "Activity for <day> (prior business
+  day)"; KPI tiles + section titles dropped the false "today" ("Requests
+  received", "Quotes delivered", "Bookings confirmed"); empty-state lines say
+  "that day". Verified end-to-end: a Tuesday fire subjects/labels Monday.
+
+Tests: fire-time-consistency rewritten for one fire (asserts the wrap-up is
+GONE everywhere); cloud-PC trigger, liveness wiring, client-email label tests
+updated. Full suite 1702 passed; ruff clean.
+
+OPEN — flagged to Michael:
+1. "Data missing" (screenshot of the client email): could not determine the
+   specific missing shipment from the crop + no production data in this clone.
+   Most likely cause is the client `_lane_resolved` filter, which silently drops
+   any booking whose lane didn't parse (2026-07-14 "client sees only resolved
+   shipments"). Need the specific shipment to confirm.
+2. Weekly exec summary (Mon 5 AM) timing: with the Friday wrap-up gone, Friday's
+   full PT-day activity isn't ingested until Monday's 8 AM fire — AFTER the
+   5 AM weekly. The weekly may undercount Friday. Options: move the weekly later
+   Monday, or have it refresh before building. Left as-is pending a decision.
+
 ## 2026-07-20 — Weekly "Carrier of the Week" bug + remove Caren from distribution
 
 Two report fixes from Michael's review of the Jul 20 weekly summary.
