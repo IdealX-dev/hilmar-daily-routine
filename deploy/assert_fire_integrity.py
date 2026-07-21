@@ -35,6 +35,7 @@ artifacts are a large step up from "reached the last line."
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -118,6 +119,51 @@ def check_integrity(*, pipeline_rc: int, require_send: bool = True,
     return violations
 
 
+def _flag_entry_dates(flag_path: Path) -> list[str]:
+    """The ET dates recorded in a sent-*.flag, oldest→newest. Each send appends
+    a line like: 'Sent 2026-07-18 09:45 ET req=… to=N recipient(s)'."""
+    try:
+        text = flag_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+    return [m.group(1) for m in
+            re.finditer(r"(?m)^\s*Sent\s+(\d{4}-\d{2}-\d{2})\b", text)]
+
+
+def send_freshness(today: str, reports: Path = REPORTS) -> tuple[str, str]:
+    """Did THIS fire actually ship, or was it idempotency-suppressed?
+
+    check_integrity only proves a sent-flag EXISTS — but a flag written by an
+    EARLIER fire (a stray weekend run, or Friday's 4:30 PM wrap-up that a Monday
+    fire then re-reports) satisfies it, so a fire that shipped NOTHING new read
+    as "fresh report shipped." That is the blind spot behind Michael's 2026-07-20
+    "no daily tracker went out yesterday": Monday's fire found Saturday's
+    sent-2026-07-17.flag and no-oped, yet the gate reported success.
+
+    Returns (status, detail):
+      "fresh"      — the report-day flag has a send dated `today` (this fire's
+                     calendar day): a real send happened this run.
+      "suppressed" — the flag exists but its newest send predates today: THIS
+                     fire shipped nothing new (the report day was already
+                     covered). Not a failure — but must not read as "shipped."
+      "absent"     — no flag at all (check_integrity already flags this as a
+                     hard violation).
+    """
+    _fd = _flag_day(today)
+    for d in (_fd, today):
+        fp = reports / f"sent-{d}.flag"
+        if fp.exists():
+            dates = _flag_entry_dates(fp)
+            if today in dates:
+                return "fresh", f"sent-{d}.flag records a send dated {today}"
+            newest = dates[-1] if dates else "unknown"
+            return "suppressed", (
+                f"sent-{d}.flag exists but its newest send is {newest}, not "
+                f"{today} — this fire shipped nothing new (report day already "
+                f"covered)")
+    return "absent", f"sent-{_fd}.flag absent"
+
+
 def check_warnings(*, secrets: Path = SECRETS) -> list[str]:
     """Return non-gating warnings (empty == nothing to surface). These are NOT
     delivery-proof violations — they must never drive the exit code or the
@@ -152,7 +198,21 @@ def main() -> int:
     warnings = check_warnings()
 
     if not violations:
-        print(f"✅ Fire integrity OK — fresh report shipped ({args.date or _et_today()})")
+        _today = args.date or _et_today()
+        # Honesty gate (2026-07-21): a passing check means the report-day flag
+        # EXISTS — not necessarily that THIS fire shipped it. Distinguish a fresh
+        # send from an idempotency-suppressed no-send so a silent no-send can
+        # never again print "fresh report shipped." Suppression is legitimate
+        # (e.g. Monday re-reporting a Friday already sent) so it is NOT a
+        # failure — just reported truthfully.
+        if not args.no_require_send:
+            _status, _detail = send_freshness(_today)
+            if _status == "suppressed":
+                print(f"ℹ️  Fire ran clean but shipped NOTHING NEW — {_detail}.")
+            else:
+                print(f"✅ Fire integrity OK — fresh report shipped ({_today})")
+        else:
+            print(f"✅ Fire integrity OK — build verified ({_today}, send not required)")
         # The report DID ship; a missing token cache is a non-gating warning,
         # never the critical "no verified report shipped" page.
         if warnings:
