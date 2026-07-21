@@ -239,10 +239,10 @@ jobs:
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
       HILMAR_NONINTERACTIVE: "1"
-      # Report window is decided by the gate per ET day-of-week (2026-07-16):
-      # Friday's 4:30 PM fire = "current" (reports Friday itself, feeding the
-      # Monday weekly); Mon-Thu 8 AM = "previous" (reports the prior business
-      # day). core.py's default stays "current"; this env var is the switch.
+      # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
+      # single 8 AM fire reports the prior business day; there is no fire-time
+      # or day-of-week branching anymore. core.py's default stays "current";
+      # this env var is where the gate's value flows into the pipeline.
       HILMAR_REPORT_WINDOW: ${{ needs.gate.outputs.window }}
       # Skip the in-pipeline pytest+coverage routine: the dedicated test.yml CI
       # workflow already runs the full suite on every push/PR (the authoritative

@@ -84,3 +84,24 @@ def test_legacy_win_row_without_dated_transition_uses_request_date():
     assert s["wins"] == 1 and s["teu_won"] == 4
     s_other = GE._today_summary([legacy], report_date=date(2026, 7, 21))
     assert s_other["wins"] == 0, "legacy win must count exactly once (its request day)"
+
+
+def test_requested_today_won_tomorrow_is_not_orphaned_and_not_double_counted():
+    """Post-#111 review 🔴: requested Jul 20, booking confirmed Jul 21 —
+    on Jul 20's tile the row must surface as won_later (not vanish from every
+    bucket), and the WIN must count exactly once, on Jul 21's tile."""
+    row = _row("r-next", "2026-07-20", "WIN", teu=2, win_at="2026-07-21")
+    s20 = GE._today_summary([row], report_date=date(2026, 7, 20))
+    assert s20["wins"] == 0, "win belongs to Jul 21, not Jul 20"
+    assert s20["won_later"] == 1, "row must be surfaced, not orphaned"
+    assert s20["total"] == 1
+    s21 = GE._today_summary([row], report_date=date(2026, 7, 21))
+    assert s21["wins"] == 1 and s21["won_later"] == 0
+    # Exactly once across both day tiles.
+    assert s20["wins"] + s21["wins"] == 1
+
+
+def test_won_later_zero_when_win_is_same_day():
+    row = _row("r-same", "2026-07-20", "WIN", teu=2, win_at="2026-07-20")
+    s = GE._today_summary([row], report_date=RD)
+    assert s["wins"] == 1 and s["won_later"] == 0
