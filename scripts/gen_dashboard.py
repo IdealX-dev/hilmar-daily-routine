@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import branding as B  # noqa  Hilmar logo + brand colors
 import core
+import gen_email as GE  # day-KPI bucketing single source (_today_summary)
 import viz as V  # noqa  shared visual helpers
 
 # ─────────────────────────────────────────────────────────────────────
@@ -199,20 +200,28 @@ def render(cfg: dict, data: dict) -> str:
     report_label = report_date.strftime("%a %b %d (today)" if _is_today else "%a %b %d (last full biz day)")
     today_reqs = [r for r in requests
                   if (r.get("request_date") == report_iso) or (r.get("date") == report_iso)]
-    tdy_total   = len(today_reqs)
+    # Day KPI buckets come from gen_email._today_summary — the SAME function the
+    # staff email uses — so the dashboard tile and the email tile can never
+    # disagree on "how many did we win that day" (post-#112 review: this file
+    # re-derived tdy_wins by request_date + current status, which contradicted
+    # the email's win-event-date bucketing for cross-day wins). TEU sub-lines
+    # for QL/NQ/Pending stay derived from the day's intake rows, matching the
+    # summary's request-date bucketing for those states.
+    _day = GE._today_summary(requests, report_date=report_date)
+    tdy_total   = _day["total"]
     tdy_teu     = sum(int(r.get("teu_requested") or 0) for r in today_reqs)
-    tdy_wins    = sum(1 for r in today_reqs if r.get("status") == "WIN")
-    tdy_teu_won = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
-                      for r in today_reqs if r.get("status") == "WIN")
-    tdy_ql      = sum(1 for r in today_reqs if r.get("status") == "LOSS" and r.get("quoted"))
+    tdy_wins    = _day["wins"]
+    tdy_teu_won = _day["teu_won"]
+    tdy_ql      = _day["quoted_lost"]
     tdy_teu_ql  = sum(int(r.get("teu_requested") or 0)
                       for r in today_reqs if r.get("status") == "LOSS" and r.get("quoted"))
-    tdy_nq      = sum(1 for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted"))
+    tdy_nq      = _day["not_quoted"]
     tdy_teu_nq  = sum(int(r.get("teu_requested") or 0)
                       for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted"))
-    tdy_pend    = sum(1 for r in today_reqs if r.get("status") == "PENDING")
+    tdy_pend    = _day["pending"]
     tdy_teu_pend = sum(int(r.get("teu_requested") or 0)
                        for r in today_reqs if r.get("status") == "PENDING")
+    tdy_won_later = _day.get("won_later", 0)
 
     # lane + carrier summaries
     lanes = data.get("lane_summary", {}) or {}
@@ -435,7 +444,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
 
 <h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity today (through end of day). Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU</div><div class="kpi-hint">click → all rows</div></a>
+  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU{f" · {tdy_won_later} booked a later day" if tdy_won_later else ""}</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
   <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>

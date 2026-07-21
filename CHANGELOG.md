@@ -3,6 +3,30 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-21 — #112 review round 2: ET day boundary + dashboard/email KPI parity
+
+Michael: "why are you not seeing these" — honest answer logged: per-diff reviews
+can't see cross-file drift, and no parity test compared the email's day tile to
+the dashboard's. Both structural gaps closed:
+
+1. ET day boundary (review 🟡): _iso_date sliced the UTC calendar date, but the
+   report day is an ET business day — a 9:30 PM EDT win is already "tomorrow"
+   in UTC, so evening events fell into the wrong day bucket (and could misfire
+   the new "booked a later day" note). New _et_date helper converts timestamps
+   to ET before comparing; applied to ALL day comparisons together (_won_on,
+   _has_dated_win, won_later, _today_events' requests/responses/status-changes)
+   so sections shift as one and can't contradict each other. Date-only strings
+   pass through untouched. Client email inherits via shared _today_events.
+2. Dashboard divergence (review 🟣): gen_dashboard re-derived tdy_wins by
+   request_date + current status — contradicting the email's event-dated Won
+   tile in the SAME daily send (email 0 Won / dashboard 1 Won on the won-later
+   shape). Dashboard day tiles now consume gen_email._today_summary — ONE
+   bucketing source, drift impossible — and surface "booked a later day" too.
+
+Tests: evening-boundary win (Mon 9:30 PM EDT counts as Monday, exactly once),
+_et_date semantics, and a guard that gen_dashboard uses _today_summary and the
+independent Won bucketing stays deleted. Suite 1712 passed.
+
 ## 2026-07-21 — Post-#111 review fixes: won-later orphan + two label/comment nits
 
 Automated review on #111 (post-merge) found one real regression + two nits; all

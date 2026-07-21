@@ -105,3 +105,39 @@ def test_won_later_zero_when_win_is_same_day():
     row = _row("r-same", "2026-07-20", "WIN", teu=2, win_at="2026-07-20")
     s = GE._today_summary([row], report_date=RD)
     assert s["wins"] == 1 and s["won_later"] == 0
+
+
+def test_evening_et_win_stays_on_its_et_day_not_utc():
+    """Post-#112 review 🟡: booking confirmed Mon 9:30 PM EDT = Tue 01:30Z.
+    UTC slicing pushed it to Tuesday (misfiring won_later); ET conversion
+    keeps it on Monday — same day it actually happened."""
+    row = {"request_id": "r-eve", "request_date": "2026-07-20", "status": "WIN",
+           "quoted": True, "teu_requested": 2, "teu_won": 2,
+           "status_history": [{"from": "PENDING", "to": "WIN",
+                               "at": "2026-07-21T01:30:00Z"}]}
+    s = GE._today_summary([row], report_date=date(2026, 7, 20))
+    assert s["wins"] == 1, "9:30 PM EDT Monday win must count as Monday"
+    assert s["won_later"] == 0, "no won_later misfire from the UTC date roll"
+    s_tue = GE._today_summary([row], report_date=date(2026, 7, 21))
+    assert s_tue["wins"] == 0, "and must not double count on Tuesday"
+
+
+def test_et_date_helper_semantics():
+    assert GE._et_date("2026-07-21T01:30:00Z") == date(2026, 7, 20)   # 9:30 PM EDT Mon
+    assert GE._et_date("2026-07-20T18:30:00Z") == date(2026, 7, 20)   # 2:30 PM EDT Mon
+    assert GE._et_date("2026-07-20") == date(2026, 7, 20)             # date-only untouched
+    assert GE._et_date(None) is None
+
+
+def test_dashboard_day_tile_uses_the_email_bucketing():
+    """Post-#112 review 🟣: gen_dashboard re-derived tdy_wins by request_date +
+    current status, contradicting the email's event-dated Won tile in the SAME
+    daily send. The dashboard must consume gen_email._today_summary — one
+    source, no drift."""
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "gen_dashboard.py").read_text(encoding="utf-8")
+    assert "GE._today_summary(" in src, (
+        "gen_dashboard must take its day KPIs from gen_email._today_summary"
+    )
+    assert 'tdy_wins    = sum(1 for r in today_reqs if r.get("status") == "WIN")' not in src, (
+        "the independent request-date+status Won bucketing must be gone"
+    )

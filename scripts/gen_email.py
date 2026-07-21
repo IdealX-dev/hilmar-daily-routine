@@ -65,6 +65,32 @@ def _iso_date(s):
         return None
 
 
+def _et_date(s):
+    """The ET calendar date of an ISO timestamp (date-only strings pass
+    through as-is — they carry no timezone to convert).
+
+    Post-#112 review: _iso_date slices the UTC calendar date, but the report
+    day is an ET business day — an event at 9:30 PM EDT is already the NEXT
+    day in UTC, so UTC-sliced comparisons pushed evening events (win
+    confirmations, requests, quotes) into the wrong day bucket. Every
+    timestamp-vs-report-day comparison in this module goes through here so
+    the Won tile, won_later, and the What Happened sections all shift (or
+    don't) together — fixing one comparison alone would just relocate the
+    self-contradiction between sections.
+    """
+    if not s:
+        return None
+    if len(s) <= 10 or "T" not in s:
+        return _iso_date(s)
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(core.ET).date()
+    except Exception:
+        return _iso_date(s)
+
+
 def _week_bucket(d):
     """Return ISO-ish week key like 'W15 (Apr 6–10)' — Monday through Friday.
 
@@ -141,8 +167,8 @@ def _today_events(data, today_date):
     pending_today = []
 
     for r in data.get("requests", []):
-        req_d = _iso_date(r.get("request_date") or r.get("request_timestamp"))
-        resp_d = _iso_date(r.get("response_timestamp"))
+        req_d = _et_date(r.get("request_date") or r.get("request_timestamp"))
+        resp_d = _et_date(r.get("response_timestamp"))
         # Standalone bookings (stand_*) are neither a Lonny ask nor a rate
         # quote — rendering them in New Requests / OL Responses produced the
         # 2026-07-09 "Lane unresolved" junk rows (no Lonny timestamp, no rate,
@@ -157,7 +183,7 @@ def _today_events(data, today_date):
         # status changes today
         for h in (r.get("status_history") or []):
             at = h.get("at")
-            if at and _iso_date(at) == today_date and h.get("from") and h.get("to") and h["from"] != h["to"]:
+            if at and _et_date(at) == today_date and h.get("from") and h.get("to") and h["from"] != h["to"]:
                 status_changes.append((r, h))
         if r.get("status") == "PENDING":
             pending_today.append(r)
@@ -897,12 +923,12 @@ def _today_summary(requests, report_date=None):
     def _won_on(r):
         """True if this row transitioned →WIN on the report day."""
         for h in (r.get("status_history") or []):
-            if h.get("to") == "WIN" and _iso_date(h.get("at")) == report_date:
+            if h.get("to") == "WIN" and _et_date(h.get("at")) == report_date:
                 return True
         return False
 
     def _has_dated_win(r):
-        return any(h.get("to") == "WIN" and _iso_date(h.get("at"))
+        return any(h.get("to") == "WIN" and _et_date(h.get("at"))
                    for h in (r.get("status_history") or []))
 
     day_wins = [r for r in requests if r.get("status") == "WIN" and _won_on(r)]
