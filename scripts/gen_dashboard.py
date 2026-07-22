@@ -193,8 +193,14 @@ def render(cfg: dict, data: dict) -> str:
     # moved to ~6 PM ET, AFTER Lonny's California (PT) business day closes, so
     # today's window is now complete and we report on TODAY. Mon–Fri → today;
     # Sat/Sun → last Friday. Single source of truth: core.report_business_day.
-    _now_et = datetime.now(core.ET).date()
-    report_date = core.report_business_day(_now_et)
+    # Full aware datetime — NOT .date() — so core.report_business_day's
+    # midnight-6AM ET wee-hours rollback applies here exactly as it does in
+    # gen_email (post-#114 review: a date object has no .hour, silently
+    # skipping the rollback and letting an off-hours dispatch give the
+    # dashboard a different report day than the email in the same send).
+    _now_et_dt = datetime.now(core.ET)
+    report_date = core.report_business_day(_now_et_dt)
+    _now_et = _now_et_dt.date()
     report_iso  = report_date.isoformat()
     _is_today = report_date == _now_et
     report_label = report_date.strftime("%a %b %d (today)" if _is_today else "%a %b %d (last full biz day)")
@@ -442,7 +448,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <button class="clear-btn" type="button" id="kpi-filter-clear">Clear Filter ✕</button>
 </div>
 
-<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — activity today (through end of day). Math: Requests = Won + Q&amp;L + NQ + Pending. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
+<h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — prior-business-day activity. Won counts bookings CONFIRMED that day (any request date); other tiles bucket that day's incoming requests by current status. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU{f" · {tdy_won_later} booked a later day" if tdy_won_later else ""}</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>

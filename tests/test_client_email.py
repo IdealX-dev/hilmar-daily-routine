@@ -268,15 +268,19 @@ def test_active_shipments_lists_recent_wins_sorted_by_etd():
     rd = _rd()
     data = {"requests": [
         _win("w-late", days_ago=2, mdolx_ref="MDOLX-L8",
-             etd_offered=(rd + timedelta(days=25)).isoformat()),
+             etd_offered=(rd + timedelta(days=25)).isoformat(),
+             eta_offered=(rd + timedelta(days=50)).isoformat()),
         _win("w-early", days_ago=5, mdolx_ref="MDOLX-E1",
              vessel_voyage="MSC AURORA 331E",
-             etd_offered=(rd + timedelta(days=20)).isoformat()),
-        _win("w-noref", days_ago=1, mdolx_ref=None, etd_offered=None),
-        _win("w-stale", days_ago=30, mdolx_ref="MDOLX-OLD"),
+             etd_offered=(rd + timedelta(days=20)).isoformat(),
+             eta_offered=(rd + timedelta(days=45)).isoformat()),
+        _win("w-noref", days_ago=1, mdolx_ref=None, etd_offered=None,
+             eta_offered=(rd + timedelta(days=40)).isoformat()),
+        _win("w-stale", days_ago=30, mdolx_ref="MDOLX-OLD",
+             eta_offered=(rd + timedelta(days=40)).isoformat()),
     ]}
     html = gce.build_body(data, {})
-    assert "Active shipments (3)" in html
+    assert "Booked shipments — upcoming and in transit (3)" in html
     assert "MDOLX-E1" in html and "MDOLX-L8" in html
     assert "MDOLX-OLD" not in html                 # outside the 14-day window
     assert "Confirmation to follow" in html        # booking ref not yet issued
@@ -293,19 +297,22 @@ def test_cutoff_callout_lists_doc_cutoffs_within_seven_days_only():
     far = (rd + timedelta(days=20)).isoformat()
     data = {"requests": [
         _win("w-near", days_ago=1, lane="Oakland → Kobe", doc_cutoff=near,
-             etd_offered=(rd + timedelta(days=6)).isoformat()),
+             etd_offered=(rd + timedelta(days=6)).isoformat(),
+             eta_offered=(rd + timedelta(days=30)).isoformat()),
         _win("w-far", days_ago=1, lane="Oakland → Laem Chabang", doc_cutoff=far,
-             etd_offered=(rd + timedelta(days=22)).isoformat()),
+             etd_offered=(rd + timedelta(days=22)).isoformat(),
+             eta_offered=(rd + timedelta(days=45)).isoformat()),
     ]}
     html = gce.build_body(data, {})
     assert "Upcoming cutoffs" in html
-    box = html[html.index("Upcoming cutoffs"):html.index("Active shipments")]
+    box = html[html.index("Upcoming cutoffs"):html.index("Booked shipments")]
     assert "Oakland → Kobe — doc cutoff" in box
     assert "Laem Chabang" not in box
     # A shipment with everything outside the horizon renders NO callout.
     quiet = gce.build_body({"requests": [
         _win("w-far", days_ago=1, doc_cutoff=far,
-             etd_offered=(rd + timedelta(days=22)).isoformat()),
+             etd_offered=(rd + timedelta(days=22)).isoformat(),
+             eta_offered=(rd + timedelta(days=45)).isoformat()),
     ]}, {})
     assert "Upcoming cutoffs" not in quiet
 
@@ -314,7 +321,8 @@ def test_cutoff_callout_falls_back_to_departure_when_no_doc_cutoff():
     rd = _rd()
     html = gce.build_body({"requests": [
         _win("w-sail", days_ago=1, lane="Oakland → Kaohsiung", doc_cutoff=None,
-             etd_offered=(rd + timedelta(days=5)).isoformat()),
+             etd_offered=(rd + timedelta(days=5)).isoformat(),
+             eta_offered=(rd + timedelta(days=30)).isoformat()),
     ]}, {})
     assert "Upcoming cutoffs" in html
     assert "Oakland → Kaohsiung — vessel departs" in html
@@ -649,3 +657,64 @@ def test_pdf_trade_regions_no_unmapped_row_for_placeholder_dest():
     assert "Far East" in region_col                                 # Yokohama's region
     footnotes = " ".join(s.text for s in story if isinstance(s, Paragraph))
     assert "pending lane assignment" in footnotes
+
+
+# ── 4e. Active = not yet arrived (Michael 2026-07-22) ─────────────────────
+
+def test_booked_shipments_excludes_arrived_blank_and_degenerate_rows():
+    """"active shipments is wrong.. you have shipments that arrived months
+    ago.. you have one with blank information." Arrived (ETA passed), long-
+    departed with no ETA, blank (no carrier/vessel/dates), and origin→origin
+    rows must all drop; a future-ETA booking stays."""
+    rd = _rd()
+    data = {"requests": [
+        _win("w-future", days_ago=2, mdolx_ref="MDOLX-FUT",
+             etd_offered=(rd + timedelta(days=7)).isoformat(),
+             eta_offered=(rd + timedelta(days=30)).isoformat()),
+        _win("w-arrived", days_ago=3, mdolx_ref="MDOLX-ARR",
+             etd_offered=(rd - timedelta(days=60)).isoformat(),
+             eta_offered=(rd - timedelta(days=40)).isoformat()),
+        _win("w-longgone", days_ago=4, mdolx_ref="MDOLX-GONE",
+             etd_offered=(rd - timedelta(days=50)).isoformat(),
+             eta_offered=None),
+        _win("w-blank", days_ago=1, mdolx_ref="260928",
+             carrier_quoted=None, carrier_won=None,
+             vessel_voyage=None, etd_offered=None, eta_offered=None),
+        _win("w-degenerate", days_ago=1, mdolx_ref="MDOLX-DEG",
+             lane="Oakland → Oakland", destination="Oakland",
+             etd_offered=(rd + timedelta(days=5)).isoformat(),
+             eta_offered=(rd + timedelta(days=30)).isoformat()),
+        _win("w-noeta", days_ago=1, mdolx_ref="MDOLX-NOETA",
+             etd_offered=(rd + timedelta(days=5)).isoformat(),
+             eta_offered=None),
+    ]}
+    active = gce._active_shipments(data, rd)
+    ids = {r["request_id"] for r in active}
+    assert ids == {"w-future"}, f"only the not-yet-arrived real booking stays; got {ids}"
+    html = gce.build_body(data, {})
+    assert "MDOLX-FUT" in html
+    for gone in ("MDOLX-ARR", "MDOLX-GONE", "260928", "MDOLX-DEG", "MDOLX-NOETA"):
+        assert gone not in html, f"{gone} must not render as active"
+
+
+def test_booked_shipments_label_disclaims_live_tracking():
+    """No track-and-trace feed exists — the section must say dates are quoted,
+    not tracked."""
+    rd = _rd()
+    data = {"requests": [_win("w1", days_ago=1, mdolx_ref="MDOLX-X",
+                              etd_offered=(rd + timedelta(days=5)).isoformat(),
+                              eta_offered=(rd + timedelta(days=30)).isoformat())]}
+    html = gce.build_body(data, {})
+    assert "Booked shipments" in html
+    assert "not live vessel tracking" in html
+
+
+def test_lane_resolved_rejects_degenerate_origin_origin_everywhere():
+    """Post-#114 review 🔴: the origin→origin guard must live in _lane_resolved
+    so ALL client sections exclude it, not just Booked shipments."""
+    assert gce._lane_resolved({"lane": "Oakland → Oakland"}) is False
+    assert gce._lane_resolved({"lane": "Oakland → Tokyo"}) is True
+    row = _row("r-deg", lane="Oakland → Oakland", destination="Oakland")
+    s = gce._client_sections({"requests": [row]},
+                             core.report_business_day(datetime.now(core.ET)))
+    assert all(row not in bucket for bucket in s.values())

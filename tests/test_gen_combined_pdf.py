@@ -146,3 +146,12 @@ def test_daily_workflow_client_email_step_untouched():
     assert "hilmar-combined.pdf" not in step, (
         "combined PDF (internal analytics) must never attach to the client email"
     )
+
+
+def test_client_part_uses_renamed_booked_shipments_label():
+    """Post-#114 review: the combined PDF's client part must carry the same
+    renamed section + quoted-dates disclaimer as the client email."""
+    src = (ROOT / "scripts" / "gen_combined_pdf.py").read_text(encoding="utf-8")
+    assert "Booked shipments — upcoming and in transit" in src
+    assert "not live vessel tracking" in src
+    assert '"Active shipments"' not in src
