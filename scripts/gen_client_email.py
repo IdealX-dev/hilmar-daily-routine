@@ -155,6 +155,13 @@ def _lane_resolved(r) -> bool:
     is resolved even when the `destination` FIELD is unset, because the lane is
     exactly the value _lane(r) renders."""
     lane = (r.get("lane") or "").strip()
+    # Degenerate origin→origin lane ("Oakland → Oakland") is a mis-parse, not
+    # a real lane — treat as UNRESOLVED here so ALL client sections exclude it
+    # (post-#114 review: the guard originally sat only in _active_shipments,
+    # leaving five other sections open to the same junk).
+    parts = [p.strip().lower() for p in lane.split("→")]
+    if len(parts) == 2 and parts[0] and parts[0] == parts[1]:
+        return False
     if lane and lane.lower() != "lane unresolved":
         return True
     dest = (r.get("destination") or "").strip()
@@ -215,11 +222,22 @@ def _client_sections(data, report_date):
 
 
 def _active_shipments(data, report_date):
-    """Confirmed bookings (WIN) from the last ACTIVE_WINDOW_DAYS — dated by
-    request_date, falling back to response_timestamp; rows with no parseable
-    date are skipped (defensive). Sorted by ETD ascending, undated ETDs last.
-    stand_* rows are INCLUDED here: a confirmed standalone booking is exactly
-    what the client tracks daily."""
+    """Confirmed bookings (WIN) that are genuinely ACTIVE — in transit or
+    awaiting departure. Michael 2026-07-22: "active shipments is wrong.. you
+    have shipments that arrived months ago.. you have one with blank
+    information." Active means NOT YET ARRIVED, so beyond the recency window
+    this now also drops:
+      - rows whose ETA has passed (the ship arrived — not active);
+      - rows with no ETA whose ETD is >35 days gone (transpacific ~30d —
+        it has arrived even if no ETA was ever parsed);
+      - junk rows with no carrier, no vessel, and no dates (nothing a client
+        can act on — the "blank information" row);
+      - degenerate origin→origin lanes (a mis-parse that slips past
+        _lane_resolved because the destination LOOKS like a real port).
+    Dated by request_date, falling back to response_timestamp; rows with no
+    parseable date are skipped (defensive). Sorted by ETD ascending, undated
+    ETDs last. stand_* rows are INCLUDED: a confirmed standalone booking is
+    exactly what the client tracks daily."""
     rows = []
     for r in data.get("requests", []):
         if r.get("status") != "WIN":
@@ -230,6 +248,13 @@ def _active_shipments(data, report_date):
         d = (_iso_date(r.get("request_date") or r.get("request_timestamp"))
              or _iso_date(r.get("response_timestamp")))
         if not d or (report_date - d).days > ACTIVE_WINDOW_DAYS:
+            continue
+        # Michael 2026-07-22: "for current shipments only those with eta's that
+        # haven't happened yet." Hard rule: a row is CURRENT iff it carries a
+        # quoted ETA and that ETA has not passed. No ETA → not shown (also
+        # kills the blank-row shape: no carrier/vessel/dates = no ETA).
+        eta = _iso_date(r.get("eta_offered"))
+        if not eta or eta < report_date:
             continue
         rows.append(r)
     rows.sort(key=lambda r: (_iso_date(r.get("etd_offered")) is None,
@@ -475,11 +500,17 @@ def build_body(data, cfg, now=None):
     if cutoffs:
         html += _cutoff_callout(cutoffs)
 
-    # 3. Active shipments — confirmed bookings from the last 14 days.
+    # 3. Booked shipments — upcoming departures + in transit, per the QUOTED
+    # schedule. NOT live tracking (Michael 2026-07-22: "you aren't tracking and
+    # tracing moves so you do not know what's active") — there is no carrier
+    # track-and-trace feed in this system, so the section is labeled by what it
+    # actually knows: booking confirmations and their quoted ETD/ETA.
     html += _section_or_line(
-        "Active shipments",
-        "Your confirmed bookings from the last 14 days — booking references, "
-        "vessel details, and cutoff dates, sorted by departure.",
+        "Booked shipments — upcoming and in transit",
+        "Your confirmed bookings that have not yet reached their quoted arrival "
+        "date — booking references, vessel details, and cutoff dates per the "
+        "quoted schedule, sorted by departure. (Dates are as quoted at booking, "
+        "not live vessel tracking.)",
         "No shipments currently in transit or awaiting departure.",
         ["Lane", "Carrier", "Booking ref", "Vessel", "ETD", "ETA", "Doc cutoff"],
         [[

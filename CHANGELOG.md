@@ -3,6 +3,44 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-22 — Client "Active shipments" honesty: arrived/blank/degenerate rows out
+
+Michael (Jul-22 client email screenshot): "active shipments is wrong.. you have
+shipments that arrived months ago.. you have one with blank information" +
+"you aren't tracking and tracing moves so you do not know what's active."
+
+Both correct. _active_shipments filtered only by request recency — never by
+arrival — and there is NO track-and-trace feed in this system, so "Active" was
+an overclaim built on quoted dates.
+
+Fix (gen_client_email):
+- Section renamed "Booked shipments — upcoming and in transit" with an explicit
+  disclaimer: dates are as QUOTED at booking, not live vessel tracking.
+- Hard rule (Michael, same day: "for current shipments only those with eta's
+  that haven't happened yet"): a row shows iff it has a quoted ETA that has not
+  passed. No ETA or ETA past → out (also kills the 260928 blank row — no
+  carrier/vessel/dates means no ETA). Degenerate origin→origin lanes
+  ("Oakland → Oakland" mis-parse past _lane_resolved) also out.
+- Regression tests lock all four exclusions + the disclaimer. Suite 1714 passed.
+
+- Post-#114 review round: origin→origin guard MOVED into _lane_resolved (all
+  six client sections now exclude it, not just Booked shipments); dashboard
+  caption no longer claims Requests = Won+Q&L+NQ+Pending (Won is event-dated);
+  dashboard passes a full ET datetime into report_business_day so the wee-hours
+  rollback applies same as the email; combined PDF client part carries the
+  renamed section + quoted-dates disclaimer. Suite 1716 passed.
+
+Also verified this morning (Michael "it only sent the report for lonny"): the
+staff email DID send fresh at 8:33 ET (request-id a97dc9d9, all 9 recipients,
+combined PDF) and landed in his idealx.us inbox at 8:35 — 2 minutes behind
+Lonny's lighter no-attachment copy. No pipeline defect; delivery lag.
+
+OPEN — real track-and-trace: knowing what's ACTUALLY active needs a carrier
+tracking integration (e.g. Terminal49/project44/carrier APIs) keyed off the
+booking refs the tracker already holds. Needs Michael's go + provider choice.
+Also still open: arrived-months-ago rows carrying RECENT request dates smells
+like the known duplicate-row issue in production tracking-data-v2.json.
+
 ## 2026-07-21 — #112 review round 2: ET day boundary + dashboard/email KPI parity
 
 Michael: "why are you not seeing these" — honest answer logged: per-diff reviews

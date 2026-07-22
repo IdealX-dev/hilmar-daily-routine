@@ -126,8 +126,9 @@ def build_client_part(story, styles, data, now=None):
         story.append(Spacer(1, 8))
 
     _client_section(
-        story, styles, "Active shipments",
-        "Confirmed bookings from the last 14 days, sorted by departure.",
+        story, styles, "Booked shipments — upcoming and in transit",
+        "Confirmed bookings with a quoted ETA still ahead, sorted by departure. "
+        "(Dates are as quoted at booking, not live vessel tracking.)",
         ["Lane", "Carrier", "Booking ref", "ETD", "ETA", "Doc cutoff"],
         [[GC._lane(r),
           r.get("carrier_won") or r.get("carrier_quoted") or "—",
