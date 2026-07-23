@@ -1494,6 +1494,54 @@ QC065_CLIENT_BODY_PATH = (
     Path(__file__).resolve().parent.parent / "reports" / "client-email-body.html")
 
 
+def qc066_impossible_states(rows, report_day=None):
+    """QC-066: rows whose OUTCOME PREDATES their own request — the merge/
+    carry-forward artifact behind the 2026-07-23 report (Michael: "your
+    quality control system is not functioning"): a NEW Jul-22 HCMC request
+    surfaced with a stale WIN/quote inherited from the recurring Outlook
+    thread, so it vanished from PENDING OL (showed 0) while its lane sat in
+    PENDING HILMAR under the OLD row. A row is flagged when:
+
+      (a) its newest status_history entry is dated (ET) BEFORE its own
+          request date — the recorded outcome happened before the ask, which
+          is causally impossible for a genuine outcome of THIS request; or
+      (b) it is a report-day request (request_date == report_day, non-stand_)
+          in a terminal status (WIN/LOSS) whose status_history exists but
+          contains NO entry dated on/after its request date — a same-day
+          request cannot have silently resolved through events that all
+          predate it.
+
+    Legacy rows with EMPTY status_history are never flagged (nothing to
+    prove against). Returns [(request_id, reason), ...]. DETECT-only for now
+    — the correct heal (split the row back into request + prior outcome)
+    needs one confirmed live shape before automating.
+    """
+    from gen_email import _et_date as _ed
+    out = []
+    for r in rows or []:
+        hist = r.get("status_history") or []
+        if not hist:
+            continue
+        req_d = _ed(r.get("request_date") or r.get("request_timestamp"))
+        if not req_d:
+            continue
+        dated = [(_ed(h.get("at")), h) for h in hist if _ed(h.get("at"))]
+        if not dated:
+            continue
+        newest = max(d for d, _ in dated)
+        rid = r.get("request_id", "?")
+        if newest < req_d:
+            out.append((rid, f"newest status event {newest} predates request {req_d}"))
+            continue
+        if (report_day and req_d == report_day
+                and not str(rid).startswith("stand_")
+                and r.get("status") in ("WIN", "LOSS")
+                and not any(d >= req_d for d, _ in dated)):
+            out.append((rid, f"report-day request in terminal {r.get('status')} "
+                             f"with no same-day-or-later status event"))
+    return out
+
+
 def qc065_internal_leaks(body_text) -> list:
     """Return the internal-analytics markers present in the rendered client
     email body (case-insensitive, raw + escaped forms). Empty list = clean."""
@@ -3905,6 +3953,26 @@ def phase_6_rules(log: Log, data: dict):
                      f"scrubbed — manual review; fix the upstream parser")
     except Exception as _e:
         log.warn(f"QC-064: check failed with exception: {_e}")
+
+    # QC-066: IMPOSSIBLE STATE — outcome predates its own request (merge /
+    # carry-forward artifact from Lonny's recurring Outlook threads). This is
+    # the "new request swallowed by a stale outcome" shape from the Jul-23
+    # report: a fresh request inherits WIN/quote state recorded BEFORE the ask
+    # existed, so it never shows in PENDING OL and the pending math lies.
+    # ERROR-class (audit red flag): the row's displayed state is wrong for the
+    # client-facing pipeline. DETECT-only — no auto-heal until one live shape
+    # is confirmed; the audit names each row so it can be split manually.
+    try:
+        _rep_day = core.report_business_day(datetime.now(core.ET))
+        _bad66 = qc066_impossible_states(requests, report_day=_rep_day)
+        if _bad66:
+            for _rid66, _why66 in _bad66:
+                log.error(f"QC-066: {_rid66} — {_why66} (stale outcome swallowed "
+                          f"a new request; split the row)")
+        else:
+            log.ok("QC-066: no impossible request/outcome orderings")
+    except Exception as _e:
+        log.warn(f"QC-066: check failed with exception: {_e}")
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE
