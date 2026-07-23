@@ -3,6 +3,33 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-23 — QC-066: impossible request/outcome ordering (HCMC swallowed request)
+
+Michael (Jul-23 report screenshot): 3 new requests, 2 OL responses, 2 status
+changes — yet the new Jul-22 HCMC request (1-40' HC, no OL response) appeared in
+NO pending bucket: PENDING OL read 0, and the only pending-Hilmar HCMC was the
+OLD Jul-21 2-20' row (waiting 44.3h — a row that already WON Monday). Michael:
+"your quality control system is not functioning."
+
+He's right — none of the 65 checks validated the causal ordering of a row's
+own events. Diagnosis (code-level; production data unreachable from this
+session): Lonny re-uses Outlook threads for recurring lanes, and the merge /
+carry-forward path can hand a NEW request a stale outcome recorded BEFORE the
+ask existed — the row then sits in a terminal status, invisible to every
+pending bucket, while the old row zombies in PENDING HILMAR.
+
+New QC-066 (ERROR, detect-only): flags any row whose newest status_history
+event (ET) predates its own request_date, and any report-day request in
+terminal WIN/LOSS with no same-day-or-later event. Legacy empty-history rows
+exempt. No auto-heal yet — the correct heal (split the row: fresh PENDING
+request + the prior outcome under its original ask) gets automated after the
+first live run confirms the exact shape. QC-INDEX updated; tests cover the
+HCMC shape, clean flows, evening-ET boundary, stand_ rows. Suite 1721 passed.
+
+NEXT (after tomorrow's fire): read QC-066's audit output naming the real rows,
+then build the split-heal + the ingest-side guard that stops the inheritance at
+the source.
+
 ## 2026-07-22 — Client "Active shipments" honesty: arrived/blank/degenerate rows out
 
 Michael (Jul-22 client email screenshot): "active shipments is wrong.. you have
