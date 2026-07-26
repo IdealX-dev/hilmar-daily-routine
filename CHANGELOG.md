@@ -3,6 +3,74 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-24 — ROOT CAUSE: PENDING_OL was unreachable; live RFQs stored as losses
+
+Michael: "three requests mentioned only 2 ol responses … yet mention waiting
+hilmar for the hcmc that doesn't show ol responded to or open" and then "your
+quality control system is not functioning."
+
+Both correct, and the same root cause. Found by reading the LIVE sent reports
+(Jul-22 and Jul-23) against the code, then proving it by execution.
+
+THE DEFECT (scripts/core.py + src/hilmar/core.py, decide_status):
+An UNQUOTED row — Lonny sent an RFQ, OL has not answered YET — was classified
+LOSS/NO_RESPONSE the instant it was ingested, with NO grace period whatsoever:
+
+    if not quoted:
+        if not response_timestamp:
+            return StatusDecision("LOSS", False, False, "NO_RESPONSE", ...)
+
+Two consequences, both proven:
+1. **PENDING_OL was STRUCTURALLY UNREACHABLE.** Brute-forcing the full input
+   space of decide_status produced PENDING_OL in 0 of 96 combinations — every
+   PENDING return carried quoted=True, so pending_substate always resolved to
+   PENDING_HILMAR. "⏳ PENDING OL (0) — awaiting OL quote / No activity" was
+   not a coincidence in the data; the bucket could never be populated.
+2. **Live open business was STORED as lost.** age_requests() runs decide_status
+   over every row on every fire and writes r["status"], so tracking-data-v2.json
+   persisted genuinely-open RFQs as LOSS/NO_RESPONSE. Nobody chased OL for them.
+
+This is exactly the Jul-22 Oakland→HCMC (Cat Lai) 1-40' HC row Michael flagged:
+requested Jul 22 3:42 PM PT, OL quoted it Jul 23 1:48 PM ET. At the Jul-22
+report build it was genuinely awaiting OL — it should have read PENDING OL (1).
+Instead it was filed a loss and appeared in NO bucket. (The "waiting Hilmar"
+HCMC row he saw beside it was a DIFFERENT, older request — correctly displayed.)
+
+THE FIX — an unanswered RFQ is open business, not a loss:
+- New PENDING_OL_LOSS_HOURS = 48 / PENDING_OL_LOSS_HOURS_FRIDAY = 72 and
+  pending_ol_stale(), mirroring the existing Hilmar-side window and anchored on
+  Lonny's REQUEST time (there is no response yet, by definition).
+- decide_status holds PENDING (quoted=False → PENDING_OL) until the window
+  expires, then ages to NQ/NO_RESPONSE exactly as before.
+- decide_status gained an optional request_timestamp kwarg, wired at all five
+  production callers (ingest, merge_ingest, qc_selfheal, src/hilmar/ingest,
+  src/hilmar/qc) with a request_date fallback.
+- STRICTLY ADDITIVE: an undateable row keeps the old immediate-NQ behavior, so
+  nothing can leak into permanent PENDING.
+
+CROSS-SYSTEM IMPACT (checked before shipping):
+- auto_chase_pending requires response_timestamp, which PENDING_OL rows lack —
+  it will NOT start nudging Lonny about quotes OL has not sent. Verified.
+- Win rate is unchanged: both NQ and PENDING are excluded from the denominator.
+- The "No-Response Rate" KPI will DROP — correctly; it was inflated by live RFQs.
+- PENDING OL will now show real open work to chase. That is the operational win.
+- Both cores changed identically; test_core_parity locks the new constants.
+
+QC — per Michael, "the daily qc needs to test new lines and data and be updated
+every time to make a change":
+- New QC-067 (ERROR + SELF-HEAL) re-tests that day's REAL rows on every fire:
+  any unquoted row filed NO_RESPONSE while still inside the response window is
+  restored to PENDING (quoted stays False → PENDING_OL), loss_reason cleared,
+  and a status_history entry appended so the audit trail survives. decide_status
+  fixes it at the source; QC-067 is the daily proof on live data and the catch
+  for stale carry-forward, operator corrections, or any future regression.
+- A test asserts QC-067 and decide_status agree exactly, so detector and state
+  machine cannot drift apart and re-create a self-contradicting report.
+- QC-INDEX updated (QC-001..QC-067); the governance ratchet already fails CI if
+  an emitted check is undocumented or untested.
+
+Suite 1744 passed (+23), coverage 91.34%, ruff clean.
+
 ## 2026-07-23 — QC-066: impossible request/outcome ordering (HCMC swallowed request)
 
 Michael (Jul-23 report screenshot): 3 new requests, 2 OL responses, 2 status

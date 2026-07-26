@@ -1307,6 +1307,7 @@ def finalize_status(
             response_timestamp=r.get("response_timestamp"),
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
+            request_timestamp=r.get("request_timestamp") or r.get("request_date"),
             send_signal_events=r.get("send_signal_events"),
             mdolx_refs_all=r.get("mdolx_refs_all"),
             now=now,
