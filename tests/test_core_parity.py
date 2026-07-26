@@ -131,6 +131,11 @@ ALLOWED_CROSS_FOLDER_DRIFT = {
     # and minimum-wins requirement across trees.
     ("PRICE_GAP_THRESHOLD_MULT", 1.05),
     ("PRICE_GAP_MIN_LANE_WINS", 3),
+    # 2026-07-24 — PENDING-OL response window. Before this, an unquoted row
+    # was LOSS/NO_RESPONSE the instant it was ingested (no grace), which made
+    # PENDING_OL structurally unreachable. Locked across trees.
+    ("PENDING_OL_LOSS_HOURS", 48),
+    ("PENDING_OL_LOSS_HOURS_FRIDAY", 72),
 ])
 def test_numeric_constants_match_across_trees(name, expected):
     """Locks the constants that gate behavior. Any numeric/policy constant

@@ -52,6 +52,16 @@ PENDING_WINDOW_HOURS = 24
 #: aging (is_business_stale) is deliberately unchanged.
 PENDING_HILMAR_LOSS_HOURS = 48
 PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
+#: PENDING-OL window — how long OL-USA has to answer Lonny's RFQ before the
+#: row is called a genuine non-response (NQ). Symmetric with the Hilmar side
+#: (PENDING_HILMAR_LOSS_HOURS): 48 CLOCK hours from Lonny's REQUEST, 72 when
+#: the RFQ landed on a Friday (ET) so the weekend doesn't burn the window.
+#: Added 2026-07-24 — before this, an unquoted request was classified
+#: LOSS/NO_RESPONSE the instant it was ingested, with NO grace at all, which
+#: made PENDING_OL structurally unreachable and buried live open business as
+#: "lost". Mirrored across trees; tests/test_core_parity.py enforces parity.
+PENDING_OL_LOSS_HOURS = 48
+PENDING_OL_LOSS_HOURS_FRIDAY = 72
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
@@ -912,6 +922,33 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) 
     return (now - resp_dt).total_seconds() / 3600.0 >= deadline
 
 
+def pending_ol_stale(request_dt, now=None) -> bool:
+    """True when an UNQUOTED row has waited long enough on OL that it counts
+    as a genuine non-response (NQ) rather than an open request (PENDING_OL).
+
+    Anchored on Lonny's REQUEST time (there is no response yet, by
+    definition). Pure CLOCK hours, mirroring pending_hilmar_stale: >= 48h, or
+    >= 72h when Lonny asked on a Friday (ET) so the weekend lands OL on Monday.
+
+    request_dt None → STALE (True). We cannot measure a window without a
+    date, so we preserve the pre-2026-07-24 behavior (immediate NQ) rather
+    than inventing a row that stays PENDING forever. This keeps the fix
+    strictly ADDITIVE: the grace window applies only to rows we can actually
+    date. Callers pass request_timestamp OR request_date, so in production
+    every real row is dateable and does get the window.
+
+    Kept byte-for-byte identical across scripts/core.py and
+    src/hilmar/core.py — tests/test_core_parity.py fails if they drift.
+    """
+    if request_dt is None:
+        return True
+    now = now or now_utc()
+    req_et = request_dt.astimezone(ET)
+    deadline = (PENDING_OL_LOSS_HOURS_FRIDAY if req_et.weekday() == 4
+                else PENDING_OL_LOSS_HOURS)
+    return (now - request_dt).total_seconds() / 3600.0 >= deadline
+
+
 def decide_status(
     *,
     has_send: bool,
@@ -919,6 +956,7 @@ def decide_status(
     response_timestamp: str | None,
     quoted: bool,
     etd_fit_days: int | None,
+    request_timestamp: str | None = None,
     send_signal_events: list | None = None,
     now: datetime | None = None,
     ol_rate: float | str | None = None,
@@ -998,6 +1036,25 @@ def decide_status(
     # block below, where parse_iso(None)→None hits the "assumed aged" Q&L guard.
     if not quoted:
         if not response_timestamp:
+            # OL has not answered YET. Michael 2026-07-24 ("your quality
+            # control system is not functioning"): a request Lonny sent this
+            # morning is OPEN BUSINESS TO CHASE, not a loss. Before this,
+            # every unquoted row was classified LOSS/NO_RESPONSE the instant
+            # it was ingested — with zero grace — which (a) buried live RFQs
+            # as "lost" in the STORED data and (b) made PENDING_OL
+            # structurally unreachable, so "PENDING OL (0) — awaiting OL
+            # quote" was permanently empty (proved: 0 of 96 input
+            # combinations could produce it). Hold PENDING (quoted=False →
+            # pending_substate PENDING_OL) until the window expires; only
+            # then is it a genuine non-response.
+            req_dt = parse_iso(request_timestamp)
+            if not pending_ol_stale(req_dt, now):
+                _w = (PENDING_OL_LOSS_HOURS_FRIDAY
+                      if req_dt and req_dt.astimezone(ET).weekday() == 4
+                      else PENDING_OL_LOSS_HOURS)
+                return StatusDecision(
+                    "PENDING", False, False, None,
+                    f"Awaiting OL quote — within the {_w}h response window")
             return StatusDecision("LOSS", False, False, "NO_RESPONSE", "OL-USA never responded with a quote")
         return StatusDecision("LOSS", False, False, "RESPONSE_NO_RATE", "OL responded but no rate was extracted")
 

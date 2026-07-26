@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -985,6 +985,7 @@ def phase_3_entries(log: Log, data: dict):
             response_timestamp=r.get("response_timestamp"),
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
+            request_timestamp=r.get("request_timestamp") or r.get("request_date"),
             ol_rate=r.get("ol_rate"),
             lane=r.get("lane"),
             lane_winning_median=lane_winning_median,
@@ -1492,6 +1493,40 @@ QC065_INTERNAL_MARKERS = (
 QC065_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 QC065_CLIENT_BODY_PATH = (
     Path(__file__).resolve().parent.parent / "reports" / "client-email-body.html")
+
+
+def qc067_open_rfq_misfiled_as_lost(rows, now=None):
+    """QC-067: live open RFQs filed as losses.
+
+    A row is flagged when it is UNQUOTED with loss_reason NO_RESPONSE while
+    Lonny's request is still INSIDE the PENDING-OL response window — i.e. OL
+    simply has not answered yet, so the row is open business to chase, not a
+    loss. This is the 2026-07-24 root cause (Michael: "your quality control
+    system is not functioning"): decide_status classified every unquoted row
+    as LOSS/NO_RESPONSE with zero grace, which made PENDING_OL structurally
+    unreachable and stored live RFQs as lost.
+
+    core.decide_status now prevents this at the source; QC-067 is the daily
+    detector that proves it on EVERY fire against that day's real rows, and
+    self-heals any row that slips through (a stale carry-forward, an operator
+    correction, or a future regression).
+
+    Returns [(request_id, hours_waiting), ...].
+    """
+    now = now or datetime.now(core.ET)
+    out = []
+    for r in rows or []:
+        if r.get("quoted"):
+            continue
+        if (r.get("loss_reason") or "") != "NO_RESPONSE":
+            continue
+        if (r.get("status") or "").upper() not in ("LOSS", "NQ"):
+            continue
+        req = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
+        if req and not core.pending_ol_stale(req, now):
+            hrs = (now - req).total_seconds() / 3600.0
+            out.append((r.get("request_id", "?"), round(hrs, 1)))
+    return out
 
 
 def qc066_impossible_states(rows, report_day=None):
@@ -3973,6 +4008,41 @@ def phase_6_rules(log: Log, data: dict):
             log.ok("QC-066: no impossible request/outcome orderings")
     except Exception as _e:
         log.warn(f"QC-066: check failed with exception: {_e}")
+
+    # QC-067: OPEN RFQ MISFILED AS LOST. Every fire, re-test that day's real
+    # rows: an unquoted row whose request is still inside the PENDING-OL
+    # response window is OPEN BUSINESS (chase OL), never a NO_RESPONSE loss.
+    # decide_status fixes this at the source (2026-07-24); this is the daily
+    # proof on live data + the self-heal for anything that slips through
+    # (stale carry-forward, operator correction, future regression).
+    # SELF-HEAL: restore PENDING (quoted stays False -> PENDING_OL) and clear
+    # the loss_reason, recording the transition so the audit trail survives.
+    try:
+        _bad67 = qc067_open_rfq_misfiled_as_lost(requests)
+        if _bad67:
+            _by_id67 = {r.get("request_id"): r for r in requests}
+            for _rid67, _hrs67 in _bad67:
+                _row67 = _by_id67.get(_rid67)
+                if not _row67:
+                    continue
+                _row67["status"] = "PENDING"
+                _row67["loss_reason"] = None
+                _row67["reason_detail"] = (
+                    f"Awaiting OL quote — {_hrs67}h since Lonny's RFQ, still "
+                    f"inside the {core.PENDING_OL_LOSS_HOURS}h response window")
+                _hist67 = _row67.setdefault("status_history", [])
+                _hist67.append({
+                    "from": "LOSS", "to": "PENDING",
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "QC-067: open RFQ was misfiled as NO_RESPONSE",
+                })
+                log.fix(f"QC-067: {_rid67} restored to PENDING OL — waiting "
+                        f"{_hrs67}h, inside the response window (was filed "
+                        f"LOSS/NO_RESPONSE)")
+        else:
+            log.ok("QC-067: no open RFQs misfiled as losses")
+    except Exception as _e:
+        log.warn(f"QC-067: check failed with exception: {_e}")
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE

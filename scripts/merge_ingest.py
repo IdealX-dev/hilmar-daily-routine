@@ -87,6 +87,7 @@ def merge_record(
         response_timestamp=rec.get("response_timestamp"),
         quoted=bool(rec.get("quoted")),
         etd_fit_days=etd_fit_days,
+        request_timestamp=rec.get("request_timestamp") or rec.get("request_date"),
         ol_rate=rec.get("ol_rate"),
         lane=rec_lane,
         lane_winning_median=lane_winning_median,

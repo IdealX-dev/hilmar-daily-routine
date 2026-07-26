@@ -1238,6 +1238,7 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
             response_timestamp=r.get("response_timestamp"),
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
+            request_timestamp=r.get("request_timestamp") or r.get("request_date"),
             send_signal_events=r.get("send_signal_events"),
             now=now,
             ol_rate=r.get("ol_rate"),

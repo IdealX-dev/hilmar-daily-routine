@@ -50,6 +50,16 @@ PENDING_WINDOW_HOURS = 24
 #: (is_business_stale) is deliberately unchanged.
 PENDING_HILMAR_LOSS_HOURS = 48
 PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
+#: PENDING-OL window — how long OL-USA has to answer Lonny's RFQ before the
+#: row is called a genuine non-response (NQ). Symmetric with the Hilmar side
+#: (PENDING_HILMAR_LOSS_HOURS): 48 CLOCK hours from Lonny's REQUEST, 72 when
+#: the RFQ landed on a Friday (ET) so the weekend doesn't burn the window.
+#: Added 2026-07-24 — before this, an unquoted request was classified
+#: LOSS/NO_RESPONSE the instant it was ingested, with NO grace at all, which
+#: made PENDING_OL structurally unreachable and buried live open business as
+#: "lost". Mirrored across trees; tests/test_core_parity.py enforces parity.
+PENDING_OL_LOSS_HOURS = 48
+PENDING_OL_LOSS_HOURS_FRIDAY = 72
 # AWAITING_MDOLX_AGING_HOURS (was 72) was removed 2026-05-30 — the
 # send-aging branch now uses is_business_stale(send_at, now) with the
 # default hours=PENDING_WINDOW_HOURS for symmetry, picking up the same
@@ -712,6 +722,33 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) 
     return (now - resp_dt).total_seconds() / 3600.0 >= deadline
 
 
+def pending_ol_stale(request_dt, now=None) -> bool:
+    """True when an UNQUOTED row has waited long enough on OL that it counts
+    as a genuine non-response (NQ) rather than an open request (PENDING_OL).
+
+    Anchored on Lonny's REQUEST time (there is no response yet, by
+    definition). Pure CLOCK hours, mirroring pending_hilmar_stale: >= 48h, or
+    >= 72h when Lonny asked on a Friday (ET) so the weekend lands OL on Monday.
+
+    request_dt None → STALE (True). We cannot measure a window without a
+    date, so we preserve the pre-2026-07-24 behavior (immediate NQ) rather
+    than inventing a row that stays PENDING forever. This keeps the fix
+    strictly ADDITIVE: the grace window applies only to rows we can actually
+    date. Callers pass request_timestamp OR request_date, so in production
+    every real row is dateable and does get the window.
+
+    Kept byte-for-byte identical across scripts/core.py and
+    src/hilmar/core.py — tests/test_core_parity.py fails if they drift.
+    """
+    if request_dt is None:
+        return True
+    now = now or now_utc()
+    req_et = request_dt.astimezone(ET)
+    deadline = (PENDING_OL_LOSS_HOURS_FRIDAY if req_et.weekday() == 4
+                else PENDING_OL_LOSS_HOURS)
+    return (now - request_dt).total_seconds() / 3600.0 >= deadline
+
+
 def decide_status(
     *,
     has_send: bool,
@@ -719,6 +756,7 @@ def decide_status(
     response_timestamp: str | None,
     quoted: bool,
     etd_fit_days: int | None,
+    request_timestamp: str | None = None,
     send_signal_events: list | None = None,
     mdolx_refs_all: list | None = None,
     now: datetime | None = None,
@@ -828,6 +866,18 @@ def decide_status(
     # carrier...") → RESPONSE_NO_RATE. Both display as NQ.
     if not quoted:
         if not response_timestamp:
+            # OL has not answered YET — open business to chase, not a loss.
+            # See scripts/core.decide_status for the full rationale
+            # (2026-07-24): the old immediate NO_RESPONSE made PENDING_OL
+            # structurally unreachable and stored live RFQs as losses.
+            req_dt = parse_iso(request_timestamp)
+            if not pending_ol_stale(req_dt, now):
+                _w = (PENDING_OL_LOSS_HOURS_FRIDAY
+                      if req_dt and req_dt.astimezone(ET).weekday() == 4
+                      else PENDING_OL_LOSS_HOURS)
+                return StatusDecision(
+                    STATUS_PENDING, False, False, None,
+                    f"Awaiting OL quote — within the {_w}h response window")
             return StatusDecision(STATUS_NQ, False, False, "NO_RESPONSE",
                                   "OL-USA never responded with a quote")
         return StatusDecision(STATUS_NQ, False, False, "RESPONSE_NO_RATE",
