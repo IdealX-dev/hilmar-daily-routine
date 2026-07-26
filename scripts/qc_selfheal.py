@@ -1495,6 +1495,88 @@ QC065_CLIENT_BODY_PATH = (
     Path(__file__).resolve().parent.parent / "reports" / "client-email-body.html")
 
 
+def qc069_duplicate_shipment_rows(rows):
+    """QC-069: the SAME shipment stored as two rows.
+
+    Michael's reported defect #2 (a lane shown as won AND still pending in the
+    same report). Two shapes, both silent today:
+
+      (a) DUPLICATE BOOKING REF — one mdolx_ref on more than one row.
+          link_bookings_to_requests emits a standalone `stand_<mdolx>` WIN when
+          it cannot link a booking to its request (e.g. the RFQ says "HCMC" and
+          OL's confirmation says "Cat Lai"), so the shipment is counted once as
+          a WIN and once as the still-open request it belongs to.
+      (b) OPEN ROW SHADOWED BY A WIN — a PENDING row and a WIN row on the same
+          canonical lane with the same container spec, the win landing at or
+          after the request. TEU is double counted and the PENDING copy later
+          ages to a LOSS claiming OL never quoted a move OL actually booked.
+
+    Detect-only: collapsing rows is destructive and the correct survivor
+    depends on which row carries the real request thread. The audit names both
+    ids so the operator (or a later, evidenced heal) can fold them.
+
+    Returns [(kind, key, [request_ids...]), ...].
+    """
+    out = []
+
+    by_ref = {}
+    for r in rows or []:
+        refs = set()
+        if r.get("mdolx_ref"):
+            refs.add(str(r["mdolx_ref"]).strip().upper())
+        for m in (r.get("mdolx_refs_all") or []):
+            if m:
+                refs.add(str(m).strip().upper())
+        for ref in refs:
+            by_ref.setdefault(ref, []).append(r.get("request_id", "?"))
+    for ref, ids in sorted(by_ref.items()):
+        if len(set(ids)) > 1:
+            out.append(("duplicate_mdolx", ref, sorted(set(ids))))
+
+    def _aliases(r):
+        """Every name this destination can legitimately go by.
+
+        core.canonical_lane_key is only .strip().lower(), so "HCMC (Cat Lai)"
+        and "Cat Lai" are different keys — which is exactly how OL's booking
+        confirmation ("Cat Lai") fails to link to Lonny's RFQ ("HCMC") and a
+        second row gets created. Match on the alias SET so the pair is caught
+        regardless of which name each side used.
+        """
+        d = (r.get("destination") or "").strip().lower()
+        if not d:
+            return set()
+        out = {d}
+        m = re.match(r"^([^(]+?)\s*\((.+)\)\s*$", d)
+        if m:
+            out.add(m.group(1).strip())
+            out.add(m.group(2).strip())
+        return {a for a in out if a and a != "unknown"}
+
+    def _equip(r):
+        return (r.get("containers") or "").strip().lower()
+
+    wins = [r for r in rows or [] if (r.get("status") or "").upper() == "WIN"]
+    pends = [r for r in rows or [] if (r.get("status") or "").upper() == "PENDING"]
+    for pr in pends:
+        p_alias, p_eq = _aliases(pr), _equip(pr)
+        if not p_alias or not p_eq:
+            continue
+        p_at = core.parse_iso(pr.get("request_timestamp") or pr.get("request_date"))
+        for w in wins:
+            if _equip(w) != p_eq or not (_aliases(w) & p_alias):
+                continue
+            w_at = core.parse_iso(w.get("booking_timestamp")
+                                  or w.get("request_timestamp")
+                                  or w.get("request_date"))
+            if p_at and w_at and w_at < p_at:
+                continue
+            out.append(("open_row_shadowed_by_win",
+                        sorted(p_alias)[0] + "|" + p_eq,
+                        sorted({pr.get("request_id", "?"), w.get("request_id", "?")})))
+            break
+    return out
+
+
 def qc068_ol_sla_breaches(rows, now=None):
     """QC-068: open RFQs where OL has BLOWN its response SLA.
 
@@ -4091,6 +4173,26 @@ def phase_6_rules(log: Log, data: dict):
                    f"(SLA {core.PENDING_OL_SLA_BIZ_HOURS} biz-h)")
     except Exception as _e:
         log.warn(f"QC-068: check failed with exception: {_e}")
+
+    # QC-069: ONE SHIPMENT, TWO ROWS. Michael's reported defect #2 — a lane
+    # showing as won AND still pending in the same report. Catches a booking
+    # ref landing on two rows (the stand_<mdolx> fallback firing when a lane
+    # alias blocks the link) and an open row shadowed by a won row on the same
+    # lane + equipment. ERROR-class: TEU is double counted and the open copy
+    # will later age into a LOSS claiming OL never quoted a move OL booked.
+    # Detect-only — the correct survivor depends on which row holds the real
+    # request thread, so the audit names both ids rather than guessing.
+    try:
+        _dup69 = qc069_duplicate_shipment_rows(requests)
+        if _dup69:
+            for _kind69, _key69, _ids69 in _dup69:
+                log.error("QC-069: " + _kind69 + " — " + _key69 + " appears on rows "
+                          + ", ".join(_ids69) + " (one shipment stored twice; "
+                          "TEU is double counted)")
+        else:
+            log.ok("QC-069: no duplicate shipment rows")
+    except Exception as _e:
+        log.warn("QC-069: check failed with exception: " + str(_e))
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE

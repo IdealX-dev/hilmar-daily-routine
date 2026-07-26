@@ -3,6 +3,71 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-26 — Data audit batch 1: TEU corruption, client contradiction, duplicate rows
+
+Full 6-dimension data-integrity audit (42 agents: 6 finders + adversarial
+verification of every finding). 36 raw findings -> 25 CONFIRMED, 11 refuted.
+This batch ships the three highest-impact confirmed defects; the rest are
+logged as a prioritized backlog below.
+
+1. TEU CORRUPTION FROM REFERENCE NUMBERS (core.parse_teu, both trees)
+   The pattern was `(\d+)\s*[x-]?\s*(\d{2})`. The greedy `\d+` ate any digit
+   run ending in 20/40/45, and ingest feeds it raw email-preview text:
+       parse_teu("PO 4451440")  ->  (44514 containers, 89028 TEU)
+   ONE such row poisons every volume figure that day — email KPIs, dashboard
+   tiles, lane and week rollups, the client PDF. Reproduced live before fixing.
+   The mirror failure was a silent UNDER-count: "40'HC x 2" returned 0 TEU on a
+   real 2-container booking.
+   Fixed: digit-boundary guards on both sides, quantity capped at 3 digits,
+   size restricted to the real ISO sizes, and a SEPARATOR now required between
+   quantity and size (every real spelling has one: "2-20'", "1x20'DV",
+   "2x40'RF", "3 x 40 HC", "2 40'HC") so a bare "quote 10040" cannot read as
+   100 x 40'. Added the reverse phrasing ("40'HC x 2", "20' x 3"), consulted
+   ONLY when the forward pattern matched nothing so nothing is double counted.
+
+2. CLIENT EMAIL CONTRADICTED ITSELF (gen_client_email._client_sections)
+   The bookings bucket was built from a historical -> WIN transition. A row that
+   flips to WIN on Lonny's "please send" and is then re-decided to
+   PENDING(AWAITING_MDOLX) on the next fire — because OL has not issued the
+   MDOLX confirmation yet — rendered in "Bookings confirmed" AND "Awaiting your
+   decision" in the SAME email to the client. Fixed: a booking must still be
+   status WIN, and the buckets are now disjoint by row identity.
+
+3. ONE SHIPMENT STORED AS TWO ROWS — new QC-069 (ERROR, detect-only)
+   The operator-reported defect #2. Catches (a) one mdolx_ref on more than one
+   row (the stand_<mdolx> fallback firing when a booking cannot be linked) and
+   (b) an open PENDING row shadowed by a WIN row on the same destination +
+   equipment. Destination matching is ALIAS-AWARE (HCMC (Cat Lai) = HCMC =
+   Cat Lai) because canonical_lane_key is only .lower() — which is exactly how
+   OL's "Cat Lai" confirmation fails to link to Lonny's "HCMC" RFQ and a second
+   row appears. Detect-only: the correct survivor depends on which row carries
+   the real request thread, so the audit names BOTH ids.
+
+Suite 1795 passed (+42), ruff clean. QC-INDEX now QC-001..QC-069.
+
+CONFIRMED BACKLOG — not yet fixed, ranked (full detail in the audit run):
+ HIGH  ingest.py:650  booking->request match via In-Reply-To/References takes
+       the FIRST row in arbitrary stage order; a recycled thread can hand a NEW
+       request an OLD booking. Verifier corrected the proposed fix: prefer the
+       container+carrier scorer over in_reply_to, never let stage order decide.
+ HIGH  ingest.py:845  lane-alias miss (HCMC vs Cat Lai) CREATES the duplicate
+       row QC-069 now only detects. Needs a canonical alias map on both sides.
+ HIGH  ingest.py:1509 additive carry-forward can append a second row with the
+       same request_id; the tie-break can discard the preserved WIN.
+ HIGH  core.py:1061   a same-day quote enriched by patch_carriers flips straight
+       to Q&L with zero aging and leaves both pending buckets.
+ HIGH  core.py:1019   decide_status returns has_send=False on SEND_NO_BOOKING,
+       erasing the record that Lonny accepted.
+ HIGH  ingest.py:368  request_date is stored as a UTC calendar date but every
+       day bucket is an ET business day — a Friday-evening Pacific RFQ lands in
+       the wrong report day (same class as the 2026-07-21 _et_date fix).
+ HIGH  gen_email.py:836 Won-tile vs What-Happened contradiction (a further
+       instance beyond the 2026-07-21 fix).
+ HIGH  qc_selfheal.py:1248 status mutated without record_transition, so
+       status_history contradicts the row's actual status.
+ MED   9 further findings (aggregation, self-heal ordering, persistence
+       atomicity, schema invariants). LOW 3.
+
 ## 2026-07-26 — Michael's timers: OL 3-biz-hour SLA + 24/72 win-loss (both sides)
 
 Michael: "no need for track and trace" / "ol response time has to be 3 hours" /
