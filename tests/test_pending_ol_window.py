@@ -132,7 +132,7 @@ def test_pending_ol_stale_helper_parity(core):
 
 def test_both_trees_agree_on_the_window():
     """Byte-level policy parity — the two cores must not drift."""
-    assert SC.PENDING_OL_LOSS_HOURS == HC.PENDING_OL_LOSS_HOURS == 48
+    assert SC.PENDING_OL_LOSS_HOURS == HC.PENDING_OL_LOSS_HOURS == 24
     assert SC.PENDING_OL_LOSS_HOURS_FRIDAY == HC.PENDING_OL_LOSS_HOURS_FRIDAY == 72
     for ts in (FRESH_RFQ, "2026-07-01T15:00:00Z", None):
         a = SC.decide_status(has_send=False, mdolx_ref=None, response_timestamp=None,

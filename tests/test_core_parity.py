@@ -134,8 +134,14 @@ ALLOWED_CROSS_FOLDER_DRIFT = {
     # 2026-07-24 — PENDING-OL response window. Before this, an unquoted row
     # was LOSS/NO_RESPONSE the instant it was ingested (no grace), which made
     # PENDING_OL structurally unreachable. Locked across trees.
-    ("PENDING_OL_LOSS_HOURS", 48),
+    # 2026-07-26 Michael: "win loss timer is the 24/72 hours" — BOTH sides of
+    # the deal resolve on the same clock. "ol response time has to be 3 hours"
+    # is a separate BUSINESS-hour SLA (overdue/chase), never a loss threshold.
+    ("PENDING_OL_LOSS_HOURS", 24),
     ("PENDING_OL_LOSS_HOURS_FRIDAY", 72),
+    ("PENDING_OL_SLA_BIZ_HOURS", 3),
+    ("PENDING_HILMAR_LOSS_HOURS", 24),
+    ("PENDING_HILMAR_LOSS_HOURS_FRIDAY", 72),
 ])
 def test_numeric_constants_match_across_trees(name, expected):
     """Locks the constants that gate behavior. Any numeric/policy constant

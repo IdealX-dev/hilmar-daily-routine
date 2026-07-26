@@ -50,7 +50,7 @@ PENDING_WINDOW_HOURS = 24
 #: prior behavior on two counts: 24→48h normal, and Friday no longer runs to
 #: Tuesday 6 PM (that left 73–78h Friday quotes stuck PENDING). The SEND-signal
 #: aging (is_business_stale) is deliberately unchanged.
-PENDING_HILMAR_LOSS_HOURS = 48
+PENDING_HILMAR_LOSS_HOURS = 24
 PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
 #: PENDING-OL window — how long OL-USA has to answer Lonny's RFQ before the
 #: row is called a genuine non-response (NQ). Symmetric with the Hilmar side
@@ -60,8 +60,19 @@ PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
 #: LOSS/NO_RESPONSE the instant it was ingested, with NO grace at all, which
 #: made PENDING_OL structurally unreachable and buried live open business as
 #: "lost". Mirrored across trees; tests/test_core_parity.py enforces parity.
-PENDING_OL_LOSS_HOURS = 48
+PENDING_OL_LOSS_HOURS = 24
 PENDING_OL_LOSS_HOURS_FRIDAY = 72
+
+#: OL-USA's RESPONSE SLA, in BUSINESS hours (ET 8:30-17:30 Mon-Fri) — the same
+#: clock the report's "Time to Quote" column already uses, so the SLA and the
+#: displayed metric can never disagree. Michael 2026-07-26: "ol response time
+#: has to be 3 hours" (config.json rules.overdue_no_response_hours = 3).
+#: This is an OVERDUE/escalation threshold, NOT a loss threshold: past 3 biz
+#: hours OL has breached and must be chased, but the row stays OPEN
+#: (PENDING_OL) until the 24/72h win-loss timer above resolves it. Keeping the
+#: two separate is deliberate — collapsing them would re-bury live business as
+#: "lost", which is the 2026-07-24 defect this whole area exists to prevent.
+PENDING_OL_SLA_BIZ_HOURS = 3
 RATE_TREND_THRESHOLD_PCT = 10
 
 VALID_STATUSES = {"WIN", "LOSS", "PENDING"}
@@ -947,6 +958,30 @@ def pending_ol_stale(request_dt, now=None) -> bool:
     deadline = (PENDING_OL_LOSS_HOURS_FRIDAY if req_et.weekday() == 4
                 else PENDING_OL_LOSS_HOURS)
     return (now - request_dt).total_seconds() / 3600.0 >= deadline
+
+
+def pending_ol_overdue(request_dt, now=None) -> bool:
+    """True when OL has BLOWN its response SLA on a still-open RFQ.
+
+    Business hours (ET 8:30-17:30 Mon-Fri) via biz_hours_between — the exact
+    measure the report shows as "Time to Quote", so an overdue flag and the
+    displayed hours can never contradict each other. An RFQ that lands at
+    6:42 PM ET does not start burning SLA until 8:30 the next business
+    morning, and the weekend never counts against OL.
+
+    NOT a loss signal — see PENDING_OL_SLA_BIZ_HOURS. The row remains
+    PENDING_OL (open, chase OL); this only marks that the chase is now owed.
+
+    Kept byte-for-byte identical across scripts/core.py and
+    src/hilmar/core.py — tests/test_core_parity.py fails if they drift.
+    """
+    if request_dt is None:
+        return False
+    now = now or now_utc()
+    elapsed = biz_hours_between(request_dt, now)
+    if elapsed is None:
+        return False
+    return elapsed >= PENDING_OL_SLA_BIZ_HOURS
 
 
 def decide_status(
