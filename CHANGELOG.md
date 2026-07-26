@@ -3,6 +3,86 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-26 — Data audit batch 3: the standalone-WIN cluster
+
+Findings 2, 11 and 22 turned out to be ONE root cause, reproduced on main
+before anything was touched.
+
+THE DEFECT
+   The only lane key in the system was `.strip().lower()`, so "HCMC" and
+   "Cat Lai" were different lanes. Lonny's RFQ says "Oakland to HCMC"; OL's
+   booking confirmation says "Oakland to Cat Lai". The booking could not be
+   linked, so link_bookings_to_requests fabricated a stand_<mdolx> WIN row
+   beside the real request:
+
+       req_abc       lane=Oakland → HCMC     status=PENDING  teu_requested=2
+       stand_260999  lane=Oakland → Cat Lai  status=WIN      teu_won=2
+
+   One shipment, two rows. TEU double counted, a phantom lane in Lane
+   Performance, and 24h later the orphaned PENDING copy ages into a LOSS
+   reporting that OL never quoted a move OL had actually booked. This is the
+   operator's reported defect #2.
+
+Three layers, because preventing it and detecting it are different jobs:
+
+1. PREVENT — core.canonical_port_key (both trees), one key per physical
+   destination, used on BOTH sides of every destination comparison so the two
+   sides cannot disagree about what counts as the same place. HCMC / Cat Lai /
+   Cai Mep / Ho Chi Minh / Saigon collapse; so do Manila North/South, Busan /
+   Port Busan / Pusan, and the three Lat Krabang spellings. Resolution is
+   whole-string, then the head before a parenthetical, then the parenthetical
+   itself, so "HCMC (Cat Lai)" and "Vietnam (Cat Lai)" both land on hcmc.
+   DELIBERATELY CONSERVATIVE: Bangkok/Laem Chabang and Tokyo/Yokohama are NOT
+   merged — collapsing distinct ports would cross-match real separate
+   business, a worse failure than the one being fixed. Unknown names fall
+   through to their own lowercased head, so this is a strict refinement of the
+   old behaviour: it can only merge names the map lists, never split ones that
+   used to match. Verified: the booking now links to the real row, TEU counts
+   once, an unrelated Hamburg RFQ is not consumed, and a booking with no
+   matching request still becomes a standalone (that path is legitimate).
+
+2. DETECT — QC-069 had TWO gaps that made it miss the exact pair it was
+   written for. Verified by execution: it returned [] on that pair.
+     (a) its alias set only split a PARENTHETICAL, so two rows saying plain
+         "HCMC" and plain "Cat Lai" produced disjoint sets. Now anchored on
+         canonical_port_key — the same key ingest matches with, so detection
+         and prevention cannot disagree.
+     (b) it compared container specs as raw strings: Lonny writes "1x40HC",
+         OL writes "1X40'HC", and case-folding leaves those different. Now
+         compares parsed (count, TEU) — that is what double-counts in the
+         rollups, and it is spelling-proof.
+
+3. CONTAIN — standalone rows no longer carry invented values.
+     * A destination resolving to the SAME port as the origin is now treated
+       as unresolved instead of emitting "Oakland → Oakland", which had been
+       rendering in Lane Performance as a real trade lane (defect #3). Happens
+       on re-forwarded / return-leg confirmations naming only one port.
+     * response_timestamp stays None, the SAME rule the MATCHED path spells
+       out 100 lines up ("we never saw a rate response — the booking arrived
+       directly"). The standalone path contradicted it and wrote the booking
+       time, making the row claim an OL rate quote at a moment OL only sent a
+       booking confirmation — the identical 171-hour turnaround defect fixed
+       on the matched path in 2026-05-19 and left live on this one.
+       booking_timestamp now carries the chronology.
+
+QC-073 (ERROR/WARN) — standalone booking row hygiene. ERROR on a degenerate
+lane and on a fabricated rate response; WARN listing standalone WINs with no
+carrier_won (an unattributable win the operator must chase). Detect-only:
+these are real bookings, and the fix is to link them or correct the source
+subject. Both ERROR shapes are now prevented at the source, so reaching the
+check is a regression.
+
+Tests: tests/test_audit_batch3.py (39 cases) — the alias table, the
+NOT-merged guard on distinct ports, cross-tree parity, the end-to-end link,
+TEU counted once, over-matching guards, both QC-069 gaps, and all three QC-073
+shapes. Suite 1898 passed (1859 -> +39), coverage 91.17%, ruff clean.
+
+Backlog after this batch: 15 confirmed findings remain (2 HIGH) — booking-to-
+request match decided by arbitrary stage-file order, additive carry-forward
+appending a second row under the same request_id, quoted rows with an
+unparseable response_timestamp aging with zero grace, and the remaining
+Won-tile vs What-Happened contradiction.
+
 ## 2026-07-26 — Data audit batch 2: send evidence, day-bucket clock, audit trail
 
 Second half of Michael's "DO BOTH". Four defects, each REPRODUCED on current

@@ -554,6 +554,74 @@ def to_pt(dt: datetime | None) -> datetime | None:
     return dt.astimezone(PT) if dt else None
 
 
+#: Ports that Lonny and OL routinely call by DIFFERENT names for the SAME
+#: destination. Until 2026-07-26 the only lane key in the system was
+#: `.strip().lower()`, so "HCMC" and "Cat Lai" were different lanes — which is
+#: precisely how OL's booking confirmation ("Oakland to Cat Lai") failed to
+#: link to Lonny's RFQ ("Oakland to HCMC"). The unlinked booking then became a
+#: fabricated `stand_<mdolx>` WIN row, so ONE shipment was stored TWICE: once
+#: as a won Oakland→Cat Lai booking and once as the still-open Oakland→HCMC
+#: request. TEU double counted, a phantom lane in Lane Performance, and 24h
+#: later the orphaned PENDING copy aged into a LOSS reporting that OL never
+#: quoted a move OL had actually booked.
+#:
+#: DELIBERATELY CONSERVATIVE. Only names for the same place, or terminals of
+#: one port complex that the two sides genuinely use interchangeably, are
+#: merged. Distinct ports with distinct rates (Bangkok vs Laem Chabang,
+#: Tokyo vs Yokohama) are NOT merged — collapsing those would cross-match real
+#: separate business, which is a worse failure than the one being fixed.
+_PORT_ALIASES = {
+    # Ho Chi Minh City — Cat Lai and Cai Mep are its two container terminals.
+    # Lonny asks for "HCMC"; OL confirms whichever terminal the vessel calls.
+    "hcmc": "hcmc", "ho chi minh": "hcmc", "ho chi minh city": "hcmc",
+    "saigon": "hcmc", "cat lai": "hcmc", "cai mep": "hcmc",
+    "cat lai port": "hcmc", "cai mep port": "hcmc",
+    # Manila North / South are terminals of one port.
+    "manila": "manila", "manila north": "manila", "manila south": "manila",
+    # Busan (formerly romanised Pusan).
+    "busan": "busan", "port busan": "busan", "pusan": "busan",
+    # Lat Krabang ICD — three spellings appear in real RFQs.
+    "lat krabang": "lat krabang", "lat krab": "lat krabang",
+    "ladkrabang": "lat krabang", "lad krabang": "lat krabang",
+    # Hong Kong.
+    "hong kong": "hong kong", "hongkong": "hong kong",
+}
+
+
+def canonical_port_key(destination) -> str:
+    """THE lane-matching key — one name per physical destination.
+
+    Used on BOTH sides of every destination comparison (booking→request
+    linking, rate-response attachment, QC duplicate detection) so the two
+    sides cannot disagree about what counts as the same place.
+
+    Resolution order, most specific first:
+      1. the whole string ("cat lai" → "hcmc")
+      2. the head before a parenthetical ("HCMC (Cat Lai)" → "hcmc")
+      3. the parenthetical itself ("Vietnam (Cat Lai)" → "hcmc")
+    Unknown names fall through to their own lowercased head, so this is a
+    strict refinement of the old `.strip().lower()`: it can only ever merge
+    names the map explicitly lists, never split ones that used to match.
+
+    This is a MATCHING key, not a display value — `title_case_destination`
+    still renders "HCMC (Cat Lai)" for humans.
+    """
+    raw = (destination or "").strip().lower()
+    if not raw:
+        return "unknown"
+    if raw in _PORT_ALIASES:
+        return _PORT_ALIASES[raw]
+    head, paren = raw, None
+    m = re.match(r"^([^(]+?)\s*\((.+)\)\s*$", raw)
+    if m:
+        head, paren = m.group(1).strip(), m.group(2).strip()
+    if head in _PORT_ALIASES:
+        return _PORT_ALIASES[head]
+    if paren and paren in _PORT_ALIASES:
+        return _PORT_ALIASES[paren]
+    return head or raw
+
+
 def et_date_of(ts) -> str | None:
     """THE canonical ET calendar date for a timestamp — the one clock every
     day bucket in this system runs on.

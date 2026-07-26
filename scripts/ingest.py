@@ -135,7 +135,15 @@ def clean_origin(subject: str, default: str = "Oakland") -> str:
 
 
 def canonical_lane_key(destination: str | None) -> str:
-    return (destination or "Unknown").strip().lower()
+    """Lane-matching key, alias-collapsed via core.canonical_port_key.
+
+    Was bare `.strip().lower()` until 2026-07-26, which made "HCMC" and
+    "Cat Lai" different lanes — exactly how OL's booking confirmation failed
+    to link to Lonny's RFQ, fabricating a `stand_<mdolx>` WIN beside the real
+    request row. Both sides of every destination comparison go through here,
+    so they cannot disagree about what counts as the same place.
+    """
+    return C.canonical_port_key(destination)
 
 
 def title_case_destination(destination: str | None) -> str:
@@ -833,6 +841,17 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             if normalized != s_dest:
                 s_dest = normalized.strip()
         s_dest = s_dest or "Unknown"
+        # A destination that resolves to the SAME port as the origin is a
+        # parse failure, not a shipment. It happens on re-forwarded or
+        # return-leg confirmations whose subject names only one port
+        # ("HILMAR 1X40'HC to Oakland"): s_dest picks up "Oakland" and
+        # s_origin defaults to "Oakland", producing a degenerate
+        # "Oakland → Oakland" lane that then appears in Lane Performance as a
+        # real trade lane. Michael's reported defect #3. Alias-aware, so
+        # "Oakland → OAK" is caught too. Treat it as unresolved and let QC-015
+        # / QC-073 surface it rather than inventing a lane.
+        if s_dest != "Unknown" and C.canonical_port_key(s_dest) == C.canonical_port_key(s_origin):
+            s_dest = "Unknown"
         lane = f"{s_origin} → {s_dest}" if s_dest != "Unknown" else "Lane unresolved"
         # Standalone wins have no rate-response body to mine for carrier_quoted —
         # the only signal is the MDOLX subject ("// MSC: EBKG..."). 2026-04-30
@@ -875,7 +894,15 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             "mdolx_refs_all": [mdolx],
             "carrier_quoted": s_carrier,
             "carrier_won": s_carrier,
-            "response_timestamp": bk_ts_iso,
+            # response_timestamp stays None — the SAME rule the matched path
+            # spells out 100 lines up ("we never saw a rate response, the
+            # booking arrived directly"). Writing the booking time here made
+            # the standalone row claim OL sent a rate quote at a moment it
+            # only sent a booking confirmation, which is the 171-hour
+            # turnaround defect fixed on the matched path in 2026-05-19 and
+            # left live on this one. booking_timestamp carries the chronology.
+            "response_timestamp": None,
+            "booking_timestamp": bk.get("sent"),
             "olusa_time_et": C.fmt_et(bk_ts) if bk_ts else None,
             "loss_reason": None,
             "reason_detail": f"Standalone booking (pre-window request) — MDOLX{mdolx}, no Lonny ask found in 30-day window",
