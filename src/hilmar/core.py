@@ -377,6 +377,44 @@ def to_pt(dt: datetime | None) -> datetime | None:
     return dt.astimezone(PT) if dt else None
 
 
+def et_date_of(ts) -> str | None:
+    """THE canonical ET calendar date for a timestamp — the one clock every
+    day bucket in this system runs on.
+
+    Exists because `request_date` had THREE conflicting producers as of
+    2026-07-26: ingest wrote the UTC calendar date, merge_ingest took a raw
+    `ts[:10]` UTC slice, and qc_selfheal's heal wrote PT — while every reader
+    (gen_email, gen_dashboard, gen_client_email, the day reconciliation)
+    buckets by the ET business day from `report_business_day`. An RFQ sent
+    Friday 5:30 PM PT is 2026-07-25 in UTC and Friday 2026-07-24 in ET; since
+    no fire ever reports a Saturday, that row appeared in NO day's New
+    Requests, KPI tile or reconciliation on any day, ever — while still
+    counting toward the period totals, so the day tiles and period tiles
+    disagreed by exactly the rows the clocks disagreed about.
+
+    Accepts an ISO string or a datetime. Returns None when it cannot parse,
+    so callers can fall back rather than invent a date. Date-only strings
+    ("2026-07-24") pass through unchanged — they carry no timezone to
+    convert, and re-interpreting them as midnight UTC would shift them a day
+    in exactly the direction this function exists to prevent.
+    """
+    if not ts:
+        return None
+    if isinstance(ts, datetime):
+        dt = ts
+    elif isinstance(ts, str):
+        if len(ts.strip()) == 10 and ts.strip().count("-") == 2:
+            return ts.strip()
+        dt = parse_iso(ts)
+    else:
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(ET).date().isoformat()
+
+
 def now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -965,8 +1003,11 @@ def decide_status(
         if send_at is None:
             send_at = parse_iso(response_timestamp)
         if is_business_stale(send_at, now):
+            # has_send stays TRUE — evidence field, not a state field. See the
+            # matching branch in scripts/core.py for the full 2026-07-26
+            # write-up; tests/test_core_parity.py enforces they agree.
             return StatusDecision(
-                STATUS_Q_AND_L, True, False, "SEND_NO_BOOKING",
+                STATUS_Q_AND_L, True, True, "SEND_NO_BOOKING",
                 "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
                 "booking never confirmed (real wins confirm same/next business day)"
             )

@@ -845,16 +845,29 @@ def phase_3_entries(log: Log, data: dict):
             )
             log.fix(f"{rid_label}: Assigned request_id={r['request_id']}")
 
-        if not r.get("request_date"):
-            if r.get("date"):
-                r["request_date"] = r["date"]
-                log.fix(f"{rid_label}: request_date copied from legacy 'date'")
-            elif r.get("request_timestamp"):
-                dt = core.parse_iso(r["request_timestamp"])
-                if dt:
-                    r["request_date"] = core.to_pt(dt).strftime("%Y-%m-%d")
-                    log.fix(f"{rid_label}: Derived request_date from request_timestamp")
-        if r.get("request_date") and not r.get("date"):
+        # request_date is RECOMPUTED from request_timestamp every pass, not
+        # merely filled when absent. Filling-only was why the 2026-07-26
+        # timezone fix could not stand on its own: every row already stored
+        # with a UTC (ingest / merge_ingest) or PT (this heal, pre-fix) date
+        # would have kept its wrong day forever, and a row mis-dated onto a
+        # Saturday is invisible to EVERY report day. The timestamp is the
+        # authority; the date is a derived bucket key, so recomputing it is a
+        # migration that runs itself. Rows with no parseable timestamp keep
+        # whatever they have — we correct dates, we don't invent them.
+        _et_rd = core.et_date_of(r.get("request_timestamp"))
+        if _et_rd:
+            if r.get("request_date") != _et_rd:
+                log.fix(f"{rid_label}: request_date {r.get('request_date')} → "
+                        f"{_et_rd} (recomputed in ET — the clock every day "
+                        f"bucket uses)")
+                r["request_date"] = _et_rd
+        elif not r.get("request_date") and r.get("date"):
+            r["request_date"] = r["date"]
+            log.fix(f"{rid_label}: request_date copied from legacy 'date'")
+        # Keep the legacy 'date' mirror in step. Readers fall back to it
+        # (`r.get("request_date") or r.get("date")`), so leaving it on the old
+        # value would reintroduce the very split this heal just closed.
+        if r.get("request_date") and r.get("date") != r["request_date"]:
             r["date"] = r["request_date"]
 
         c_count, teu = core.parse_teu(r.get("containers", ""))
@@ -1019,9 +1032,19 @@ def phase_3_entries(log: Log, data: dict):
                 log.fix(f"{rid_label}: NQ contamination — cleared ol_rate={r['ol_rate']!r}")
                 r["ol_rate"] = "Not Quoted"
 
-        if r["status"] == "LOSS" and r.get("has_send"):
+        # has_send on a LOSS is normally contradictory — Lonny cannot have
+        # accepted a quote we lost on price, and he certainly cannot have
+        # accepted one OL never sent. SEND_NO_BOOKING is the ONE exception:
+        # that loss reason MEANS "Lonny accepted and OL never confirmed the
+        # booking", so has_send=True is the evidence that defines it. Clearing
+        # it here was the second half of the 2026-07-26 defect — even with
+        # core.decide_status fixed, this line wiped the flag straight back out
+        # and the next pass relabelled the row UNDIFFERENTIATED, losing the
+        # OL-service-failure signal from the loss mix and carrier scorecards.
+        if (r["status"] == "LOSS" and r.get("has_send")
+                and r.get("loss_reason") != "SEND_NO_BOOKING"):
             r["has_send"] = False
-            log.fix(f"{rid_label}: Cleared has_send on LOSS")
+            log.fix(f"{rid_label}: Cleared has_send on LOSS/{r.get('loss_reason')}")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1587,6 +1610,87 @@ _CONTAINER_TOKEN_RX = re.compile(
     r"|\b(?:container|containers|reefer|reefers|teu|fcl)\b",
     re.IGNORECASE,
 )
+
+
+def qc071_request_date_clock(rows):
+    """QC-071: rows bucketed on the wrong day because request_date is not ET.
+
+    THE FAILURE (2026-07-26): `request_date` had THREE producers writing THREE
+    clocks — ingest wrote the UTC calendar date, merge_ingest took a raw
+    `ts[:10]` UTC slice, and this file's own heal wrote PT — while every
+    reader buckets by the ET business day from `core.report_business_day`.
+    An RFQ sent Friday 5:30 PM PT is 2026-07-25 in UTC and Friday 2026-07-24
+    in ET, and since no fire ever reports a Saturday, that row appeared in NO
+    day's New Requests, KPI tile or day reconciliation — on any day, ever —
+    while still counting toward the period totals. The day tiles and the
+    period tiles then disagreed by exactly the rows the clocks disagreed on,
+    and the day reconciliation still balanced because the row was never in
+    the denominator to begin with.
+
+    All three producers now call `core.et_date_of`. This is the daily proof on
+    live rows, and the catch for a fourth producer appearing later.
+
+    The heal itself lives in phase_3 (it RECOMPUTES request_date every pass,
+    which is also the migration for rows already stored on the wrong clock);
+    by the time this runs, a finding means the heal did not reach the row —
+    so this is ERROR-class and detect-only, on purpose.
+
+    Returns [(request_id, stored, expected), ...].
+    """
+    out = []
+    for r in rows or []:
+        ts = r.get("request_timestamp")
+        if not ts:
+            continue
+        expected = core.et_date_of(ts)
+        if not expected:
+            continue
+        stored = r.get("request_date")
+        if stored and stored != expected:
+            out.append((r.get("request_id", "?"), stored, expected))
+    return out
+
+
+def qc072_history_contradicts_status(rows):
+    """QC-072: status_history's terminal state contradicts the row's status.
+
+    `status_history` is the field schema.json declares as THE transition
+    record — audits, the dashboard timeline and Sentry triage reconstruct a
+    row's outcome from it. Two writers used to bypass it (2026-07-26):
+    `age_requests` assigned `r["status"]` directly, and `merge_idempotent`
+    recomputed `status` while preserving the OLD history. A send-signal WIN
+    that never booked therefore read status="LOSS" / SEND_NO_BOOKING with
+    history still ending at {"to": "WIN"} — so every history-based reader
+    reported it as WON, with no entry anywhere explaining the regression.
+
+    Both writers now route through `core.record_transition` / union the log.
+    This is the daily proof, plus the second invariant the same defect broke:
+    `teu_won > 0` on a row that is not a WIN, which counts booked volume for
+    a shipment that does not exist.
+
+    Detect-only. Rewriting history is never a safe automatic act — the audit
+    names the row so a human decides which record is the true one.
+
+    Returns [(request_id, kind, detail), ...] where kind is
+    "history-contradiction" or "stale-teu-won".
+    """
+    out = []
+    for r in rows or []:
+        rid = r.get("request_id", "?")
+        status = (r.get("status") or "").upper()
+        hist = r.get("status_history") or []
+        if hist and isinstance(hist, list) and isinstance(hist[-1], dict):
+            last_to = (hist[-1].get("to") or "").upper()
+            if last_to and status and last_to != status:
+                out.append((rid, "history-contradiction",
+                            f"status={status} but status_history ends at "
+                            f"{last_to} (at {hist[-1].get('at')})"))
+        teu_won = r.get("teu_won") or 0
+        if status != "WIN" and isinstance(teu_won, (int, float)) and teu_won > 0:
+            out.append((rid, "stale-teu-won",
+                        f"teu_won={teu_won} on a {status or 'blank'} row — "
+                        f"booked volume for a shipment that was not booked"))
+    return out
 
 
 def qc070_teu_sanity(rows, heal=True):
@@ -4300,6 +4404,40 @@ def phase_6_rules(log: Log, data: dict):
                    f"{core.MAX_ROW_CONTAINERS} container per-row ceiling")
     except Exception as _e:
         log.warn("QC-070: check failed with exception: " + str(_e))
+
+    # QC-071: DAY BUCKETS ON THE WRONG CLOCK. request_date must be the ET
+    # calendar date of request_timestamp, because every reader buckets by the
+    # ET business day. A row on the wrong clock can land on a Saturday, which
+    # no fire ever reports — invisible to every day-scoped surface forever
+    # while still inflating the period totals. phase_3 recomputes it each pass;
+    # reaching here means the heal missed the row.
+    try:
+        _rd71 = qc071_request_date_clock(requests)
+        if _rd71:
+            for _rid71, _stored71, _exp71 in _rd71:
+                log.error(f"QC-071: request {_rid71} — request_date={_stored71} "
+                          f"but its timestamp is ET {_exp71}; the row buckets "
+                          f"on the wrong report day")
+        else:
+            log.ok("QC-071: every request_date matches its timestamp in ET")
+    except Exception as _e:
+        log.warn("QC-071: check failed with exception: " + str(_e))
+
+    # QC-072: THE ROW AND ITS OWN AUDIT TRAIL DISAGREE. status_history is the
+    # declared transition record, so a row whose history ends somewhere other
+    # than its status reports the WRONG outcome to every history-based reader
+    # (audits, dashboard timeline, Sentry triage). Same check covers teu_won
+    # left behind on a row that is no longer a WIN. Detect-only — rewriting
+    # history is never a safe automatic act.
+    try:
+        _h72 = qc072_history_contradicts_status(requests)
+        if _h72:
+            for _rid72, _kind72, _detail72 in _h72:
+                log.error(f"QC-072: request {_rid72} — {_detail72}")
+        else:
+            log.ok("QC-072: status_history agrees with status on every row")
+    except Exception as _e:
+        log.warn("QC-072: check failed with exception: " + str(_e))
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE

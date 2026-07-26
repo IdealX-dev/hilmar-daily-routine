@@ -365,7 +365,14 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
             "destination": destination or "Unknown",
             "lane": f"{origin} → {destination or 'Unknown'}",
             "request_timestamp": sent,
-            "request_date": sent_dt.date().isoformat() if sent_dt else None,
+            # ET, NOT UTC. Every day bucket in the system is an ET business
+            # day (core.report_business_day), so a UTC calendar date silently
+            # shifts late-Pacific requests forward a day: an RFQ sent Friday
+            # 5:30 PM PT is 2026-07-25 in UTC but Friday 2026-07-24 in ET, and
+            # since no fire ever reports a Saturday it appeared in NO day's
+            # New Requests, KPI tile or day reconciliation — on any day, ever,
+            # while still counting in the period totals. Proved 2026-07-26.
+            "request_date": C.to_et(sent_dt).date().isoformat() if sent_dt else None,
             "lonny_time_pt": C.fmt_pt(sent_dt) if sent_dt else None,
             "subject": subject,
             "pol": _pol,
@@ -849,7 +856,8 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             "destination": s_dest,
             "lane": lane,
             "request_timestamp": None,
-            "request_date": bk_ts.date().isoformat() if bk_ts else None,
+            # ET for the same reason as the request row above — one clock.
+            "request_date": C.to_et(bk_ts).date().isoformat() if bk_ts else None,
             "lonny_time_pt": None,
             "subject": bk.get("subject"),
             "pol": s_bp.get("pol") or _derive_ports(s_origin, s_dest)[0],
@@ -1142,7 +1150,11 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
                             C.parse_iso(best["request_timestamp"])):
                 best = r
         if best:
-            best["status"] = "WIN"
+            # record_transition, not a bare assignment — see age_requests.
+            # A promotion to WIN with no history entry is the same defect in
+            # the other direction: the row reads WIN while status_history has
+            # no record of when or why it got there.
+            C.record_transition(best, "WIN", "Lonny replied Send", at=sent_dt)
             best["quoted"] = True
             best["has_send"] = True
             # Inherit carrier_won from carrier_quoted if we captured one earlier
@@ -1199,12 +1211,10 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
             best["reason_detail"] = (best.get("reason_detail") or "") + \
                                     f" | Lonny Send reply {sent[:10]}"
             best["teu_won"] = best.get("teu_requested", 0)
-            best.setdefault("status_history", []).append({
-                "at": sent,
-                "from": "PENDING",
-                "to": "WIN",
-                "reason": "Lonny send-reply",
-            })
+            # The history entry is written by record_transition above, not
+            # here. This hand-rolled append hardcoded "from": "PENDING" (wrong
+            # whenever the row was in any other state) and fired even when the
+            # row was ALREADY WIN, growing a duplicate entry on every ingest.
             promotions += 1
     return promotions
 
@@ -1216,6 +1226,22 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
 # ─────────────────────────────────────────────────────────────────────
 # Age out pending → loss via core.decide_status
 # ─────────────────────────────────────────────────────────────────────
+
+def _clear_win_evidence_on_exit(r: dict, prior_status, new_status) -> None:
+    """Drop win-only volume when a row LEAVES WIN.
+
+    `teu_won` is the TEU we actually booked. When a send-signal WIN ages out
+    to LOSS/SEND_NO_BOOKING because OL never issued the MDOLX, that volume was
+    never booked — but nothing cleared it, so the row sat at status="LOSS"
+    with teu_won=2 and every won-TEU rollup counted a shipment that does not
+    exist. Deliberately narrow: this clears ONLY on the WIN → not-WIN edge,
+    and only the volume. `has_send` / `mdolx_ref` stay — they are evidence of
+    what happened, and erasing them is the separate 2026-07-26 defect fixed in
+    core.decide_status and the qc_selfheal has_send heal.
+    """
+    if prior_status == "WIN" and new_status != "WIN" and r.get("teu_won"):
+        r["teu_won"] = 0
+
 
 def age_requests(requests: list[dict], now: datetime | None = None) -> None:
     now = now or C.now_utc()
@@ -1245,8 +1271,22 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
             lane=r.get("lane"),
             lane_winning_median=lane_winning_median,
         )
-        r["status"] = decision.status
+        # Route through record_transition, never a bare assignment.
+        # status_history is the field schema.json declares as THE transition
+        # record — audits, the dashboard timeline and Sentry triage all
+        # reconstruct the outcome from it. Assigning r["status"] directly left
+        # the two contradicting each other: a send-signal WIN that never booked
+        # was re-decided here to LOSS/SEND_NO_BOOKING while status_history
+        # still ended at {"to": "WIN"}, so anything reading the history
+        # reported the row as WON with no record of the regression. Proved on
+        # a real age_requests run 2026-07-26.
+        _prior_status = r.get("status")
+        if _prior_status != decision.status:
+            C.record_transition(r, decision.status, decision.reason_detail, at=now)
+        else:
+            r["status"] = decision.status
         r["loss_reason"] = decision.loss_reason
+        _clear_win_evidence_on_exit(r, _prior_status, decision.status)
         # Don't overwrite reason_detail if it was set by a successful link
         if not r.get("reason_detail") or "Staged — pending match" in (r.get("reason_detail") or ""):
             r["reason_detail"] = decision.reason_detail

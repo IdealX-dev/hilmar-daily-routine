@@ -554,6 +554,44 @@ def to_pt(dt: datetime | None) -> datetime | None:
     return dt.astimezone(PT) if dt else None
 
 
+def et_date_of(ts) -> str | None:
+    """THE canonical ET calendar date for a timestamp — the one clock every
+    day bucket in this system runs on.
+
+    Exists because `request_date` had THREE conflicting producers as of
+    2026-07-26: ingest wrote the UTC calendar date, merge_ingest took a raw
+    `ts[:10]` UTC slice, and qc_selfheal's heal wrote PT — while every reader
+    (gen_email, gen_dashboard, gen_client_email, the day reconciliation)
+    buckets by the ET business day from `report_business_day`. An RFQ sent
+    Friday 5:30 PM PT is 2026-07-25 in UTC and Friday 2026-07-24 in ET; since
+    no fire ever reports a Saturday, that row appeared in NO day's New
+    Requests, KPI tile or reconciliation on any day, ever — while still
+    counting toward the period totals, so the day tiles and period tiles
+    disagreed by exactly the rows the clocks disagreed about.
+
+    Accepts an ISO string or a datetime. Returns None when it cannot parse,
+    so callers can fall back rather than invent a date. Date-only strings
+    ("2026-07-24") pass through unchanged — they carry no timezone to
+    convert, and re-interpreting them as midnight UTC would shift them a day
+    in exactly the direction this function exists to prevent.
+    """
+    if not ts:
+        return None
+    if isinstance(ts, datetime):
+        dt = ts
+    elif isinstance(ts, str):
+        if len(ts.strip()) == 10 and ts.strip().count("-") == 2:
+            return ts.strip()
+        dt = parse_iso(ts)
+    else:
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(ET).date().isoformat()
+
+
 def now_utc() -> datetime:
     return datetime.now(UTC)
 
@@ -1128,7 +1166,17 @@ def decide_status(
     # MDOLX present but no send — anomaly. Hold PENDING for ops review
     # rather than auto-winning (mirrors src/hilmar Reading-B).
     if has_mdolx and not has_send:
-        return StatusDecision("PENDING", True, True, "MDOLX_NO_SEND",
+        # has_send=False — the branch is literally `has_mdolx and not has_send`,
+        # so claiming True here asserted the opposite of the condition that got
+        # us here. NOT cosmetic: qc_selfheal writes the decision back onto the
+        # row, so pass 2 re-read has_send=True alongside the MDOLX and took the
+        # WIN branch. The anomaly that was supposed to be HELD for ops review
+        # silently promoted itself to a WIN one fire later, with no send signal
+        # and nobody looking. Found 2026-07-26 while fixing the SEND_NO_BOOKING
+        # evidence bug — same class, and it lived in scripts/ only (src/hilmar
+        # already returned False), i.e. the exact "green in CI, wrong on the
+        # box" split tests/test_core_parity.py exists to catch.
+        return StatusDecision("PENDING", True, False, "MDOLX_NO_SEND",
                               "MDOLX booking present but no Lonny Send — anomaly, review")
 
     # Send received, MDOLX not yet — booking in flight. Demote to
@@ -1142,8 +1190,20 @@ def decide_status(
             if ts and (send_at is None or ts > send_at):
                 send_at = ts
         if send_signal_stale(send_at, now):
+            # has_send stays TRUE. It is an EVIDENCE field — "did Lonny
+            # accept?" — not a state field, and on this branch the answer is
+            # yes by definition: SEND_NO_BOOKING means the send happened and
+            # OL never confirmed. Returning False here erased the only record
+            # that Lonny accepted, and because qc_selfheal writes the decision
+            # back onto the row (`r["has_send"] = decision.has_send`), the NEXT
+            # pass re-read has_send=False, fell through to the quote-aging
+            # branch and relabelled the row UNDIFFERENTIATED — "we lost, cause
+            # unknown". Unrecoverable: the OL-dropped-the-ball signal was gone
+            # from the loss mix, the carrier scorecards (_OL_SILENT) and the
+            # improvement report. Proved on live-shaped data 2026-07-26:
+            # pass1 SEND_NO_BOOKING/has_send=False -> pass2 UNDIFFERENTIATED.
             return StatusDecision(
-                "LOSS", True, False, "SEND_NO_BOOKING",
+                "LOSS", True, True, "SEND_NO_BOOKING",
                 "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
                 "booking never confirmed (real wins confirm same/next business day)")
         return StatusDecision("PENDING", True, True, "AWAITING_MDOLX",

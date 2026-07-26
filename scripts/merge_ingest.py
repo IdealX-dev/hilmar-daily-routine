@@ -109,7 +109,11 @@ def merge_record(
     new_entry = {
         "request_id": rid,
         "conversationId": conv_id,
-        "request_date": (req_ts or "")[:10],
+        # ET, not a raw UTC slice. `req_ts[:10]` took the UTC calendar date,
+        # the third of three conflicting conventions in this system (ingest
+        # wrote UTC, qc_selfheal wrote PT, the reports read ET). One clock now:
+        # ET, matching core.report_business_day. See scripts/ingest.py.
+        "request_date": core.et_date_of(req_ts),
         "request_timestamp": req_ts,
         "subject": rec.get("subject"),
         "origin": rec.get("origin"),
