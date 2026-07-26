@@ -3,6 +3,49 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-26 — Michael's timers: OL 3-biz-hour SLA + 24/72 win-loss (both sides)
+
+Michael: "no need for track and trace" / "ol response time has to be 3 hours" /
+"win loss timer is the 24/72 hours."
+
+These are TWO DIFFERENT clocks, and keeping them separate is the whole point:
+
+  * **3 BUSINESS hours = OL's response SLA.** Past it OL has breached and must
+    be chased — but the row stays OPEN (PENDING_OL). It is NOT a loss.
+  * **24h (72h when quoted/asked on a Friday ET) = the win/loss timer** that
+    actually resolves the deal, on BOTH sides.
+
+Collapsing them would re-bury live business as "lost" — precisely the
+2026-07-24 defect. Flagged and kept distinct deliberately.
+
+CHANGES:
+- PENDING_HILMAR_LOSS_HOURS 48 → 24 (FRIDAY stays 72). SUPERSEDES the
+  2026-07-14 "48 hours most" rule.
+- PENDING_OL_LOSS_HOURS 48 → 24 / 72 Friday — the same win-loss timer now
+  governs the OL side too.
+- NEW PENDING_OL_SLA_BIZ_HOURS = 3 + core.pending_ol_overdue(), measured in
+  BUSINESS hours (ET 8:30–17:30 Mon-Fri) via the existing biz_hours_between —
+  the SAME function behind the report's "Time to Quote" column, so the SLA and
+  the displayed wait can never disagree. Derived from live data, not guessed:
+  the Jul-22 HCMC row shows "5.3h" for an 19-hour wall-clock gap, confirming
+  the report already measures OL in business hours.
+- Daily email "Pending OL Quote" now shows BUSINESS hours and flags red ⚠ on
+  any row past the 3h SLA (was wall-clock with 8h/24h colour bands).
+- NEW QC-068 (WARN, no heal) names every lane OL owes and its business-hours
+  wait, every fire, so a blown SLA cannot sit silently in the dataset. Only OL
+  sending the quote clears it.
+- Parity test now locks all five timer constants across both trees.
+- Tests updated for the 24/72 rule (test_auditfix_pending_hilmar_window,
+  test_core); new tests pin that an SLA breach does NOT turn an open RFQ into a
+  loss, that the weekend never counts against OL, and that the two timers stay
+  independent numbers on independent clocks.
+
+CLOSED: track-and-trace — Michael 2026-07-26 "no need for track and trace".
+Removed from the open list; the client email keeps the honest "dates are as
+quoted at booking, not live vessel tracking" disclaimer.
+
+Suite 1753 passed, ruff clean.
+
 ## 2026-07-24 — ROOT CAUSE: PENDING_OL was unreachable; live RFQs stored as losses
 
 Michael: "three requests mentioned only 2 ol responses … yet mention waiting

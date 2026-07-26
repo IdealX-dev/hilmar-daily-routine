@@ -57,7 +57,7 @@ def test_undateable_row_not_flagged():
 
 
 def test_falls_back_to_request_date_when_timestamp_missing():
-    rows = [_row("dateonly", request_timestamp=None, request_date="2026-07-22")]
+    rows = [_row("dateonly", request_timestamp=None, request_date="2026-07-23")]
     assert len(q.qc067_open_rfq_misfiled_as_lost(rows, now=NOW)) == 1
 
 

@@ -284,9 +284,9 @@ def test_decide_status_quoted_wednesday_within_24h():
     assert d.status == "PENDING"
 
 
-def test_decide_status_quoted_wednesday_past_48h():
-    """Past 48 CLOCK hours on a non-Friday quote — flips to Q&L
-    (Michael 2026-07-14, supersedes the 2026-06-04 24h restatement)."""
+def test_decide_status_quoted_wednesday_past_24h():
+    """Past 24 CLOCK hours on a non-Friday quote — flips to Q&L
+    (Michael 2026-07-26: "win loss timer is the 24/72 hours")."""
     wed_quote = "2026-04-22T13:00:00Z"                             # Wed 09:00 ET
     check = datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc)      # ~50h later
     d = core.decide_status(
@@ -294,11 +294,11 @@ def test_decide_status_quoted_wednesday_past_48h():
         quoted=True, etd_fit_days=0, now=check,
     )
     assert d.status == "Q&L"
-    # ...and still PENDING at 25h (inside the 48h window now).
+    # ...and still PENDING at 23h (inside the 24h window).
     d_early = core.decide_status(
         has_send=False, mdolx_ref=None, response_timestamp=wed_quote,
         quoted=True, etd_fit_days=0,
-        now=datetime(2026, 4, 23, 14, 0, tzinfo=timezone.utc),
+        now=datetime(2026, 4, 23, 12, 0, tzinfo=timezone.utc),
     )
     assert d_early.status == "PENDING"
 

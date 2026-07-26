@@ -1495,6 +1495,35 @@ QC065_CLIENT_BODY_PATH = (
     Path(__file__).resolve().parent.parent / "reports" / "client-email-body.html")
 
 
+def qc068_ol_sla_breaches(rows, now=None):
+    """QC-068: open RFQs where OL has BLOWN its response SLA.
+
+    Michael 2026-07-26: "ol response time has to be 3 hours." Measured in
+    BUSINESS hours (core.pending_ol_overdue -> biz_hours_between, ET
+    8:30-17:30 Mon-Fri) so it matches the report's own Time-to-Quote column
+    and never counts nights or weekends against OL.
+
+    This is an OPERATIONAL alert, not a data defect: the rows are correctly
+    stored as PENDING_OL (open). It exists so a breached SLA cannot sit
+    silently in the dataset — the daily audit names every lane OL owes, so
+    the desk can be chased the same morning.
+
+    Returns [(request_id, lane, biz_hours_waiting), ...], worst first.
+    """
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for r in rows or []:
+        if core.pending_substate(r) != "PENDING_OL":
+            continue
+        req = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
+        if not req or not core.pending_ol_overdue(req, now):
+            continue
+        hrs = core.biz_hours_between(req, now) or 0.0
+        out.append((r.get("request_id", "?"), r.get("lane") or "?", round(hrs, 1)))
+    out.sort(key=lambda x: -x[2])
+    return out
+
+
 def qc067_open_rfq_misfiled_as_lost(rows, now=None):
     """QC-067: live open RFQs filed as losses.
 
@@ -4043,6 +4072,25 @@ def phase_6_rules(log: Log, data: dict):
             log.ok("QC-067: no open RFQs misfiled as losses")
     except Exception as _e:
         log.warn(f"QC-067: check failed with exception: {_e}")
+
+    # QC-068: OL RESPONSE-SLA BREACH. Michael 2026-07-26 — OL owes a quote
+    # within 3 BUSINESS hours. Not a data defect (the rows are correctly
+    # PENDING_OL); this is the daily operational alert so a blown SLA can
+    # never sit silently in the dataset. WARN-class: it names the lanes OL
+    # owes so the desk gets chased the same morning. No heal — only OL
+    # sending the quote clears it.
+    try:
+        _sla68 = qc068_ol_sla_breaches(requests)
+        if _sla68:
+            for _rid68, _lane68, _hrs68 in _sla68:
+                log.warn(f"QC-068: OL SLA breached — {_lane68} waiting {_hrs68} "
+                         f"biz-h (SLA {core.PENDING_OL_SLA_BIZ_HOURS}h), "
+                         f"request {_rid68} — chase the OL desk")
+        else:
+            log.ok(f"QC-068: no OL SLA breaches "
+                   f"(SLA {core.PENDING_OL_SLA_BIZ_HOURS} biz-h)")
+    except Exception as _e:
+        log.warn(f"QC-068: check failed with exception: {_e}")
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE

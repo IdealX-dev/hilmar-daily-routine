@@ -1,9 +1,9 @@
-"""PENDING_HILMAR quote-decision window (Michael 2026-07-14):
-"pending hilmar is 48 hours most.. then it's lost if we don't win.. except
-fridays.. it's 72 hours." A quote awaiting Lonny's decision ages to Q&L after
-48 CLOCK hours from the OL quote — 72 when OL quoted on a Friday (ET), so the
-weekend lands Lonny on Monday. Supersedes the prior 24h-biz + Tuesday-18:00
-carve-out that left 73-78h Friday quotes stuck PENDING.
+"""PENDING_HILMAR quote-decision window.
+
+Michael 2026-07-26 (SUPERSEDES the 2026-07-14 "48 hours most"): "win loss
+timer is the 24/72 hours." A quote awaiting Lonny's decision ages to Q&L after
+24 CLOCK hours from the OL quote — 72 when OL quoted on a Friday (ET), so the
+weekend lands Lonny on Monday. The Friday carve-out is unchanged.
 """
 from __future__ import annotations
 
@@ -23,15 +23,15 @@ def _q(y, mo, d, h, mi):
     return dt.datetime(y, mo, d, h, mi, tzinfo=ET)
 
 
-def test_constants_48_and_72():
-    assert core.PENDING_HILMAR_LOSS_HOURS == 48
+def test_constants_24_and_72():
+    assert core.PENDING_HILMAR_LOSS_HOURS == 24
     assert core.PENDING_HILMAR_LOSS_HOURS_FRIDAY == 72
 
 
-def test_non_friday_ages_at_48_clock_hours():
+def test_non_friday_ages_at_24_clock_hours():
     resp = _q(2026, 7, 13, 10, 0)          # Mon 10:00 ET
-    assert core.pending_hilmar_stale(resp, resp + dt.timedelta(hours=47.9)) is False
-    assert core.pending_hilmar_stale(resp, resp + dt.timedelta(hours=48)) is True
+    assert core.pending_hilmar_stale(resp, resp + dt.timedelta(hours=23.9)) is False
+    assert core.pending_hilmar_stale(resp, resp + dt.timedelta(hours=24)) is True
 
 
 def test_friday_extends_to_72_clock_hours():

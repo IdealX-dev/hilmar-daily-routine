@@ -1478,10 +1478,19 @@ def _pending_ol_html(rows):
         req_dt = core.parse_iso(r.get("request_timestamp"))
         wait_s = "—"
         wait_color = "#374151"
+        overdue = False
         if req_dt:
-            wait_h = (now - req_dt).total_seconds() / 3600.0
+            # BUSINESS hours (ET 8:30-17:30 Mon-Fri) — the same clock as the
+            # "Time to Quote" column, so the SLA and the displayed wait can
+            # never disagree. Michael 2026-07-26: OL's response SLA is 3 hours.
+            wait_h = core.biz_hours_between(req_dt, now)
+            if wait_h is None:
+                wait_h = 0.0
             wait_s = f"{wait_h:.1f}h"
-            wait_color = "#16a34a" if wait_h <= 8 else ("#d97706" if wait_h <= 24 else "#dc2626")
+            overdue = core.pending_ol_overdue(req_dt, now)
+            wait_color = "#dc2626" if overdue else "#16a34a"
+            if overdue:
+                wait_s += " ⚠"
         body += f"""
 <tr style="border-bottom:1px solid #e5e7eb">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
@@ -1501,7 +1510,7 @@ def _pending_ol_html(rows):
 """
     return f"""
 <h2 style="color:#b45309;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fcd34d;padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is wall-clock since the RFQ (green ≤8h, amber ≤24h, red &gt;24h — red rows are chase candidates with the OL desk).</p>
+<p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:#b45309;color:white">
     <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Lane</th>
@@ -1509,7 +1518,7 @@ def _pending_ol_html(rows):
     <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff">TEU</th>
     <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Product</th>
     <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff" title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>
-    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff" title="Wall-clock since the RFQ with no OL quote — chase OL when red">Waiting on OL</th>
+    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff" title="Business hours since the RFQ with no OL quote — red means OL has blown the response SLA">Waiting on OL</th>
   </tr>
   {body}
 </table>
