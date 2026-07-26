@@ -744,7 +744,33 @@ def clock_hours_between(start: datetime | None, end: datetime | None) -> float |
 # ─────────────────────────────────────────────────────────────────────
 
 _CONTAINER_RX = re.compile(
-    r"(\d+)\s*[×x\-]?\s*(\d{2})['\u2019\s]*(HC|RF|DV|GP|RE|RH|FR|OT|NOR)?",
+    # Digit-boundary guarded so a PO/reference number can NEVER be mined as a
+    # container spec. Pre-2026-07-26 this was `(\d+)\s*[×x\-]?\s*(\d{2})`,
+    # which let the greedy `\d+` eat "PO 4451440" and hand back qty=44514,
+    # size=40 -> 89,028 TEU from ONE row, poisoning every volume figure in the
+    # day's email, dashboard, PDF and lane rollups. Now:
+    #   (?<![\d.,])  - not preceded by a digit/decimal (no mid-number starts)
+    #   \d{1,3}      - a real container quantity, never a 7-digit reference
+    #   (20|40|45)   - only real ISO sizes, so \d+ cannot over-consume
+    #   (?![\d])     - not followed by a digit (no "1234520" tail match)
+    #   (?:\s*[×x-]\s*|\s+)  - a SEPARATOR IS REQUIRED between qty and size,
+    #                        so a bare 5-digit reference ("quote 10040")
+    #                        cannot read as 100 x 40'. Every real spelling has
+    #                        one: "2-20'", "1x20'DV", "2×40'RF", "3 x 40 HC",
+    #                        "2 40'HC".
+    r"(?<![\d.,])(\d{1,3})(?:\s*[×x\-]\s*|\s+)(20|40|45)(?![\d])['\u2019\s]*"
+    r"(HC|RF|DV|GP|RE|RH|FR|OT|NOR)?",
+    re.IGNORECASE,
+)
+
+#: Reverse phrasing OL and Lonny both use — "40'HC x 2", "40' x 3". The
+#: forward pattern returns 0 for these, which silently UNDER-counted real
+#: bookings (the mirror of the PO over-count). Only consulted when the
+#: forward pattern matched nothing, so a normal "2-40'HC" can never be
+#: counted twice.
+_CONTAINER_REVERSE_RX = re.compile(
+    r"(?<![\d.,])(20|40|45)(?![\d])['\u2019\s]*"
+    r"(?:HC|RF|DV|GP|RE|RH|FR|OT|NOR)?\s*[×x]\s*(\d{1,3})(?![\d])",
     re.IGNORECASE,
 )
 
@@ -762,11 +788,21 @@ def parse_teu(containers: str | None) -> tuple[int, int]:
     for match in _CONTAINER_RX.finditer(containers):
         qty = int(match.group(1))
         size = int(match.group(2))
-        if size not in (20, 40, 45):  # guard against garbage like "2250F"
+        if size not in (20, 40, 45):  # belt-and-braces; regex already restricts
             continue
         teu_per = 2 if size >= 40 else 1
         total_count += qty
         total_teu += qty * teu_per
+    if total_count == 0:
+        # Reverse phrasing only when the forward pattern found nothing, so a
+        # normal "2-40'HC" is never double counted.
+        for match in _CONTAINER_REVERSE_RX.finditer(containers):
+            size = int(match.group(1))
+            qty = int(match.group(2))
+            if size not in (20, 40, 45):
+                continue
+            total_count += qty
+            total_teu += qty * (2 if size >= 40 else 1)
     return total_count, total_teu
 
 

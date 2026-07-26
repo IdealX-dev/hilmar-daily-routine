@@ -203,11 +203,26 @@ def _client_sections(data, report_date):
     quotes = [r for r in ol_resp if r.get("ol_rate")]
     bookings, seen = [], set()
     for r, h in status_ch:
+        # A →WIN TRANSITION is not the same as a confirmed booking. A row can
+        # flip to WIN on Lonny's "please send" and then be re-decided back to
+        # PENDING(AWAITING_MDOLX) on the next fire when OL has not issued the
+        # MDOLX confirmation yet. Anchoring on the historical transition alone
+        # put that row in "Bookings confirmed" AND "Awaiting your decision" in
+        # the SAME client email — the most expensive place to contradict
+        # ourselves. Require the PERSISTED outcome to still be WIN.
+        if r.get("status") != "WIN":
+            continue
         if h.get("to") == "WIN" and id(r) not in seen:
             seen.add(id(r))
             bookings.append(r)
-    awaiting = [r for r in pending if core.pending_substate(r) == "PENDING_HILMAR"]
-    in_progress = [r for r in pending if core.pending_substate(r) == "PENDING_OL"]
+    _booked_ids = {id(r) for r in bookings}
+    # Belt-and-braces: the buckets must be DISJOINT by identity, so a row can
+    # never render under two contradicting framings even if a future status
+    # change makes both predicates true at once.
+    awaiting = [r for r in pending
+                if core.pending_substate(r) == "PENDING_HILMAR" and id(r) not in _booked_ids]
+    in_progress = [r for r in pending
+                   if core.pending_substate(r) == "PENDING_OL" and id(r) not in _booked_ids]
     # HARD GUARANTEE (2026-07-14): the client sees only resolved shipments.
     # Every bucket is filtered through _lane_resolved so a "Lane unresolved" /
     # placeholder-destination row can never render in any section. If this
