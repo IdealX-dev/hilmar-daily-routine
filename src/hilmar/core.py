@@ -71,6 +71,27 @@ PENDING_OL_LOSS_HOURS_FRIDAY = 72
 #: two separate is deliberate — collapsing them would re-bury live business as
 #: "lost", which is the 2026-07-24 defect this whole area exists to prevent.
 PENDING_OL_SLA_BIZ_HOURS = 3
+
+#: PER-ROW TEU SANITY CEILING. On 2026-07-26 a reference number in a subject
+#: line ("PO 4451440") parsed as 44,514 x 40' = 89,028 TEU from ONE row and
+#: poisoned every volume figure in the day's email, dashboard, PDF and lane
+#: rollups. `parse_teu`'s regex was hardened the same day, but a regex is one
+#: line of defence and a wrong-but-huge number is invisible until someone
+#: reads the report. This is the second line: any parse above the ceiling is
+#: REFUSED (parse_teu returns 0, 0) rather than trusted, and QC-070 errors on
+#: any stored row that exceeds it.
+#:
+#: Calibration: Hilmar quotes 1-6 containers per RFQ line in every real
+#: sample on record (largest observed: 6x40'RF = 12 TEU). 100 TEU is 50 forty-
+#: foots in a SINGLE request line — an order of magnitude beyond anything the
+#: business has ever asked for, so a real quote can never trip it, while both
+#: known parser defects (89,028 TEU and the 200 TEU "quote 10040" misread) are
+#: caught. Raise it deliberately if Hilmar's volume ever changes; do not raise
+#: it to silence a QC-070 that is telling you the parser regressed.
+#: Mirrored across trees; tests/test_core_parity.py enforces parity.
+MAX_ROW_CONTAINERS = 60
+MAX_ROW_TEU = 100
+
 # AWAITING_MDOLX_AGING_HOURS (was 72) was removed 2026-05-30 — the
 # send-aging branch now uses is_business_stale(send_at, now) with the
 # default hours=PENDING_WINDOW_HOURS for symmetry, picking up the same
@@ -545,11 +566,41 @@ _CONTAINER_REVERSE_RX = re.compile(
 )
 
 
+def teu_implausible(container_count: int, teu: int) -> str | None:
+    """Return a human reason when a per-row (containers, TEU) pair cannot be real.
+
+    The sanity gate behind MAX_ROW_CONTAINERS / MAX_ROW_TEU. Used in two
+    places on purpose:
+      * `parse_teu` — refuses to RETURN an impossible parse, so a regex
+        regression can never inject a poisoned number into a fresh ingest.
+      * `qc070_teu_sanity` — errors on any STORED row above the ceiling, so a
+        number already sitting in the dataset (written by an older build, a
+        carry-forward, or a hand edit) is caught before it reaches a report.
+
+    Returns None when the pair is plausible.
+    """
+    if container_count > MAX_ROW_CONTAINERS:
+        return (f"{container_count} containers on one row exceeds the "
+                f"{MAX_ROW_CONTAINERS}-container per-row ceiling")
+    if teu > MAX_ROW_TEU:
+        return (f"{teu} TEU on one row exceeds the {MAX_ROW_TEU} TEU "
+                f"per-row ceiling")
+    if container_count < 0 or teu < 0:
+        return f"negative volume ({container_count} containers, {teu} TEU)"
+    return None
+
+
 def parse_teu(containers: str | None) -> tuple[int, int]:
     """
     Parse a container string into (container_count, teu_total).
     Handles common patterns: "2×40'RF", "1x20'DV", "2-40' HC Reefers", "3×20'DV + 1×40'HC".
     20' = 1 TEU, 40' = 2 TEU.
+
+    Refuses implausible results: anything above the per-row ceiling
+    (`teu_implausible`) returns (0, 0) instead of the poisoned figure. Zero is
+    a visibly wrong answer that QC-070 flags and a human can fix; 89,028 TEU
+    is an invisibly wrong answer that silently rewrites every rollup in the
+    report. The failure mode is chosen deliberately.
     """
     if not containers or not isinstance(containers, str):
         return 0, 0
@@ -573,6 +624,8 @@ def parse_teu(containers: str | None) -> tuple[int, int]:
                 continue
             total_count += qty
             total_teu += qty * (2 if size >= 40 else 1)
+    if teu_implausible(total_count, total_teu):
+        return 0, 0
     return total_count, total_teu
 
 

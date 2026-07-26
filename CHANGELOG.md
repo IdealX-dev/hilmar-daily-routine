@@ -3,6 +3,65 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-26 — TEU sanity ceiling: QC-070 (ERROR + self-heal)
+
+Michael: "DO BOTH" — this is the first half (the sanity cap); the confirmed
+backlog is the second and continues in the next batch.
+
+WHY, WHEN THE REGEX WAS ALREADY FIXED THIS MORNING: batch 1 hardened
+`core.parse_teu` so "PO 4451440" stops parsing as 44,514 x 40' = 89,028 TEU.
+That fix is correct, but it left the whole defence resting on ONE regex. Every
+volume figure in the daily email, dashboard, PDF and lane rollup is a SUM over
+rows, so a single bad row rewrites the day's numbers, and a wrong-but-huge
+number is invisible until a human reads the report and disbelieves it. This
+adds the second line of defence, so a future regex regression costs a zero
+instead of an 89,028.
+
+1. PER-ROW CEILING (core.MAX_ROW_TEU = 100, MAX_ROW_CONTAINERS = 60; both trees)
+   New `core.teu_implausible(count, teu)` returns a human reason, or None.
+   `parse_teu` now REFUSES a parse above the ceiling — returns (0, 0) rather
+   than the poisoned figure. The failure mode is chosen deliberately: zero is
+   visibly wrong and QC-070 flags it; 89,028 silently rewrites every rollup.
+   Calibration: the largest real Hilmar sample on record is 6x40'RF = 12 TEU,
+   so 100 TEU (50 forty-foots in ONE request line) is ~8x beyond anything the
+   business has ever asked for. Verified: every real spelling on record still
+   parses identically ("1x40HC", "2-20'", "4X40'RF", "3x20'DV + 1x40'HC",
+   "40'HC x 2"), while "999 x 40'HC" and "40'HC x 800" — well-formed parses
+   that the regex reads CORRECTLY, i.e. exactly the case a regression lands in
+   — are refused.
+
+2. QC-070 (ERROR) — TEU that cannot be real
+   (a) OVER-COUNT, SELF-HEALED: a stored `teu_requested` / `teu_won` /
+       `container_count` above the ceiling is recomputed from the row's OWN
+       `containers` text via `parse_teu`, so a heal can never write a value
+       ingest would itself refuse. `teu_won` clears to 0 on a non-WIN row —
+       it is win evidence, not a volume. This catches numbers ALREADY in the
+       dataset: written by an older build, a carry-forward, or a hand edit.
+   (b) 0-TEU SHAPE, DETECT-ONLY: a row whose `containers` text plainly names
+       equipment yet recomputes to 0 TEU — either a parser gap or a parse
+       refused as implausible. Not healed: healing it would mean INVENTING a
+       volume, which is the exact class of guess that caused the defect.
+   Verified end-to-end through the live `phase_6_rules` path on a poisoned row
+   (89,028 TEU / 44,514 containers): both fields errored and healed to 4 TEU /
+   2 containers from the row's own text; the clean row alongside it was
+   untouched.
+
+3. WHY QC-006 WAS NOT ENOUGH — recorded, because it looks like a duplicate
+   QC-006 (WARN, >30 TEU) DID fire correctly on the 89,028 row on 2026-07-26,
+   and the report shipped anyway: a WARN neither gates nor heals, and QC-006
+   only ever inspected `teu_requested`. Both checks stay. QC-006 is the
+   advisory band ("unusually large, eyeball it"); QC-070 is the hard ceiling
+   ("impossible, stop"). Different questions, different answers. QC-006's row
+   in QC-INDEX.md and its call site now say so, so nobody re-litigates it.
+
+Tests: `tests/test_teu_sanity_cap.py` (34 cases) — the ceiling constants, both
+known real defects (89,028 and the 200 TEU "quote 10040" misread), every real
+spelling, cross-tree parity of the constants AND the refusal, all four QC-070
+branches, heal=False non-mutation, and junk field types (booleans are ints in
+Python and must not read as volumes). One test guards the CALIBRATION itself:
+it fails if the ceiling is ever tuned down toward real volumes.
+Full suite 1829 passed (1795 -> +34), coverage 91.17%, ruff clean.
+
 ## 2026-07-26 — Data audit batch 1: TEU corruption, client contradiction, duplicate rows
 
 Full 6-dimension data-integrity audit (42 agents: 6 finders + adversarial
