@@ -1577,6 +1577,83 @@ def qc069_duplicate_shipment_rows(rows):
     return out
 
 
+#: A container-size token in free text — the trigger for QC-070 shape (b).
+#: Deliberately looser than core._CONTAINER_RX (no quantity required): its
+#: whole job is to say "this text is ABOUT containers", so that a row whose
+#: text obviously describes equipment but yields 0 TEU is surfaced instead of
+#: being read as a genuinely empty request.
+_CONTAINER_TOKEN_RX = re.compile(
+    r"(?<![\d.,])(?:20|40|45)(?![\d])['’\s]*(?:HC|RF|DV|GP|RE|RH|FR|OT|NOR)\b"
+    r"|\b(?:container|containers|reefer|reefers|teu|fcl)\b",
+    re.IGNORECASE,
+)
+
+
+def qc070_teu_sanity(rows, heal=True):
+    """QC-070: per-row TEU that cannot be real.
+
+    THE FAILURE THIS EXISTS FOR (2026-07-26): a reference number in a subject
+    line ("PO 4451440") parsed as 44,514 x 40' = 89,028 TEU on ONE row, and
+    because every volume figure in the report is a SUM over rows, that single
+    row rewrote the day's email, dashboard, PDF and every lane rollup with a
+    number nobody could reconcile. The parser regex was hardened the same day.
+    This is the check that makes the hardening unnecessary: even if the regex
+    regresses tomorrow, an impossible number cannot reach a report.
+
+    Two shapes, both ERROR-class:
+
+      (a) OVER-COUNT — a stored `teu_requested` / `teu_won` / `container_count`
+          above `core.MAX_ROW_TEU` / `MAX_ROW_CONTAINERS`. SELF-HEALED: the
+          field is recomputed from the row's own `containers` text via
+          `core.parse_teu` (which now refuses impossible parses itself), so
+          the row lands on a real number or on 0 — never on the poisoned one.
+
+      (b) UNDER-COUNT / REFUSAL — a row whose `containers` text plainly names
+          container sizes but recomputes to 0 TEU. That is either the parser
+          failing to read a real spelling, or `parse_teu` refusing a parse it
+          judged impossible. Both are real defects and both need eyes, so
+          this shape is DETECT-ONLY: healing it would mean inventing a
+          volume, which is exactly the class of guess that caused (a).
+
+    Returns [(request_id, shape, detail), ...] where shape is
+    "over-count" or "unparsed".
+    """
+    out = []
+    for r in rows or []:
+        rid = r.get("request_id", "?")
+        raw = r.get("containers") or ""
+        # Recompute once — parse_teu is the same gate ingest uses, so a heal
+        # can never write a value ingest would itself have refused.
+        recount, reteu = core.parse_teu(raw)
+
+        # (a) stored numbers above the ceiling, whatever wrote them. Each
+        #     field is judged against its OWN ceiling so the message names the
+        #     field that is actually wrong.
+        is_win = (r.get("status") or "").upper() == "WIN"
+        for field, healed in (("teu_requested", reteu),
+                              ("teu_won", reteu if is_win else 0),
+                              ("container_count", recount)):
+            stored = r.get(field)
+            if not isinstance(stored, (int, float)) or isinstance(stored, bool):
+                continue
+            why = (core.teu_implausible(int(stored), 0)
+                   if field == "container_count"
+                   else core.teu_implausible(0, int(stored)))
+            if not why:
+                continue
+            out.append((rid, "over-count", f"{field}={stored} — {why}"))
+            if heal:
+                r[field] = healed
+
+        # (b) container text present and readable-looking, but nothing parsed.
+        if raw and reteu == 0 and _CONTAINER_TOKEN_RX.search(raw):
+            out.append((rid, "unparsed",
+                        f"containers={raw!r} names container sizes but "
+                        f"recomputes to 0 TEU (parser gap, or a parse "
+                        f"refused as implausible)"))
+    return out
+
+
 def qc068_ol_sla_breaches(rows, now=None):
     """QC-068: open RFQs where OL has BLOWN its response SLA.
 
@@ -1745,6 +1822,14 @@ def phase_6_rules(log: Log, data: dict):
         if bh and bh > 100:
             log.warn(f"QC-005: {r['request_id']} biz-hrs {bh} — suspicious")
 
+    # QC-006 is the ADVISORY band: >30 TEU on a row is unusual for Hilmar but
+    # can be real, so it asks a human to eyeball it and never blocks. It is
+    # NOT the poisoned-data guard, and 2026-07-26 proved the difference — it
+    # fired correctly on the 89,028 TEU row and the report shipped anyway,
+    # because a WARN neither gates nor heals, and this only ever looked at
+    # teu_requested. QC-070 is the hard ceiling (ERROR + self-heal, all three
+    # volume fields). Keep both: "unusually large" and "impossible" are
+    # different questions with different answers.
     for r in requests:
         t = r.get("teu_requested", 0)
         if t and t > 30:
@@ -4193,6 +4278,28 @@ def phase_6_rules(log: Log, data: dict):
             log.ok("QC-069: no duplicate shipment rows")
     except Exception as _e:
         log.warn("QC-069: check failed with exception: " + str(_e))
+
+    # QC-070: TEU THAT CANNOT BE REAL. The second line of defence behind
+    # core.parse_teu's hardened regex. Every volume figure in the report is a
+    # SUM over rows, so ONE poisoned row (2026-07-26: "PO 4451440" -> 89,028
+    # TEU) rewrites the whole day's numbers invisibly. Over-counts SELF-HEAL
+    # by recomputing from the row's own containers text; rows whose text names
+    # equipment but yields 0 TEU are named for a human, because healing that
+    # shape would mean inventing a volume.
+    try:
+        _teu70 = qc070_teu_sanity(requests)
+        if _teu70:
+            for _rid70, _shape70, _detail70 in _teu70:
+                if _shape70 == "over-count":
+                    log.error(f"QC-070: request {_rid70} — {_detail70} "
+                              f"(recomputed from its containers text)")
+                else:
+                    log.error(f"QC-070: request {_rid70} — {_detail70}")
+        else:
+            log.ok(f"QC-070: all rows within the {core.MAX_ROW_TEU} TEU / "
+                   f"{core.MAX_ROW_CONTAINERS} container per-row ceiling")
+    except Exception as _e:
+        log.warn("QC-070: check failed with exception: " + str(_e))
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE
