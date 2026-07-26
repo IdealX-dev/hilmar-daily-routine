@@ -3,6 +3,96 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-26 — Data audit batch 2: send evidence, day-bucket clock, audit trail
+
+Second half of Michael's "DO BOTH". Four defects, each REPRODUCED on current
+main before it was touched, each re-verified after. Two new QC checks
+(QC-071, QC-072) so a regression is caught on live data the next morning.
+
+1. has_send WAS ERASED ON SEND_NO_BOOKING (core.decide_status, both trees)
+   The branch returned has_send=False on the one loss reason that MEANS the
+   send happened. has_send is an EVIDENCE field ("did Lonny accept?"), not a
+   state field. Because qc_selfheal writes the decision back onto the row
+   (r["has_send"] = decision.has_send), the NEXT pass re-read has_send=False,
+   fell through to the quote-aging branch and relabelled the row
+   UNDIFFERENTIATED — "we lost, cause unknown". Unrecoverable. The
+   OL-dropped-the-ball signal vanished from the loss mix, the carrier
+   scorecards (_OL_SILENT) and the improvement report.
+   Proved: pass1 SEND_NO_BOOKING/has_send=False -> pass2 UNDIFFERENTIATED.
+   A SECOND site did the same thing — qc_selfheal cleared has_send on EVERY
+   LOSS, which would have wiped the flag straight back out. Now exempted for
+   SEND_NO_BOOKING only; clearing stays for every other reason, where
+   has_send genuinely is contradictory. Invariant now tested both ways.
+
+2. NEW DEFECT FOUND WHILE FIXING (1): MDOLX_NO_SEND SELF-PROMOTED TO WIN
+   Not on the audit list — found by testing the adjacent branch. The branch
+   is literally `has_mdolx and not has_send`, yet scripts/core.py returned
+   has_send=TRUE, asserting the opposite of the condition that reached it.
+   Same feedback loop: pass 2 re-read has_send=True alongside the MDOLX and
+   took the WIN branch. An anomaly explicitly HELD for ops review silently
+   became a WIN one fire later, with no send signal and nobody looking.
+   src/hilmar/core.py already returned False — so this was PRODUCTION-ONLY,
+   the exact "green in CI, wrong on the box" split the parity tests exist to
+   catch. Proved both trees side by side, fixed scripts/ to match.
+
+3. request_date RAN ON THREE DIFFERENT CLOCKS (ingest, merge_ingest, qc heal)
+   ingest wrote the UTC calendar date, merge_ingest took a raw ts[:10] UTC
+   slice, and qc_selfheal's heal wrote PT — while every reader buckets by the
+   ET business day (core.report_business_day). An RFQ Lonny sent Friday 5:30
+   PM PT is 2026-07-25 in UTC and Friday 2026-07-24 in ET; since no fire ever
+   reports a Saturday, that row appeared in NO day's New Requests, KPI tile or
+   day reconciliation — on any day, ever — while still counting in the period
+   totals. So the day tiles and period tiles disagreed by exactly the rows the
+   clocks disagreed about, and the day reconciliation still balanced because
+   the row was never in the denominator.
+   Fixed with ONE canonical helper, core.et_date_of (both trees), called by
+   all three producers — a fourth convention can't quietly appear. Date-only
+   strings pass through untouched (re-reading them as midnight UTC would shift
+   them a day, in the exact direction this prevents); unparseable input
+   returns None so callers fall back rather than invent a date.
+   The phase_3 heal now RECOMPUTES request_date every pass instead of only
+   filling it when missing — which is also the MIGRATION, since every row
+   already stored on the wrong clock would otherwise have kept its wrong day
+   forever. The legacy `date` mirror is kept in step (readers fall back to it).
+   Verified: the Friday-evening RFQ now lands on Friday's report, and on no
+   other day.
+
+4. ROWS CONTRADICTED THEIR OWN AUDIT TRAIL (ingest.age_requests, merge)
+   status was assigned directly instead of through core.record_transition, and
+   merge_idempotent recomputed `status` (in _RECOMPUTED_FIELDS) while
+   PRESERVING the old status_history (not in it). A send-signal WIN that never
+   booked read status="LOSS"/SEND_NO_BOOKING with history still ending at
+   {"to": "WIN"} — and status_history is the field schema.json declares as THE
+   transition record, so audits, the dashboard timeline and Sentry triage all
+   reported the row as WON, with no entry anywhere explaining the regression.
+   It also kept teu_won=2 for a shipment that was never booked.
+   Fixed: both ingest mutators route through record_transition; a hand-rolled
+   history append that hardcoded "from": "PENDING" (wrong from any other
+   state) and fired even when the row was ALREADY WIN was deleted; leaving WIN
+   clears teu_won via _clear_win_evidence_on_exit — deliberately narrow, only
+   the volume, never the has_send/mdolx_ref evidence (that is defect 1).
+   merge_idempotent now UNIONS status_history rather than keeping the stale
+   copy. First attempt deduped on `at` and an EXISTING ingest test caught it:
+   a fresh run re-derives the same transition with a new timestamp, so every
+   daily fire would have appended another copy — unbounded growth. Dedup is
+   now on CONSECUTIVE (from, to, reason), keeping the earliest, so a genuine
+   WIN -> LOSS -> WIN keeps both WIN entries and [-1] stays the true state.
+
+QC-071 (ERROR) — request_date != its own timestamp in ET. Heals in phase_3
+(recompute + migrate); reaching the check means the heal missed the row.
+QC-072 (ERROR) — status_history[-1]["to"] != status, or teu_won > 0 on a
+non-WIN row. Detect-only: rewriting history is never a safe automatic act.
+
+Tests: tests/test_audit_batch2.py (30 cases). Suite 1859 passed (1829 -> +30),
+coverage 91.16%, ruff clean, QC governance ratchet green.
+
+Backlog after this batch: 18 confirmed findings remain (5 HIGH) — booking-to-
+request match decided by arbitrary stage-file order, the HCMC/Cat Lai lane
+alias gap that CREATES the duplicate rows QC-069 only detects, additive
+carry-forward appending a second row under the same request_id, quoted rows
+with an unparseable response_timestamp aging with zero grace, and the
+remaining Won-tile vs What-Happened contradiction.
+
 ## 2026-07-26 — TEU sanity ceiling: QC-070 (ERROR + self-heal)
 
 Michael: "DO BOTH" — this is the first half (the sanity cap); the confirmed

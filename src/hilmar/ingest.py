@@ -1376,6 +1376,40 @@ _RECOMPUTED_FIELDS = frozenset({
 })
 
 
+def _merge_status_history(old, new):
+    """Union two status_history lists, deduped and ordered by `at`.
+
+    status_history is an append-only LOG, so neither merge rule fits it:
+    "preserve existing" drops transitions the fresh run discovered, and
+    "recompute" (adding it to _RECOMPUTED_FIELDS) would throw away every
+    transition ever accumulated, since a freshly-built row starts empty.
+    Union is the only rule that keeps the log honest.
+
+    Dedup collapses CONSECUTIVE entries sharing (from, to, reason), keeping
+    the earliest. Deduping on `at` is not enough and caught a real regression
+    in tests/test_ingest.py: a fresh run re-derives the same transition with a
+    NEW timestamp, so an exact-match key let every daily fire append another
+    copy of "None → WIN" forever. Requiring ADJACENCY rather than global
+    uniqueness is deliberate — a row that genuinely goes WIN → LOSS → WIN
+    keeps both WIN entries, so `[-1]["to"]` stays the true current state,
+    which is the invariant QC-072 checks.
+
+    Entries with no parseable `at` sort last but are never dropped — a
+    transition we cannot date is still a transition that happened.
+    """
+    combined = [e for e in (list(old or []) + list(new or []))
+                if isinstance(e, dict)]
+    combined.sort(key=lambda e: (e.get("at") is None, e.get("at") or ""))
+    out = []
+    for e in combined:
+        key = (e.get("from"), e.get("to"), e.get("reason"))
+        if out and (out[-1].get("from"), out[-1].get("to"),
+                    out[-1].get("reason")) == key:
+            continue
+        out.append(e)
+    return out
+
+
 def merge_idempotent(
     existing: list[dict[str, Any]] | None,
     fresh: list[dict[str, Any]],
@@ -1421,6 +1455,18 @@ def merge_idempotent(
             if old_v is None or old_v == "" or k in _RECOMPUTED_FIELDS:
                 merged[k] = v
             # else preserve existing
+        # status_history is neither "recompute" nor "preserve" — it is a LOG,
+        # so it UNIONS. `status` is in _RECOMPUTED_FIELDS and the history is
+        # not, which left the merged row asserting one outcome in `status` and
+        # a different one in `status_history[-1]["to"]` — and the history is
+        # the field schema.json declares as the transition record, so audits,
+        # the dashboard timeline and Sentry triage all read the stale answer.
+        # Union by (at, from, to) so re-ingesting the same run is idempotent,
+        # then order by `at` so [-1] is genuinely the latest transition.
+        merged["status_history"] = _merge_status_history(
+            old_r.get("status_history"), new_r.get("status_history"))
+        if not merged["status_history"]:
+            merged.pop("status_history", None)
         out.append(merged)
 
     # Carry forward existing rows not in fresh (e.g. older window survivors).
