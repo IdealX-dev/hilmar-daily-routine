@@ -327,12 +327,76 @@ REVIEW OF #124 — THREE REAL DEFECTS IN BATCH 5's OWN WORK
    reads both artifacts back off disk; batch 5's test had only re-implemented
    the `if` against a mock Log, which is why it stayed green.
 
-Tests: tests/test_audit_batch6.py (47 cases), tests/test_state_store.py
+SECOND REVIEW PASS ON #124 — FOUR MORE, TWO OF THEM MINE
+   All four confirmed by execution before touching anything. The 🔴 was
+   caused by my own fix in item 25 above.
+
+26. QC-075 FALSE-FIRED ON EVERY HEALED FIRE (my regression)
+   Moving the check ahead of phase_7_save (item 25) put it after phase_6's
+   MUTATING heals but before anything rebuilt `data["summary"]`.
+   `_trade_region_reconciliation` recomputes the regions fresh from the rows
+   while reading `data["summary"]` as-is — so it compared post-heal regions
+   against a summary built back in phase 5, and failed on ORDERING rather
+   than on any real disagreement. Reproduced with a single QC-067 row: heals
+   LOSS/NO_RESPONSE → PENDING, fresh NQ=0 vs stale NQ=1, reconciled=False.
+   That is a FALSE QC-075 ERROR persisted into both artifacts on essentially
+   every fire that heals a status — and phase_7_save's own recompute a few
+   lines later then wrote `reconciled: True` into the SAME qc-result.json.
+   The report contradicting itself, produced by the check written to stop
+   that. Fixed by rebuilding the aggregates immediately before the check:
+   QC-075's job is catching two AGGREGATORS that disagree, never two points
+   in time.
+
+27. THE REBUILD FIX WAS COUNTED TWICE (my regression)
+   Item 15's fix had phase_7_save call `phase_5_summaries` a second time, and
+   that function logs `log.fix("...rebuilt...")` unconditionally — the drift
+   flag only changes the message text, it never gates the call. So every run
+   recorded the rebuild twice, inflating `data["qc"]["fixes_applied"]`, which
+   gen_dashboard renders verbatim as "N fixes", and printing the same line
+   twice in the Fixes Applied list. Adding the item-26 rebuild would have
+   made it three.
+   Split the pure rebuild out as `_recompute_aggregates(data) -> bool`, which
+   touches no Log. phase_5_summaries wraps it and logs; the phase-7 and
+   pre-QC-075 rebuilds call it silently. One rebuild fix per run, whatever
+   the call count.
+
+28. `pol` WAS NEVER PLACEHOLDER-SCRUBBED, AND MY SCHEMA DOC SAID IT WAS
+   `_PLACEHOLDER_FIELDS` was ("pod", "destination", "origin"). `pol` was the
+   one asymmetry: written the same way as `pod` from free-text OL body
+   parsing (adjacent lines in ingest), already listed among QC-064's display
+   fields, and exported to durable external surfaces by historian.py and
+   share_intel.py — but swept nowhere. A literal "TBD" in OL's POL cell
+   survived every scrub and shipped as a port name.
+   Pre-existing; what item 18 added was a schema description asserting a
+   guarantee the code did not provide. Fixed the CODE, not the doc — there
+   was no reason for the exclusion, and papering over it with wording would
+   have left the export poisoned. `pol` is now swept with the other three.
+
+29. THE PUSH GUARD'S EXCEPTION ESCAPED ITS OWN HANDLER
+   `StateStoreError` is a SUBCLASS of RuntimeError, so main()'s
+   `except StateStoreError` never caught the bare `RuntimeError` item 6's
+   corruption guard raised. daily.yml's push step got a Python traceback
+   instead of the one-line "state_store: REFUSING to push ..." diagnostic the
+   guard exists to print. The refusal and the non-zero exit were always
+   correct — only the message was lost. Every other raise in the module
+   already used StateStoreError; this one now does too, pinned by a
+   structural test that fails on any bare RuntimeError/Exception raise
+   anywhere in the file.
+
+Tests: tests/test_audit_batch6.py (63 cases), tests/test_state_store.py
 updated for the immutable snapshot name. Every fix mutation-checked — the
 old code reintroduced, the relevant tests confirmed failing, the fix
 restored: 5 fail for the weekly clock, 2 for the merge guard, 5 for the
-review findings. Suite 2058 passed (2011 -> +47), coverage 91.28%, ruff clean
-on the CI-gated paths.
+first review pass, 6 for the second. Suite 2074 passed (2011 -> +63),
+coverage 91.28%, ruff clean on the CI-gated paths.
+
+ON THE SECOND PASS'S TESTS: my first behavioural QC-075 test survived
+reverting the fix, because it drove the phase sequence itself instead of
+reading main()'s. That is the SAME weakness the reviewer had just flagged in
+the previous QC-075 test. Both are now pinned structurally from the AST —
+main() must rebuild before it reconciles and reconcile before it saves, and
+phase_7_save must call the silent rebuild — so drift in main() fails here
+rather than in production.
 
 DECISIONS FOR MICHAEL
    * `DEFAULT_PRICING_CPM["claude-opus-4-6"]` is still ~3x overstated. Left

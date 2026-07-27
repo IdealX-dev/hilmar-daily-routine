@@ -71,7 +71,14 @@ _GARBAGE_PLACEHOLDERS = frozenset({
     "unknown", "n/a", "na", "none", "null", "tbd", "-", "—", "",
 })
 #: Lane-defining fields swept for the poisoned placeholder above.
-_PLACEHOLDER_FIELDS = ("pod", "destination", "origin")
+#: `pol` added 2026-07-27 (review of #124). It was the one asymmetry here:
+#: `pod` was swept and `pol` was not, though both are written the same way
+#: from free-text OL body parsing (ingest.py — `best["pol"] = rt.get("pol")`
+#: on the line above the identical `pod` assignment), both are display fields
+#: QC-064 already lists, and both are exported to durable external surfaces by
+#: historian.py and share_intel.py. A literal "TBD" in OL's POL cell therefore
+#: survived every scrub and shipped as a port name.
+_PLACEHOLDER_FIELDS = ("pol", "pod", "destination", "origin")
 
 
 def _is_placeholder(v) -> bool:
@@ -1141,19 +1148,34 @@ def phase_4_duplicates(log: Log, data: dict):
 # Phase 5 — summaries
 # ─────────────────────────────────────────────────────────────────────
 
-def phase_5_summaries(log: Log, data: dict):
-    log.section("PHASE 5: SUMMARY RECALCULATION")
+def _recompute_aggregates(data: dict) -> bool:
+    """Rebuild summary / lane_summary / carrier_summary from `data["requests"]`.
+
+    Returns True when anything changed. SILENT — it touches no Log, so
+    callers decide whether a rebuild is worth reporting as a "fix".
+
+    Split out of phase_5_summaries because the rebuild now runs more than once
+    per fire (phase 5, again before QC-075, again in phase 7), while
+    `log.fix("...rebuilt...")` fires unconditionally on every call. Routing the
+    extra rebuilds through the logging wrapper inflated
+    `data["qc"]["fixes_applied"]` — which gen_dashboard renders verbatim in its
+    "N fixes" line — and printed the same rebuild message two or three times in
+    the Fixes Applied list. Raised in review of #124.
+    """
     old_summary = data.get("summary", {}) or {}
     computed = core.aggregate_summary(data["requests"])
     if "dod" in old_summary and "dod" not in computed:
         computed["dod"] = old_summary["dod"]
-    drift = False
-    for k, v in computed.items():
-        if old_summary.get(k) != v:
-            drift = True
+    drift = any(old_summary.get(k) != v for k, v in computed.items())
     data["summary"] = computed
     data["lane_summary"] = core.aggregate_lanes(data["requests"])
     data["carrier_summary"] = core.aggregate_carriers(data["requests"])
+    return drift
+
+
+def phase_5_summaries(log: Log, data: dict):
+    log.section("PHASE 5: SUMMARY RECALCULATION")
+    drift = _recompute_aggregates(data)
     log.fix("Summary, lane_summary, carrier_summary rebuilt from raw data" + (" (drift detected)" if drift else ""))
 
 
@@ -4868,10 +4890,10 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
     # mechanism put a QC-067-restored row in the dashboard's not_quoted KPI
     # while the row list showed it PENDING.
     #
-    # phase_5_summaries is a pure recompute from `data["requests"]`, so
-    # running it a second time here is cheap and idempotent — it just makes
-    # the stored aggregates describe the stored rows.
-    phase_5_summaries(log, data)
+    # The SILENT recompute, not phase_5_summaries: this is a pure rebuild from
+    # `data["requests"]`, cheap and idempotent, and it must not log a second
+    # "rebuilt" fix — that inflated the fix count the dashboard renders.
+    _recompute_aggregates(data)
 
     data["qc"] = {
         "last_run": core.now_utc().isoformat(),
@@ -5026,6 +5048,22 @@ def main() -> int:
     # Escalating afterwards appended to a list nothing re-serialized, so the
     # divergence appeared only on this subprocess's stdout — behaviourally the
     # same `print()` QC-075 was created to replace. Raised in review of #124.
+    # ...and it must compare TWO AGGREGATIONS OF THE SAME ROWS.
+    #
+    # _trade_region_reconciliation recomputes the regions fresh from
+    # data["requests"] but reads data["summary"] as-is — and phase_6's heals
+    # (QC-067 restoring a misfiled row to PENDING, QC-004, QC-064, ...) change
+    # rows WITHOUT touching that dict. So a summary built back in phase 5
+    # describes the PRE-heal rows, and the comparison failed on ordering
+    # rather than on any real disagreement: proved with a single QC-067 row,
+    # fresh NQ=0 vs stale NQ=1 -> reconciled=False. That is a FALSE QC-075
+    # ERROR on essentially every fire that heals a status, persisted into both
+    # artifacts — while phase_7_save's own recompute a few lines later makes
+    # the same qc-result.json report reconciled=True beside it. The report
+    # contradicting itself, in a check written to stop exactly that.
+    # QC-075's job is catching two AGGREGATORS that disagree, never two points
+    # in time, so rebuild first. Raised in review of #124.
+    _recompute_aggregates(data)
     _tr75 = _trade_region_reconciliation(data)
     if _tr75 and _tr75.get("reconciled") is False:
         log.error("QC-075: trade-region rollup does not reconcile to summary — "

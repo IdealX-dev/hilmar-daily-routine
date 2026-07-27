@@ -26,9 +26,11 @@ A future change to either clock fails here rather than in Michael's inbox.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -587,3 +589,221 @@ def test_qc075_fires_before_the_save_in_main_not_after():
     assert qc075_at < save_at, (
         "QC-075 escalates after phase_7_save again — it will not reach the "
         "persisted artifacts")
+
+
+# ── second review pass on #124 — four more, all confirmed by execution ───────
+
+import state_store as SS  # noqa: E402
+
+
+def _misfiled_open_rfq():
+    """A row QC-067 heals: filed LOSS/NO_RESPONSE but still inside the
+    PENDING-OL response window, so it is open business, not a loss."""
+    now = core.now_utc()
+    return {"request_id": "r1", "status": "LOSS", "loss_reason": "NO_RESPONSE",
+            "quoted": False, "origin": "Oakland", "destination": "Busan",
+            "lane": "Oakland → Busan", "teu_requested": 4, "container_count": 2,
+            "request_date": core.et_date_of(now),
+            "request_timestamp": (now - timedelta(hours=5)).isoformat(),
+            "status_history": []}
+
+
+def _run_phases(capsys=None):
+    """phase_5 → phase_6 → the pre-QC-075 rebuild → the reconciliation,
+    i.e. exactly main()'s order around the check."""
+    data = {"requests": [_misfiled_open_rfq()], "summary": {},
+            "lane_summary": {}, "carrier_summary": {}}
+    log = QC.Log()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        QC.phase_5_summaries(log, data)
+        QC.phase_6_rules(log, data)
+        QC._recompute_aggregates(data)
+        tr = QC._trade_region_reconciliation(data)
+    return data, log, tr
+
+
+def test_qc075_does_not_false_fire_after_a_status_heal():
+    """THE REVIEW FINDING. _trade_region_reconciliation recomputes the regions
+    fresh but reads data["summary"] as-is, and phase_6's heals change rows
+    without touching that dict. Comparing post-heal regions against a
+    pre-heal summary failed on ORDERING, not on any real disagreement — a
+    false QC-075 ERROR persisted on essentially every fire that heals a
+    status, while phase_7_save's own recompute made the same qc-result.json
+    report reconciled=True beside it."""
+    data, log, tr = _run_phases()
+    assert data["requests"][0]["status"] == "PENDING", "QC-067 did not heal — test is inert"
+    assert tr.get("reconciled") is True, (
+        "QC-075 fired on a stale summary rather than a real aggregator "
+        "disagreement")
+    assert not any("QC-075" in e for e in log.errors)
+
+
+def test_qc075_still_fires_on_a_genuine_aggregator_disagreement():
+    """The check must keep its teeth: poison the summary AFTER the rebuild and
+    it has to be caught."""
+    data, log, _ = _run_phases()
+    data["summary"]["not_quoted"] = data["summary"].get("not_quoted", 0) + 7
+    assert QC._trade_region_reconciliation(data).get("reconciled") is False
+
+
+def test_the_rebuild_fix_is_logged_once_per_run_not_twice():
+    """phase_7_save recomputes the aggregates (finding #15), but routing that
+    through phase_5_summaries logged a second 'rebuilt' fix — inflating
+    data["qc"]["fixes_applied"], which gen_dashboard renders verbatim as
+    'N fixes', and printing the same line twice in the Fixes Applied list.
+
+    Drives main()'s REAL sequence: phase_5 (the one logging rebuild), then
+    the pre-QC-075 rebuild, then phase_7_save's — the last two silent.
+    """
+    data = {"requests": [_misfiled_open_rfq()], "summary": {},
+            "lane_summary": {}, "carrier_summary": {}}
+    log = QC.Log()
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_5_summaries(log, data)
+        QC.phase_6_rules(log, data)
+        QC._recompute_aggregates(data)                    # before QC-075
+        QC._recompute_aggregates(data)                    # inside phase_7_save
+    rebuilds = [f for f in log.fixes if "rebuilt from raw data" in f]
+    assert len(rebuilds) == 1, f"the rebuild fix was logged {len(rebuilds)}x"
+
+
+def test_the_silent_recompute_touches_no_log():
+    """_recompute_aggregates is the shared pure rebuild. If it ever starts
+    logging, every extra call inflates the fix count again."""
+    data = {"requests": [_misfiled_open_rfq()], "summary": {},
+            "lane_summary": {}, "carrier_summary": {}}
+    log = QC.Log()
+    for _ in range(3):
+        QC._recompute_aggregates(data)
+    assert log.fixes == [] and log.warnings == [] and log.errors == []
+
+
+def test_the_silent_recompute_actually_rebuilds():
+    """Silent must not mean inert — it still has to write the aggregates."""
+    row = _misfiled_open_rfq()
+    row["carrier_quoted"] = "ONE"
+    data = {"requests": [row], "summary": {"not_quoted": 99},
+            "lane_summary": {}, "carrier_summary": {}}
+    assert QC._recompute_aggregates(data) is True, "drift went unreported"
+    assert data["summary"]["not_quoted"] != 99
+    assert data["lane_summary"], "lane_summary was not rebuilt"
+    assert data["carrier_summary"], "carrier_summary was not rebuilt"
+
+
+def test_phase_7_save_does_not_log_a_second_rebuild(tmp_path):
+    """The persisted fix count is what the dashboard prints."""
+    import json as _json
+    data = {"requests": [_misfiled_open_rfq()], "summary": {},
+            "lane_summary": {}, "carrier_summary": {}}
+    log = QC.Log()
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_5_summaries(log, data)
+        QC.phase_7_save(log, data, tmp_path / "t.json", tmp_path / "r.json")
+    persisted = _json.loads((tmp_path / "t.json").read_text(encoding="utf-8"))
+    rebuilds = [f for f in persisted["qc"]["fix_log"] if "rebuilt from raw data" in f]
+    assert len(rebuilds) == 1, (
+        f"tracking-data-v2.json reports {len(rebuilds)} rebuild fixes — the "
+        f"dashboard's 'N fixes' line is inflated")
+
+
+@pytest.mark.parametrize("field", ["pol", "pod", "destination", "origin"])
+def test_pol_is_scrubbed_like_every_other_lane_field(field):
+    """`pol` was the one asymmetry: swept nowhere, though it is written the
+    same way as `pod` from free-text OL body parsing, is a QC-064 display
+    field, and is exported to durable external surfaces by historian.py and
+    share_intel.py. A literal "TBD" in OL's POL cell shipped as a port name —
+    and this PR's new schema.json doc claimed it could not."""
+    assert field in QC._PLACEHOLDER_FIELDS
+
+
+def test_a_placeholder_pol_is_removed_not_left_as_the_string_TBD():
+    """Driven through the real heal, and asserting the key is ABSENT rather
+    than None — present-but-null bypasses every `.get(key, default)`
+    downstream, which is finding #16 in this same PR."""
+    row = _misfiled_open_rfq()
+    row["pol"] = "TBD"
+    row["pod"] = "N/A"
+    data = {"requests": [row], "summary": {}, "lane_summary": {},
+            "carrier_summary": {}}
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_3_entries(QC.Log(), data)
+    assert "pol" not in row, f"placeholder POL survived as {row.get('pol')!r}"
+    assert "pod" not in row
+
+
+def test_a_real_pol_survives_the_scrub():
+    """The heal must only take garbage."""
+    row = _misfiled_open_rfq()
+    row["pol"] = "Oakland"
+    data = {"requests": [row], "summary": {}, "lane_summary": {},
+            "carrier_summary": {}}
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_3_entries(QC.Log(), data)
+    assert row["pol"] == "Oakland"
+
+
+def test_the_push_guard_raises_a_catchable_StateStoreError(tmp_path):
+    """StateStoreError is a SUBCLASS of RuntimeError, so main()'s
+    `except StateStoreError` never caught a bare RuntimeError — the guard's
+    exception escaped and daily.yml's push step got a Python traceback
+    instead of the one-line diagnostic the guard exists to print."""
+    (tmp_path / "tracking-data-v2.json").write_text('{"requests": [1,2',
+                                                    encoding="utf-8")
+
+    class _NoUpload:
+        def get_blob_client(self, name):
+            raise AssertionError("the corrupt file must never be uploaded")
+
+    with pytest.raises(SS.StateStoreError, match="REFUSING to push"):
+        SS.push(tmp_path, container=_NoUpload())
+
+
+def test_every_raise_in_state_store_is_a_StateStoreError():
+    """Structural: main() has exactly one handler, so a bare raise anywhere
+    in this module degrades to a traceback."""
+    import ast
+    src = (SCRIPTS / "state_store.py").read_text(encoding="utf-8")
+    bare = [n.lineno for n in ast.walk(ast.parse(src))
+            if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+            and isinstance(n.exc.func, ast.Name)
+            and n.exc.func.id in ("RuntimeError", "Exception")]
+    assert not bare, f"bare RuntimeError/Exception raised at lines {bare}"
+
+
+def test_main_rebuilds_the_summary_before_the_qc075_check():
+    """The behavioural test above drives the sequence itself, so it cannot
+    catch main() drifting out of that order — which is exactly how the
+    original QC-075 test stayed green while the check fired after the save.
+    Pin the real ordering in main(): phase_6's heals, then the rebuild, then
+    the reconciliation, then the save."""
+    import ast
+    src = (SCRIPTS / "qc_selfheal.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+    seg = ast.get_source_segment(src, fn) or ""
+    heals = seg.find("phase_6_rules(log, data)")
+    rebuild = seg.find("_recompute_aggregates(data)")
+    check = seg.find("_trade_region_reconciliation(data)")
+    save = seg.find("phase_7_save(log, data")
+    assert -1 not in (heals, rebuild, check, save), "main() no longer has these steps"
+    assert heals < rebuild < check < save, (
+        f"main()'s order is wrong (heals={heals} rebuild={rebuild} "
+        f"check={check} save={save}) — QC-075 will compare a stale summary "
+        f"against fresh regions and false-fire on every healed fire")
+
+
+def test_phase_7_save_uses_the_silent_rebuild_not_the_logging_one():
+    """Structural counterpart: if phase_7_save goes back through
+    phase_5_summaries, the fix count inflates again."""
+    import ast
+    src = (SCRIPTS / "qc_selfheal.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "phase_7_save")
+    seg = ast.get_source_segment(src, fn) or ""
+    calls = {n.func.id for n in ast.walk(ast.parse(seg.strip()))
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+    assert "_recompute_aggregates" in calls
+    assert "phase_5_summaries" not in calls, (
+        "phase_7_save logs a second 'rebuilt' fix — inflating the count "
+        "gen_dashboard prints")

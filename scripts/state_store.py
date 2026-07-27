@@ -225,7 +225,15 @@ def push(root: Path | None = None, *, container=None,
         if rel.endswith("tracking-data-v2.json"):
             _reason = _tracking_file_unusable(src)
             if _reason:
-                raise RuntimeError(
+                # StateStoreError, NOT a bare RuntimeError. StateStoreError
+                # is a SUBCLASS of RuntimeError, so `except StateStoreError`
+                # in main() does not catch the parent — this guard's exception
+                # escaped uncaught and daily.yml's push step got a Python
+                # traceback instead of the one-line diagnostic the guard was
+                # written to print. The refusal and the non-zero exit were
+                # always correct; only the message was. Raised in review of
+                # #124. Every other raise in this module already uses it.
+                raise StateStoreError(
                     f"REFUSING to push {rel}: {_reason}. The local file is "
                     f"corrupt; pushing it would overwrite the last good blob. "
                     f"Pull a fresh copy or restore a snapshot."
