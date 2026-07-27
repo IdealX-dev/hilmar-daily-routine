@@ -159,6 +159,23 @@ def build_subject(data, cfg):
 # "What Happened Today" computation
 # ─────────────────────────────────────────────────────────────────────
 
+def _win_landed(r, h) -> bool:
+    """Did this →WIN transition actually STICK?
+
+    THE single definition of "a win happened here", shared by the KPI tile
+    (`_today_summary`) and the What-Happened block (`_today_block_html`).
+    They used to disagree: the block counted any →WIN transition dated today,
+    the tile also required the row to still BE a WIN. A row promoted on a
+    send-signal and later re-decided away (aged to SEND_NO_BOOKING, or held as
+    MDOLX_NO_SEND) satisfied one and not the other, so a single email reported
+    both "0 wins" and "1 wins" for the same day.
+
+    A transition that was subsequently reversed is not a win. Rendering it as
+    one is how the report ends up arguing with itself.
+    """
+    return h.get("to") == "WIN" and (r.get("status") or "").upper() == "WIN"
+
+
 def _today_events(data, today_date):
     """Buckets the activity for the 'What Happened Today' block."""
     new_requests = []
@@ -718,6 +735,14 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
             teu = r.get('teu_requested') or 0
             cont_label = r.get('containers') or f"{cnt}cnt"
             reason = _fmt_rate_in_reason(h.get('reason') or '')
+            # A →WIN that did NOT stick is still a real event worth showing —
+            # but it must not read as a win, or the table contradicts the win
+            # count directly above it. Say what actually happened instead.
+            if h.get("to") == "WIN" and not _win_landed(r, h):
+                _now_is = (r.get("status") or "?").upper()
+                _why = r.get("loss_reason") or r.get("reason_detail") or ""
+                reason = (f"{reason} — REVERSED, now {_now_is}"
+                          f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
             req_date = r.get('request_date') or '—'
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
@@ -833,7 +858,22 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
         f'</tr></thead><tbody>{pend_rows}</tbody></table>'
     )
 
-    wins_in_day = sum(1 for (r, h) in status_ch if h.get("to") == "WIN")
+    # ONE definition of "a win today", shared with the KPI tile.
+    #
+    # This line used to count every →WIN transition dated today REGARDLESS of
+    # where the row ended up, while `_today_summary`'s tile additionally
+    # required `status == "WIN"`. A row that flipped to WIN on a send-signal
+    # and was then re-decided away (aged to SEND_NO_BOOKING, or held as
+    # MDOLX_NO_SEND) therefore counted HERE and not THERE — so the same email
+    # said "Won — Wed Jul 22: 0" in the KPI strip and "· 1 wins ·" eight
+    # inches below, with a green PENDING → WIN pill under it. Michael has
+    # flagged this shape repeatedly ("CHECK YOUR REPORT"); it is the report
+    # disagreeing with itself about whether the day had a win.
+    #
+    # `_win_landed` is the single rule both surfaces now use, and the STATUS
+    # CHANGES table below applies it too, so a transition the KPI refuses to
+    # count is never rendered as a win.
+    wins_in_day = sum(1 for (r, h) in status_ch if _win_landed(r, h))
     summary_line = (
         f"📊 {len(new_req)} new requests · {len(ol_resp)} new quotes received · "
         f"{wins_in_day} wins · {len(status_ch)} status changes · "

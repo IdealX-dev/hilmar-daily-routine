@@ -1630,6 +1630,65 @@ _CONTAINER_TOKEN_RX = re.compile(
 )
 
 
+def qc074_win_evidence_consistency(rows):
+    """QC-074: a row whose WIN evidence and outcome disagree.
+
+    Guards the two 2026-07-27 defects that both corrupt the SAME shipment
+    identity, from opposite directions:
+
+      (a) DUPLICATE request_id (**ERROR**) — the additive carry-forward used
+          to APPEND a prior WIN beside the row the fresh stage had already
+          rebuilt under the same id, so tracking-data-v2.json reported two
+          entries and double the TEU for one shipment, with the id
+          simultaneously PENDING/LOSS and WIN. phase_4 then arbitrated by
+          counting non-empty fields and could discard the very win the
+          carry-forward exists to protect. The carry-forward now reconciles by
+          id and MERGES the evidence; reaching here means something appended
+          a duplicate anyway.
+
+      (b) BOOKED BUT NOT WON (**ERROR**) — a row carrying an `mdolx_ref` (a
+          real booking OL issued) that is not a WIN and is not explicitly held
+          for review as MDOLX_NO_SEND. A booking ref is hard evidence; a row
+          holding one while reported as a loss is telling the client we lost a
+          move OL booked.
+
+      (c) WON WITHOUT EVIDENCE (**WARN**) — a WIN with neither `mdolx_ref` nor
+          `has_send`. QC-003 already warns on this shape; repeated here so one
+          check answers "does the win evidence hang together" end to end.
+
+    Detect-only. Which row is the true one depends on evidence outside the
+    dataset, so the audit names the ids for a human.
+
+    Returns [(request_id, severity, detail), ...].
+    """
+    out = []
+    seen = {}
+    for r in rows or []:
+        rid = r.get("request_id")
+        if rid:
+            seen.setdefault(rid, []).append(r)
+    for rid, group in seen.items():
+        if len(group) > 1:
+            states = ", ".join(sorted({(g.get("status") or "?") for g in group}))
+            out.append((rid, "error",
+                        f"{len(group)} rows share this request_id (states: "
+                        f"{states}) — one shipment stored more than once, so "
+                        f"its TEU is counted more than once"))
+    for r in rows or []:
+        rid = r.get("request_id", "?")
+        status = (r.get("status") or "").upper()
+        if r.get("mdolx_ref") and status != "WIN" and r.get("loss_reason") != "MDOLX_NO_SEND":
+            out.append((rid, "error",
+                        f"carries booking {r['mdolx_ref']} but is {status or 'blank'}"
+                        f"{'/' + str(r.get('loss_reason')) if r.get('loss_reason') else ''}"
+                        f" — a booking ref is evidence OL moved this shipment"))
+        if status == "WIN" and not r.get("mdolx_ref") and not r.get("has_send"):
+            out.append((rid, "warn",
+                        "WIN with neither an MDOLX booking ref nor a send "
+                        "signal — no evidence backs this win"))
+    return out
+
+
 def qc073_standalone_booking_hygiene(rows):
     """QC-073: fabricated or degenerate values on a standalone booking row.
 
@@ -4527,6 +4586,25 @@ def phase_6_rules(log: Log, data: dict):
                    "(no degenerate lanes, no fabricated rate responses)")
     except Exception as _e:
         log.warn("QC-073: check failed with exception: " + str(_e))
+
+    # QC-074: WIN EVIDENCE vs OUTCOME. Two ways one shipment's identity gets
+    # corrupted — the carry-forward appending a second row under an existing
+    # request_id (TEU counted twice, the id both PENDING and WIN), and a row
+    # holding a real MDOLX booking ref while reported as a loss. Both are
+    # ERRORs; a WIN with no evidence at all is a WARN.
+    try:
+        _we74 = qc074_win_evidence_consistency(requests)
+        if _we74:
+            for _rid74, _sev74, _detail74 in _we74:
+                if _sev74 == "error":
+                    log.error(f"QC-074: request {_rid74} — {_detail74}")
+                else:
+                    log.warn(f"QC-074: request {_rid74} — {_detail74}")
+        else:
+            log.ok("QC-074: win evidence consistent (no duplicate ids, "
+                   "no booked-but-not-won rows)")
+    except Exception as _e:
+        log.warn("QC-074: check failed with exception: " + str(_e))
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE

@@ -134,6 +134,58 @@ def clean_origin(subject: str, default: str = "Oakland") -> str:
     return origin or default
 
 
+def _pick_best_request(pool, bk_ts, bk_carrier, bk_ccount):
+    """Pick the best-evidenced request for a booking from `pool` → (row, score).
+
+    DETERMINISTIC BY CONSTRUCTION — this is the whole point. Candidates are
+    filtered to asks Lonny actually sent BEFORE the booking and within 14
+    days, scored on the booking subject's own evidence (container count +
+    carrier), and ties break to the LATEST request before the booking.
+    Nothing depends on the order the pool arrived in.
+
+    Until 2026-07-27 the header-chain branch had no scoring at all: the first
+    row encountered whose imid appeared in In-Reply-To/References won
+    outright. When Lonny REUSED a thread that made STAGE-FILE ORDER decide the
+    outcome — a new, still-unanswered 1x20'DV RFQ could be stamped WIN with a
+    2x40'HC booking, vanishing from PENDING OL while the genuinely quoted row
+    stayed open. Proved by running the same inputs in both orders.
+
+    Returns (None, 0) when no candidate qualifies. Callers then fall through
+    to the lane scan or emit a standalone — this never refuses outright,
+    because an unmatched booking still has to land somewhere visible.
+    """
+    scored = []
+    for r in pool:
+        if r.get("mdolx_ref"):           # already matched a win
+            continue
+        req_ts = C.parse_iso(r.get("request_timestamp"))
+        # An ask Lonny sent AFTER the booking cannot be what the booking
+        # fulfils. This single guard is what stops a brand-new RFQ from
+        # swallowing an older move's booking.
+        if not req_ts or req_ts > bk_ts:
+            continue
+        if (bk_ts - req_ts) > timedelta(days=14):
+            continue
+        score = 0
+        r_carrier = r.get("carrier_quoted")
+        if r_carrier:
+            r_carrier = C.normalize_carrier(r_carrier) or r_carrier
+        if bk_carrier and r_carrier and bk_carrier == r_carrier:
+            score += 2
+        if bk_ccount and r.get("container_count") == bk_ccount:
+            score += 2
+        # The booking subject NAMES its container count. A candidate that
+        # contradicts it is the wrong ask — penalise so a same-thread
+        # 1x20'DV can never outrank a 2x40'HC booking's real 2x40'HC request.
+        elif bk_ccount and r.get("container_count") not in (None, 0):
+            score -= 2
+        scored.append((score, req_ts, r))
+    if not scored:
+        return None, 0
+    scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    return scored[0][2], scored[0][0]
+
+
 def canonical_lane_key(destination: str | None) -> str:
     """Lane-matching key, alias-collapsed via core.canonical_port_key.
 
@@ -657,59 +709,53 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             if ref:
                 bk_chain.add(ref.strip("<>"))
 
-        if bk_chain:
-            # Search ALL unmatched requests (any lane) — header match
-            # trumps lane heuristics. Lonny's RFQ subject might say
-            # "Oakland to HCMC" while OL's booking says "HILMAR -> Cat Lai";
-            # the header chain links them regardless of subject drift.
-            for r in requests:
-                if r.get("mdolx_ref"):
-                    continue
-                for src_imid in (r.get("source_imids") or []):
-                    if not src_imid:
-                        continue
-                    if src_imid.strip("<>") in bk_chain:
-                        best = r
-                        best_via = "in_reply_to/references"
-                        break
-                if best:
-                    break
+        # The booking subject's own evidence — container count and carrier —
+        # scores EVERY candidate set below, chain-matched or lane-matched.
+        bk_carrier = BP.parse_subject_carrier(bk.get("subject"))
+        if bk_carrier:
+            bk_carrier = C.normalize_carrier(bk_carrier) or bk_carrier
+        _ccm = re.search(r"(\d+)\s*[xX]\s*\d{2}", raw_subj)
+        bk_ccount = int(_ccm.group(1)) if _ccm else None
 
-        # Fallback: score unmatched RFQs on the lane within 14d. The booking
-        # confirmation subject carries the container count + carrier
-        # ("HILMAR 1X40'HC Oakland to Hamburg// ONE: ...") — matching those
-        # against a request's container_count + carrier_quoted is a far
-        # stronger link than "latest RFQ on the lane". Highest score wins;
-        # ties break to the latest RFQ sent before the booking.
+        if bk_chain:
+            # The header chain is a strong signal, but it is a FILTER, not a
+            # decision. Until 2026-07-27 the first row encountered whose imid
+            # appeared anywhere in In-Reply-To/References won outright — so
+            # when Lonny REUSED a thread, the outcome was decided by whatever
+            # order the stage file happened to hold the rows in.
+            #
+            # Proved: thread with RFQ_old (2x40'HC, 07-20, quoted) and a NEW
+            # unanswered RFQ (1x20'DV, 07-22). OL books the OLD move; its
+            # References carry both imids. Stage holds NEW first -> the
+            # booking lands on req_new; stage holds OLD first -> it lands on
+            # req_old. Same inputs, same day, opposite business outcome. The
+            # new request is stamped WIN with a booking for equipment it never
+            # asked for and vanishes from PENDING OL, while the genuinely
+            # quoted row sits open. That is the operator's 2026-07-22
+            # Oakland->HCMC report.
+            #
+            # Now: every chain member is a candidate, and the SAME evidence
+            # scoring that governs the lane fallback picks between them.
+            chain_pool = [
+                r for r in requests
+                if any(s and s.strip("<>") in bk_chain
+                       for s in (r.get("source_imids") or []))
+            ]
+            best, _chain_score = _pick_best_request(
+                chain_pool, bk_ts, bk_carrier, bk_ccount)
+            if best:
+                best_via = "in_reply_to/references"
+                if len(chain_pool) > 1:
+                    # Never silently. A reused thread means a human may need
+                    # to confirm which ask this booking settles.
+                    best_via += f" (chose 1 of {len(chain_pool)} in-thread by evidence)"
+
+        # Fallback: score unmatched RFQs on the lane within 14d, same rules.
         if not best:
-            bk_carrier = BP.parse_subject_carrier(bk.get("subject"))
-            if bk_carrier:
-                bk_carrier = C.normalize_carrier(bk_carrier) or bk_carrier
-            _ccm = re.search(r"(\d+)\s*[xX]\s*\d{2}", raw_subj)
-            bk_ccount = int(_ccm.group(1)) if _ccm else None
-            scored: list[tuple] = []
-            for r in candidates:
-                if r.get("mdolx_ref"):           # already matched a win
-                    continue
-                req_ts = C.parse_iso(r.get("request_timestamp"))
-                if not req_ts or req_ts > bk_ts:
-                    continue
-                if (bk_ts - req_ts) > timedelta(days=14):
-                    continue
-                score = 0
-                r_carrier = r.get("carrier_quoted")
-                if r_carrier:
-                    r_carrier = C.normalize_carrier(r_carrier) or r_carrier
-                if bk_carrier and r_carrier and bk_carrier == r_carrier:
-                    score += 2
-                if bk_ccount and r.get("container_count") == bk_ccount:
-                    score += 2
-                scored.append((score, req_ts, r))
-            if scored:
-                scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
-                best = scored[0][2]
-                if scored[0][0] > 0:
-                    best_via = "lane+container+carrier"
+            best, _lane_score = _pick_best_request(
+                candidates, bk_ts, bk_carrier, bk_ccount)
+            if best and _lane_score > 0:
+                best_via = "lane+container+carrier"
 
         if best:
             best["status"] = "WIN"
@@ -1388,6 +1434,54 @@ def apply_operator_corrections(requests: list[dict]) -> int:
     return applied
 
 
+#: Win EVIDENCE carried back onto a rebuilt row. Everything here is a fact the
+#: prior build observed and the fresh stage simply could not see again — a
+#: booking ref, who won it, the volume booked. Deliberately excludes anything
+#: the fresh ingest re-derives correctly (lane, containers, timestamps), so a
+#: carry-forward can restore an outcome without freezing stale display fields.
+_PRIOR_WIN_EVIDENCE = (
+    "mdolx_ref", "carrier_won", "teu_won", "booking_timestamp",
+    "vessel_voyage", "mdolx_date",
+)
+
+
+def _merge_prior_win_into(existing: dict, prior_win: dict, prior_mtime: str) -> None:
+    """Fold a prior WIN's evidence into the row the fresh stage rebuilt.
+
+    Called when the carry-forward finds a row ALREADY carrying that
+    request_id — which is the normal case whenever the RFQ email is still
+    inside the stage window, since the fresh build reconstructs it as PENDING
+    with no knowledge of the booking. Appending a second row instead (the
+    behaviour until 2026-07-27) double-counted the shipment and left the same
+    id in two contradicting states for phase_4 to arbitrate by field count.
+
+    The prior WIN's status wins outright: it is backed by a booking the fresh
+    stage cannot see. `mdolx_refs_all` unions, evidence fields fill only where
+    the rebuilt row has nothing, and the transition is recorded so the audit
+    trail explains the change (QC-072's invariant).
+    """
+    existing["mdolx_refs_all"] = sorted(
+        {m for m in (list(existing.get("mdolx_refs_all") or [])
+                     + list(prior_win.get("mdolx_refs_all") or [])
+                     + [existing.get("mdolx_ref"), prior_win.get("mdolx_ref")]) if m}
+    )
+    for k in _PRIOR_WIN_EVIDENCE:
+        if prior_win.get(k) not in (None, "", 0) and not existing.get(k):
+            existing[k] = prior_win[k]
+    if not existing.get("teu_won"):
+        existing["teu_won"] = prior_win.get("teu_won") or existing.get("teu_requested") or 0
+    existing["quoted"] = True
+    existing["has_send"] = True
+    if existing.get("status") != "WIN":
+        C.record_transition(
+            existing, "WIN",
+            f"Prior-build WIN restored (MDOLX{prior_win.get('mdolx_ref') or '?'}) — "
+            f"booking not visible in the current stage window")
+    existing["loss_reason"] = None
+    existing["preserved_from_prior"] = True
+    existing["preserved_source_mtime"] = prior_mtime
+
+
 def _prior_win_captured(wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates) -> bool:
     """Is this prior WIN already represented in the freshly-built wins?
 
@@ -1563,7 +1657,31 @@ def main() -> int:
                     wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates)
                 if captured:
                     continue
-                # This prior WIN is not represented in the new build. Carry forward.
+                # This prior WIN is not represented in the new build.
+                #
+                # RECONCILE BY request_id FIRST, then append. Appending
+                # unconditionally created a SECOND row carrying the SAME
+                # request_id: the fresh stage still holds the RFQ email, so it
+                # rebuilds that row as PENDING, and this loop then appended the
+                # old WIN beside it. tracking-data-v2.json ended up reporting
+                # 2 entries and 8 TEU for one 4-TEU shipment, the same id
+                # simultaneously PENDING/NQ and WIN — and when phase_4 later
+                # collapsed the pair by non-empty FIELD COUNT it could keep
+                # either, in one observed run discarding the very win this
+                # carry-forward exists to protect (MDOLX260500 Oakland→
+                # Yokohama, stamped WIN from Linda's recap).
+                #
+                # A status contradiction is never resolved by counting fields.
+                # An mdolx-backed WIN is evidence; a rebuilt PENDING/LOSS on
+                # the same id is the absence of evidence. Evidence wins.
+                _wid = w.get("request_id")
+                _existing = next(
+                    (r for r in all_requests if r.get("request_id") == _wid), None
+                ) if _wid else None
+                if _existing is not None:
+                    _merge_prior_win_into(_existing, w, prior_mtime)
+                    preserved_count += 1
+                    continue
                 carried = dict(w)
                 carried["preserved_from_prior"] = True
                 carried["preserved_source_mtime"] = prior_mtime

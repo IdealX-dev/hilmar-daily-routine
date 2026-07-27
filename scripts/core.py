@@ -135,6 +135,12 @@ LOSS_REASONS = {
     "AWAITING_MDOLX",
     "MDOLX_NO_SEND",
     "SEND_NO_BOOKING",
+    # PENDING sub-state (and, once the request clock expires, a real loss):
+    # OL quoted but the response carried no usable timestamp — typically a
+    # patch_carriers rate recovered from a sibling thread or a booking PDF.
+    # Added 2026-07-27 so this case stops hiding inside "OTHER"; see the
+    # never-age-on-absence branch in decide_status.
+    "NO_RESPONSE_TS",
 }
 
 #: Multiplier above lane winning median where we call a loss "PRICE".
@@ -1312,8 +1318,35 @@ def decide_status(
     # Quoted — check aging
     resp_dt = parse_iso(response_timestamp)
     if not resp_dt:
-        # Malformed timestamp — treat as old enough
-        return StatusDecision("LOSS", True, False, "OTHER", "Quoted but response_timestamp unparseable — assumed aged")
+        # NEVER AGE ON ABSENCE. "assumed aged" used to return LOSS/OTHER here
+        # the instant a quoted row arrived without a parseable response
+        # timestamp — which is exactly what patch_carriers produces when it
+        # recovers a rate from a sibling thread or a booking PDF that carried
+        # no usable timestamp. An RFQ Lonny sent THIS MORNING, quoted an hour
+        # ago, was reported to staff AND to the client as a LOSS: counted
+        # against win rate, dropped from auto_chase_pending, and absent from
+        # every pending bucket, so PENDING OL read 0 and nobody followed up on
+        # live business the system had already buried. Proved 2026-07-27: a
+        # request 2h old returned LOSS/OTHER for both a missing and a
+        # malformed timestamp.
+        #
+        # A missing timestamp is missing EVIDENCE, not elapsed time. Fall back
+        # to the clock we do trust — Lonny's request — and hold PENDING until
+        # THAT window expires. Only then is the row genuinely old enough to be
+        # a loss, and it is tagged NO_RESPONSE_TS so the cause is legible
+        # rather than hidden inside "OTHER".
+        req_dt = parse_iso(request_timestamp)
+        if req_dt and not pending_hilmar_stale(req_dt, now):
+            _age = (now - req_dt).total_seconds() / 3600.0
+            return StatusDecision(
+                "PENDING", True, False, "NO_RESPONSE_TS",
+                f"Quoted, but the OL response carried no usable timestamp — "
+                f"aging off Lonny's request instead ({_age:.1f}h ago, still "
+                f"inside the decision window)")
+        return StatusDecision(
+            "LOSS", True, False, "NO_RESPONSE_TS",
+            "Quoted but response_timestamp unparseable, and the request itself "
+            "is past the decision window")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
     # PENDING-Hilmar quote-decision window (Michael 2026-07-14): 48 CLOCK

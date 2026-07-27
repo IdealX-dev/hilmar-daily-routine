@@ -3,6 +3,102 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — Data audit batch 4: the last four priority findings
+
+Each defect REPRODUCED on main before it was touched, re-verified after.
+One new QC check (QC-074) and one schema change.
+
+1. BOOKING->REQUEST MATCHING WAS DECIDED BY STAGE-FILE ORDER (ingest.py)
+   The header chain (In-Reply-To/References) picked the FIRST row it
+   encountered whose imid appeared anywhere in the chain. When Lonny REUSED a
+   thread, that made row ordering decide a business outcome:
+
+       stage holds NEW first -> booking landed on req_new
+       stage holds OLD first -> booking landed on req_old
+
+   Same inputs, same day, opposite result. The new still-unanswered 1x20'DV
+   RFQ got stamped WIN carrying a 2x40'HC booking it never asked for and
+   vanished from PENDING OL, while the genuinely quoted 2x40'HC row sat open —
+   the operator's 2026-07-22 Oakland->HCMC report. QC-066 could not catch it:
+   the stolen booking is same-day, so both its clauses pass.
+   Fixed: the chain is now a candidate FILTER, not a decision. Every chain
+   member goes through the same evidence scoring the lane fallback already
+   used (container count + carrier from the booking subject), candidates Lonny
+   sent AFTER the booking are dropped outright, ties break to the latest ask
+   before the booking, and a candidate whose container count CONTRADICTS the
+   booking subject is penalised. Ambiguity is recorded in
+   `_booking_match_via` ("chose 1 of N in-thread by evidence") rather than
+   resolved silently. Extracted to a module-level `_pick_best_request` after
+   ruff flagged the closure's late-bound loop variables (B023) — a real
+   hazard, not a style nit.
+
+2. NEVER AGE ON ABSENCE (core.decide_status, both trees)
+   A quoted row whose response_timestamp was missing or unparseable returned
+   LOSS/OTHER instantly — "assumed aged". That is exactly what patch_carriers
+   produces when it recovers a rate from a sibling thread or a booking PDF
+   carrying no usable timestamp. Proved: an RFQ sent 2 HOURS AGO returned
+   LOSS/OTHER. It was reported to staff AND to the client as a loss, counted
+   against win rate, dropped from auto_chase_pending, and absent from every
+   pending bucket — so PENDING OL read 0 and nobody followed up on live
+   business the system had already buried.
+   A missing timestamp is missing EVIDENCE, not elapsed time. The row now
+   falls back to Lonny's request clock and holds PENDING until THAT window
+   expires; only then is it a loss. Tagged NO_RESPONSE_TS (new loss reason,
+   both trees + schema.json enum) so the cause is legible instead of hidden
+   inside the "OTHER" catch-all. Three existing tests pinned the old OTHER
+   label — updated, intent preserved; the schema enum test caught the missing
+   enum value, which is the governance ratchet doing its job.
+
+3. CARRY-FORWARD APPENDED A SECOND ROW UNDER THE SAME request_id (ingest.py)
+   The RFQ email is still inside the 90-day stage window, so the fresh build
+   rebuilds the row as PENDING with no knowledge of the booking; the additive
+   carry-forward then APPENDED the old WIN beside it. tracking-data-v2.json
+   reported 2 entries and 8 TEU for one 4-TEU shipment, the same id
+   simultaneously PENDING/NQ and WIN — and phase_4 collapsed them by counting
+   non-empty FIELDS, in one observed run discarding the very win the
+   carry-forward exists to protect (MDOLX260500 Oakland->Yokohama).
+   Fixed: reconcile by request_id FIRST. A prior WIN whose id already exists
+   MERGES its evidence into the rebuilt row (`_merge_prior_win_into`) instead
+   of appending — booking ref, carrier, booked TEU, refs unioned — and records
+   the transition so QC-072's invariant holds. Evidence fills gaps only, so a
+   fresher carrier signal is not clobbered. A status contradiction is never
+   resolved by counting fields: an mdolx-backed WIN is evidence, a rebuilt
+   PENDING is the absence of it.
+
+4. THE REPORT ARGUED WITH ITSELF ABOUT WINS (gen_email.py)
+   The "Won — <day>" KPI tile required `status == "WIN"`; the What-Happened
+   block counted every ->WIN transition dated that day regardless of where the
+   row ended up. A row promoted on a send-signal and later re-decided away
+   (aged to SEND_NO_BOOKING, or held MDOLX_NO_SEND) satisfied one and not the
+   other — so ONE email read "Won — Wed Jul 22: 0" in the KPI strip and
+   "· 1 wins ·" eight inches below, with a green PENDING -> WIN pill under it.
+   Michael has flagged this shape repeatedly ("CHECK YOUR REPORT").
+   Fixed: `_win_landed(r, h)` is now THE single rule both surfaces use — a
+   transition that was subsequently reversed is not a win. The STATUS CHANGES
+   table applies it too: the event is still shown (it happened), but labelled
+   "REVERSED, now LOSS (SEND_NO_BOOKING)" instead of rendering as a win.
+
+QC-074 (ERROR/WARN) — win evidence vs outcome. ERROR on a duplicate
+request_id (one shipment stored twice, TEU counted twice) and on a row
+carrying an mdolx_ref while reported as a loss; WARN on a WIN with neither
+mdolx_ref nor has_send. MDOLX_NO_SEND is exempt — that state is DEFINED as
+holding a booking ref without a win. Detect-only; shape (a) is prevented at
+the source by fix 3.
+
+SCHEMA CHANGE: loss_reason enum gains "NO_RESPONSE_TS" (schema.json +
+LOSS_REASONS in both core trees). Additive only — no existing value changed,
+so prior data stays valid.
+
+Tests: tests/test_audit_batch4.py (27 cases) — order-independence proved by
+running the same inputs both ways, the after-the-booking guard, chain-still-
+beats-lane, ambiguity flagging, all four never-age-on-absence outcomes,
+cross-tree parity, the schema enum, merge idempotency and no-clobber, and both
+win surfaces agreeing on a reversed win AND on a real one.
+Suite 1925 passed (1898 -> +27), coverage 91.17%, ruff clean.
+
+Backlog after this batch: 11 confirmed findings remain, all MEDIUM/LOW — the
+last HIGH-severity finding is closed.
+
 ## 2026-07-26 — Data audit batch 3: the standalone-WIN cluster
 
 Findings 2, 11 and 22 turned out to be ONE root cause, reproduced on main

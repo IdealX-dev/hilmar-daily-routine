@@ -134,7 +134,11 @@ def test_phase3_rewrites_never_responded_on_rated_row():
     s = survivors[0]
     assert "never responded" not in s["reason_detail"]
     assert "assumed aged" in s["reason_detail"]
-    assert s["loss_reason"] == "OTHER"
+    # Relabelled OTHER -> NO_RESPONSE_TS on 2026-07-27: the row is quoted with
+    # no usable response timestamp, which is now named rather than swept into
+    # the "OTHER" catch-all. Still a loss here — the row carries no request
+    # clock to age off. See the never-age-on-absence branch in decide_status.
+    assert s["loss_reason"] == "NO_RESPONSE_TS"
     assert any("never responded" in m for m in log.fixes), log.fixes
 
 
