@@ -110,7 +110,7 @@ def test_select_default_is_opus(monkeypatch: pytest.MonkeyPatch, cost_log_path: 
         cost_log_path=cost_log_path,
         client_factory=lambda: StubClient(_ok_response()),
     )
-    assert router.select("business_advice") == "claude-opus-4-6"
+    assert router.select("business_advice") == "claude-opus-5"
 
 
 def test_select_global_override(monkeypatch: pytest.MonkeyPatch, cost_log_path: Path):
@@ -159,7 +159,7 @@ def test_call_happy_path_writes_cost_log(
     )
     resp = router.call(task_type="business_advice", prompt="give me advice")
     assert resp.text == "hello"
-    assert resp.model == "claude-opus-4-6"
+    assert resp.model == "claude-opus-5"
     assert resp.input_tokens == 1000
     assert resp.output_tokens == 500
     assert resp.cost_cents > 0  # opus is not free
@@ -171,7 +171,7 @@ def test_call_happy_path_writes_cost_log(
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["task"] == "business_advice"
-    assert rec["model"] == "claude-opus-4-6"
+    assert rec["model"] == "claude-opus-5"
     assert rec["input_tokens"] == 1000
     assert rec["cost_cents"] == resp.cost_cents
 
@@ -211,7 +211,7 @@ def test_call_429_then_success_retries_once(
         client_factory=lambda: StubClient(_throttle_then_ok(throttle_count=1)),
     )
     resp = router.call(task_type="business_advice", prompt="p")
-    assert resp.model == "claude-opus-4-6"
+    assert resp.model == "claude-opus-5"
     assert resp.text == "ok-after-retry"
 
 
@@ -333,5 +333,6 @@ def test_pricing_lookup_uses_default_for_unknown_model(cost_log_path: Path):
         client_factory=lambda: StubClient(_ok_response()),
     )
     cents = router._cost_cents("totally-unknown-model", 1_000_000, 1_000_000)
-    # Falls back to DEFAULT_MODEL pricing — opus (1500/7500).
-    assert cents == 1500 + 7500
+    # Falls back to DEFAULT_MODEL pricing — Opus 5 (500/2500 cents per
+    # MTok = $5/$25). Was 1500/7500 while the default was Opus 4.6.
+    assert cents == 500 + 2500

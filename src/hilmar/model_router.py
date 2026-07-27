@@ -38,7 +38,51 @@ log = logging.getLogger(__name__)
 
 
 # Default model; tightly hard-coded — the env override is the dial.
-DEFAULT_MODEL = "claude-opus-4-6"
+# Migrated claude-opus-4-6 -> claude-opus-5 on 2026-07-27. Three Opus
+# generations forward, and it changes two things this file has to handle:
+#
+#   1. THINKING IS ON BY DEFAULT. On Opus 4.6 (and 4.7/4.8) a request that
+#      omits the `thinking` parameter ran WITHOUT thinking. On Opus 5 the
+#      same request runs adaptive thinking — and `max_tokens` is a hard cap
+#      on thinking PLUS response text together. `_invoke` sends no
+#      `thinking` field, so every narrative call would silently start
+#      spending its 4096-token budget on reasoning and truncate the answer.
+#      Handled by MAX_TOKENS_FLOOR below.
+#   2. The prompt-cache minimum drops 4096 -> 512 tokens, which is what
+#      makes caching viable here at all (see CACHE_SYSTEM_PROMPT).
+#
+# Sampling parameters (`temperature`/`top_p`/`top_k`) and `budget_tokens`
+# return 400 on Opus 4.7+; this file never sent any, so nothing to strip.
+DEFAULT_MODEL = "claude-opus-5"
+
+#: Floor for `max_tokens` on thinking-capable models. Opus 5 counts thinking
+#: tokens against `max_tokens`, so a budget sized for the answer alone gets
+#: eaten by reasoning and the response truncates mid-sentence (`stop_reason:
+#: "max_tokens"`). The narrative sections are a few hundred tokens of prose;
+#: 4096 was ample when none of it went to thinking and is not now. Callers
+#: asking for less than this on a thinking model are raised to it.
+MAX_TOKENS_FLOOR = 16000
+
+#: Models that think by default when `thinking` is omitted. Kept explicit
+#: rather than inferred from the name so a future model has to be added
+#: deliberately — guessing wrong here truncates production output silently.
+THINKING_BY_DEFAULT = frozenset({"claude-opus-5"})
+
+#: Minimum cacheable prefix, in tokens, per model. NOT monotonic across
+#: generations — Opus 4.6 needs 4096, Opus 5 only 512 — which is why the
+#: Opus 5 migration is what makes caching viable rather than the marker
+#: itself. A prefix below the model's minimum silently does not cache.
+#: Models absent from this map are never marked.
+CACHE_MIN_TOKENS = {
+    "claude-opus-5":     512,
+    "claude-sonnet-4-6": 1024,
+    "claude-haiku-4-5":  4096,
+}
+
+#: Kill switch for the system-prompt cache breakpoint. On by default; set
+#: HILMAR_LLM_CACHE=0 to send plain-string system prompts again if a cache
+#: interaction is ever suspected in a live incident.
+CACHE_SYSTEM_PROMPT = os.environ.get("HILMAR_LLM_CACHE", "1").strip() != "0"
 
 # Per-task model defaults. Insights tasks (narrative, critique, etc.)
 # default to Opus — quality-bound. Parser extraction is high-volume and
@@ -65,6 +109,15 @@ TASK_TYPES = (
 # Cost table: cents per million tokens. Approximate Anthropic public list
 # pricing as of 2026-04-26 — overridable via env if it shifts.
 DEFAULT_PRICING_CPM = {
+    # Claude Opus 5 — $5.00 / $25.00 per MTok (list, 2026-07-27).
+    "claude-opus-5":        {"input":  500, "output": 2500},
+    # NOTE (2026-07-27): this claude-opus-4-6 row says $15/$75 per MTok.
+    # Anthropic's published price for Opus 4.6 is $5.00/$25.00 — the same as
+    # Opus 5 — so this entry is ~3x high and every cost_cents figure logged
+    # against Opus 4.6 has been overstated by that factor. Left as-is
+    # deliberately: correcting it retroactively would make historical
+    # llm-cost-log entries incomparable, and that is Michael's call, not a
+    # silent edit. Flagged in CHANGELOG; the new Opus 5 row above is correct.
     "claude-opus-4-6":      {"input": 1500, "output": 7500},
     "claude-sonnet-4-6":    {"input":  300, "output": 1500},
     "claude-haiku-4-5":     {"input":   80, "output":  400},
@@ -155,6 +208,41 @@ class ModelRouter:
 
     # ── cost helpers ─────────────────────────────────────────────────
 
+    def _system_param(self, model: str, system: str):
+        """Render `system` as either a plain string or a cache-marked block.
+
+        Prompt caching is a PREFIX match with a model-specific minimum, and
+        below that minimum `cache_control` is a silent no-op — no error, no
+        cache, just the ~1.25x write premium. The minimum is not monotonic
+        across generations: 4096 tokens on Opus 4.6, 512 on Opus 5. That 8x
+        drop is the only reason a breakpoint is worth setting here at all.
+
+        Marking the system block caches `tools` + `system` together (render
+        order is tools -> system -> messages). It does NOT reorder anything,
+        so model output is unchanged — the request bytes are identical apart
+        from the marker.
+
+        WHAT THIS DOES AND DOESN'T BUY (measured 2026-07-27, not estimated
+        from the docs): the four insights tasks each send a DIFFERENT system
+        prompt, so they do not share a prefix with each other, and the daily
+        pipeline runs once every 24h while the cache TTL is 5 minutes (1h
+        max). So there is no cross-task and no cross-run hit. What it does
+        cover is the retry and Sonnet-cascade paths in `call`, which re-send
+        an identical prefix seconds apart — exactly the case a cache is for.
+        The larger win needs the shared context moved ahead of the per-task
+        instruction so all four calls share a prefix; that changes prompt
+        structure and therefore output, so it is a separate decision.
+        """
+        if not CACHE_SYSTEM_PROMPT or model not in CACHE_MIN_TOKENS:
+            return system
+        # Rough gate so we don't mark blocks that cannot possibly clear the
+        # model's minimum. Deliberately conservative (4 chars/token) — a
+        # marker below the minimum is harmless but misleading to read.
+        if len(system) < CACHE_MIN_TOKENS[model] * 4:
+            return system
+        return [{"type": "text", "text": system,
+                 "cache_control": {"type": "ephemeral"}}]
+
     def _cost_cents(self, model: str, in_tok: int, out_tok: int) -> int:
         prices = self._pricing.get(model) or self._pricing.get(DEFAULT_MODEL) or {"input": 0, "output": 0}
         cents = (in_tok / 1_000_000) * prices["input"] + (out_tok / 1_000_000) * prices["output"]
@@ -229,13 +317,22 @@ class ModelRouter:
             self._client_cache = self._client_factory()
         client = self._client_cache
 
+        # Opus 5 counts thinking against max_tokens (see DEFAULT_MODEL note).
+        # Raise the ceiling rather than disabling thinking: disabling it is
+        # capped at effort<=high on Opus 5, and it carries two documented
+        # failure modes (tool calls emitted as plain text; <thinking> tags
+        # leaking into the response). Thinking on with a real budget is the
+        # safe configuration.
+        effective_max = (max(max_tokens, MAX_TOKENS_FLOOR)
+                         if model in THINKING_BY_DEFAULT else max_tokens)
+
         kwargs: dict[str, Any] = {
             "model": model,
-            "max_tokens": max_tokens,
+            "max_tokens": effective_max,
             "messages": [{"role": "user", "content": prompt}],
         }
         if system is not None:
-            kwargs["system"] = system
+            kwargs["system"] = self._system_param(model, system)
 
         try:
             raw = client.messages.create(**kwargs)

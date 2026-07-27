@@ -3,6 +3,94 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — LLM layer: Opus 4.6 -> Claude Opus 5, + prompt-cache breakpoint
+
+Michael forwarded Anthropic's "prompt cache hit rate is low" notice (est. up
+to 45% of IDEALX direct API spend) and asked to migrate then add caching.
+
+WHAT I MEASURED FIRST (before changing anything)
+   Four LLM call sites in this repo. Prompt caching is a PREFIX match with a
+   model-specific minimum, and below that minimum `cache_control` is a SILENT
+   no-op — no error, no cache, just the ~1.25x write premium. Measured
+   against a deliberately-padded InsightsContext:
+
+     insights.py (4 calls/day)  ~8,300 chars (~2,100-2,800 tok)  opus-4-6, min 4096  NO
+     parser_fallback.py         250-char system                  haiku-4-5, min 4096  NO
+     qc_actions_from_sentry.py  no system prompt at all          haiku-4-5, min 4096  NO
+     pdf_llm_rescue.py          base64 PDF FIRST, differs/call    -                    NO
+
+   So caching on the OLD model would have done nothing. The minimum is not
+   monotonic across generations — 4096 on Opus 4.6, 512 on Opus 5 — which is
+   why the migration is what makes caching viable, not the marker.
+
+1. DEFAULT_MODEL: claude-opus-4-6 -> claude-opus-5 (three Opus generations)
+   TWO breaking changes had to be handled; both fail silently, not loudly.
+
+   (a) THINKING IS ON BY DEFAULT. On Opus 4.6/4.7/4.8 a request that omits
+       the `thinking` parameter ran WITHOUT thinking. On Opus 5 the same
+       request runs adaptive thinking — and `max_tokens` caps thinking PLUS
+       response text together. `_invoke` sends no `thinking` field, so every
+       narrative call would have started spending its 4096-token budget on
+       reasoning and truncating the answer mid-sentence, with no error and
+       just `stop_reason: "max_tokens"`. Fixed with MAX_TOKENS_FLOOR (16000)
+       applied to models in THINKING_BY_DEFAULT.
+       NOT fixed by disabling thinking: that is capped at effort<=high on
+       Opus 5 and carries two documented failure modes (tool calls emitted as
+       plain TEXT so the call silently never runs; <thinking> tags leaking
+       into the response). Thinking on with a real budget is the safe config.
+
+   (b) Sampling params (`temperature`/`top_p`/`top_k`) and `budget_tokens`
+       return 400 on Opus 4.7+. This router never sent any — verified, and
+       now pinned by a test so it stays that way.
+
+   parser_extraction stays on claude-haiku-4-5. That is a deliberate cost
+   choice for a high-volume, structurally simple task and was not in scope.
+
+2. PROMPT-CACHE BREAKPOINT (ModelRouter._system_param)
+   Marks the system block with `cache_control` when it clears the model's
+   minimum. Caches tools+system together (render order tools -> system ->
+   messages). BEHAVIOUR-NEUTRAL: it adds a field and reorders nothing, so the
+   model is asked exactly the same thing — pinned by a test.
+
+   HONEST CEILING, measured not assumed: the four insights tasks each send a
+   DIFFERENT system prompt, so they share no prefix with each other, and the
+   pipeline runs once every 24h against a 5-minute TTL (1h max) — so there is
+   no cross-task and no cross-run hit. What this covers is the retry and
+   Sonnet-cascade paths, which re-send an identical prefix seconds apart.
+   Real saving in THIS repo: cents. The 45% in Anthropic's notice is org-wide
+   and cannot be coming from here — see the open question below.
+
+   The bigger win needs the shared ctx_json moved AHEAD of the per-task
+   instruction so all four calls share a prefix. That inverts the
+   data/instruction ordering and would change the output of all four
+   narrative sections, so it is a separate decision, not folded in silently.
+
+   Kill switch: HILMAR_LLM_CACHE=0 reverts to plain-string system prompts.
+
+3. FOUND WHILE MIGRATING — the cost table is ~3x high on Opus 4.6
+   DEFAULT_PRICING_CPM lists claude-opus-4-6 at 1500/7500 cents per MTok
+   ($15/$75). Anthropic's published price is $5.00/$25.00 — the same as
+   Opus 5. Every cost_cents figure logged against Opus 4.6 has therefore been
+   overstated ~3x, which also means the HILMAR_INSIGHTS_COST_ALERT_CENTS
+   banner has been firing early. LEFT AS-IS deliberately: correcting it
+   retroactively makes historical llm-cost-log entries incomparable, and that
+   is Michael's call. The new Opus 5 row (500/2500) is correct.
+
+OPEN QUESTION FOR MICHAEL: Anthropic's notice covers IDEALX org-wide direct
+API traffic and explicitly EXCLUDES Claude Code. This repo's direct traffic is
+4 Opus calls/day plus budgeted Haiku parser calls — 45% of that is pennies.
+The traffic driving that estimate is another IDEALX system (the OL-USA quote
+tracker on the Cloud PC is the obvious candidate). I cannot see it from this
+container. Point me at it and I will run the same measurement there.
+
+Tests: tests/test_model_router_opus5.py (15 cases) — the max_tokens floor and
+that it only applies to thinking models, no removed params sent, thinking
+never disabled, the breakpoint on/off either side of each model's minimum,
+Haiku's far-higher minimum, behaviour-neutrality, the kill switch, and a guard
+that every routable model has a declared minimum. Four existing tests pinning
+the old default/pricing updated.
+Suite 1940 passed (1925 -> +15), coverage 91.23%, ruff clean.
+
 ## 2026-07-27 — Data audit batch 4: the last four priority findings
 
 Each defect REPRODUCED on main before it was touched, re-verified after.

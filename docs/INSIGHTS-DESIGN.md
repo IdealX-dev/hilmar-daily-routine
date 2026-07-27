@@ -118,7 +118,7 @@ class InsightsContext:
 
 #### M3.11.b — LLM narrative engine (Claude Opus)
 
-Calls **Claude Opus** (`claude-opus-4-6`) with the `InsightsContext` + a structured prompt. Returns four sections in a single response:
+Calls **Claude Opus** (`claude-opus-5`; migrated from `claude-opus-4-6` 2026-07-27) with the `InsightsContext` + a structured prompt. Returns four sections in a single response:
 
 ```
 SECTION A — System (technical critique of the pipeline itself)
@@ -149,12 +149,12 @@ Default = Opus. But the router is built first-class so we can dial down later wi
 
 ```python
 TASK_TYPE_TO_MODEL = {
-    "metrics_narrative":   "claude-opus-4-6",      # default Opus per Michael
-    "system_critique":     "claude-opus-4-6",
-    "design_suggestions":  "claude-opus-4-6",
-    "data_suggestions":    "claude-opus-4-6",
-    "business_advice":     "claude-opus-4-6",
-    "feedback_synthesis":  "claude-opus-4-6",
+    "metrics_narrative":   "claude-opus-5",      # default Opus per Michael
+    "system_critique":     "claude-opus-5",
+    "design_suggestions":  "claude-opus-5",
+    "data_suggestions":    "claude-opus-5",
+    "business_advice":     "claude-opus-5",
+    "feedback_synthesis":  "claude-opus-5",
 }
 
 # Env override — flip any task to a cheaper model without code change:
@@ -170,7 +170,7 @@ class ModelRouter:
 
 **Cost telemetry:** every call appends to `data/llm-cost-log.jsonl`:
 ```json
-{"ts":"2026-04-26T07:00:12Z","task":"business_advice","model":"claude-opus-4-6","input_tokens":3892,"output_tokens":612,"cost_cents":18}
+{"ts":"2026-04-26T07:00:12Z","task":"business_advice","model":"claude-opus-5","input_tokens":3892,"output_tokens":612,"cost_cents":18}
 ```
 
 **Alert (no hard cap):** if `daily_cost_cents() > 200` (= $2/day), append a banner to the daily email:
@@ -230,7 +230,7 @@ tests/
 ANTHROPIC_API_KEY=
 
 # Default model — Opus per Michael's pick 2026-04-26
-HILMAR_INSIGHTS_MODEL=claude-opus-4-6
+HILMAR_INSIGHTS_MODEL=claude-opus-5
 
 # Per-task override (optional, blank = use HILMAR_INSIGHTS_MODEL)
 # HILMAR_INSIGHTS_MODEL_business_advice=claude-sonnet-4-6
