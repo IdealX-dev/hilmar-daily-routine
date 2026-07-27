@@ -3,6 +3,45 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — Self-review of the one commit that shipped unreviewed
+
+#124 merged with 85da7e9 never seen by the automated reviewer — IDEALX's
+Claude Code overage limit was reached mid-PR, so the third pass never ran.
+That commit is the one that fixed two regressions I had introduced, i.e. the
+least-scrutinised part of the whole batch. Reviewed it myself instead.
+
+WHAT I CHECKED, AND WHAT HELD
+   * `pol` added to _PLACEHOLDER_FIELDS — the only change in that commit that
+     alters LIVE row data. Verified the FULL loop by execution, not just the
+     pop: phase_3 removes the garbage literal, and QC-027's heal in phase_6
+     re-derives the real POL from the lane endpoints. "TBD"/"N/A" ends up as
+     "Oakland"/"Busan" — strictly better data, not a hole. The risk was that
+     popping a field the completeness gate MEASURES would make QC-027 start
+     reporting a gap this heal created; it does not, because the heal refills
+     it, and because both the scrub and the gate scope to the same rows.
+   * QC-075 keeps its teeth after the pre-check rebuild. The rebuild removes
+     STALENESS; it cannot mask a genuine disagreement, because the two sides
+     run different aggregators over the same rows. Confirmed by simulating
+     finding #17's actual predicate split — reconciled correctly reads False.
+
+WHAT DID NOT HOLD — MY OWN TEST
+   `test_qc075_still_fires_on_a_genuine_aggregator_disagreement` poisoned
+   `data["summary"]` directly and asserted the check caught it. But main()
+   rebuilds the summary immediately before reconciling, so that poisoning is
+   overwritten — the test asserted against a state production can never reach.
+   Green, and proving nothing. That is the SAME "test looks green over an
+   untested path" shape that produced two findings in this batch already
+   (the mock-Log QC-075 test, and the phase-sequence test that survived
+   reverting its own fix).
+   Rewritten to drive the real mechanism: monkeypatch aggregate_trade_regions
+   back to the pre-fix loss_reason predicate so the two aggregators genuinely
+   disagree about one RESPONSE_NO_RATE row. Mutation-checked by forcing
+   `reconciled = True` — the new test fails, the old one would not have.
+
+Suite 2075 passed (2074 -> +1), coverage 91.28%, ruff clean on the CI-gated
+paths. No production behaviour changed by this commit — it is one test
+replaced and one added.
+
 ## 2026-07-27 — Data audit batch 5: the report contradicting itself, + durability
 
 Five confirmed findings. Four are the SAME defect in four places — two code

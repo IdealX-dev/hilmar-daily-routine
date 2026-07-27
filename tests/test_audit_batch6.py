@@ -639,12 +639,47 @@ def test_qc075_does_not_false_fire_after_a_status_heal():
     assert not any("QC-075" in e for e in log.errors)
 
 
-def test_qc075_still_fires_on_a_genuine_aggregator_disagreement():
-    """The check must keep its teeth: poison the summary AFTER the rebuild and
-    it has to be caught."""
-    data, log, _ = _run_phases()
-    data["summary"]["not_quoted"] = data["summary"].get("not_quoted", 0) + 7
-    assert QC._trade_region_reconciliation(data).get("reconciled") is False
+def test_qc075_still_fires_on_a_genuine_aggregator_disagreement(monkeypatch):
+    """The rebuild must remove STALENESS without masking a real disagreement.
+
+    Rewritten after self-review: the first version poisoned data["summary"]
+    directly and asserted the check caught it — but main() rebuilds the
+    summary immediately before reconciling, so that poisoning would be
+    overwritten. It was asserting against a state production can never be in,
+    which is precisely the "green test over an untested path" shape two
+    findings in this batch already came from.
+
+    This drives the REAL mechanism instead: the two aggregators disagreeing
+    about the SAME rows. That is finding #17 exactly — aggregate_trade_regions
+    bucketed NQ by loss_reason while aggregate_summary used is_not_quoted, so
+    a RESPONSE_NO_RATE row counted as Q&L in one and NQ in the other. A
+    rebuild cannot reconcile that, because the two sides run different
+    predicates, so QC-075 must still fire.
+    """
+    row = {"request_id": "d1", "status": "LOSS", "loss_reason": "RESPONSE_NO_RATE",
+           "quoted": False, "origin": "Oakland", "destination": "Busan",
+           "lane": "Oakland → Busan", "teu_requested": 4,
+           "request_date": core.et_date_of(core.now_utc())}
+    data = {"requests": [row], "summary": {}, "lane_summary": {},
+            "carrier_summary": {}}
+
+    real = core.aggregate_trade_regions
+
+    def _old_loss_reason_predicate(reqs):
+        """The pre-fix bucketing: NQ only when loss_reason == NO_RESPONSE."""
+        out = real(reqs)
+        for m in out.values():
+            if m["not_quoted"]:
+                m["not_quoted"] -= 1
+                m["quoted_lost"] += 1
+        return out
+
+    monkeypatch.setattr(core, "aggregate_trade_regions", _old_loss_reason_predicate)
+    QC._recompute_aggregates(data)               # what main() does first
+    tr = QC._trade_region_reconciliation(data)
+    assert tr.get("reconciled") is False, (
+        "the pre-QC-075 rebuild masked a genuine aggregator disagreement — "
+        "the check has lost the teeth it was given")
 
 
 def test_the_rebuild_fix_is_logged_once_per_run_not_twice():
@@ -807,3 +842,37 @@ def test_phase_7_save_uses_the_silent_rebuild_not_the_logging_one():
     assert "phase_5_summaries" not in calls, (
         "phase_7_save logs a second 'rebuilt' fix — inflating the count "
         "gen_dashboard prints")
+
+
+def test_a_placeholder_pol_is_replaced_by_a_real_port_not_left_as_a_hole():
+    """Adding `pol` to the scrub list changes LIVE rows, so verify the whole
+    loop, not just the pop: phase_3 removes the garbage literal and QC-027's
+    heal in phase_6 re-derives the real POL from the lane endpoints.
+
+    Checked during self-review of the unreviewed commit. Popping a field the
+    completeness gate measures would have been a regression if nothing put a
+    real value back — QC-027 would have started reporting a hole this heal
+    created. It re-derives, so "TBD" ends up as "Oakland": strictly better
+    data than before, not merely absent.
+    """
+    now = core.now_utc()
+    row = {"request_id": "p2", "status": "LOSS", "loss_reason": "PRICE",
+           "quoted": True, "origin": "Oakland", "destination": "Busan",
+           "lane": "Oakland → Busan", "pol": "TBD", "pod": "N/A",
+           "teu_requested": 4, "container_count": 2, "ol_rate": 2400,
+           "carrier_quoted": "ONE", "request_date": core.et_date_of(now),
+           "request_timestamp": (now - timedelta(hours=30)).isoformat(),
+           "response_timestamp": (now - timedelta(hours=28)).isoformat(),
+           "source_imids": ["<y@ol>"], "status_history": []}
+    data = {"requests": [row], "summary": {}, "lane_summary": {},
+            "carrier_summary": {}}
+    log = QC.Log()
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_3_entries(log, data)
+        assert "pol" not in row, "the garbage literal survived the scrub"
+        QC.phase_5_summaries(log, data)
+        QC.phase_6_rules(log, data)
+    assert row.get("pol") == "Oakland", (
+        f"POL was left as {row.get('pol')!r} — the scrub opened a hole in a "
+        f"field QC-027 measures and nothing refilled it")
+    assert row.get("pod") == "Busan"
