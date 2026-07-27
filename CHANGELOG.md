@@ -3,6 +3,410 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — Data audit batch 5: the report contradicting itself, + durability
+
+Five confirmed findings. Four are the SAME defect in four places — two code
+paths computing "the same" number by different rules, with nothing comparing
+them. That is the shape behind every "CHECK YOUR REPORT" so far.
+
+1. TWO DEFINITIONS OF "NOT QUOTED" — actually THREE (finding #17)
+   `gen_email` bucketed NQ by `loss_reason == "NO_RESPONSE"`; `core.
+   aggregate_summary` used `core.is_not_quoted` (a LOSS that was never
+   quoted). A RESPONSE_NO_RATE row — OL acknowledged the RFQ but sent no rate,
+   so quoted=False — satisfies the second and not the first. ONE row then split
+   across five contradicting numbers in a SINGLE email:
+     "Not Quoted: 1 · 4 TEU"  in the KPI tile
+     "NQ 0 / Q&L 1"           in the 8-week rollup
+     "NQ 0 / Q&L 1"           in Volume by Trade Region — printed directly
+                              under the words "reconciles to summary"
+     0 rows                   in the NOT-QUOTED detail section
+     ONE charged 1 Q&L loss + 4 TEU lost with 0 quotes (win-rate denominator 0)
+   Fixed by routing all three `gen_email` call sites through
+   `core.is_not_quoted`. loss_reason is now purely the WHY column; it never
+   decides the bucket.
+   THE TEST FOUND A THIRD SITE I HAD MISSED: `core.aggregate_trade_regions`
+   used the same wrong `loss_reason` test, which is precisely the Volume by
+   Trade Region line above. Fixed there too. (No mirror in src/hilmar — that
+   function only exists in the production tree.)
+
+2. QC-075 (ERROR) — trade-region rollup vs summary
+   `_trade_region_reconciliation` has computed a `reconciled` boolean since
+   2026-05, but it was only ever `print()`ed to stdout — never routed to
+   log.error — so every divergence shipped silently. It now escalates. The
+   check detects; the shared predicate above prevents.
+
+3. AGGREGATES WERE PERSISTED BEFORE THE HEALS RAN (finding #15)
+   phase_5 built summary/lane_summary/carrier_summary, phase_6 then ran the
+   MUTATING heals (QC-064 nulls a leaked responder mailbox out of
+   carrier_quoted, QC-067 restores a row to PENDING, QC-056 backfills a
+   carrier), and phase_7 saved phase_5's stale output. The shipped file's
+   aggregates contradicted its own rows: the audit read clean because the ROW
+   was fixed, while carrier_summary still keyed a carrier named
+   "MBD_OceanExport@ol-usa.com" and the client PDF printed it.
+   Fixed: phase_7_save recomputes first. It is a pure recompute from rows, so
+   it is cheap and idempotent.
+
+4. THE PLACEHOLDER HEAL SHIPPED THE LITERAL STRING "None" (finding #16)
+   Setting origin/destination/pod to None left the key PRESENT-but-null, so
+   every downstream `r.get("origin", "Oakland")` default was bypassed —
+   `.get` only substitutes when the key is ABSENT. The client PDF's Lane
+   Performance table shipped a row labelled "None → Tokyo", strictly worse
+   than the "Unknown → Tokyo" the heal was replacing. Now `r.pop(field, None)`.
+
+5. "PENDING WATCHLIST — N OPEN" OVER AN EMPTY TABLE (finding #18)
+   The header counted len(pending) while any row whose substate timestamp
+   would not parse was `continue`d out of the table — the dashboard
+   contradicting itself, and an open RFQ nobody chases because it is
+   invisible. Now falls through response_timestamp -> request_timestamp ->
+   booking_timestamp -> request_date, and a row that still cannot be dated is
+   shown with an em-dash age at lowest severity rather than dropped (matching
+   gen_email's PENDING HILMAR table). Sort and render both handle None.
+
+6. NON-ATOMIC SAVE + AN UNCONDITIONAL PUSH OVER IT (finding #20)
+   `open(path, "w")` truncates the destination the instant it is called, so a
+   crash, OOM kill or cancelled job mid-write left tracking-data-v2.json
+   truncated — and daily.yml pushes under `if: always()`, so that half-written
+   file was then uploaded over the canonical blob. The backup could not help:
+   it snapshots the same corrupt file.
+   `core.save_data` now writes to a temp file, flushes, fsyncs, and
+   `os.replace`s — atomic on POSIX, so a reader sees the whole old file or the
+   whole new one. The fsync is what makes that survive a machine crash rather
+   than just a process one. A failed write cleans up its temp file.
+   `state_store.push` independently refuses to upload a tracking file that
+   does not parse or has no `requests` list — the last gate before it leaves
+   the machine.
+
+Tests: tests/test_audit_batch5.py (18 cases). The atomic-save test asserts the
+PREVIOUS file survives a mid-write failure; the watchlist test drives the real
+gen_dashboard.render with the production config and asserts every row appears;
+the push guard is exercised against five corruption shapes (truncated, empty,
+non-JSON, no requests list, top-level array) each asserting the good blob is
+untouched. Suite 1965 passed (1940 -> +25), coverage 91.23%, ruff clean.
+
+REMAINING BACKLOG: 7 findings — #13 merge_thread_dupes swallowing a distinct
+request, #14 lane substring match writing a rate onto the wrong terminal,
+#19 weekly vs daily crediting a booking to different weeks, #21 same-day
+backup overwrite, #23 QC-067 heal bypassing manual_locked, #24 weekly.yml
+concurrency group, #25 undeclared schema fields + typo'd date_range key.
+
+## 2026-07-27 — Audit batch 5b: wrong-row writes, an overwritten operator, a reverted day, and a three-month-stale date window
+
+Four more of the same seven. These are WRITE-SIDE defects: each one puts a
+correct value on the wrong row, the wrong day, or under a key nobody reads.
+
+14. A RATE LANDED ON THE WRONG TERMINAL (finding #14)
+   `apply_rate_responses` fell back to a bare substring test when the exact
+   lane key missed: `dest_canon in k or k in dest_canon`. Neither "manila
+   (north)" nor "manila (south)" is a substring of the other — but BOTH
+   canonicalise to "manila" via `canonical_port_key`, which is exactly what
+   that alias map is for — so an exact-key hit ALSO pooled the two terminals.
+   A reply on a thread titled "RE: Oakland to Manila" could then write
+   ol_rate / carrier_quoted / etd_offered / vessel_voyage onto the WRONG
+   terminal's row. The client saw a South-terminal rate reported as the North
+   lane's quote, while the correct request stayed unquoted and aged out NQ.
+   Two wrong numbers from one match.
+   New `core.same_port(a, b)`: same canonical city AND, when BOTH sides name
+   a terminal, the same terminal. A terminal-less side still matches either,
+   so the "HCMC" → "HCMC (Cat Lai)" widening that the fallback existed for
+   keeps working. Narrowing is UNCONDITIONAL on both branches.
+   MY FIRST VERSION HAD A HOLE MY OWN TEST CAUGHT: `if _narrowed: candidates
+   = _narrowed` kept the INCOMPATIBLE list when nothing matched, so a Manila
+   (South) rate still landed on the Manila (North) row — the whole check
+   defeated in the one case it existed for. If no candidate is compatible
+   there is no match: leaving the row unquoted is correct, because a wrong
+   rate on a client quote is worse than a missing one.
+   Mirrored into src/hilmar/core.py with 21 new parity cases in
+   test_core_parity.py. scripts/ runs the fire, src/hilmar/ is what coverage
+   targets; a drift here writes a wrong rate in production while CI stays
+   green — the exact PR #13 failure mode that test file exists to catch.
+
+15. QC-067's HEAL OVERWROTE THE OPERATOR (finding #23)
+   Every other re-decide path in qc_selfheal skips `manual_locked`. QC-067's
+   did not, so a human correction filing a row LOSS/NO_RESPONSE was silently
+   flipped back to PENDING on the next fire — and the operator had no signal
+   it had happened. Now it skips and WARNs.
+   Same heal also hand-rolled its status_history append with a hardcoded
+   `"from": "LOSS"` — a FABRICATED prior state whenever the row was in any
+   other status, i.e. a corrupt audit trail written by the thing whose job is
+   keeping the audit trail. Now `core.record_transition`, which reads the
+   real prior status and no-ops when it already matches.
+
+16. THE WEEKLY JOB REVERTED A DAY OF INGEST (finding #24)
+   weekly.yml ran under `concurrency: hilmar-weekly`; daily.yml runs under
+   `hilmar-daily-fire`. DIFFERENT groups means no serialization, and both
+   jobs share one blob store. Weekly pulls state at the start of its run; if
+   the daily fire wrote new state in between, weekly's push then uploaded its
+   own stale snapshot over it — silent last-writer-wins, a whole day's ingest
+   gone with no error anywhere. Both now use `hilmar-daily-fire`.
+   Compounding it: the push step was NAMED "Push state back (weekly-sent
+   flag)" but ran a bare `push`, which uploads the ENTIRE state set including
+   tracking-data-v2.json — a file the weekly job never writes and has no
+   business uploading. And `reports/weekly-sent-{d}.flag` was never in
+   `state_paths()` at all, so the one file it meant to sync was the one file
+   it did not: weekly idempotency was machine-LOCAL, and a re-dispatch on a
+   fresh runner saw no flag and re-sent the exec summary to the full
+   distribution list.
+   Fixed on both sides — flag added to `state_paths()`, and `push(only=...)`
+   / `--only weekly-sent` so the job pushes its own flag and nothing else.
+
+17. THE DATE WINDOW WAS A HARDCODED LITERAL UNDER A TYPO'D KEY (finding #25)
+   `"data_range": {"start": "2026-04-01", "end": "2026-04-19"}`. Two defects
+   in one line. (a) The key is `date_range` — that is what gen_email,
+   gen_email_new, render.data_window, restructure_two_table and insights all
+   read — so the key was silently ABSENT and gen_email fell back to
+   `cfg["data_range"]["start"]`, printing the CONFIG's start date instead of
+   the data's. (b) Even a reader that found it got a hardcoded window three
+   months stale. Now `_computed_date_range(all_requests)`, computed from the
+   rows actually being written and bucketed by `core.et_date_of` so the
+   window agrees with the day tiles rather than describing a different clock.
+   (The src/hilmar tree's qc.py heals data_range→date_range; the scripts/
+   pipeline that actually runs in production has no such heal.)
+
+18. FOUR FIELDS PRODUCTION WRITES THAT THE SCHEMA NEVER DECLARED
+   Same finding, root cause: nothing compared schema.json to what ingest
+   writes, which is how `data_range` survived three months. Auditing the
+   whole contract found `pol`, `pod`, `free_time_requested` and —
+   importantly — `manual_locked`, the operator override flag that item 15
+   above is entirely about. The flag every heal must honour was invisible to
+   anything built off the schema. All four now declared, with descriptions
+   stating which is the raw parsed value vs the canonical one.
+   MIGRATION NOTE (CLAUDE.md rule 3): additive only. The request definition
+   does not set `additionalProperties`, so it was already permissive — these
+   rows validated before and validate now. No stored row changes, nothing to
+   rewrite, reversible by deleting the four property entries. Logged here.
+   The lasting fix is the comparison itself: two new tests read ingest's
+   `output` dict and its request-row literals FROM THE AST and assert every
+   key is declared. AST, not a substring scan — an earlier source-scraping
+   test in this same file failed because my own explanatory COMMENT matched
+   the string it was asserting absent. The next undeclared field, or the next
+   `data_range`, fails CI instead of shipping.
+
+Tests: tests/test_audit_batch5.py 18 -> 43 cases, tests/test_core_parity.py
++21 (same_port / port_terminal / canonical_port_key across both trees). The
+schema-conformance tests were mutation-checked — deleting `pol` and
+`manual_locked` from schema.json fails 3 tests; restoring them passes 43.
+Suite 2011 passed (1965 -> +46), coverage 91.27%, ruff clean on the CI-gated
+paths (scripts/ src/ tests/ deploy/).
+
+KNOWN, NOT FIXED: `plugin-build/build_plugin.py:70` has one ruff UP031.
+Pre-existing, and outside the paths test.yml lints — not a regression from
+this work, not silently fixed inside an unrelated commit.
+
+REMAINING BACKLOG: 3 findings — #13 merge_thread_dupes swallowing a distinct
+request when the equipment line falls outside the Outlook bodyPreview, #19
+weekly summary vs daily email crediting the same booking to different weeks
+(wants a shared `core.win_event_date(r)`), #21 same-ET-day blob backup
+overwritten by a recovery run (wants timestamped immutable snapshots,
+`overwrite=False`, and a `restore` command).
+
+## 2026-07-27 — Audit batch 6: the last three findings, plus three the reviewer caught in batch 5
+
+BACKLOG NOW EMPTY. The three findings that were left, plus three real defects
+the automated review of #124 found in batch 5's own work — I confirmed all
+three by execution before touching anything, and the reviewer was right on
+all three.
+
+19. ONE BOOKING, TWO DIFFERENT WEEKS (finding #19)
+   Michael directed on 2026-07-21 ("a win belongs to the day Lonny booked it")
+   that the daily email count wins by EVENT date, and gen_email._today_summary
+   was changed to do exactly that. gen_weekly_summary was never changed: it
+   filters every row — wins included — by request_date. So an RFQ received
+   Friday 2026-07-24 and booking-confirmed Monday 2026-07-27 is a win in
+   Monday's daily email (week of the 27th) AND a win in the PREVIOUS week's
+   summary (week of the 20th). The same booking, credited to two different
+   weeks, in two reports read side by side. Not a wrong number — two
+   right-looking numbers that cannot both be true.
+   New `core.win_event_date(r)` — ONE definition, in both core trees, called
+   by both reports. ET date of the LAST →WIN transition (last, not any: a row
+   reversed and re-won has two, and "any transition on this day" credited it
+   to both days), falling back to request_date for legacy rows so no win
+   vanishes, and None once the row is no longer a WIN so a reversed booking
+   is never credited anywhere.
+   The weekly now filters wins through `_filter_wins` while intake / Q&L / NQ
+   / pending stay request_date-bucketed — the daily's documented split,
+   matched exactly. carrier_of_week, the top-winning-lanes table and the
+   4-week trend all move with it. win_rate keeps mixing the two clocks ON
+   PURPOSE: it is the identical formula and identical mix the daily's KPI
+   block uses, and a second "cleaner" rule here would just recreate the
+   disagreement this fix removes.
+
+20. THE SAME CLOCK WAS WRONG IN teams_alert, TWICE (found while fixing #19)
+   (a) `at[:10]` sliced a UTC calendar date and compared it to an ET
+   `today_iso`. A booking confirmed 20:30 ET Friday is 2026-07-25 in UTC and
+   2026-07-24 in ET, so the two never matched and NO win alert fired for any
+   booking confirmed after 8 PM ET — silently, every time. Proved by
+   execution before changing it.
+   (b) The alert never checked the row's CURRENT status, only that a →WIN
+   transition existed — so a booking won and then reversed the same day still
+   fired "🎉 WIN", celebrating a cancellation. gen_client_email already guards
+   exactly this ("a →WIN transition is not the same as a confirmed booking");
+   the alert path did not. Found by a test I wrote expecting it to pass.
+   (c) The big-day TEU sum read `status_history[-1]` — the most recent
+   transition of ANY kind — so a row won in the morning and touched by any
+   later transition stopped counting toward the day's total.
+   All three are gone: `core.win_event_date` answers exactly the question
+   being asked, and the status guard is structural rather than remembered.
+
+21. A TRUNCATED PREVIEW IS NOT EVIDENCE OF ABSENCE (finding #13)
+   `_merge_thread_dupes` collapses Lonny's "header" email into the sibling
+   carrying the container line, deciding which is which by teu_requested==0.
+   But teu_requested comes from `guess_teu_from_preview`, which reads ONLY
+   summary_preview — and the stagers cut that at 300 chars
+   (refresh_stage.py:548). Lonny's RFQs open with routing and dates, so on a
+   longer ask the equipment line falls PAST the cut. The row then looks thin
+   while being a completely ordinary second RFQ, and the merge DELETED it: a
+   real rate request that never reached intake, never got chased, never
+   counted in any total, and left no trace but a merge_note on another row.
+   When nothing parsed, the row's `containers` field still holds that raw
+   preview, so we can tell whether we saw the whole email. A preview whose
+   length lands exactly on a stager cap (200 or 300) was truncated → keep BOTH
+   rows and record why. The genuine header-only case (a short, complete
+   preview) still merges, so Issue #5 stays fixed.
+   The bias is deliberate and asymmetric: a wrong "truncated" verdict costs
+   one duplicate row, which is visible and which QC's dupe checks catch. A
+   wrong "complete" verdict silently deletes a real RFQ, which nothing
+   catches.
+
+22. THE BACKUP WAS DESTROYED BY THE ATTEMPT TO USE IT (finding #21)
+   `backup()` wrote `{PREFIX}{ET-date}.json.gz` with `overwrite=True` — ONE
+   blob per day, replaced in place. The second run of any ET day overwrote
+   the first, and the case where that matters is exactly the case backups
+   exist for: the fire corrupts tracking-data-v2.json, and the recovery
+   dispatch pulls the bad state and calls backup(), uploading it over the
+   day's only good snapshot. Nothing older than midnight to fall back to.
+   Snapshots are now IMMUTABLE: the name carries a UTC time as well, and the
+   upload is `overwrite=False`, so no snapshot can be replaced — not by a
+   second fire, not by a recovery run, not by a future bug. The ET date still
+   LEADS the name, so the retention prune and QC-032's `latest_backup_age_days`
+   keep parsing it unchanged. A same-second re-run is treated as already-done;
+   any other upload error is raised, because a backup that silently did not
+   happen is worse than one that loudly failed.
+   Added `restore` and `list-backups`. A backup nobody can restore is not a
+   backup — the only way back was hand-fetching a blob and gunzipping it into
+   place under pressure. `restore` is gated three ways, per CLAUDE.md's
+   destructive-action rule: it is a DRY RUN without `--yes` (reports the
+   target, writes nothing); it snapshots the file it is about to replace
+   first, so a wrong restore is itself reversible; and the payload must parse
+   as JSON with a `requests` list before it can land, the same gate push()
+   applies on the way out. The write is atomic.
+
+REVIEW OF #124 — THREE REAL DEFECTS IN BATCH 5's OWN WORK
+   All three confirmed by execution first. Two are sites I claimed to have
+   fixed and had not.
+
+23. THE 8-WEEK ROLLUP AND THE LANE TABLES STILL USED loss_reason
+   Batch 5 said "all three gen_email NQ sites now use core.is_not_quoted".
+   There were five. `_week_rows` — which builds the literal "NQ 0 / Q&L 1"
+   line quoted as evidence in the finding-#17 writeup — still tested
+   `loss_reason == "NO_RESPONSE"`, and so did `_build_lane_buckets`, which
+   feeds the Winning/Losing lane tables and additionally charged a
+   never-quoted row's TEU to that lane's `teu_lost`. Proved: one
+   RESPONSE_NO_RATE row gave aggregate_summary NQ=1/Q&L=0 and _week_rows
+   NQ=0/Q&L=1. The exact contradiction the batch existed to remove, still
+   shipping in the surface the writeup pointed at.
+
+24. apply_send_signals COULD PROMOTE THE WRONG TERMINAL TO WIN
+   Batch 5 fixed the terminal collapse in `apply_rate_responses` and left the
+   identical pattern in `apply_send_signals` — same `canonical_lane_key`
+   pooling, same bare-substring fallback, no `same_port` narrowing. Since
+   that loop tie-breaks purely on the latest request_timestamp, a "Send"
+   reply on the Manila (North) thread could flip the Manila (South) row to
+   WIN, inheriting its carrier, while the row Lonny actually confirmed stayed
+   open and aged out as a loss. Worse than the rate case: a wrong WIN is a
+   stronger, more client-facing claim. Same unconditional narrowing applied.
+
+25. QC-075 ESCALATED AFTER THE ARTIFACTS WERE ALREADY WRITTEN
+   `phase_7_save` serializes log.errors into BOTH persisted artifacts —
+   `data["qc"]["error_log"]` in tracking-data-v2.json and `error_details` /
+   `status` in reports/qc-result.json. QC-075 fired AFTER that call, so it
+   appended to a list nothing re-serialized. gen_dashboard's QC tab and
+   gen_improvements_report's red-flags section read those files, so a
+   reconciliation failure was invisible on every surface anyone consumes —
+   behaviourally identical to the `print()` QC-075 was created to replace.
+   Moved ahead of phase_7_save. The new test drives the REAL phase_7_save and
+   reads both artifacts back off disk; batch 5's test had only re-implemented
+   the `if` against a mock Log, which is why it stayed green.
+
+SECOND REVIEW PASS ON #124 — FOUR MORE, TWO OF THEM MINE
+   All four confirmed by execution before touching anything. The 🔴 was
+   caused by my own fix in item 25 above.
+
+26. QC-075 FALSE-FIRED ON EVERY HEALED FIRE (my regression)
+   Moving the check ahead of phase_7_save (item 25) put it after phase_6's
+   MUTATING heals but before anything rebuilt `data["summary"]`.
+   `_trade_region_reconciliation` recomputes the regions fresh from the rows
+   while reading `data["summary"]` as-is — so it compared post-heal regions
+   against a summary built back in phase 5, and failed on ORDERING rather
+   than on any real disagreement. Reproduced with a single QC-067 row: heals
+   LOSS/NO_RESPONSE → PENDING, fresh NQ=0 vs stale NQ=1, reconciled=False.
+   That is a FALSE QC-075 ERROR persisted into both artifacts on essentially
+   every fire that heals a status — and phase_7_save's own recompute a few
+   lines later then wrote `reconciled: True` into the SAME qc-result.json.
+   The report contradicting itself, produced by the check written to stop
+   that. Fixed by rebuilding the aggregates immediately before the check:
+   QC-075's job is catching two AGGREGATORS that disagree, never two points
+   in time.
+
+27. THE REBUILD FIX WAS COUNTED TWICE (my regression)
+   Item 15's fix had phase_7_save call `phase_5_summaries` a second time, and
+   that function logs `log.fix("...rebuilt...")` unconditionally — the drift
+   flag only changes the message text, it never gates the call. So every run
+   recorded the rebuild twice, inflating `data["qc"]["fixes_applied"]`, which
+   gen_dashboard renders verbatim as "N fixes", and printing the same line
+   twice in the Fixes Applied list. Adding the item-26 rebuild would have
+   made it three.
+   Split the pure rebuild out as `_recompute_aggregates(data) -> bool`, which
+   touches no Log. phase_5_summaries wraps it and logs; the phase-7 and
+   pre-QC-075 rebuilds call it silently. One rebuild fix per run, whatever
+   the call count.
+
+28. `pol` WAS NEVER PLACEHOLDER-SCRUBBED, AND MY SCHEMA DOC SAID IT WAS
+   `_PLACEHOLDER_FIELDS` was ("pod", "destination", "origin"). `pol` was the
+   one asymmetry: written the same way as `pod` from free-text OL body
+   parsing (adjacent lines in ingest), already listed among QC-064's display
+   fields, and exported to durable external surfaces by historian.py and
+   share_intel.py — but swept nowhere. A literal "TBD" in OL's POL cell
+   survived every scrub and shipped as a port name.
+   Pre-existing; what item 18 added was a schema description asserting a
+   guarantee the code did not provide. Fixed the CODE, not the doc — there
+   was no reason for the exclusion, and papering over it with wording would
+   have left the export poisoned. `pol` is now swept with the other three.
+
+29. THE PUSH GUARD'S EXCEPTION ESCAPED ITS OWN HANDLER
+   `StateStoreError` is a SUBCLASS of RuntimeError, so main()'s
+   `except StateStoreError` never caught the bare `RuntimeError` item 6's
+   corruption guard raised. daily.yml's push step got a Python traceback
+   instead of the one-line "state_store: REFUSING to push ..." diagnostic the
+   guard exists to print. The refusal and the non-zero exit were always
+   correct — only the message was lost. Every other raise in the module
+   already used StateStoreError; this one now does too, pinned by a
+   structural test that fails on any bare RuntimeError/Exception raise
+   anywhere in the file.
+
+Tests: tests/test_audit_batch6.py (63 cases), tests/test_state_store.py
+updated for the immutable snapshot name. Every fix mutation-checked — the
+old code reintroduced, the relevant tests confirmed failing, the fix
+restored: 5 fail for the weekly clock, 2 for the merge guard, 5 for the
+first review pass, 6 for the second. Suite 2074 passed (2011 -> +63),
+coverage 91.28%, ruff clean on the CI-gated paths.
+
+ON THE SECOND PASS'S TESTS: my first behavioural QC-075 test survived
+reverting the fix, because it drove the phase sequence itself instead of
+reading main()'s. That is the SAME weakness the reviewer had just flagged in
+the previous QC-075 test. Both are now pinned structurally from the AST —
+main() must rebuild before it reconciles and reconcile before it saves, and
+phase_7_save must call the silent rebuild — so drift in main() fails here
+rather than in production.
+
+DECISIONS FOR MICHAEL
+   * `DEFAULT_PRICING_CPM["claude-opus-4-6"]` is still ~3x overstated. Left
+     deliberately — a retroactive correction breaks comparability with every
+     historical cost figure already reported. Say the word and I will change
+     it forward-dated instead.
+   * The 45% prompt-cache estimate in Anthropic's notice is org-wide direct
+     API traffic. This repo's own saving is cents; whichever IDEALX system
+     generates that spend is not this one, and I cannot identify it from here.
+
 ## 2026-07-27 — LLM layer: Opus 4.6 -> Claude Opus 5, + prompt-cache breakpoint
 
 Michael forwarded Anthropic's "prompt cache hit rate is low" notice (est. up

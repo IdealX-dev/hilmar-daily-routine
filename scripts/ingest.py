@@ -134,6 +134,26 @@ def clean_origin(subject: str, default: str = "Oakland") -> str:
     return origin or default
 
 
+def _computed_date_range(rows) -> dict:
+    """The actual span of the rows being written, as {"start", "end"}.
+
+    Dates are the ET calendar dates the rest of the system buckets by
+    (core.et_date_of), so the window agrees with the day tiles rather than
+    describing a different clock. Falls back to today for an empty build —
+    a file with no rows still has a window, it is just an empty one.
+    """
+    dates = sorted(
+        d for d in (
+            C.et_date_of(r.get("request_timestamp")) or r.get("request_date")
+            for r in (rows or [])
+        ) if d
+    )
+    if not dates:
+        today = C.et_date_of(C.now_utc())
+        return {"start": today, "end": today}
+    return {"start": dates[0], "end": dates[-1]}
+
+
 def _pick_best_request(pool, bk_ts, bk_carrier, bk_ccount):
     """Pick the best-evidenced request for a booking from `pool` → (row, score).
 
@@ -479,6 +499,27 @@ def build_requests(lonny_out: list[dict]) -> list[dict]:
     return _merge_thread_dupes(requests)
 
 
+# The stagers TRUNCATE Outlook's bodyPreview before it ever reaches ingest:
+# refresh_stage.py slices [:300], the hilmar-tree stager [:200]. A preview whose
+# length lands exactly on one of those caps was cut off, so anything after the
+# cut — including the container line — is simply not visible to us.
+_PREVIEW_TRUNCATION_LENS = (200, 300)
+
+
+def _preview_was_truncated(text) -> bool:
+    """True when this preview was cut off by a stager, so its CONTENT cannot
+    be used as evidence that something is ABSENT.
+
+    Deliberately biased toward True. The two ways to be wrong are not
+    symmetric: calling a complete preview "truncated" costs one duplicate row,
+    which is visible in the report and which QC's dupe checks catch. Calling a
+    truncated preview "complete" silently DELETES a real RFQ — it never
+    appears in intake, never gets chased, and nobody can see that it is gone.
+    """
+    s = (text or "").strip()
+    return len(s) in _PREVIEW_TRUNCATION_LENS
+
+
 def _merge_thread_dupes(requests: list[dict]) -> list[dict]:
     """Collapse multi-message Lonny outbound dupes within the same conversation.
 
@@ -526,6 +567,32 @@ def _merge_thread_dupes(requests: list[dict]) -> list[dict]:
             if (ta == 0) ^ (tb == 0):
                 primary, secondary = (ra, rb) if tb == 0 else (rb, ra)
                 sec_idx = b if tb == 0 else a
+                # teu==0 IS NOT PROOF THE EMAIL HAD NO CONTAINERS.
+                #
+                # teu_requested comes from guess_teu_from_preview(), which
+                # reads ONLY summary_preview — and the stagers cut that at 300
+                # chars (refresh_stage.py:548). Lonny's RFQs open with routing
+                # and dates, so on a longer ask the equipment line falls PAST
+                # the cut. The row then looks "thin" while being a completely
+                # ordinary second RFQ, and this branch DELETED it: a real rate
+                # request that never reached intake, never got chased, never
+                # counted in any total, and left no trace but a merge_note on
+                # a different row.
+                #
+                # When nothing parsed, the row's `containers` field holds that
+                # raw preview, so we can still tell whether we were looking at
+                # the whole email. If it was truncated, we have no evidence of
+                # absence — keep BOTH rows. A spurious duplicate is visible and
+                # QC catches it; a silently deleted RFQ is neither.
+                _sec_preview = secondary.get("containers")
+                if _preview_was_truncated(_sec_preview):
+                    primary.setdefault("merge_notes", []).append(
+                        f"Declined to merge sibling "
+                        f"imid={(secondary.get('source_imids') or ['?'])[0][:30]} "
+                        f"— its preview was truncated at "
+                        f"{len((_sec_preview or '').strip())} chars, so teu=0 "
+                        f"is a parse gap, not evidence of a header-only email")
+                    continue
                 primary["source_imids"] = list({*(primary.get("source_imids") or []),
                                                  *(secondary.get("source_imids") or [])})
                 primary["source_ids"] = list({*(primary.get("source_ids") or []),
@@ -1029,15 +1096,33 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
 
         # Primary: exact canonical match.
         candidates = by_lane.get(canonical_lane_key(dest), [])
-        # Fallback: substring match — handles "HCMC" matching "HCMC (Cat Lai)"
-        # / "HCMC (Cai Mep)", "Yokohama " (trailing space) etc. Audit 2026-04-30.
+        # Fallback: still widen, but on PORT IDENTITY rather than a bare
+        # substring test. `dest_canon in k or k in dest_canon` pooled Manila
+        # (North) with Manila (South) — one is a substring of neither, but both
+        # canonicalise to "manila" — so a reply on a thread titled "RE: Oakland
+        # to Manila" could write ol_rate / carrier_quoted / etd_offered /
+        # vessel_voyage onto the WRONG terminal's row. The client then saw a
+        # South-terminal rate reported as the North lane's quote, while the
+        # correct request stayed unquoted and aged out as NQ.
+        # core.same_port requires terminal equality when BOTH sides name one.
         if not candidates:
-            dest_canon = canonical_lane_key(dest).strip()
             for k, rs in by_lane.items():
                 if k == "unknown":
                     continue
-                if dest_canon in k or k in dest_canon:
-                    candidates.extend(rs)
+                candidates.extend(r for r in rs
+                                  if C.same_port(dest, r.get("destination")))
+        else:
+            # Even an exact key hit can span terminals now that
+            # canonical_port_key collapses "Manila (North)"/"Manila (South)"
+            # to one key. Narrow to the compatible ones — UNCONDITIONALLY.
+            # An earlier version kept the unfiltered list when nothing was
+            # compatible, which defeated the whole check: a Manila (South)
+            # reply still landed on the Manila (North) row. If no candidate
+            # is compatible then there is no match, and leaving the row
+            # unquoted is the correct outcome — a wrong rate on the client's
+            # quote is worse than a missing one.
+            candidates = [r for r in candidates
+                          if C.same_port(dest, r.get("destination"))]
 
         # 2026-05-19 PM (Michael "you have to check each email header as
         # often lonny sends same rate requests/routes for the same moves he
@@ -1199,14 +1284,28 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
         # was missing send-replies whose subject was "Oakland to HCMC " (trailing
         # space) or "Oakland to HCMC (Cat Lai)" while the original ask used
         # "HCMC (Cai Mep)").
+        # SAME terminal narrowing as apply_rate_responses, and for a stronger
+        # reason. canonical_lane_key IS canonical_port_key, which deliberately
+        # collapses "Manila (North)" and "Manila (South)" onto "manila" — so
+        # both terminals' rows arrive in one candidate list, and the loop below
+        # tie-breaks purely on the latest request_timestamp. A "Send" reply on
+        # the NORTH thread could therefore promote the SOUTH row to WIN,
+        # inheriting its carrier_won, while the row Lonny actually confirmed
+        # stayed open and aged out as a loss. A wrong WIN is a stronger and
+        # more client-facing claim than a wrong rate.
         candidates = by_lane.get(canonical_lane_key(dest), [])
         if not candidates:
-            dest_canon = canonical_lane_key(dest).strip()
             for k, rs in by_lane.items():
                 if k == "unknown":
                     continue
-                if dest_canon in k or k in dest_canon:
-                    candidates.extend(rs)
+                candidates.extend(r for r in rs
+                                  if C.same_port(dest, r.get("destination")))
+        else:
+            # Unconditional, same as apply_rate_responses: if no candidate is
+            # terminal-compatible then there is no match, and leaving the row
+            # open is the correct outcome.
+            candidates = [r for r in candidates
+                          if C.same_port(dest, r.get("destination"))]
         best = None
         for r in candidates:
             if r.get("status") == "WIN":
@@ -1708,7 +1807,20 @@ def main() -> int:
     output = {
         "version": "6.1-plan-a-bodies",
         "generated_at": C.now_utc().isoformat(),
-        "data_range": {"start": "2026-04-01", "end": "2026-04-19"},
+        # KEY IS `date_range`, NOT `data_range`, and the window is COMPUTED.
+        #
+        # Two defects in one line. (a) Every reader — gen_email, gen_email_new,
+        # render.data_window, restructure_two_table, insights — asks for
+        # `date_range`; ingest wrote `data_range`, so the key was silently
+        # absent and gen_email fell back to `cfg["data_range"]["start"]`,
+        # printing the CONFIG's start date instead of the data's. (The hilmar
+        # tree's qc.py:199 heals data_range->date_range, but the scripts/
+        # pipeline that actually runs in production has no such heal.)
+        # (b) The value was a hardcoded 2026-04-01..2026-04-19 literal, three
+        # months stale, so even a reader that found it got the wrong window.
+        # Computed from the rows actually in the file; dict shape, which
+        # render._data_window and the schema's oneOf both accept.
+        "date_range": _computed_date_range(all_requests),
         "requests": all_requests,
         "summary": summary,
         "lanes": list(lanes.values()),

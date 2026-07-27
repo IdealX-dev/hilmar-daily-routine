@@ -71,7 +71,14 @@ _GARBAGE_PLACEHOLDERS = frozenset({
     "unknown", "n/a", "na", "none", "null", "tbd", "-", "—", "",
 })
 #: Lane-defining fields swept for the poisoned placeholder above.
-_PLACEHOLDER_FIELDS = ("pod", "destination", "origin")
+#: `pol` added 2026-07-27 (review of #124). It was the one asymmetry here:
+#: `pod` was swept and `pol` was not, though both are written the same way
+#: from free-text OL body parsing (ingest.py — `best["pol"] = rt.get("pol")`
+#: on the line above the identical `pod` assignment), both are display fields
+#: QC-064 already lists, and both are exported to durable external surfaces by
+#: historian.py and share_intel.py. A literal "TBD" in OL's POL cell therefore
+#: survived every scrub and shipped as a port name.
+_PLACEHOLDER_FIELDS = ("pol", "pod", "destination", "origin")
 
 
 def _is_placeholder(v) -> bool:
@@ -830,10 +837,19 @@ def phase_3_entries(log: Log, data: dict):
         for _pf in _PLACEHOLDER_FIELDS:
             if _is_placeholder(r.get(_pf)):
                 _bad = r.get(_pf)
-                r[_pf] = None
+                # POP, don't set to None. Setting the key to None left the
+                # field PRESENT-but-null, so every downstream
+                # `r.get("origin", "Oakland")` default was bypassed — `.get`
+                # only substitutes when the key is ABSENT — and the value
+                # rendered as the literal string "None". The client PDF's Lane
+                # Performance table shipped a row labelled "None → Tokyo",
+                # strictly worse than the "Unknown → Tokyo" this heal was
+                # replacing, and gen_client_email's own
+                # f"{r.get('origin','?')} → ..." fallback printed the same.
+                r.pop(_pf, None)
                 log.fix(f"{r.get('request_id') or rid_label}: cleaned poisoned "
-                        f"placeholder {_pf}={_bad!r} → None (garbage literal, "
-                        f"pre lane-derivation)")
+                        f"placeholder {_pf}={_bad!r} → removed (garbage "
+                        f"literal, pre lane-derivation)")
         # Hygiene healers — run on every record regardless of status/lock.
         _heal_containers(log, rid_label, r, bodies_idx)
         _heal_missing_rate(log, rid_label, r, bodies_idx)
@@ -1132,19 +1148,34 @@ def phase_4_duplicates(log: Log, data: dict):
 # Phase 5 — summaries
 # ─────────────────────────────────────────────────────────────────────
 
-def phase_5_summaries(log: Log, data: dict):
-    log.section("PHASE 5: SUMMARY RECALCULATION")
+def _recompute_aggregates(data: dict) -> bool:
+    """Rebuild summary / lane_summary / carrier_summary from `data["requests"]`.
+
+    Returns True when anything changed. SILENT — it touches no Log, so
+    callers decide whether a rebuild is worth reporting as a "fix".
+
+    Split out of phase_5_summaries because the rebuild now runs more than once
+    per fire (phase 5, again before QC-075, again in phase 7), while
+    `log.fix("...rebuilt...")` fires unconditionally on every call. Routing the
+    extra rebuilds through the logging wrapper inflated
+    `data["qc"]["fixes_applied"]` — which gen_dashboard renders verbatim in its
+    "N fixes" line — and printed the same rebuild message two or three times in
+    the Fixes Applied list. Raised in review of #124.
+    """
     old_summary = data.get("summary", {}) or {}
     computed = core.aggregate_summary(data["requests"])
     if "dod" in old_summary and "dod" not in computed:
         computed["dod"] = old_summary["dod"]
-    drift = False
-    for k, v in computed.items():
-        if old_summary.get(k) != v:
-            drift = True
+    drift = any(old_summary.get(k) != v for k, v in computed.items())
     data["summary"] = computed
     data["lane_summary"] = core.aggregate_lanes(data["requests"])
     data["carrier_summary"] = core.aggregate_carriers(data["requests"])
+    return drift
+
+
+def phase_5_summaries(log: Log, data: dict):
+    log.section("PHASE 5: SUMMARY RECALCULATION")
+    drift = _recompute_aggregates(data)
     log.fix("Summary, lane_summary, carrier_summary rebuilt from raw data" + (" (drift detected)" if drift else ""))
 
 
@@ -4453,17 +4484,26 @@ def phase_6_rules(log: Log, data: dict):
                 _row67 = _by_id67.get(_rid67)
                 if not _row67:
                     continue
-                _row67["status"] = "PENDING"
+                # An operator's verdict outranks an automatic heal. Every
+                # other re-decide path in this file skips manual_locked rows;
+                # this one did not, so a human correction could be silently
+                # undone on the next fire.
+                if _row67.get("manual_locked"):
+                    log.warn(f"QC-067: {_rid67} looks misfiled but is "
+                             f"manual_locked — leaving the operator's verdict "
+                             f"in place")
+                    continue
                 _row67["loss_reason"] = None
                 _row67["reason_detail"] = (
                     f"Awaiting OL quote — {_hrs67}h since Lonny's RFQ, still "
                     f"inside the {core.PENDING_OL_LOSS_HOURS}h response window")
-                _hist67 = _row67.setdefault("status_history", [])
-                _hist67.append({
-                    "from": "LOSS", "to": "PENDING",
-                    "at": datetime.now(timezone.utc).isoformat(),
-                    "reason": "QC-067: open RFQ was misfiled as NO_RESPONSE",
-                })
+                # record_transition, not a hand-rolled append: the old code
+                # hardcoded "from": "LOSS", which is a FABRICATED prior state
+                # whenever the row was in any other status. record_transition
+                # reads the real one, and no-ops if the status already matches.
+                core.record_transition(
+                    _row67, "PENDING",
+                    "QC-067: open RFQ was misfiled as NO_RESPONSE")
                 log.fix(f"QC-067: {_rid67} restored to PENDING OL — waiting "
                         f"{_hrs67}h, inside the response window (was filed "
                         f"LOSS/NO_RESPONSE)")
@@ -4837,6 +4877,24 @@ def _per_carrier_breakdown(requests):
 
 def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
     log.section("PHASE 7: PERSIST")
+
+    # RECOMPUTE THE AGGREGATES BEFORE PERSISTING THEM.
+    #
+    # phase_5 builds summary / lane_summary / carrier_summary, then phase_6
+    # runs the MUTATING heals — QC-064 nulls a leaked responder mailbox out of
+    # carrier_quoted, QC-067 restores a misfiled row to PENDING, QC-056
+    # backfills a carrier. Persisting phase_5's output after phase_6 shipped a
+    # file whose aggregates contradicted its own rows: the audit read clean
+    # because the row WAS fixed, while carrier_summary still keyed a carrier
+    # named "MBD_OceanExport@ol-usa.com" and the client PDF printed it. Same
+    # mechanism put a QC-067-restored row in the dashboard's not_quoted KPI
+    # while the row list showed it PENDING.
+    #
+    # The SILENT recompute, not phase_5_summaries: this is a pure rebuild from
+    # `data["requests"]`, cheap and idempotent, and it must not log a second
+    # "rebuilt" fix — that inflated the fix count the dashboard renders.
+    _recompute_aggregates(data)
+
     data["qc"] = {
         "last_run": core.now_utc().isoformat(),
         "fixes_applied": len(log.fixes),
@@ -4980,6 +5038,37 @@ def main() -> int:
     phase_4_duplicates(log, data)
     phase_5_summaries(log, data)
     phase_6_rules(log, data)
+
+    # QC-075 MUST fire BEFORE phase_7_save, not after it.
+    #
+    # phase_7_save serializes log.errors into BOTH persisted artifacts —
+    # data["qc"]["error_log"] in tracking-data-v2.json, and error_details /
+    # status in reports/qc-result.json. Those files are what gen_dashboard's
+    # QC tab and gen_improvements_report's red-flags section actually read.
+    # Escalating afterwards appended to a list nothing re-serialized, so the
+    # divergence appeared only on this subprocess's stdout — behaviourally the
+    # same `print()` QC-075 was created to replace. Raised in review of #124.
+    # ...and it must compare TWO AGGREGATIONS OF THE SAME ROWS.
+    #
+    # _trade_region_reconciliation recomputes the regions fresh from
+    # data["requests"] but reads data["summary"] as-is — and phase_6's heals
+    # (QC-067 restoring a misfiled row to PENDING, QC-004, QC-064, ...) change
+    # rows WITHOUT touching that dict. So a summary built back in phase 5
+    # describes the PRE-heal rows, and the comparison failed on ordering
+    # rather than on any real disagreement: proved with a single QC-067 row,
+    # fresh NQ=0 vs stale NQ=1 -> reconciled=False. That is a FALSE QC-075
+    # ERROR on essentially every fire that heals a status, persisted into both
+    # artifacts — while phase_7_save's own recompute a few lines later makes
+    # the same qc-result.json report reconciled=True beside it. The report
+    # contradicting itself, in a check written to stop exactly that.
+    # QC-075's job is catching two AGGREGATORS that disagree, never two points
+    # in time, so rebuild first. Raised in review of #124.
+    _recompute_aggregates(data)
+    _tr75 = _trade_region_reconciliation(data)
+    if _tr75 and _tr75.get("reconciled") is False:
+        log.error("QC-075: trade-region rollup does not reconcile to summary — "
+                  f"{_tr75.get('error') or _tr75}")
+
     result = phase_7_save(log, data, data_path, result_path)
     print("\n" + "=" * 60)
     print("QC SELF-HEAL COMPLETE")
@@ -4995,6 +5084,9 @@ def main() -> int:
     print(f"  Carrier coverage: WIN {cc.get('win_with_carrier')}/{cc.get('win_total')} ({cc.get('win_coverage_pct')}%) | Q&L {cc.get('ql_with_carrier')}/{cc.get('ql_total')} ({cc.get('ql_coverage_pct')}%)")
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
+    # QC-075 itself already fired above, BEFORE phase_7_save, so it is inside
+    # both persisted artifacts. Nothing to escalate here — this line only
+    # echoes the outcome to the run log.
 
     # CLAUDE.md rule #2 hard gate (POST-PATCH only; pre-patch is advisory).
     # Two distinct QC-039 failure modes, deliberately handled differently:

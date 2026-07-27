@@ -450,6 +450,37 @@ def canonical_port_key(destination) -> str:
     return head or raw
 
 
+def port_terminal(destination) -> str:
+    """The terminal a destination names, or "" when it names only a city.
+
+    "Manila (North)" -> "north";  "Manila" -> "";  "HCMC (Cat Lai)" -> "cat lai"
+    """
+    m = re.match(r"^[^(]+\(\s*(.+?)\s*\)\s*$", (destination or "").strip())
+    return m.group(1).strip().lower() if m else ""
+
+
+def same_port(a, b) -> bool:
+    """True when two destinations can refer to the SAME physical call.
+
+    Same canonical city (`canonical_port_key`), AND — when BOTH sides name a
+    terminal — the same terminal. A terminal-less side matches either.
+
+    Exists because rate-response matching fell back to a bare substring test
+    ("manila" in "manila (north)"), which pooled Manila (North) and Manila
+    (South) as one candidate set. A reply on a thread titled "RE: Oakland to
+    Manila" could then write ol_rate, carrier_quoted, etd_offered and
+    vessel_voyage onto the WRONG terminal's row — reporting a South-terminal
+    rate to the client as the North lane's quote, while the correct request
+    stayed unquoted and aged out as NQ.
+    """
+    if canonical_port_key(a) != canonical_port_key(b):
+        return False
+    ta, tb = port_terminal(a), port_terminal(b)
+    if ta and tb:
+        return ta == tb
+    return True
+
+
 def et_date_of(ts) -> str | None:
     """THE canonical ET calendar date for a timestamp — the one clock every
     day bucket in this system runs on.
@@ -486,6 +517,41 @@ def et_date_of(ts) -> str | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(ET).date().isoformat()
+
+
+def win_event_date(r) -> str | None:
+    """THE ET calendar date a WIN happened — the ONE clock every report must
+    credit a booking to.
+
+    Exists because the daily email and the weekly summary disagreed about
+    which period a booking belonged to. Michael directed on 2026-07-21 ("a win
+    belongs to the day Lonny booked it") that the daily count wins by EVENT
+    date, so `gen_email._today_summary` counts →WIN status_history transitions
+    dated the report day. `gen_weekly_summary` was never changed: it filters
+    every row — wins included — by `request_date`. An RFQ received Friday and
+    booked the following Monday is therefore a win in Monday's daily email
+    (week of the 27th) and a win in the PREVIOUS week's summary (week of the
+    20th). The same booking, credited to two different weeks, in two reports
+    Michael reads side by side.
+
+    Returns the ET date of the row's LAST →WIN transition. Falls back to
+    `request_date` for legacy WIN rows recorded before transitions were kept,
+    so every WIN lands in exactly one bucket and none vanishes. Returns None
+    for a row whose CURRENT status is not WIN — a row that was won and then
+    reversed is not a win, and must not be credited to any period.
+
+    LAST transition, not any: a row reversed out of WIN and later re-won has
+    two →WIN entries, and testing "any transition on this day" credited it to
+    both days. The booking that stands is the latest one.
+    """
+    if (r.get("status") or "").upper() != "WIN":
+        return None
+    dated = [d for d in (et_date_of(h.get("at"))
+                         for h in (r.get("status_history") or [])
+                         if h.get("to") == "WIN") if d]
+    if dated:
+        return max(dated)
+    return et_date_of(r.get("request_date") or r.get("request_timestamp"))
 
 
 def now_utc() -> datetime:

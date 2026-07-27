@@ -249,7 +249,24 @@ def render(cfg: dict, data: dict) -> str:
             hs = _hours_since(r.get("request_timestamp"))
         else:
             hs = _hours_since(r.get("response_timestamp"))
+        # NEVER DROP THE ROW. `continue` on an unparseable timestamp meant the
+        # header counted the row ("Pending Watchlist — N open", taken from
+        # len(pending)) while the table beneath it rendered nothing — the
+        # dashboard contradicting itself, and an open RFQ nobody chases
+        # because it is invisible. Fall through the other timestamps we hold,
+        # and if none parses still show the row with an em-dash age, exactly
+        # as gen_email's PENDING HILMAR table already does.
         if hs is None:
+            for _alt in ("response_timestamp", "request_timestamp",
+                         "booking_timestamp", "request_date"):
+                hs = _hours_since(r.get(_alt))
+                if hs is not None:
+                    break
+        if hs is None:
+            # Undateable, but real. Lowest severity so it sorts last rather
+            # than screaming, and the age cell renders "—".
+            pending_watch.append({**r, "_hours_since": None, "_severity": "low",
+                                  "_substate": substate})
             continue
         if hs >= warn_thresholds[-1]:
             severity = "critical"
@@ -261,7 +278,10 @@ def render(cfg: dict, data: dict) -> str:
             severity = "low"
         pending_watch.append({**r, "_hours_since": hs, "_severity": severity,
                               "_substate": substate})
-    pending_watch.sort(key=lambda x: -x["_hours_since"])
+    # Undateable rows sort last (None is not negatable, and they are the
+    # least urgent thing on the list — but they ARE on the list).
+    pending_watch.sort(key=lambda x: (x["_hours_since"] is None,
+                                      -(x["_hours_since"] or 0)))
 
     # WoW
     weeks = wow_bars(requests)
@@ -891,7 +911,10 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             _sub = r.get("_substate")
             _wcolor = "#b45309" if _sub == "PENDING_OL" else "#7c3aed"
             wait_on = f'<span style="color:{_wcolor};font-weight:600">{V.pending_label(_sub)}</span>'
-            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{r["_hours_since"]}h</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
+            # "—" for a row we cannot date, matching gen_email's PENDING
+            # HILMAR table. Previously these rows were dropped entirely.
+            _age = "—" if r.get("_hours_since") is None else f'{r["_hours_since"]}h'
+            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{_age}</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">Nothing pending right now.</p>'
