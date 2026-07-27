@@ -99,7 +99,12 @@ def test_quoted_with_missing_timestamp_is_never_no_response():
                          ol_rate="$3,076")
     assert d.quoted is True
     assert d.loss_reason != "NO_RESPONSE", "a quoted row can never be NO_RESPONSE"
-    assert d.loss_reason == "OTHER"   # 'assumed aged' Q&L (legacy LOSS form)
+    # Relabelled OTHER -> NO_RESPONSE_TS on 2026-07-27. Same outcome (this call
+    # passes no request_timestamp, so there is no request clock to age off and
+    # the row is still a loss); the reason is now legible instead of hiding
+    # inside the "OTHER" catch-all. See the never-age-on-absence branch.
+    assert d.loss_reason == "NO_RESPONSE_TS"
+    assert d.status == "LOSS"
 
 
 def test_responded_but_no_rate_is_response_no_rate():

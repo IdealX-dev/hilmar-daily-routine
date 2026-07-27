@@ -153,6 +153,11 @@ LOSS_REASONS = {
     "SEND_NO_BOOKING",      # display-Q&L — AWAITING_MDOLX aged out past 72h
     "COVERED",              # scripts/core.LOSS_REASONS compat — Lonny said the load was covered elsewhere
     "DRAFT_ONLY",           # scripts/core.LOSS_REASONS compat — DRAFT RATED reply, no full rate
+    "NO_RESPONSE_TS",       # PENDING sub-state, then display-Q&L — OL quoted but
+                            #   the response carried no usable timestamp (typically
+                            #   a patch_carriers rate from a sibling thread or PDF).
+                            #   Added 2026-07-27 so it stops hiding inside "OTHER";
+                            #   see the never-age-on-absence branch in decide_status.
 }
 
 #: Multiplier above lane winning median where we call a loss "PRICE".
@@ -1120,9 +1125,22 @@ def decide_status(
     # through here; parse_iso(None)→None hits the "assumed aged" Q&L guard.
     resp_dt = parse_iso(response_timestamp)
     if not resp_dt:
-        # Malformed timestamp — treat as past window.
-        return StatusDecision(STATUS_Q_AND_L, True, False, "OTHER",
-                              "Quoted but response_timestamp unparseable — assumed aged")
+        # NEVER AGE ON ABSENCE — see the matching branch in scripts/core.py
+        # for the full 2026-07-27 write-up. A missing timestamp is missing
+        # EVIDENCE, not elapsed time; fall back to Lonny's request clock and
+        # hold PENDING until that window expires.
+        req_dt = parse_iso(request_timestamp)
+        if req_dt and not pending_hilmar_stale(req_dt, now):
+            _age = (now - req_dt).total_seconds() / 3600.0
+            return StatusDecision(
+                STATUS_PENDING, True, False, "NO_RESPONSE_TS",
+                f"Quoted, but the OL response carried no usable timestamp — "
+                f"aging off Lonny's request instead ({_age:.1f}h ago, still "
+                f"inside the decision window)")
+        return StatusDecision(
+            STATUS_Q_AND_L, True, False, "NO_RESPONSE_TS",
+            "Quoted but response_timestamp unparseable, and the request itself "
+            "is past the decision window")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
     # PENDING-Hilmar quote-decision window (Michael 2026-07-14): 48 CLOCK
