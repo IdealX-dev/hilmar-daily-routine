@@ -114,26 +114,40 @@ def detect_events(data: dict, cfg: dict) -> list[dict]:
     today_iso = datetime.now(core.ET).date().isoformat()
     if "win" in enabled:
         for r in rows:
-            for h in (r.get("status_history") or []):
-                at = (h.get("at") or "")[:10]
-                if at == today_iso and h.get("to") == "WIN" and h.get("from") != "WIN":
-                    key = f"win:{r.get('request_id')}:{at}"
-                    if not _was_alerted(key):
-                        rate = r.get("ol_rate")
-                        events.append({
-                            "type": "win",
-                            "key": key,
-                            "color": "16a34a",
-                            "title": f"🎉 WIN — {r.get('lane', '?')}",
-                            "text": (
-                                f"**Carrier**: {r.get('carrier_won') or '?'}  "
-                                f"**Rate**: ${rate:,.0f}  " if rate else f"**Carrier**: {r.get('carrier_won') or '?'}  "
-                            ) + (
-                                f"**TEU**: {r.get('teu_won') or r.get('teu_requested')}  "
-                                f"**ETD**: {r.get('etd_offered') or '?'}  "
-                                f"**MDOLX**: {r.get('mdolx_ref') or '?'}"
-                            ),
-                        })
+            # core.win_event_date — the shared win clock, replacing a scan of
+            # status_history that had two defects.
+            #
+            # (a) It sliced `at[:10]`, a UTC calendar date, against an ET
+            #     `today_iso`. A booking confirmed 20:30 ET Friday is
+            #     2026-07-25 in UTC and 2026-07-24 in ET, so the two never
+            #     matched and NO alert fired for any win confirmed after
+            #     8 PM ET — silently, every time.
+            # (b) It never checked the row's CURRENT status, only that a →WIN
+            #     transition existed. A booking won and then reversed the same
+            #     day still fired "🎉 WIN" — celebrating a cancellation.
+            #     gen_client_email already guards exactly this ("a →WIN
+            #     transition is not the same as a confirmed booking"); the
+            #     alert path did not. win_event_date returns None once the row
+            #     is no longer a WIN, so the guard is now structural.
+            at = core.win_event_date(r)
+            if at == today_iso:
+                key = f"win:{r.get('request_id')}:{at}"
+                if not _was_alerted(key):
+                    rate = r.get("ol_rate")
+                    events.append({
+                        "type": "win",
+                        "key": key,
+                        "color": "16a34a",
+                        "title": f"🎉 WIN — {r.get('lane', '?')}",
+                        "text": (
+                            f"**Carrier**: {r.get('carrier_won') or '?'}  "
+                            f"**Rate**: ${rate:,.0f}  " if rate else f"**Carrier**: {r.get('carrier_won') or '?'}  "
+                        ) + (
+                            f"**TEU**: {r.get('teu_won') or r.get('teu_requested')}  "
+                            f"**ETD**: {r.get('etd_offered') or '?'}  "
+                            f"**MDOLX**: {r.get('mdolx_ref') or '?'}"
+                        ),
+                    })
 
     # 2. Pending past 24h
     if "pending_overdue" in enabled:
@@ -224,10 +238,16 @@ def detect_events(data: dict, cfg: dict) -> list[dict]:
 
     # 5. Big-day WIN (total TEU won today ≥ threshold)
     if "big_day" in enabled:
+        # core.win_event_date, not the LAST history entry's UTC slice. Two
+        # defects in that expression: it sliced UTC against an ET today_iso
+        # (see the →WIN alert above), and it read `[-1]` — whatever transition
+        # happened most recently — so a row won this morning and then touched
+        # by any later transition stopped counting toward the day's TEU. The
+        # shared helper answers exactly the question being asked: the ET date
+        # this row's win happened.
         teu_today = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                         for r in rows
-                        if r.get("status") == "WIN"
-                        and (r.get("status_history") or [{}])[-1].get("at", "")[:10] == today_iso)
+                        if core.win_event_date(r) == today_iso)
         threshold = cfg.get("min_teu_for_big_day", 30)
         if teu_today >= threshold:
             key = f"big_day:{today_iso}:{teu_today}"

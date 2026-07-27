@@ -80,12 +80,51 @@ def _filter_rows(rows, start_date, end_date):
     return out
 
 
-def analyze_week(rows):
-    """Compute headline metrics for a week."""
+def _filter_wins(rows, start_date, end_date):
+    """WIN rows whose win EVENT landed in [start, end] — regardless of when
+    the RFQ came in.
+
+    The counterpart to `_filter_rows`, which buckets by `request_date`. Wins
+    have to be event-dated or the weekly contradicts the daily: Michael
+    directed on 2026-07-21 that a win belongs to the day it was booked, and
+    `gen_email` was changed to match, but the weekly still filtered wins by
+    request_date. An RFQ received Friday and booked the following Monday was
+    a win in Monday's daily email AND a win in the PREVIOUS week's summary —
+    the same booking credited to two different weeks in two reports Michael
+    reads side by side. `core.win_event_date` is the shared definition both
+    now call (audit finding #19).
+    """
+    s, e = start_date.isoformat(), end_date.isoformat()
+    out = []
+    for r in rows:
+        d = core.win_event_date(r)
+        if d and s <= d <= e:
+            out.append(r)
+    return out
+
+
+def analyze_week(rows, win_rows=None):
+    """Compute headline metrics for a week.
+
+    `rows` is the week's INTAKE — rows whose request_date falls in the week —
+    and drives total / Q&L / NQ / pending, because those describe what came
+    in and where it currently stands. `win_rows` is the separately-filtered
+    set of wins whose EVENT landed in the week (see `_filter_wins`); when it
+    is None the rows are treated as their own win set, which is what a caller
+    passing one pre-filtered list means.
+
+    win_rate mixes the two on purpose: `wins / (wins + ql)`, event-dated
+    numerator over an intake-dated Q&L. That is the identical formula and the
+    identical mix the daily email's KPI block uses, and matching it is the
+    whole point — a second, "cleaner" rule here would just recreate the
+    disagreement this fix removes. Since every win in `win_rows` is also in
+    the denominator, the rate cannot exceed 100%.
+    """
+    win_rows = rows if win_rows is None else win_rows
     total = len(rows)
-    wins = sum(1 for r in rows if r["status"] == "WIN")
+    wins = sum(1 for r in win_rows if r["status"] == "WIN")
     teu_won = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
-                  for r in rows if r["status"] == "WIN")
+                  for r in win_rows if r["status"] == "WIN")
     ql = sum(1 for r in rows if r["status"] == "LOSS" and r.get("quoted"))
     teu_ql = sum(int(r.get("teu_requested") or 0)
                  for r in rows if r["status"] == "LOSS" and r.get("quoted"))
@@ -139,10 +178,25 @@ def top_lanes_losing(rows, n=3):
     return out[:n]
 
 
-def carrier_of_week(rows):
+def carrier_of_week(rows, win_rows=None):
+    """Quotes come from the week's INTAKE, wins from the week's win EVENTS.
+
+    A carrier that booked a Friday RFQ on Monday won it in Monday's week —
+    crowning it for the week the RFQ arrived would credit the trophy to a
+    week the daily email says it won nothing in. `win_rows=None` means the
+    caller passed one pre-filtered list that is both.
+    """
+    win_rows = rows if win_rows is None else win_rows
+    # Identity, not equality: rows are plain dicts (unhashable, and two
+    # distinct RFQs can compare equal), so membership is by object.
+    intake_ids = {id(r) for r in rows}
+    win_ids = {id(r) for r in win_rows if r.get("status") == "WIN"}
+    considered = {id(r): r for r in list(rows) + list(win_rows)}
+
     by_c = defaultdict(lambda: {"quotes": 0, "wins": 0, "teu_won": 0})
-    for r in rows:
-        won = r.get("status") == "WIN"
+    for r in considered.values():
+        won = id(r) in win_ids
+        quoted_here = id(r) in intake_ids and bool(r.get("quoted"))
         # Attribute a WIN to the carrier that actually won it (carrier_won) and a
         # quote to the carrier quoted; fall back so a row carrying only one of the
         # two fields still counts.
@@ -150,7 +204,7 @@ def carrier_of_week(rows):
             or r.get("carrier_quoted") or r.get("carrier_won")
         if not c:
             continue
-        if r.get("quoted") or won:
+        if quoted_here or won:
             by_c[c]["quotes"] += 1
         if won:
             by_c[c]["wins"] += 1
@@ -185,7 +239,7 @@ def four_week_trend(all_rows, today):
         wk_today = today - timedelta(weeks=w)
         mon, fri = _week_bounds(wk_today)
         week_rows = _filter_rows(all_rows, mon, fri)
-        m = analyze_week(week_rows)
+        m = analyze_week(week_rows, _filter_wins(all_rows, mon, fri))
         m["week_start"] = mon.isoformat()
         m["week_end"] = fri.isoformat()
         trend.append(m)
@@ -360,11 +414,16 @@ def main(argv=None, now=None):
     prev_mon, prev_fri = mon - timedelta(weeks=1), fri - timedelta(weeks=1)
     this_rows = _filter_rows(rows, mon, fri)
     prev_rows = _filter_rows(rows, prev_mon, prev_fri)
-    this_metrics = analyze_week(this_rows)
-    prev_metrics = analyze_week(prev_rows)
-    top_win = top_lanes_by_teu_won(this_rows)
+    # Wins are filtered SEPARATELY, by the date the booking landed rather than
+    # the date the RFQ came in — the same clock gen_email's day tiles use, so
+    # a Friday RFQ booked on Monday is not a win in both weeks (finding #19).
+    this_wins = _filter_wins(rows, mon, fri)
+    prev_wins = _filter_wins(rows, prev_mon, prev_fri)
+    this_metrics = analyze_week(this_rows, this_wins)
+    prev_metrics = analyze_week(prev_rows, prev_wins)
+    top_win = top_lanes_by_teu_won(this_wins)
     top_loss = top_lanes_losing(this_rows)
-    cow = carrier_of_week(this_rows)
+    cow = carrier_of_week(this_rows, this_wins)
     trend = four_week_trend(rows, report_anchor)
 
     html = render_html((mon, fri), this_metrics, prev_metrics, top_win, top_loss, cow, trend)

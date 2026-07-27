@@ -65,6 +65,17 @@ STATE_FILES: list[str] = [
 ]
 
 
+def _utc_stamp() -> str:
+    """HHMMSS in UTC — the time half of an immutable snapshot's name.
+
+    UTC, not ET: the DATE half is ET (so the retention prune and QC-032's age
+    check keep reading an ET day), but the time only has to make names unique
+    and sort correctly within that day, and UTC has no DST discontinuity to
+    produce a duplicate or out-of-order stamp.
+    """
+    return datetime.now(ZoneInfo("UTC")).strftime("%H%M%S")
+
+
 def _today_et() -> str:
     """Flag files are dated in ET — the operational day of the 6 PM ET fire.
     Must match outlook_send.py's flag naming or the idempotency sync breaks."""
@@ -247,11 +258,27 @@ def backup(root: Path | None = None, *, container=None) -> str | None:
 
     Post-cutover replacement for the OneDrive/local backup pair that an
     ephemeral runner cannot reach (QC-032's red flag from the first
-    post-flip audit, 2026-06-12). One snapshot per ET day, taken right
-    after state pull — i.e. yesterday's end-state, before today's fire
-    mutates it. Prunes snapshots older than BACKUP_RETENTION_DAYS (by the
-    date embedded in the blob name, so no list-metadata support needed).
-    Returns the blob name written, or None if there was nothing to back up.
+    post-flip audit, 2026-06-12). Taken right after state pull — i.e. the
+    previous end-state, before this fire mutates it. Prunes snapshots older
+    than BACKUP_RETENTION_DAYS (by the date embedded in the blob name, so no
+    list-metadata support needed). Returns the blob name written, or None if
+    there was nothing to back up.
+
+    SNAPSHOTS ARE IMMUTABLE (2026-07-27, audit finding #21). This used to
+    write `{PREFIX}{date}.json.gz` with `overwrite=True` — ONE blob per ET
+    day, replaced in place. So the second run of any ET day overwrote the
+    first, and the case where that matters is exactly the case backups exist
+    for: the fire corrupts or empties tracking-data-v2.json, and the recovery
+    dispatch — pulling the bad state, then calling backup() — uploads that bad
+    file over the day's only good snapshot. The backup destroyed by the
+    attempt to use it, with nothing older than midnight to fall back to.
+
+    The name now carries the UTC time as well, and the upload is
+    `overwrite=False`, so no snapshot can ever be replaced — not by a second
+    fire, not by a recovery run, not by a future bug. The date still leads the
+    name, so the retention prune and `latest_backup_age_days` keep parsing it
+    unchanged. Two runs inside the same second is the only collision, and it
+    is treated as already-done rather than an error.
     """
     import gzip
     from datetime import timedelta
@@ -262,9 +289,17 @@ def backup(root: Path | None = None, *, container=None) -> str | None:
         return None
     cc = container or _container_client()
     today = _today_et()
-    name = f"{BACKUP_PREFIX}{today}.json.gz"
-    cc.get_blob_client(name).upload_blob(
-        gzip.compress(src.read_bytes()), overwrite=True)
+    name = f"{BACKUP_PREFIX}{today}T{_utc_stamp()}.json.gz"
+    try:
+        cc.get_blob_client(name).upload_blob(
+            gzip.compress(src.read_bytes()), overwrite=False)
+    except Exception as e:
+        # A same-second re-run is a no-op, not a failure — the identical
+        # snapshot is already there. Anything else is a real upload error and
+        # must not be swallowed: a backup that silently did not happen is
+        # worse than one that loudly failed.
+        if type(e).__name__ != "ResourceExistsError":
+            raise
     # Prune: blob names carry their date — delete anything older than the
     # retention window. list_blobs may be unsupported on exotic clients;
     # pruning is best-effort.
@@ -304,9 +339,93 @@ def latest_backup_age_days(*, container=None) -> float | None:
     return (now - newest).total_seconds() / 86400.0
 
 
+def list_backups(*, container=None) -> list[str]:
+    """Every snapshot blob name, oldest first. Names sort chronologically
+    because they lead with `YYYY-MM-DDTHHMMSS`."""
+    cc = container or _container_client()
+    try:
+        return sorted(getattr(b, "name", b)
+                      for b in cc.list_blobs(name_starts_with=BACKUP_PREFIX))
+    except Exception:
+        return []
+
+
+def restore(name: str | None = None, root: Path | None = None, *,
+            container=None, confirm: bool = False) -> str | None:
+    """Write a snapshot back over tracking-data-v2.json.
+
+    A backup nobody can restore is not a backup — until now the only way back
+    was to hand-fetch a blob, gunzip it, and copy it into place under
+    pressure, which is when mistakes get made. This is the scripted,
+    reversible counterpart the working standard asks for.
+
+    `name` selects the snapshot; None means the newest. Returns the blob name
+    restored, or None when there is nothing to restore.
+
+    THIS OVERWRITES LIVE DATA, so it is gated three ways:
+      * `confirm=False` (the default, and what the CLI does without --yes)
+        resolves and REPORTS the target without writing anything.
+      * the current file is snapshotted first, so the restore is itself
+        reversible — recovering from a wrong restore is another restore.
+      * the payload must parse as JSON carrying a `requests` list before it
+        can land, so a truncated or half-uploaded blob cannot replace a good
+        file with a broken one (the same gate push() applies on the way out).
+    """
+    import gzip
+
+    root = root or ROOT
+    cc = container or _container_client()
+    target = name or (list_backups(container=cc) or [None])[-1]
+    if not target:
+        return None
+    if not confirm:
+        return target
+
+    raw = cc.get_blob_client(target).download_blob().readall()
+    payload = gzip.decompress(raw)
+    try:
+        parsed = json.loads(payload.decode("utf-8"))
+    except Exception as e:
+        raise StateStoreError(
+            f"{target} does not contain valid JSON ({e}) — refusing to "
+            f"restore it over live data") from e
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("requests"), list):
+        raise StateStoreError(
+            f"{target} has no `requests` list — refusing to restore it over "
+            f"live data")
+
+    dst = root / "tracking-data-v2.json"
+    if dst.exists():
+        # Snapshot what we are about to replace FIRST. If this restore turns
+        # out to be the wrong choice, the state it destroyed is still a blob.
+        backup(root=root, container=cc)
+
+    # Atomic, for the same reason core.save_data is: a partial write here
+    # would destroy the live file AND leave nothing usable in its place.
+    tmp = dst.with_suffix(dst.suffix + ".restore-tmp")
+    try:
+        with open(tmp, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, dst)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("cmd", choices=["pull", "push", "backup"])
+    ap.add_argument("cmd", choices=["pull", "push", "backup", "restore",
+                                    "list-backups"])
+    ap.add_argument("--from", dest="from_blob", default=None,
+                    help="restore: snapshot blob name to restore "
+                         "(default: the newest).")
+    ap.add_argument("--yes", action="store_true",
+                    help="restore: actually write over tracking-data-v2.json. "
+                         "Without it, restore only reports what it WOULD do — "
+                         "this overwrites live client booking data.")
     ap.add_argument("--only", default=None,
                     help="Comma-separated path fragments; push ONLY matching "
                          "state files. Use from jobs that must not overwrite "
@@ -323,6 +442,25 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "backup":
             written = backup()
             print(f"state_store: backup {'-> ' + written if written else 'skipped (no data file)'}")
+            return 0
+        if args.cmd == "list-backups":
+            names = list_backups()
+            print("\n".join(names) if names else "state_store: no snapshots")
+            return 0
+        if args.cmd == "restore":
+            target = restore(args.from_blob, confirm=args.yes)
+            if not target:
+                print("state_store: no snapshot to restore", file=sys.stderr)
+                return 1
+            if args.yes:
+                print(f"state_store: restored {target} -> tracking-data-v2.json "
+                      f"(the replaced file was snapshotted first)")
+            else:
+                # Dry run by default: this overwrites live client booking
+                # data, so the destructive step needs an explicit --yes.
+                print(f"state_store: WOULD restore {target} over "
+                      f"tracking-data-v2.json. Nothing was written. "
+                      f"Re-run with --yes to do it.")
             return 0
         _only = ([f.strip() for f in args.only.split(",") if f.strip()]
                  if args.only else None)

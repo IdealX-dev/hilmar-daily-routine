@@ -89,8 +89,7 @@ request, #14 lane substring match writing a rate onto the wrong terminal,
 backup overwrite, #23 QC-067 heal bypassing manual_locked, #24 weekly.yml
 concurrency group, #25 undeclared schema fields + typo'd date_range key.
 
-## 2026-07-27 — Audit batch 5b: wrong-row writes, an overwritten operator, a
-## reverted day, and a three-month-stale date window
+## 2026-07-27 — Audit batch 5b: wrong-row writes, an overwritten operator, a reverted day, and a three-month-stale date window
 
 Four more of the same seven. These are WRITE-SIDE defects: each one puts a
 correct value on the wrong row, the wrong day, or under a key nobody reads.
@@ -199,6 +198,150 @@ weekly summary vs daily email crediting the same booking to different weeks
 (wants a shared `core.win_event_date(r)`), #21 same-ET-day blob backup
 overwritten by a recovery run (wants timestamped immutable snapshots,
 `overwrite=False`, and a `restore` command).
+
+## 2026-07-27 — Audit batch 6: the last three findings, plus three the reviewer caught in batch 5
+
+BACKLOG NOW EMPTY. The three findings that were left, plus three real defects
+the automated review of #124 found in batch 5's own work — I confirmed all
+three by execution before touching anything, and the reviewer was right on
+all three.
+
+19. ONE BOOKING, TWO DIFFERENT WEEKS (finding #19)
+   Michael directed on 2026-07-21 ("a win belongs to the day Lonny booked it")
+   that the daily email count wins by EVENT date, and gen_email._today_summary
+   was changed to do exactly that. gen_weekly_summary was never changed: it
+   filters every row — wins included — by request_date. So an RFQ received
+   Friday 2026-07-24 and booking-confirmed Monday 2026-07-27 is a win in
+   Monday's daily email (week of the 27th) AND a win in the PREVIOUS week's
+   summary (week of the 20th). The same booking, credited to two different
+   weeks, in two reports read side by side. Not a wrong number — two
+   right-looking numbers that cannot both be true.
+   New `core.win_event_date(r)` — ONE definition, in both core trees, called
+   by both reports. ET date of the LAST →WIN transition (last, not any: a row
+   reversed and re-won has two, and "any transition on this day" credited it
+   to both days), falling back to request_date for legacy rows so no win
+   vanishes, and None once the row is no longer a WIN so a reversed booking
+   is never credited anywhere.
+   The weekly now filters wins through `_filter_wins` while intake / Q&L / NQ
+   / pending stay request_date-bucketed — the daily's documented split,
+   matched exactly. carrier_of_week, the top-winning-lanes table and the
+   4-week trend all move with it. win_rate keeps mixing the two clocks ON
+   PURPOSE: it is the identical formula and identical mix the daily's KPI
+   block uses, and a second "cleaner" rule here would just recreate the
+   disagreement this fix removes.
+
+20. THE SAME CLOCK WAS WRONG IN teams_alert, TWICE (found while fixing #19)
+   (a) `at[:10]` sliced a UTC calendar date and compared it to an ET
+   `today_iso`. A booking confirmed 20:30 ET Friday is 2026-07-25 in UTC and
+   2026-07-24 in ET, so the two never matched and NO win alert fired for any
+   booking confirmed after 8 PM ET — silently, every time. Proved by
+   execution before changing it.
+   (b) The alert never checked the row's CURRENT status, only that a →WIN
+   transition existed — so a booking won and then reversed the same day still
+   fired "🎉 WIN", celebrating a cancellation. gen_client_email already guards
+   exactly this ("a →WIN transition is not the same as a confirmed booking");
+   the alert path did not. Found by a test I wrote expecting it to pass.
+   (c) The big-day TEU sum read `status_history[-1]` — the most recent
+   transition of ANY kind — so a row won in the morning and touched by any
+   later transition stopped counting toward the day's total.
+   All three are gone: `core.win_event_date` answers exactly the question
+   being asked, and the status guard is structural rather than remembered.
+
+21. A TRUNCATED PREVIEW IS NOT EVIDENCE OF ABSENCE (finding #13)
+   `_merge_thread_dupes` collapses Lonny's "header" email into the sibling
+   carrying the container line, deciding which is which by teu_requested==0.
+   But teu_requested comes from `guess_teu_from_preview`, which reads ONLY
+   summary_preview — and the stagers cut that at 300 chars
+   (refresh_stage.py:548). Lonny's RFQs open with routing and dates, so on a
+   longer ask the equipment line falls PAST the cut. The row then looks thin
+   while being a completely ordinary second RFQ, and the merge DELETED it: a
+   real rate request that never reached intake, never got chased, never
+   counted in any total, and left no trace but a merge_note on another row.
+   When nothing parsed, the row's `containers` field still holds that raw
+   preview, so we can tell whether we saw the whole email. A preview whose
+   length lands exactly on a stager cap (200 or 300) was truncated → keep BOTH
+   rows and record why. The genuine header-only case (a short, complete
+   preview) still merges, so Issue #5 stays fixed.
+   The bias is deliberate and asymmetric: a wrong "truncated" verdict costs
+   one duplicate row, which is visible and which QC's dupe checks catch. A
+   wrong "complete" verdict silently deletes a real RFQ, which nothing
+   catches.
+
+22. THE BACKUP WAS DESTROYED BY THE ATTEMPT TO USE IT (finding #21)
+   `backup()` wrote `{PREFIX}{ET-date}.json.gz` with `overwrite=True` — ONE
+   blob per day, replaced in place. The second run of any ET day overwrote
+   the first, and the case where that matters is exactly the case backups
+   exist for: the fire corrupts tracking-data-v2.json, and the recovery
+   dispatch pulls the bad state and calls backup(), uploading it over the
+   day's only good snapshot. Nothing older than midnight to fall back to.
+   Snapshots are now IMMUTABLE: the name carries a UTC time as well, and the
+   upload is `overwrite=False`, so no snapshot can be replaced — not by a
+   second fire, not by a recovery run, not by a future bug. The ET date still
+   LEADS the name, so the retention prune and QC-032's `latest_backup_age_days`
+   keep parsing it unchanged. A same-second re-run is treated as already-done;
+   any other upload error is raised, because a backup that silently did not
+   happen is worse than one that loudly failed.
+   Added `restore` and `list-backups`. A backup nobody can restore is not a
+   backup — the only way back was hand-fetching a blob and gunzipping it into
+   place under pressure. `restore` is gated three ways, per CLAUDE.md's
+   destructive-action rule: it is a DRY RUN without `--yes` (reports the
+   target, writes nothing); it snapshots the file it is about to replace
+   first, so a wrong restore is itself reversible; and the payload must parse
+   as JSON with a `requests` list before it can land, the same gate push()
+   applies on the way out. The write is atomic.
+
+REVIEW OF #124 — THREE REAL DEFECTS IN BATCH 5's OWN WORK
+   All three confirmed by execution first. Two are sites I claimed to have
+   fixed and had not.
+
+23. THE 8-WEEK ROLLUP AND THE LANE TABLES STILL USED loss_reason
+   Batch 5 said "all three gen_email NQ sites now use core.is_not_quoted".
+   There were five. `_week_rows` — which builds the literal "NQ 0 / Q&L 1"
+   line quoted as evidence in the finding-#17 writeup — still tested
+   `loss_reason == "NO_RESPONSE"`, and so did `_build_lane_buckets`, which
+   feeds the Winning/Losing lane tables and additionally charged a
+   never-quoted row's TEU to that lane's `teu_lost`. Proved: one
+   RESPONSE_NO_RATE row gave aggregate_summary NQ=1/Q&L=0 and _week_rows
+   NQ=0/Q&L=1. The exact contradiction the batch existed to remove, still
+   shipping in the surface the writeup pointed at.
+
+24. apply_send_signals COULD PROMOTE THE WRONG TERMINAL TO WIN
+   Batch 5 fixed the terminal collapse in `apply_rate_responses` and left the
+   identical pattern in `apply_send_signals` — same `canonical_lane_key`
+   pooling, same bare-substring fallback, no `same_port` narrowing. Since
+   that loop tie-breaks purely on the latest request_timestamp, a "Send"
+   reply on the Manila (North) thread could flip the Manila (South) row to
+   WIN, inheriting its carrier, while the row Lonny actually confirmed stayed
+   open and aged out as a loss. Worse than the rate case: a wrong WIN is a
+   stronger, more client-facing claim. Same unconditional narrowing applied.
+
+25. QC-075 ESCALATED AFTER THE ARTIFACTS WERE ALREADY WRITTEN
+   `phase_7_save` serializes log.errors into BOTH persisted artifacts —
+   `data["qc"]["error_log"]` in tracking-data-v2.json and `error_details` /
+   `status` in reports/qc-result.json. QC-075 fired AFTER that call, so it
+   appended to a list nothing re-serialized. gen_dashboard's QC tab and
+   gen_improvements_report's red-flags section read those files, so a
+   reconciliation failure was invisible on every surface anyone consumes —
+   behaviourally identical to the `print()` QC-075 was created to replace.
+   Moved ahead of phase_7_save. The new test drives the REAL phase_7_save and
+   reads both artifacts back off disk; batch 5's test had only re-implemented
+   the `if` against a mock Log, which is why it stayed green.
+
+Tests: tests/test_audit_batch6.py (47 cases), tests/test_state_store.py
+updated for the immutable snapshot name. Every fix mutation-checked — the
+old code reintroduced, the relevant tests confirmed failing, the fix
+restored: 5 fail for the weekly clock, 2 for the merge guard, 5 for the
+review findings. Suite 2058 passed (2011 -> +47), coverage 91.28%, ruff clean
+on the CI-gated paths.
+
+DECISIONS FOR MICHAEL
+   * `DEFAULT_PRICING_CPM["claude-opus-4-6"]` is still ~3x overstated. Left
+     deliberately — a retroactive correction breaks comparability with every
+     historical cost figure already reported. Say the word and I will change
+     it forward-dated instead.
+   * The 45% prompt-cache estimate in Anthropic's notice is org-wide direct
+     API traffic. This repo's own saving is cents; whichever IDEALX system
+     generates that spend is not this one, and I cannot identify it from here.
 
 ## 2026-07-27 — LLM layer: Opus 4.6 -> Claude Opus 5, + prompt-cache breakpoint
 

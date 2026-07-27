@@ -207,7 +207,13 @@ def test_backup_writes_dated_gzip_and_prunes(tmp_path, monkeypatch):
         f"{ss.BACKUP_PREFIX}2026-06-05.json.gz": b"recent",    # kept
     })
     name = ss.backup(tmp_path, container=cc)
-    assert name == f"{ss.BACKUP_PREFIX}2026-06-12.json.gz"
+    # The name leads with the ET DATE (the prune and QC-032's age check parse
+    # it) and carries a UTC time after it, so a second run the same day cannot
+    # replace the first — audit finding #21. Asserted as a prefix + shape
+    # rather than a literal, because the time half is a real clock read.
+    assert name.startswith(f"{ss.BACKUP_PREFIX}2026-06-12T")
+    assert name.endswith(".json.gz")
+    assert len(name) == len(f"{ss.BACKUP_PREFIX}2026-06-12T125801.json.gz")
     assert gzip.decompress(cc.store[name]) == b'{"requests": [1]}'
     assert f"{ss.BACKUP_PREFIX}2026-05-01.json.gz" not in cc.store
     assert f"{ss.BACKUP_PREFIX}2026-06-05.json.gz" in cc.store

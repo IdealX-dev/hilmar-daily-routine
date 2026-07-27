@@ -261,7 +261,6 @@ def _week_rows(data):
         b["requests"] += 1
         b["teu_req"] += int(r.get("teu_requested") or 0)
         st = r.get("status") or ""
-        lr = r.get("loss_reason") or ""
         if st == "WIN":
             b["won"] += 1
             b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
@@ -270,7 +269,12 @@ def _week_rows(data):
                 b["mdolx"].append(mref)
         elif st == "PENDING":
             b["pending"] += 1
-        elif st == "LOSS" and lr == "NO_RESPONSE":
+        # core.is_not_quoted, NOT loss_reason. This is the 8-week rollup — the
+        # "NQ 0 / Q&L 1" line in the finding-#17 evidence — and it was the one
+        # NQ site in this file the first pass missed. A RESPONSE_NO_RATE row
+        # (OL acknowledged the RFQ but sent no rate, so quoted=False) is NQ to
+        # aggregate_summary and was Q&L here, in the same email.
+        elif core.is_not_quoted(r):
             b["nq"] += 1
         elif st == "LOSS":
             b["ql"] += 1
@@ -340,8 +344,11 @@ def _build_lane_buckets(data):
         elif st == "PENDING":
             b["pending"] += 1
         elif st == "LOSS":
-            reason = (r.get("loss_reason") or "")
-            if reason == "NO_RESPONSE":
+            # Same shared predicate as every other NQ site — this one feeds
+            # the Winning/Losing lane tables, so a RESPONSE_NO_RATE row used
+            # to be reported as a competitive loss on a lane it was never
+            # quoted on, and counted into that lane's teu_lost.
+            if core.is_not_quoted(r):
                 b["nq"] += 1
             else:
                 b["ql"] += 1
@@ -973,21 +980,21 @@ def _today_summary(requests, report_date=None):
                 if (r.get("request_date") == rd_iso) or (r.get("date") == rd_iso)]
 
     def _won_on(r):
-        """True if this row transitioned →WIN on the report day."""
-        for h in (r.get("status_history") or []):
-            if h.get("to") == "WIN" and _et_date(h.get("at")) == report_date:
-                return True
-        return False
+        """True if this row's win EVENT lands on the report day.
+
+        `core.win_event_date` is the shared definition — the weekly summary
+        buckets by the same call, so the two reports cannot credit one
+        booking to different periods (audit finding #19). It already folds in
+        the legacy fallback to request_date for WIN rows recorded before
+        transitions were kept, so no separate fallback pass is needed here.
+        """
+        return core.win_event_date(r) == rd_iso
 
     def _has_dated_win(r):
         return any(h.get("to") == "WIN" and _et_date(h.get("at"))
                    for h in (r.get("status_history") or []))
 
-    day_wins = [r for r in requests if r.get("status") == "WIN" and _won_on(r)]
-    # Legacy fallback: WIN rows with no dated →WIN transition count under their
-    # request_date (the old behavior), so they are attributed exactly once.
-    day_wins += [r for r in day_reqs
-                 if r.get("status") == "WIN" and not _has_dated_win(r)]
+    day_wins = [r for r in requests if _won_on(r)]
 
     # Rows REQUESTED this day whose win landed on a DIFFERENT day (e.g. asked
     # late Monday, booking confirmed Tuesday morning before the fire). The win

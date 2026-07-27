@@ -5016,6 +5016,21 @@ def main() -> int:
     phase_4_duplicates(log, data)
     phase_5_summaries(log, data)
     phase_6_rules(log, data)
+
+    # QC-075 MUST fire BEFORE phase_7_save, not after it.
+    #
+    # phase_7_save serializes log.errors into BOTH persisted artifacts —
+    # data["qc"]["error_log"] in tracking-data-v2.json, and error_details /
+    # status in reports/qc-result.json. Those files are what gen_dashboard's
+    # QC tab and gen_improvements_report's red-flags section actually read.
+    # Escalating afterwards appended to a list nothing re-serialized, so the
+    # divergence appeared only on this subprocess's stdout — behaviourally the
+    # same `print()` QC-075 was created to replace. Raised in review of #124.
+    _tr75 = _trade_region_reconciliation(data)
+    if _tr75 and _tr75.get("reconciled") is False:
+        log.error("QC-075: trade-region rollup does not reconcile to summary — "
+                  f"{_tr75.get('error') or _tr75}")
+
     result = phase_7_save(log, data, data_path, result_path)
     print("\n" + "=" * 60)
     print("QC SELF-HEAL COMPLETE")
@@ -5031,14 +5046,9 @@ def main() -> int:
     print(f"  Carrier coverage: WIN {cc.get('win_with_carrier')}/{cc.get('win_total')} ({cc.get('win_coverage_pct')}%) | Q&L {cc.get('ql_with_carrier')}/{cc.get('ql_total')} ({cc.get('ql_coverage_pct')}%)")
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
-    # A FALSE here means the trade-region rollup disagrees with summary — the
-    # two halves of the same email reporting different counts. It was only
-    # ever printed to stdout, so every divergence shipped silently. QC-075
-    # gives it teeth.
-    if tr and tr.get("reconciled") is False:
-        log.error("QC-075: trade-region rollup does not reconcile to summary — "
-                  f"{tr.get('error') or tr}")
-        result["errors"] = len(log.errors)
+    # QC-075 itself already fired above, BEFORE phase_7_save, so it is inside
+    # both persisted artifacts. Nothing to escalate here — this line only
+    # echoes the outcome to the run log.
 
     # CLAUDE.md rule #2 hard gate (POST-PATCH only; pre-patch is advisory).
     # Two distinct QC-039 failure modes, deliberately handled differently:

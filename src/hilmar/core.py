@@ -519,6 +519,41 @@ def et_date_of(ts) -> str | None:
     return dt.astimezone(ET).date().isoformat()
 
 
+def win_event_date(r) -> str | None:
+    """THE ET calendar date a WIN happened — the ONE clock every report must
+    credit a booking to.
+
+    Exists because the daily email and the weekly summary disagreed about
+    which period a booking belonged to. Michael directed on 2026-07-21 ("a win
+    belongs to the day Lonny booked it") that the daily count wins by EVENT
+    date, so `gen_email._today_summary` counts →WIN status_history transitions
+    dated the report day. `gen_weekly_summary` was never changed: it filters
+    every row — wins included — by `request_date`. An RFQ received Friday and
+    booked the following Monday is therefore a win in Monday's daily email
+    (week of the 27th) and a win in the PREVIOUS week's summary (week of the
+    20th). The same booking, credited to two different weeks, in two reports
+    Michael reads side by side.
+
+    Returns the ET date of the row's LAST →WIN transition. Falls back to
+    `request_date` for legacy WIN rows recorded before transitions were kept,
+    so every WIN lands in exactly one bucket and none vanishes. Returns None
+    for a row whose CURRENT status is not WIN — a row that was won and then
+    reversed is not a win, and must not be credited to any period.
+
+    LAST transition, not any: a row reversed out of WIN and later re-won has
+    two →WIN entries, and testing "any transition on this day" credited it to
+    both days. The booking that stands is the latest one.
+    """
+    if (r.get("status") or "").upper() != "WIN":
+        return None
+    dated = [d for d in (et_date_of(h.get("at"))
+                         for h in (r.get("status_history") or [])
+                         if h.get("to") == "WIN") if d]
+    if dated:
+        return max(dated)
+    return et_date_of(r.get("request_date") or r.get("request_timestamp"))
+
+
 def now_utc() -> datetime:
     return datetime.now(UTC)
 
