@@ -89,6 +89,117 @@ request, #14 lane substring match writing a rate onto the wrong terminal,
 backup overwrite, #23 QC-067 heal bypassing manual_locked, #24 weekly.yml
 concurrency group, #25 undeclared schema fields + typo'd date_range key.
 
+## 2026-07-27 — Audit batch 5b: wrong-row writes, an overwritten operator, a
+## reverted day, and a three-month-stale date window
+
+Four more of the same seven. These are WRITE-SIDE defects: each one puts a
+correct value on the wrong row, the wrong day, or under a key nobody reads.
+
+14. A RATE LANDED ON THE WRONG TERMINAL (finding #14)
+   `apply_rate_responses` fell back to a bare substring test when the exact
+   lane key missed: `dest_canon in k or k in dest_canon`. Neither "manila
+   (north)" nor "manila (south)" is a substring of the other — but BOTH
+   canonicalise to "manila" via `canonical_port_key`, which is exactly what
+   that alias map is for — so an exact-key hit ALSO pooled the two terminals.
+   A reply on a thread titled "RE: Oakland to Manila" could then write
+   ol_rate / carrier_quoted / etd_offered / vessel_voyage onto the WRONG
+   terminal's row. The client saw a South-terminal rate reported as the North
+   lane's quote, while the correct request stayed unquoted and aged out NQ.
+   Two wrong numbers from one match.
+   New `core.same_port(a, b)`: same canonical city AND, when BOTH sides name
+   a terminal, the same terminal. A terminal-less side still matches either,
+   so the "HCMC" → "HCMC (Cat Lai)" widening that the fallback existed for
+   keeps working. Narrowing is UNCONDITIONAL on both branches.
+   MY FIRST VERSION HAD A HOLE MY OWN TEST CAUGHT: `if _narrowed: candidates
+   = _narrowed` kept the INCOMPATIBLE list when nothing matched, so a Manila
+   (South) rate still landed on the Manila (North) row — the whole check
+   defeated in the one case it existed for. If no candidate is compatible
+   there is no match: leaving the row unquoted is correct, because a wrong
+   rate on a client quote is worse than a missing one.
+   Mirrored into src/hilmar/core.py with 21 new parity cases in
+   test_core_parity.py. scripts/ runs the fire, src/hilmar/ is what coverage
+   targets; a drift here writes a wrong rate in production while CI stays
+   green — the exact PR #13 failure mode that test file exists to catch.
+
+15. QC-067's HEAL OVERWROTE THE OPERATOR (finding #23)
+   Every other re-decide path in qc_selfheal skips `manual_locked`. QC-067's
+   did not, so a human correction filing a row LOSS/NO_RESPONSE was silently
+   flipped back to PENDING on the next fire — and the operator had no signal
+   it had happened. Now it skips and WARNs.
+   Same heal also hand-rolled its status_history append with a hardcoded
+   `"from": "LOSS"` — a FABRICATED prior state whenever the row was in any
+   other status, i.e. a corrupt audit trail written by the thing whose job is
+   keeping the audit trail. Now `core.record_transition`, which reads the
+   real prior status and no-ops when it already matches.
+
+16. THE WEEKLY JOB REVERTED A DAY OF INGEST (finding #24)
+   weekly.yml ran under `concurrency: hilmar-weekly`; daily.yml runs under
+   `hilmar-daily-fire`. DIFFERENT groups means no serialization, and both
+   jobs share one blob store. Weekly pulls state at the start of its run; if
+   the daily fire wrote new state in between, weekly's push then uploaded its
+   own stale snapshot over it — silent last-writer-wins, a whole day's ingest
+   gone with no error anywhere. Both now use `hilmar-daily-fire`.
+   Compounding it: the push step was NAMED "Push state back (weekly-sent
+   flag)" but ran a bare `push`, which uploads the ENTIRE state set including
+   tracking-data-v2.json — a file the weekly job never writes and has no
+   business uploading. And `reports/weekly-sent-{d}.flag` was never in
+   `state_paths()` at all, so the one file it meant to sync was the one file
+   it did not: weekly idempotency was machine-LOCAL, and a re-dispatch on a
+   fresh runner saw no flag and re-sent the exec summary to the full
+   distribution list.
+   Fixed on both sides — flag added to `state_paths()`, and `push(only=...)`
+   / `--only weekly-sent` so the job pushes its own flag and nothing else.
+
+17. THE DATE WINDOW WAS A HARDCODED LITERAL UNDER A TYPO'D KEY (finding #25)
+   `"data_range": {"start": "2026-04-01", "end": "2026-04-19"}`. Two defects
+   in one line. (a) The key is `date_range` — that is what gen_email,
+   gen_email_new, render.data_window, restructure_two_table and insights all
+   read — so the key was silently ABSENT and gen_email fell back to
+   `cfg["data_range"]["start"]`, printing the CONFIG's start date instead of
+   the data's. (b) Even a reader that found it got a hardcoded window three
+   months stale. Now `_computed_date_range(all_requests)`, computed from the
+   rows actually being written and bucketed by `core.et_date_of` so the
+   window agrees with the day tiles rather than describing a different clock.
+   (The src/hilmar tree's qc.py heals data_range→date_range; the scripts/
+   pipeline that actually runs in production has no such heal.)
+
+18. FOUR FIELDS PRODUCTION WRITES THAT THE SCHEMA NEVER DECLARED
+   Same finding, root cause: nothing compared schema.json to what ingest
+   writes, which is how `data_range` survived three months. Auditing the
+   whole contract found `pol`, `pod`, `free_time_requested` and —
+   importantly — `manual_locked`, the operator override flag that item 15
+   above is entirely about. The flag every heal must honour was invisible to
+   anything built off the schema. All four now declared, with descriptions
+   stating which is the raw parsed value vs the canonical one.
+   MIGRATION NOTE (CLAUDE.md rule 3): additive only. The request definition
+   does not set `additionalProperties`, so it was already permissive — these
+   rows validated before and validate now. No stored row changes, nothing to
+   rewrite, reversible by deleting the four property entries. Logged here.
+   The lasting fix is the comparison itself: two new tests read ingest's
+   `output` dict and its request-row literals FROM THE AST and assert every
+   key is declared. AST, not a substring scan — an earlier source-scraping
+   test in this same file failed because my own explanatory COMMENT matched
+   the string it was asserting absent. The next undeclared field, or the next
+   `data_range`, fails CI instead of shipping.
+
+Tests: tests/test_audit_batch5.py 18 -> 43 cases, tests/test_core_parity.py
++21 (same_port / port_terminal / canonical_port_key across both trees). The
+schema-conformance tests were mutation-checked — deleting `pol` and
+`manual_locked` from schema.json fails 3 tests; restoring them passes 43.
+Suite 2011 passed (1965 -> +46), coverage 91.27%, ruff clean on the CI-gated
+paths (scripts/ src/ tests/ deploy/).
+
+KNOWN, NOT FIXED: `plugin-build/build_plugin.py:70` has one ruff UP031.
+Pre-existing, and outside the paths test.yml lints — not a regression from
+this work, not silently fixed inside an unrelated commit.
+
+REMAINING BACKLOG: 3 findings — #13 merge_thread_dupes swallowing a distinct
+request when the equipment line falls outside the Outlook bodyPreview, #19
+weekly summary vs daily email crediting the same booking to different weeks
+(wants a shared `core.win_event_date(r)`), #21 same-ET-day blob backup
+overwritten by a recovery run (wants timestamped immutable snapshots,
+`overwrite=False`, and a `restore` command).
+
 ## 2026-07-27 — LLM layer: Opus 4.6 -> Claude Opus 5, + prompt-cache breakpoint
 
 Michael forwarded Anthropic's "prompt cache hit rate is low" notice (est. up

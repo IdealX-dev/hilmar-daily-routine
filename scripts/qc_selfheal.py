@@ -4462,17 +4462,26 @@ def phase_6_rules(log: Log, data: dict):
                 _row67 = _by_id67.get(_rid67)
                 if not _row67:
                     continue
-                _row67["status"] = "PENDING"
+                # An operator's verdict outranks an automatic heal. Every
+                # other re-decide path in this file skips manual_locked rows;
+                # this one did not, so a human correction could be silently
+                # undone on the next fire.
+                if _row67.get("manual_locked"):
+                    log.warn(f"QC-067: {_rid67} looks misfiled but is "
+                             f"manual_locked — leaving the operator's verdict "
+                             f"in place")
+                    continue
                 _row67["loss_reason"] = None
                 _row67["reason_detail"] = (
                     f"Awaiting OL quote — {_hrs67}h since Lonny's RFQ, still "
                     f"inside the {core.PENDING_OL_LOSS_HOURS}h response window")
-                _hist67 = _row67.setdefault("status_history", [])
-                _hist67.append({
-                    "from": "LOSS", "to": "PENDING",
-                    "at": datetime.now(timezone.utc).isoformat(),
-                    "reason": "QC-067: open RFQ was misfiled as NO_RESPONSE",
-                })
+                # record_transition, not a hand-rolled append: the old code
+                # hardcoded "from": "LOSS", which is a FABRICATED prior state
+                # whenever the row was in any other status. record_transition
+                # reads the real one, and no-ops if the status already matches.
+                core.record_transition(
+                    _row67, "PENDING",
+                    "QC-067: open RFQ was misfiled as NO_RESPONSE")
                 log.fix(f"QC-067: {_rid67} restored to PENDING OL — waiting "
                         f"{_hrs67}h, inside the response window (was filed "
                         f"LOSS/NO_RESPONSE)")

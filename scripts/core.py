@@ -657,6 +657,37 @@ def canonical_port_key(destination) -> str:
     return head or raw
 
 
+def port_terminal(destination) -> str:
+    """The terminal a destination names, or "" when it names only a city.
+
+    "Manila (North)" -> "north";  "Manila" -> "";  "HCMC (Cat Lai)" -> "cat lai"
+    """
+    m = re.match(r"^[^(]+\(\s*(.+?)\s*\)\s*$", (destination or "").strip())
+    return m.group(1).strip().lower() if m else ""
+
+
+def same_port(a, b) -> bool:
+    """True when two destinations can refer to the SAME physical call.
+
+    Same canonical city (`canonical_port_key`), AND — when BOTH sides name a
+    terminal — the same terminal. A terminal-less side matches either.
+
+    Exists because rate-response matching fell back to a bare substring test
+    ("manila" in "manila (north)"), which pooled Manila (North) and Manila
+    (South) as one candidate set. A reply on a thread titled "RE: Oakland to
+    Manila" could then write ol_rate, carrier_quoted, etd_offered and
+    vessel_voyage onto the WRONG terminal's row — reporting a South-terminal
+    rate to the client as the North lane's quote, while the correct request
+    stayed unquoted and aged out as NQ.
+    """
+    if canonical_port_key(a) != canonical_port_key(b):
+        return False
+    ta, tb = port_terminal(a), port_terminal(b)
+    if ta and tb:
+        return ta == tb
+    return True
+
+
 def et_date_of(ts) -> str | None:
     """THE canonical ET calendar date for a timestamp — the one clock every
     day bucket in this system runs on.

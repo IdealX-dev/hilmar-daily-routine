@@ -32,7 +32,11 @@ on:
           - full
 
 concurrency:
-  group: hilmar-weekly
+  # SAME group as daily.yml. These two jobs share one blob store: weekly pulls
+  # state at the start of its run, and if the daily fire wrote new state in
+  # between, weekly's push used to upload its stale snapshot over it — a silent
+  # last-writer-wins revert of a whole day's ingest. One group serializes them.
+  group: hilmar-daily-fire
   cancel-in-progress: false
 
 env:
@@ -140,4 +144,6 @@ jobs:
 
       - name: Push state back (weekly-sent flag)
         if: steps.gate.outputs.proceed == 'true' && env.SEND_TO == 'full'
-        run: python3 scripts/state_store.py push
+        # Weekly owns its OWN flag and nothing else. It never mutates
+        # tracking-data-v2.json, so it must not upload it.
+        run: python3 scripts/state_store.py push --only weekly-sent

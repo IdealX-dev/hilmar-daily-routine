@@ -45,6 +45,7 @@
         "etd_requested": {"type": ["string", "null"], "description": "Lonny's requested ETD (departure-side counterpart to eta_requested)."},
         "cutoff_requested": {"type": ["string", "null"]},
         "free_time": {"type": ["string", "null"]},
+        "free_time_requested": {"type": ["string", "null"], "description": "Free time Lonny ASKED FOR in the RFQ body. Distinct from free_time / origin_free_time / dest_free_time, which are what the carrier OFFERED. Written by ingest at row construction."},
         "demurrage_free": {"type": ["integer", "null"], "description": "Destination-side free time (days, integer). Parsed from booking body via int(...)."},
         "detention_free": {"type": ["integer", "null"], "description": "Origin-side free time (days, integer). Parsed from booking body via int(...)."},
         "lonny_notes": {"type": ["string", "null"]},
@@ -66,6 +67,10 @@
         "port_cutoff": {"type": ["string", "null"]},
         "origin_free_time": {"type": ["string", "null"]},
         "dest_free_time": {"type": ["string", "null"]},
+
+        "pol": {"type": ["string", "null"], "description": "Port of loading as NAMED IN THE EMAIL — the raw parsed value, not the canonical `origin`. Written by ingest at row construction, backfilled by QC's port heal. Placeholder-scrubbed alongside origin/destination."},
+        "pod": {"type": ["string", "null"], "description": "Port of discharge as NAMED IN THE EMAIL — the raw parsed value, not the canonical `destination`. Written by ingest at row construction, backfilled by QC's port heal. Placeholder-scrubbed alongside origin/destination."},
+        "manual_locked": {"type": ["boolean", "null"], "description": "TRUE when an operator correction set this row's fields. LOAD-BEARING: every re-decide and heal path must skip a locked row, so an automatic rule cannot silently overwrite a human verdict on the next fire. Set by ingest's operator-correction pass; read by drift_check and QC."},
 
         "turnaround_hours": {"type": ["number", "null"]},
         "turnaround_biz_hours": {"type": ["number", "null"]},

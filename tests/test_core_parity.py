@@ -246,3 +246,46 @@ def test_old_or_rule_is_gone_in_both():
     )
     assert scripts_core.decide_status(**stale_send).status != "WIN"
     assert hilmar_core.decide_status(**stale_send).status != "WIN"
+
+
+# ── port identity: canonical_port_key / port_terminal / same_port ─────────
+
+@pytest.mark.parametrize("a,b", [
+    # Same city, both name a terminal, terminals DIFFER → not the same call.
+    ("Manila (North)", "Manila (South)"),
+    ("HCMC (Cat Lai)", "HCMC (Cai Mep)"),
+    # Same city, both name the SAME terminal.
+    ("Manila (North)", "manila (north)"),
+    # One side terminal-less → matches either terminal.
+    ("Manila", "Manila (South)"),
+    ("Manila (North)", "Manila"),
+    # Aliased city names, no terminals.
+    ("Saigon", "Ho Chi Minh City"),
+    ("Pusan", "Busan"),
+    ("Ladkrabang", "Lat Krabang"),
+    # Deliberately NOT merged — distinct physical ports.
+    ("Bangkok", "Laem Chabang"),
+    ("Tokyo", "Yokohama"),
+    # Degenerate inputs.
+    ("", ""),
+    ("Manila", ""),
+])
+def test_same_port_parity(a, b):
+    """same_port decides which rate response lands on which request row.
+    scripts/ runs the fire; src/hilmar/ is what the suite covers. A drift
+    here writes the wrong carrier's rate onto a client-facing quote in
+    production while CI stays green — the exact PR #13 failure mode."""
+    x = scripts_core.same_port(a, b)
+    y = hilmar_core.same_port(a, b)
+    assert x == y, f"same_port drift: scripts={x} hilmar={y} for {a!r}/{b!r}"
+
+
+@pytest.mark.parametrize("dest", [
+    "Manila (North)", "Manila", "HCMC (Cat Lai)", "Vietnam (Cat Lai)",
+    "Lat Krabang", "Yokohama ", "", None, "Hong Kong (Kwai Tsing)",
+])
+def test_port_key_and_terminal_parity(dest):
+    assert scripts_core.canonical_port_key(dest) == hilmar_core.canonical_port_key(dest), \
+        f"canonical_port_key drift for {dest!r}"
+    assert scripts_core.port_terminal(dest) == hilmar_core.port_terminal(dest), \
+        f"port_terminal drift for {dest!r}"

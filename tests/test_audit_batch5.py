@@ -287,3 +287,250 @@ def test_the_source_defect_qc075_guards_is_fixed():
     assert agg["not_quoted"] == 1 and agg["quoted_lost"] == 0
     assert sum(m["not_quoted"] for m in regions.values()) == 1
     assert sum(m["quoted_lost"] for m in regions.values()) == 0
+
+
+# ═══ second group: matching, idempotency, and the state-push blast radius ═══
+
+# ── [14] a rate must not land on the wrong terminal ─────────────────────────
+
+@pytest.mark.parametrize("a,b,compatible", [
+    ("Manila (North)", "Manila (South)", False),   # THE defect
+    ("Manila", "Manila (North)", True),            # bare city may match either
+    ("Manila (North)", "Manila (North)", True),
+    ("HCMC (Cat Lai)", "Cat Lai", True),           # alias, no terminal on one side
+    ("HCMC", "Manila", False),
+    ("Yokohama ", "Yokohama", True),               # trailing space
+])
+def test_same_port_requires_terminal_equality_when_both_name_one(a, b, compatible):
+    assert core.same_port(a, b) is compatible
+
+
+def test_port_terminal_extracts_only_a_parenthetical():
+    assert core.port_terminal("Manila (North)") == "north"
+    assert core.port_terminal("Manila") == ""
+    assert core.port_terminal(None) == ""
+
+
+def test_a_bare_city_rate_does_not_overwrite_a_different_terminal():
+    """OL replies on "RE: Oakland to Manila (South)" while an open North RFQ
+    exists. The South rate must not be written onto the North row — the client
+    would be quoted the wrong terminal's price and the North request would
+    stay unquoted and age out as NQ."""
+    north = {"request_id": "r-north", "destination": "Manila (North)",
+             "status": "PENDING", "quoted": False,
+             "request_timestamp": "2026-07-20T15:00:00Z"}
+    ingest = _load(SCRIPTS / "ingest.py", "ingest_batch5")
+    ingest.apply_rate_responses([north], [{
+        "destination": "Manila (South)", "sent": "2026-07-20T18:00:00Z",
+        "subject": "RE: Oakland to Manila (South)", "ol_rate": "3450",
+        "carrier": "ONE",
+    }])
+    assert north.get("quoted") is not True, "a South rate landed on the North row"
+    assert not north.get("ol_rate")
+
+
+# ── [23] QC-067's heal must respect an operator's verdict ───────────────────
+
+def _misfiled_open_rfq(**kw):
+    """An unquoted row filed LOSS/NO_RESPONSE while still inside the PENDING-OL
+    window — the shape QC-067 restores."""
+    return {"request_id": "r-67", "status": "LOSS", "quoted": False,
+            "loss_reason": "NO_RESPONSE", "destination": "HCMC",
+            "containers": "1x40HC",
+            "request_timestamp": core.now_utc().isoformat(), **kw}
+
+
+def test_qc067_heal_restores_an_open_rfq():
+    """Baseline: the heal still does its job."""
+    row = _misfiled_open_rfq()
+    qc.phase_6_rules(qc.Log(), {"requests": [row], "summary": {},
+                                "lane_summary": {}, "carrier_summary": {}})
+    assert row["status"] == "PENDING"
+    assert row["loss_reason"] is None
+
+
+def test_qc067_heal_skips_a_manual_locked_row():
+    """An operator's verdict outranks an automatic heal. Every other
+    re-decide path skips manual_locked; this one did not, so a human
+    correction was silently undone on the next fire."""
+    row = _misfiled_open_rfq(manual_locked=True)
+    qc.phase_6_rules(qc.Log(), {"requests": [row], "summary": {},
+                                "lane_summary": {}, "carrier_summary": {}})
+    assert row["status"] == "LOSS", "the operator's verdict was overwritten"
+    assert row["loss_reason"] == "NO_RESPONSE"
+
+
+def test_qc067_heal_records_the_real_prior_status():
+    """The hand-rolled append hardcoded `"from": "LOSS"` — a FABRICATED prior
+    state whenever the row was in any other status. record_transition reads
+    the real one."""
+    row = _misfiled_open_rfq(status="NQ")
+    qc.phase_6_rules(qc.Log(), {"requests": [row], "summary": {},
+                                "lane_summary": {}, "carrier_summary": {}})
+    hist = row.get("status_history") or []
+    if hist and hist[-1].get("to") == "PENDING":
+        assert hist[-1]["from"] == "NQ", "recorded a fabricated prior status"
+
+
+# ── [24] the weekly job must not revert the daily fire ──────────────────────
+
+def test_weekly_and_daily_share_one_concurrency_group():
+    """They share one blob store. Weekly pulls state at the start of its run;
+    if the daily fire wrote new state in between, weekly's push uploaded its
+    stale snapshot over it — a silent revert of a whole day's ingest."""
+    daily = (ROOT / ".github/workflows/daily.yml").read_text(encoding="utf-8")
+    weekly = (ROOT / ".github/workflows/weekly.yml").read_text(encoding="utf-8")
+
+    def _group(y):
+        for line in y.splitlines():
+            if line.strip().startswith("group:"):
+                return line.split("group:", 1)[1].strip()
+        return None
+
+    assert _group(daily) == _group(weekly) is not None
+
+
+def test_weekly_pushes_only_its_own_flag():
+    weekly = (ROOT / ".github/workflows/weekly.yml").read_text(encoding="utf-8")
+    assert "state_store.py push --only weekly-sent" in weekly
+
+
+def test_the_weekly_flag_is_actually_syncable():
+    """The push step was NAMED "Push state back (weekly-sent flag)" but that
+    flag was never in state_paths() — so it pushed everything EXCEPT the one
+    thing it meant to, and weekly idempotency was machine-local."""
+    ss = _load(SCRIPTS / "state_store.py", "state_store_batch5")
+    paths = ss.state_paths("2026-07-27")
+    assert "reports/weekly-sent-2026-07-27.flag" in paths
+
+
+def test_push_only_narrows_the_blast_radius(tmp_path):
+    ss = _load(SCRIPTS / "state_store.py", "state_store_batch5b")
+    (tmp_path / "tracking-data-v2.json").write_text('{"requests": []}', encoding="utf-8")
+    (tmp_path / "reports").mkdir()
+    flag = f"reports/weekly-sent-{ss._today_et()}.flag"
+    (tmp_path / flag).write_text("sent", encoding="utf-8")
+
+    class _CC:
+        def __init__(self): self.store = {}
+        def get_blob_client(self, name):
+            outer = self
+            class _BC:
+                def exists(self): return name in outer.store
+                def upload_blob(self, data, overwrite=False): outer.store[name] = data
+            return _BC()
+
+    cc = _CC()
+    pushed = ss.push(tmp_path, container=cc, only=["weekly-sent"])
+    assert pushed == [flag]
+    assert "tracking-data-v2.json" not in cc.store, (
+        "weekly uploaded state it does not own")
+
+
+# ── [25] the date window must be real, and under the key readers use ────────
+
+def _ingest_output_keys() -> set[str]:
+    """The top-level keys of the dict ingest.main() writes, read from the AST.
+
+    AST, not a substring scan of the source: a `"data_range"` appearing in a
+    COMMENT (this fix has several) would satisfy or defeat a text match by
+    accident. Only the real dict literal counts.
+    """
+    import ast
+    tree = ast.parse((SCRIPTS / "ingest.py").read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree)
+              if isinstance(n, ast.FunctionDef) and n.name == "main")
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Dict)
+                and any(getattr(t, "id", None) == "output" for t in node.targets)):
+            return {k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    raise AssertionError("ingest.main() no longer assigns an `output` dict")
+
+
+def test_ingest_writes_the_key_readers_actually_read():
+    """Readers ask for `date_range`; ingest wrote `data_range`, so the key was
+    silently absent and gen_email fell back to the CONFIG's start date."""
+    keys = _ingest_output_keys()
+    assert "date_range" in keys, "the key every reader asks for is not written"
+    assert "data_range" not in keys, "the typo'd key is back"
+
+
+def test_every_key_ingest_writes_is_declared_in_the_schema():
+    """schema.json is the contract; ingest is the only writer of the top
+    level. `data_range` survived three months because nothing compared the
+    two — this is that comparison."""
+    schema = json.loads((ROOT / "schema.json").read_text(encoding="utf-8"))
+    declared = set(schema["properties"])
+    undeclared = _ingest_output_keys() - declared
+    assert not undeclared, f"ingest writes undeclared top-level keys: {sorted(undeclared)}"
+
+
+def _request_row_keys() -> set[str]:
+    """Keys of the two request-row dict literals in ingest.py, via the AST.
+
+    Both literals are the argument of a `requests.append(...)` /
+    `standalones.append(...)` call, so they are found by shape rather than by
+    line number — adding a row builder does not silently drop it from this
+    check.
+    """
+    import ast
+    tree = ast.parse((SCRIPTS / "ingest.py").read_text(encoding="utf-8"))
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "append"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Dict)):
+            continue
+        keys = {k.value for k in node.args[0].keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if "request_id" in keys:      # a request row, not a status_history entry
+            out |= keys
+    assert out, "no request-row literal found in ingest.py"
+    return out
+
+
+def test_every_request_field_ingest_writes_is_declared_in_the_schema():
+    """A field the pipeline writes but the schema never declares is invisible
+    to anything built off the contract. `manual_locked` — the operator's
+    override flag, which every heal must honour — was one of them, alongside
+    pol, pod and free_time_requested."""
+    schema = json.loads((ROOT / "schema.json").read_text(encoding="utf-8"))
+    declared = set(schema["definitions"]["request"]["properties"])
+    undeclared = _request_row_keys() - declared
+    assert not undeclared, f"undeclared request fields: {sorted(undeclared)}"
+
+
+@pytest.mark.parametrize("field", ["manual_locked", "pol", "pod",
+                                   "free_time_requested"])
+def test_the_four_previously_undeclared_fields_are_declared(field):
+    """Named individually so removing one from the schema fails loudly rather
+    than shrinking a set assertion."""
+    schema = json.loads((ROOT / "schema.json").read_text(encoding="utf-8"))
+    assert field in schema["definitions"]["request"]["properties"]
+
+
+def test_manual_locked_is_written_where_the_heals_expect_it():
+    """The schema entry is only worth something if the writer still sets it —
+    ingest's operator-correction pass is the sole producer."""
+    src = (SCRIPTS / "ingest.py").read_text(encoding="utf-8")
+    assert 'row["manual_locked"] = True' in src
+
+
+def test_computed_date_range_reflects_the_rows():
+    ingest = _load(SCRIPTS / "ingest.py", "ingest_batch5c")
+    rng = ingest._computed_date_range([
+        {"request_timestamp": "2026-07-25T00:30:00Z"},   # Fri 24th in ET
+        {"request_timestamp": "2026-07-20T15:00:00Z"},
+        {"request_date": "2026-07-27"},
+    ])
+    assert rng == {"start": "2026-07-20", "end": "2026-07-27"}
+
+
+def test_computed_date_range_handles_an_empty_build():
+    ingest = _load(SCRIPTS / "ingest.py", "ingest_batch5d")
+    rng = ingest._computed_date_range([])
+    assert rng["start"] == rng["end"] and len(rng["start"]) == 10

@@ -134,6 +134,26 @@ def clean_origin(subject: str, default: str = "Oakland") -> str:
     return origin or default
 
 
+def _computed_date_range(rows) -> dict:
+    """The actual span of the rows being written, as {"start", "end"}.
+
+    Dates are the ET calendar dates the rest of the system buckets by
+    (core.et_date_of), so the window agrees with the day tiles rather than
+    describing a different clock. Falls back to today for an empty build —
+    a file with no rows still has a window, it is just an empty one.
+    """
+    dates = sorted(
+        d for d in (
+            C.et_date_of(r.get("request_timestamp")) or r.get("request_date")
+            for r in (rows or [])
+        ) if d
+    )
+    if not dates:
+        today = C.et_date_of(C.now_utc())
+        return {"start": today, "end": today}
+    return {"start": dates[0], "end": dates[-1]}
+
+
 def _pick_best_request(pool, bk_ts, bk_carrier, bk_ccount):
     """Pick the best-evidenced request for a booking from `pool` → (row, score).
 
@@ -1029,15 +1049,33 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
 
         # Primary: exact canonical match.
         candidates = by_lane.get(canonical_lane_key(dest), [])
-        # Fallback: substring match — handles "HCMC" matching "HCMC (Cat Lai)"
-        # / "HCMC (Cai Mep)", "Yokohama " (trailing space) etc. Audit 2026-04-30.
+        # Fallback: still widen, but on PORT IDENTITY rather than a bare
+        # substring test. `dest_canon in k or k in dest_canon` pooled Manila
+        # (North) with Manila (South) — one is a substring of neither, but both
+        # canonicalise to "manila" — so a reply on a thread titled "RE: Oakland
+        # to Manila" could write ol_rate / carrier_quoted / etd_offered /
+        # vessel_voyage onto the WRONG terminal's row. The client then saw a
+        # South-terminal rate reported as the North lane's quote, while the
+        # correct request stayed unquoted and aged out as NQ.
+        # core.same_port requires terminal equality when BOTH sides name one.
         if not candidates:
-            dest_canon = canonical_lane_key(dest).strip()
             for k, rs in by_lane.items():
                 if k == "unknown":
                     continue
-                if dest_canon in k or k in dest_canon:
-                    candidates.extend(rs)
+                candidates.extend(r for r in rs
+                                  if C.same_port(dest, r.get("destination")))
+        else:
+            # Even an exact key hit can span terminals now that
+            # canonical_port_key collapses "Manila (North)"/"Manila (South)"
+            # to one key. Narrow to the compatible ones — UNCONDITIONALLY.
+            # An earlier version kept the unfiltered list when nothing was
+            # compatible, which defeated the whole check: a Manila (South)
+            # reply still landed on the Manila (North) row. If no candidate
+            # is compatible then there is no match, and leaving the row
+            # unquoted is the correct outcome — a wrong rate on the client's
+            # quote is worse than a missing one.
+            candidates = [r for r in candidates
+                          if C.same_port(dest, r.get("destination"))]
 
         # 2026-05-19 PM (Michael "you have to check each email header as
         # often lonny sends same rate requests/routes for the same moves he
@@ -1708,7 +1746,20 @@ def main() -> int:
     output = {
         "version": "6.1-plan-a-bodies",
         "generated_at": C.now_utc().isoformat(),
-        "data_range": {"start": "2026-04-01", "end": "2026-04-19"},
+        # KEY IS `date_range`, NOT `data_range`, and the window is COMPUTED.
+        #
+        # Two defects in one line. (a) Every reader — gen_email, gen_email_new,
+        # render.data_window, restructure_two_table, insights — asks for
+        # `date_range`; ingest wrote `data_range`, so the key was silently
+        # absent and gen_email fell back to `cfg["data_range"]["start"]`,
+        # printing the CONFIG's start date instead of the data's. (The hilmar
+        # tree's qc.py:199 heals data_range->date_range, but the scripts/
+        # pipeline that actually runs in production has no such heal.)
+        # (b) The value was a hardcoded 2026-04-01..2026-04-19 literal, three
+        # months stale, so even a reader that found it got the wrong window.
+        # Computed from the rows actually in the file; dict shape, which
+        # render._data_window and the schema's oneOf both accept.
+        "date_range": _computed_date_range(all_requests),
         "requests": all_requests,
         "summary": summary,
         "lanes": list(lanes.values()),

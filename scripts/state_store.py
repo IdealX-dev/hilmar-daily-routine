@@ -102,8 +102,15 @@ def state_paths(today: str | None = None) -> list[str]:
         # client-sent = the client-facing email's idempotency flag
         # (outlook_send --flag-name client-sent); it syncs like the staff
         # flags so cross-machine dedupe holds for that send shape too.
+        # weekly-sent added 2026-07-27: weekly.yml's push step was already
+        # NAMED "Push state back (weekly-sent flag)", but that flag was never
+        # in this list — so the step pushed the entire state set (including
+        # tracking-data-v2.json, which weekly never writes) and never the one
+        # flag it meant to. Its idempotency was therefore machine-local: a
+        # re-dispatch on a fresh runner saw no flag and re-sent the weekly
+        # exec summary to the full distribution.
         for p in (f"reports/sent-{d}.flag", f"reports/improvements-sent-{d}.flag",
-                  f"reports/client-sent-{d}.flag")
+                  f"reports/client-sent-{d}.flag", f"reports/weekly-sent-{d}.flag")
     ]
 
 ENV_CONN = "AZURE_STORAGE_CONNECTION_STRING"
@@ -175,13 +182,25 @@ def pull(root: Path | None = None, *, container=None) -> list[str]:
     return pulled
 
 
-def push(root: Path | None = None, *, container=None) -> list[str]:
+def push(root: Path | None = None, *, container=None,
+         only: list[str] | None = None) -> list[str]:
     """Upload each locally-present state file to the store, overwriting the
-    prior version. Returns the list of relative paths actually pushed."""
+    prior version. Returns the list of relative paths actually pushed.
+
+    `only` restricts the push to paths whose relative name contains one of the
+    given substrings. This exists because the WEEKLY workflow used to push the
+    FULL state set: it pulls state at the start of its run, and if the daily
+    fire wrote new state in between, the weekly push then uploaded its own
+    stale snapshot over it — a silent last-writer-wins revert of a whole day's
+    ingest. The weekly job never mutates tracking-data-v2.json and has no
+    business uploading it; it now pushes only its own flag.
+    """
     root = root or ROOT
     cc = container or _container_client()
     pushed: list[str] = []
     for rel in state_paths():
+        if only and not any(frag in rel for frag in only):
+            continue
         src = root / rel
         if not src.exists():
             continue
@@ -288,6 +307,11 @@ def latest_backup_age_days(*, container=None) -> float | None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=["pull", "push", "backup"])
+    ap.add_argument("--only", default=None,
+                    help="Comma-separated path fragments; push ONLY matching "
+                         "state files. Use from jobs that must not overwrite "
+                         "state they did not produce (e.g. the weekly "
+                         "summary, which owns its flag and nothing else).")
     args = ap.parse_args(argv)
 
     if not is_configured():
@@ -300,7 +324,9 @@ def main(argv: list[str] | None = None) -> int:
             written = backup()
             print(f"state_store: backup {'-> ' + written if written else 'skipped (no data file)'}")
             return 0
-        done = pull() if args.cmd == "pull" else push()
+        _only = ([f.strip() for f in args.only.split(",") if f.strip()]
+                 if args.only else None)
+        done = pull() if args.cmd == "pull" else push(only=_only)
     except StateStoreError as e:
         print(f"state_store: {e}", file=sys.stderr)
         return 1
