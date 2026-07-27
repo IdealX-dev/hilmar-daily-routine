@@ -1559,16 +1559,18 @@ def qc069_duplicate_shipment_rows(rows):
     def _aliases(r):
         """Every name this destination can legitimately go by.
 
-        core.canonical_lane_key is only .strip().lower(), so "HCMC (Cat Lai)"
-        and "Cat Lai" are different keys — which is exactly how OL's booking
-        confirmation ("Cat Lai") fails to link to Lonny's RFQ ("HCMC") and a
-        second row gets created. Match on the alias SET so the pair is caught
-        regardless of which name each side used.
+        Now anchored on core.canonical_port_key, the SAME key ingest matches
+        bookings with, so detection and prevention cannot disagree. The
+        original version only split a parenthetical ("HCMC (Cat Lai)" →
+        {hcmc, cat lai}), which meant the exact pair this check was written
+        for — one row saying "HCMC" and the other saying "Cat Lai", neither
+        with parens — produced disjoint sets and slipped through. Verified
+        2026-07-26: qc069 returned [] on that pair.
         """
         d = (r.get("destination") or "").strip().lower()
-        if not d:
+        if not d or d == "unknown":
             return set()
-        out = {d}
+        out = {d, core.canonical_port_key(d)}
         m = re.match(r"^([^(]+?)\s*\((.+)\)\s*$", d)
         if m:
             out.add(m.group(1).strip())
@@ -1576,7 +1578,21 @@ def qc069_duplicate_shipment_rows(rows):
         return {a for a in out if a and a != "unknown"}
 
     def _equip(r):
-        return (r.get("containers") or "").strip().lower()
+        """Container spec as a COMPARABLE value, not a raw string.
+
+        Lonny writes "1x40HC" and OL's booking subject says "1X40'HC"; case-
+        folding alone leaves those different ("1x40hc" vs "1x40'hc"), so the
+        second half of the shadowed-row check never fired on the real pair.
+        Compare the parsed (count, TEU) instead — that is what double-counts
+        in the rollups, and it is spelling-proof. Falls back to the folded
+        string when nothing parses, so unparseable-but-identical specs still
+        match rather than silently comparing (0, 0) to (0, 0).
+        """
+        raw = (r.get("containers") or "").strip().lower()
+        if not raw:
+            return None
+        count, teu = core.parse_teu(raw)
+        return (count, teu) if teu else raw
 
     wins = [r for r in rows or [] if (r.get("status") or "").upper() == "WIN"]
     pends = [r for r in rows or [] if (r.get("status") or "").upper() == "PENDING"]
@@ -1593,8 +1609,10 @@ def qc069_duplicate_shipment_rows(rows):
                                   or w.get("request_date"))
             if p_at and w_at and w_at < p_at:
                 continue
+            _eq_label = (f"{p_eq[0]}x/{p_eq[1]}TEU" if isinstance(p_eq, tuple)
+                         else str(p_eq))
             out.append(("open_row_shadowed_by_win",
-                        sorted(p_alias)[0] + "|" + p_eq,
+                        sorted(p_alias)[0] + "|" + _eq_label,
                         sorted({pr.get("request_id", "?"), w.get("request_id", "?")})))
             break
     return out
@@ -1610,6 +1628,57 @@ _CONTAINER_TOKEN_RX = re.compile(
     r"|\b(?:container|containers|reefer|reefers|teu|fcl)\b",
     re.IGNORECASE,
 )
+
+
+def qc073_standalone_booking_hygiene(rows):
+    """QC-073: fabricated or degenerate values on a standalone booking row.
+
+    A `stand_<mdolx>` row is what `link_bookings_to_requests` writes when it
+    cannot find the RFQ a booking belongs to. It is a synthesised row — every
+    field on it is inferred from one subject line — so it is the single most
+    likely place for invented data to enter the dataset. Michael's reported
+    defect #3 was exactly this: rows with a degenerate lane and entirely blank
+    carrier/vessel/dates sitting in the report as real shipments.
+
+    Three shapes:
+
+      (a) DEGENERATE LANE (**ERROR**) — origin and destination resolve to the
+          same port, so "Oakland → Oakland" renders as a real trade lane in
+          Lane Performance. Now prevented at the source (the constructor
+          treats it as unresolved), so reaching here is a regression.
+      (b) FABRICATED RATE RESPONSE (**ERROR**) — `response_timestamp` set on a
+          row with no `ol_rate`. A booking confirmation is not a rate quote;
+          writing the booking time here makes the row claim an OL response
+          that never happened and corrupts every turnaround metric it feeds.
+      (c) UNEVIDENCED WIN (**WARN**) — a standalone carrying no `carrier_won`.
+          Not corruption, but it IS a win nobody can attribute, and the
+          operator needs the list to go find the thread.
+
+    Detect-only. These rows are real bookings; the fix is to link them to
+    their request or correct the source subject, and both need human eyes.
+
+    Returns [(request_id, severity, detail), ...] with severity
+    "error" or "warn".
+    """
+    out = []
+    for r in rows or []:
+        rid = str(r.get("request_id", "") or "")
+        origin, dest = r.get("origin"), r.get("destination")
+        if (origin and dest and str(dest).strip().lower() != "unknown"
+                and core.canonical_port_key(origin) == core.canonical_port_key(dest)):
+            out.append((rid or "?", "error",
+                        f"degenerate lane {origin} → {dest} — origin and "
+                        f"destination are the same port"))
+        if (rid.startswith("stand_") and r.get("response_timestamp")
+                and not r.get("ol_rate")):
+            out.append((rid, "error",
+                        f"response_timestamp={r['response_timestamp']} with no "
+                        f"ol_rate — a booking confirmation is not a rate quote"))
+        if rid.startswith("stand_") and not r.get("carrier_won"):
+            out.append((rid, "warn",
+                        "standalone booking WIN with no carrier_won — "
+                        "unattributable win, find the thread"))
+    return out
 
 
 def qc071_request_date_clock(rows):
@@ -4438,6 +4507,26 @@ def phase_6_rules(log: Log, data: dict):
             log.ok("QC-072: status_history agrees with status on every row")
     except Exception as _e:
         log.warn("QC-072: check failed with exception: " + str(_e))
+
+    # QC-073: STANDALONE BOOKING ROW HYGIENE. A stand_<mdolx> row is synthesised
+    # from ONE subject line when a booking can't be linked to its RFQ, so it is
+    # where invented data most easily enters the dataset — Michael's reported
+    # defect #3 (degenerate lanes, blank carrier/vessel/dates shown as real
+    # shipments). Degenerate lanes and fabricated rate-response timestamps are
+    # ERRORs; an unattributable win is a WARN with the list to chase.
+    try:
+        _sb73 = qc073_standalone_booking_hygiene(requests)
+        if _sb73:
+            for _rid73, _sev73, _detail73 in _sb73:
+                if _sev73 == "error":
+                    log.error(f"QC-073: request {_rid73} — {_detail73}")
+                else:
+                    log.warn(f"QC-073: request {_rid73} — {_detail73}")
+        else:
+            log.ok("QC-073: standalone booking rows clean "
+                   "(no degenerate lanes, no fabricated rate responses)")
+    except Exception as _e:
+        log.warn("QC-073: check failed with exception: " + str(_e))
 
     # QC-065: CLIENT-REPORT INVARIANTS. The client-facing daily email
     # (gen_client_email.py → reports/client-email-body.html) goes to THE
