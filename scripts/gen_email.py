@@ -302,7 +302,7 @@ def _carrier_rows(data):
         elif st == "PENDING":
             b["pending"] += 1
             b["teu_pending"] += teu
-        elif st == "LOSS" and (r.get("loss_reason") or "") != "NO_RESPONSE":
+        elif st == "LOSS" and not core.is_not_quoted(r):
             b["ql"] += 1
             b["teu_lost"] += teu
     rows = []
@@ -367,6 +367,19 @@ def _winning_lane_rows(data):
 NQ_DISPLAY_WINDOW_DAYS = 14  # Hide stale NQ rows from the listing (still counted in aggregates)
 
 
+# ONE definition of "Not Quoted", shared with core.aggregate_summary and
+# core.aggregate_trade_regions: core.is_not_quoted(r) — a LOSS that was never
+# quoted, whatever the reason.
+#
+# This file used to test `loss_reason == "NO_RESPONSE"` instead, which is a
+# DIFFERENT set: RESPONSE_NO_RATE (OL acknowledged the RFQ but sent no rate)
+# is quoted=False, so core counted it NQ while these three call sites counted
+# it Q&L. One row then split across five contradicting numbers in the SAME
+# email — "Not Quoted: 1" in the KPI tile beside "NQ 0 / Q&L 1" in the 8-week
+# rollup and in Volume by Trade Region, an NQ detail section rendering zero
+# rows under a tile claiming one, and a carrier charged a Q&L loss while
+# showing 0 quotes (win-rate denominator 0). loss_reason is now purely the
+# WHY column; it never decides the bucket.
 def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
     """Return ALL Not-Quoted rows, filtered to the recent display window.
 
@@ -387,7 +400,7 @@ def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
         cutoff_iso = (datetime.now(timezone.utc).date() - timedelta(days=cutoff_days)).isoformat()
     rows = []
     for r in data.get("requests", []):
-        if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE":
+        if core.is_not_quoted(r):
             if cutoff_iso is not None:
                 req_date = r.get("request_date") or r.get("date") or ""
                 if req_date < cutoff_iso:
@@ -401,8 +414,7 @@ def _not_quoted_aggregate(data):
     """ALL Not-Quoted rows regardless of age — for tally / TEU / lane stats
     that should reflect total Hilmar volume for rate negotiation depth.
     """
-    return [r for r in data.get("requests", [])
-            if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE"]
+    return [r for r in data.get("requests", []) if core.is_not_quoted(r)]
 
 
 def _pending_rows(data):

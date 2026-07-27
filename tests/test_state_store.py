@@ -7,6 +7,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -79,21 +81,23 @@ def test_pull_skips_missing_blobs_first_run(tmp_path):
 def test_round_trip_push_then_pull(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
-    (src / "tracking-data-v2.json").write_text("DATA", encoding="utf-8")
+    # Valid tracking JSON — push() now refuses to publish a file that
+    # does not parse, so a placeholder string can no longer stand in.
+    (src / "tracking-data-v2.json").write_text('{"requests": ["DATA"]}', encoding="utf-8")
     cc = _FakeContainer()
     ss.push(src, container=cc)
 
     dst = tmp_path / "dst"
     dst.mkdir()
     ss.pull(dst, container=cc)
-    assert (dst / "tracking-data-v2.json").read_text(encoding="utf-8") == "DATA"
+    assert (dst / "tracking-data-v2.json").read_text(encoding="utf-8") == '{"requests": ["DATA"]}'
 
 
 def test_push_overwrites_existing_blob(tmp_path):
-    (tmp_path / "tracking-data-v2.json").write_text("v2", encoding="utf-8")
-    cc = _FakeContainer({"tracking-data-v2.json": b"v1"})
+    (tmp_path / "tracking-data-v2.json").write_text('{"requests": [2]}', encoding="utf-8")
+    cc = _FakeContainer({"tracking-data-v2.json": b'{"requests": [1]}'})
     ss.push(tmp_path, container=cc)
-    assert cc.store["tracking-data-v2.json"] == b"v2"
+    assert cc.store["tracking-data-v2.json"] == b'{"requests": [2]}'
 
 
 def test_main_is_noop_when_unconfigured(monkeypatch, capsys):
@@ -221,3 +225,42 @@ def test_quote_history_db_rides_the_state_sync():
     # runner and the history silently never accumulates.
     import state_store
     assert "data/quote-history.db" in state_store.STATE_FILES
+
+
+# ── push() refuses to publish a corrupt tracking file ───────────────────────
+#
+# The daily workflow pushes under `if: always()`, so it runs even when the
+# pipeline died partway through. Before this guard a truncated
+# tracking-data-v2.json was uploaded straight over the last good blob — and
+# the backup could not help, because it snapshots the same corrupt file.
+
+@pytest.mark.parametrize("body,why", [
+    ('{"requests": [1], ', "truncated mid-JSON — the crash shape"),
+    ("", "empty file"),
+    ("not json at all", "not JSON"),
+    ('{"summary": {}}', "parses, but carries no requests list"),
+    ('[1, 2, 3]', "top level is a list, not the tracking object"),
+])
+def test_push_refuses_a_corrupt_tracking_file(tmp_path, body, why):
+    (tmp_path / "tracking-data-v2.json").write_text(body, encoding="utf-8")
+    cc = _FakeContainer({"tracking-data-v2.json": b'{"requests": [1]}'})
+    with pytest.raises(RuntimeError, match="REFUSING to push"):
+        ss.push(tmp_path, container=cc)
+    # The good blob is untouched — that is the whole point.
+    assert cc.store["tracking-data-v2.json"] == b'{"requests": [1]}', why
+
+
+def test_push_still_publishes_a_valid_tracking_file(tmp_path):
+    """The guard must not become a blanket refusal."""
+    (tmp_path / "tracking-data-v2.json").write_text('{"requests": []}', encoding="utf-8")
+    cc = _FakeContainer()
+    assert "tracking-data-v2.json" in ss.push(tmp_path, container=cc)
+
+
+def test_other_state_files_are_not_json_gated(tmp_path):
+    """Only the tracking file is JSON. The stage cache is plain text and must
+    keep syncing."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "stage_emails.txt").write_text("not json", encoding="utf-8")
+    cc = _FakeContainer()
+    assert "scripts/stage_emails.txt" in ss.push(tmp_path, container=cc)

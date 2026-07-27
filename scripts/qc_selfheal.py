@@ -830,10 +830,19 @@ def phase_3_entries(log: Log, data: dict):
         for _pf in _PLACEHOLDER_FIELDS:
             if _is_placeholder(r.get(_pf)):
                 _bad = r.get(_pf)
-                r[_pf] = None
+                # POP, don't set to None. Setting the key to None left the
+                # field PRESENT-but-null, so every downstream
+                # `r.get("origin", "Oakland")` default was bypassed — `.get`
+                # only substitutes when the key is ABSENT — and the value
+                # rendered as the literal string "None". The client PDF's Lane
+                # Performance table shipped a row labelled "None → Tokyo",
+                # strictly worse than the "Unknown → Tokyo" this heal was
+                # replacing, and gen_client_email's own
+                # f"{r.get('origin','?')} → ..." fallback printed the same.
+                r.pop(_pf, None)
                 log.fix(f"{r.get('request_id') or rid_label}: cleaned poisoned "
-                        f"placeholder {_pf}={_bad!r} → None (garbage literal, "
-                        f"pre lane-derivation)")
+                        f"placeholder {_pf}={_bad!r} → removed (garbage "
+                        f"literal, pre lane-derivation)")
         # Hygiene healers — run on every record regardless of status/lock.
         _heal_containers(log, rid_label, r, bodies_idx)
         _heal_missing_rate(log, rid_label, r, bodies_idx)
@@ -4837,6 +4846,24 @@ def _per_carrier_breakdown(requests):
 
 def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
     log.section("PHASE 7: PERSIST")
+
+    # RECOMPUTE THE AGGREGATES BEFORE PERSISTING THEM.
+    #
+    # phase_5 builds summary / lane_summary / carrier_summary, then phase_6
+    # runs the MUTATING heals — QC-064 nulls a leaked responder mailbox out of
+    # carrier_quoted, QC-067 restores a misfiled row to PENDING, QC-056
+    # backfills a carrier. Persisting phase_5's output after phase_6 shipped a
+    # file whose aggregates contradicted its own rows: the audit read clean
+    # because the row WAS fixed, while carrier_summary still keyed a carrier
+    # named "MBD_OceanExport@ol-usa.com" and the client PDF printed it. Same
+    # mechanism put a QC-067-restored row in the dashboard's not_quoted KPI
+    # while the row list showed it PENDING.
+    #
+    # phase_5_summaries is a pure recompute from `data["requests"]`, so
+    # running it a second time here is cheap and idempotent — it just makes
+    # the stored aggregates describe the stored rows.
+    phase_5_summaries(log, data)
+
     data["qc"] = {
         "last_run": core.now_utc().isoformat(),
         "fixes_applied": len(log.fixes),
@@ -4995,6 +5022,14 @@ def main() -> int:
     print(f"  Carrier coverage: WIN {cc.get('win_with_carrier')}/{cc.get('win_total')} ({cc.get('win_coverage_pct')}%) | Q&L {cc.get('ql_with_carrier')}/{cc.get('ql_total')} ({cc.get('ql_coverage_pct')}%)")
     tr = result.get("trade_region_reconciliation", {})
     print(f"  Trade region reconciled: {tr.get('reconciled')}")
+    # A FALSE here means the trade-region rollup disagrees with summary — the
+    # two halves of the same email reporting different counts. It was only
+    # ever printed to stdout, so every divergence shipped silently. QC-075
+    # gives it teeth.
+    if tr and tr.get("reconciled") is False:
+        log.error("QC-075: trade-region rollup does not reconcile to summary — "
+                  f"{tr.get('error') or tr}")
+        result["errors"] = len(log.errors)
 
     # CLAUDE.md rule #2 hard gate (POST-PATCH only; pre-patch is advisory).
     # Two distinct QC-039 failure modes, deliberately handled differently:

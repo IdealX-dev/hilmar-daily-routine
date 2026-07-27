@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
 import sys
 from datetime import datetime
@@ -184,10 +185,38 @@ def push(root: Path | None = None, *, container=None) -> list[str]:
         src = root / rel
         if not src.exists():
             continue
+        # GATE THE CANONICAL STATE FILE. The daily workflow pushes under
+        # `if: always()`, so it runs even when the pipeline died partway
+        # through — and before save_data was made atomic that meant a
+        # truncated tracking-data-v2.json could be uploaded straight over the
+        # good blob, destroying the only copy. Parsing it here is the last
+        # check before it leaves the machine; a file that does not parse, or
+        # that has no `requests` list, is not state and must not be published.
+        if rel.endswith("tracking-data-v2.json"):
+            _reason = _tracking_file_unusable(src)
+            if _reason:
+                raise RuntimeError(
+                    f"REFUSING to push {rel}: {_reason}. The local file is "
+                    f"corrupt; pushing it would overwrite the last good blob. "
+                    f"Pull a fresh copy or restore a snapshot."
+                )
         bc = cc.get_blob_client(rel)
         bc.upload_blob(src.read_bytes(), overwrite=True)
         pushed.append(rel)
     return pushed
+
+
+def _tracking_file_unusable(src: Path) -> str | None:
+    """Return a human reason when the tracking file must not be published."""
+    try:
+        doc = json.loads(src.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001 — any parse failure disqualifies it
+        return f"does not parse as JSON ({e})"
+    if not isinstance(doc, dict):
+        return f"top level is {type(doc).__name__}, expected an object"
+    if not isinstance(doc.get("requests"), list):
+        return "has no `requests` list"
+    return None
 
 
 BACKUP_PREFIX = "backups/tracking-data-v2."

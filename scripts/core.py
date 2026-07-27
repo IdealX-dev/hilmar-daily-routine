@@ -299,11 +299,17 @@ def aggregate_trade_regions(requests: list[dict],
         m["teu_requested"] += teu
         m["destinations"].add(r.get("destination") or "Unknown")
         st = r.get("status")
-        lr = r.get("loss_reason") or ""
         if st == "WIN":
             m["wins"] += 1
             m["teu_won"] += r.get("teu_won") or teu
-        elif st == "LOSS" and lr == "NO_RESPONSE":
+        # SAME predicate as aggregate_summary — is_not_quoted, not a
+        # loss_reason test. This branch used `loss_reason == "NO_RESPONSE"`,
+        # so a RESPONSE_NO_RATE row (OL acked the RFQ but sent no rate;
+        # quoted=False) was counted Q&L here while aggregate_summary counted
+        # it NQ. That is the "Volume by Trade Region: NQ 0 / Q&L 1" line
+        # printed directly beneath the words "reconciles to summary" — the
+        # divergence QC-075 now escalates instead of printing.
+        elif is_not_quoted(r):
             m["not_quoted"] += 1
             m["teu_not_quoted"] += teu
         elif st == "LOSS":
@@ -465,10 +471,33 @@ def load_data(path: Path | str) -> dict:
 
 
 def save_data(data: dict, path: Path | str) -> None:
+    """Persist the tracking file ATOMICALLY — temp file, fsync, os.replace.
+
+    `open(path, "w")` truncates the destination the instant it is called and
+    then streams into it. A crash, an OOM kill, or a cancelled CI job partway
+    through left tracking-data-v2.json truncated mid-JSON — and the daily
+    workflow's blob push runs under `if: always()`, so that half-written file
+    was then uploaded over the canonical state. The state store's own backup
+    could not help: it snapshots the same corrupt file.
+
+    os.replace is atomic on POSIX, so a reader either sees the entire previous
+    file or the entire new one, never a partial write. The fsync is what makes
+    that promise survive a machine-level crash rather than just a process one:
+    without it the rename can reach disk before the bytes it points at do.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, default=str)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        # Never leave a stray .tmp behind to be mistaken for real state.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def validate_data_shape(data: dict, strict: bool = False) -> tuple[bool, list[str]]:

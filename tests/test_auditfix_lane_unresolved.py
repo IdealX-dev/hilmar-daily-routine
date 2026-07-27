@@ -149,9 +149,16 @@ def test_lane_tables_render_offered_column():
 # ── 5. FIX 1 (2026-07-14, run 29292014093): phase_3 heals poisoned literals ─
 def test_phase3_heals_poisoned_pod_destination_origin_to_none():
     """A row persisted with the LITERAL 'Unknown'/'N/A'/… in pod/destination/
-    origin is coerced to None at entry-heal, BEFORE lane derivation — killing
-    the recurring 'pod=Unknown re-derives unresolved every fire' drift at the
-    source. A real port is never touched."""
+    origin has that field REMOVED at entry-heal, BEFORE lane derivation —
+    killing the recurring 'pod=Unknown re-derives unresolved every fire' drift
+    at the source. A real port is never touched.
+
+    Changed 2026-07-27 from `= None` to `pop()`. Setting the key to None left
+    it present-but-null, so every downstream `r.get("origin", "Oakland")`
+    default was bypassed (`.get` only substitutes when the key is ABSENT) and
+    the value rendered as the literal string "None" — the client PDF's Lane
+    Performance table shipped a row labelled "None → Tokyo", strictly worse
+    than the "Unknown → Tokyo" this heal replaced."""
     data = {"requests": [
         {"request_id": "r-poison", "subject": "HILMAR rate request",
          "pod": "Unknown", "destination": "unknown", "origin": "N/A",
@@ -163,9 +170,11 @@ def test_phase3_heals_poisoned_pod_destination_origin_to_none():
     log = q.Log()
     q.phase_3_entries(log, data)
     poison = next(r for r in data["requests"] if r["request_id"] == "r-poison")
-    assert poison["pod"] is None
-    assert poison["destination"] is None
-    assert poison["origin"] is None
+    # Absent, not None — so `.get(key, default)` engages downstream.
+    assert "pod" not in poison
+    assert "destination" not in poison
+    assert "origin" not in poison
+    assert poison.get("origin", "Oakland") == "Oakland"
     assert any("poisoned placeholder" in f and "r-poison" in f for f in log.fixes)
     clean = next(r for r in data["requests"] if r["request_id"] == "r-clean")
     assert clean["destination"] == "Tokyo" and clean["pod"] == "Yokohama"

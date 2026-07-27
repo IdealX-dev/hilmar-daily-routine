@@ -3,6 +3,92 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — Data audit batch 5: the report contradicting itself, + durability
+
+Five confirmed findings. Four are the SAME defect in four places — two code
+paths computing "the same" number by different rules, with nothing comparing
+them. That is the shape behind every "CHECK YOUR REPORT" so far.
+
+1. TWO DEFINITIONS OF "NOT QUOTED" — actually THREE (finding #17)
+   `gen_email` bucketed NQ by `loss_reason == "NO_RESPONSE"`; `core.
+   aggregate_summary` used `core.is_not_quoted` (a LOSS that was never
+   quoted). A RESPONSE_NO_RATE row — OL acknowledged the RFQ but sent no rate,
+   so quoted=False — satisfies the second and not the first. ONE row then split
+   across five contradicting numbers in a SINGLE email:
+     "Not Quoted: 1 · 4 TEU"  in the KPI tile
+     "NQ 0 / Q&L 1"           in the 8-week rollup
+     "NQ 0 / Q&L 1"           in Volume by Trade Region — printed directly
+                              under the words "reconciles to summary"
+     0 rows                   in the NOT-QUOTED detail section
+     ONE charged 1 Q&L loss + 4 TEU lost with 0 quotes (win-rate denominator 0)
+   Fixed by routing all three `gen_email` call sites through
+   `core.is_not_quoted`. loss_reason is now purely the WHY column; it never
+   decides the bucket.
+   THE TEST FOUND A THIRD SITE I HAD MISSED: `core.aggregate_trade_regions`
+   used the same wrong `loss_reason` test, which is precisely the Volume by
+   Trade Region line above. Fixed there too. (No mirror in src/hilmar — that
+   function only exists in the production tree.)
+
+2. QC-075 (ERROR) — trade-region rollup vs summary
+   `_trade_region_reconciliation` has computed a `reconciled` boolean since
+   2026-05, but it was only ever `print()`ed to stdout — never routed to
+   log.error — so every divergence shipped silently. It now escalates. The
+   check detects; the shared predicate above prevents.
+
+3. AGGREGATES WERE PERSISTED BEFORE THE HEALS RAN (finding #15)
+   phase_5 built summary/lane_summary/carrier_summary, phase_6 then ran the
+   MUTATING heals (QC-064 nulls a leaked responder mailbox out of
+   carrier_quoted, QC-067 restores a row to PENDING, QC-056 backfills a
+   carrier), and phase_7 saved phase_5's stale output. The shipped file's
+   aggregates contradicted its own rows: the audit read clean because the ROW
+   was fixed, while carrier_summary still keyed a carrier named
+   "MBD_OceanExport@ol-usa.com" and the client PDF printed it.
+   Fixed: phase_7_save recomputes first. It is a pure recompute from rows, so
+   it is cheap and idempotent.
+
+4. THE PLACEHOLDER HEAL SHIPPED THE LITERAL STRING "None" (finding #16)
+   Setting origin/destination/pod to None left the key PRESENT-but-null, so
+   every downstream `r.get("origin", "Oakland")` default was bypassed —
+   `.get` only substitutes when the key is ABSENT. The client PDF's Lane
+   Performance table shipped a row labelled "None → Tokyo", strictly worse
+   than the "Unknown → Tokyo" the heal was replacing. Now `r.pop(field, None)`.
+
+5. "PENDING WATCHLIST — N OPEN" OVER AN EMPTY TABLE (finding #18)
+   The header counted len(pending) while any row whose substate timestamp
+   would not parse was `continue`d out of the table — the dashboard
+   contradicting itself, and an open RFQ nobody chases because it is
+   invisible. Now falls through response_timestamp -> request_timestamp ->
+   booking_timestamp -> request_date, and a row that still cannot be dated is
+   shown with an em-dash age at lowest severity rather than dropped (matching
+   gen_email's PENDING HILMAR table). Sort and render both handle None.
+
+6. NON-ATOMIC SAVE + AN UNCONDITIONAL PUSH OVER IT (finding #20)
+   `open(path, "w")` truncates the destination the instant it is called, so a
+   crash, OOM kill or cancelled job mid-write left tracking-data-v2.json
+   truncated — and daily.yml pushes under `if: always()`, so that half-written
+   file was then uploaded over the canonical blob. The backup could not help:
+   it snapshots the same corrupt file.
+   `core.save_data` now writes to a temp file, flushes, fsyncs, and
+   `os.replace`s — atomic on POSIX, so a reader sees the whole old file or the
+   whole new one. The fsync is what makes that survive a machine crash rather
+   than just a process one. A failed write cleans up its temp file.
+   `state_store.push` independently refuses to upload a tracking file that
+   does not parse or has no `requests` list — the last gate before it leaves
+   the machine.
+
+Tests: tests/test_audit_batch5.py (18 cases). The atomic-save test asserts the
+PREVIOUS file survives a mid-write failure; the watchlist test drives the real
+gen_dashboard.render with the production config and asserts every row appears;
+the push guard is exercised against five corruption shapes (truncated, empty,
+non-JSON, no requests list, top-level array) each asserting the good blob is
+untouched. Suite 1965 passed (1940 -> +25), coverage 91.23%, ruff clean.
+
+REMAINING BACKLOG: 7 findings — #13 merge_thread_dupes swallowing a distinct
+request, #14 lane substring match writing a rate onto the wrong terminal,
+#19 weekly vs daily crediting a booking to different weeks, #21 same-day
+backup overwrite, #23 QC-067 heal bypassing manual_locked, #24 weekly.yml
+concurrency group, #25 undeclared schema fields + typo'd date_range key.
+
 ## 2026-07-27 — LLM layer: Opus 4.6 -> Claude Opus 5, + prompt-cache breakpoint
 
 Michael forwarded Anthropic's "prompt cache hit rate is low" notice (est. up
