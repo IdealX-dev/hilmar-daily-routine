@@ -3,6 +3,97 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-27 — Why the report didn't go out, and the two fixes so it can't happen this way again
+
+Michael: "todays reports didn't fire" -> "YOU HAVE TO FIX THIS SO IT DOESN'T
+HAPPEN AGAIN. FIX THE QC AND THE DAILY AUDITS."
+
+THREE THINGS HAPPENED. Only the first was GitHub's.
+
+1. THE SCHEDULED FIRES NEVER GOT A MACHINE (GitHub, transient)
+   Both 08:07-ET cron runs and two Liveness ticks were created and never
+   assigned a runner: runner_id 0, runner_name "", NO steps array at all,
+   failed 2-3s later, logs 404. Proved by control — the same repo's successful
+   jobs carry runner_id 1000016xxx and a full steps list. Cleared by 18:19; a
+   dispatch then got runners immediately on the identical commit. Not code:
+   daily.yml is byte-identical between Friday's passing run and today's
+   failures, and no step ever executed.
+   I first hypothesised an Actions spending cap. Michael checked: wrong. Logged
+   because I asserted it before ruling it out.
+
+2. THE RE-FIRE WAS BLOCKED BY A GATE THAT MEASURED TOO EARLY (ours — the real
+   defect)
+   QC-039 read carrier_quoted 291/313 (93.0%) and blocked the client ship.
+   QC-056 then backfilled 10 carriers ON THE SAME RUN. 301/313 = 96.2% — over
+   the 95% gate. A whole business day's report was withheld because the gate
+   ran ~880 lines BEFORE the heals it was grading, inside the same
+   phase_6_rules call.
+   THIRD INSTANCE OF THIS EXACT SHAPE: batch-5 #15 persisted aggregates before
+   the heals ran; the QC-075 stale-summary bug false-fired for the same reason;
+   now this. So the rule is no longer a habit, it is a TEST: every write to a
+   gate-graded field (carrier_quoted, carrier_won, ol_rate) must land before
+   compute_accuracy runs, enforced by an AST walk over phase_6_rules. Moving
+   one check would have fixed today; the test is what stops the fourth
+   instance.
+   Verified: 3 tests fail with the old ordering restored, including the
+   behavioural one (a row QC-056 CAN heal must not trip the gate). The gate
+   keeps its teeth — a row with no carrier anywhere in its text still blocks.
+
+3. THE ALARM COULD NOT REACH ANYONE (ours — why nobody was told)
+   When the fire failed it raised a FIRE-ALERT. That alert returned
+   {'github': False, 'teams': False}. daily.yml gave the pipeline and
+   integrity-gate steps no GH_TOKEN, and the production-fire job no
+   `issues: write`; no Teams webhook is configured. So the alarm existed only
+   as a stderr banner inside a failed job's log and a queue file on an
+   ephemeral runner that was then destroyed. Michael found out because the
+   report never arrived.
+   Fixed at source: `issues: write` on the job, GH_TOKEN at JOB level (not one
+   step — both alert-raising steps need it, and so will the next one). A
+   failing fire now opens a labeled issue immediately instead of depending
+   entirely on the liveness watchdog, which runs on the same runners and
+   therefore failed the same way today.
+   `fire_alert.send_alert` now also prints an unmissable ALERT UNDELIVERABLE
+   banner when no remote channel took it. An alarm that cannot deliver is a
+   silent failure of the one thing whose job is not being silent.
+
+NEW QC-076 (ERROR) — "can the alarm actually reach anyone?"
+   Checks on EVERY fire, while everything is fine, that at least one remote
+   channel (GitHub issue / Teams webhook) is available. The worst time to learn
+   the alarm is dead is the moment you need it — same rationale as QC-032
+   checking backup freshness instead of waiting for a restore to fail. Scoped
+   to unattended runs: on a dev box stderr IS a human channel, and a check that
+   cries wolf there trains the operator to ignore it.
+
+WHAT I GOT WRONG TODAY, ON THE RECORD
+   * Asserted an Actions billing cap before ruling it out. Wrong.
+   * Said the weekly summary succeeded "on the merged code" — it ran on the
+     PRE-merge SHA, so my weekly.yml change still has not run in production.
+     First real exercise is next Monday.
+   * Nearly diagnosed this whole thing against a STALE local main (f921f2d):
+     `git checkout main` silently landed on the old clone, not the merged
+     cc7cd79. Caught before drawing conclusions from it.
+   * Investigated the liveness watchdog on a hunch it was blind to failed
+     fires. It is not — heartbeat.yml deliberately FAILS the job on a
+     non-success fire (2026-06-25) so liveness's --status=success query cannot
+     see it. That design is sound; the watchdog simply never got a runner.
+
+STILL OPEN
+   * Friday 2026-07-24 never got its own daily email. The DATA is intact and
+     the weekly covers it; the one daily send is gone. Tomorrow's fire reports
+     Monday.
+   * TEAMS_WEBHOOK_URL is still unset. That is the durable fix for CORRELATED
+     failure: today the fire and its watchdog died together because both run
+     on GitHub runners. A GitHub-independent channel is the only thing that
+     survives that. Needs Michael to supply the URL.
+   * QC-073 flagged a real error not yet fixed: stand_260928 has a degenerate
+     lane Oakland -> Oakland.
+   * The automated reviewer is limit-blocked, so this batch merges on CI +
+     self-review only.
+
+Suite 2093 passed (2075 -> +18), coverage 91.28%, ruff clean on the CI-gated
+paths. QC governance ratchet green (it caught QC-076 undocumented on the first
+run — working as designed).
+
 ## 2026-07-27 — Self-review of the one commit that shipped unreviewed
 
 #124 merged with 85da7e9 never seen by the automated reviewer — IDEALX's

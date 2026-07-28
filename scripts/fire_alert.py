@@ -194,7 +194,50 @@ def send_alert(title: str, body: str, *, level: str = "error",
         "github": _github_issue(s_title, full_body, labels),
         "teams": _teams(s_title, full_body),
     }
+    _warn_if_undeliverable(results)
     return results
+
+
+#: Channels that can actually REACH a human who is not already reading the
+#: run log. stderr and queue are local: on an ephemeral runner stderr is
+#: buried in a log nobody opens on a normal day, and the queue file dies with
+#: the container.
+REMOTE_CHANNELS = ("github", "teams")
+
+
+def undeliverable(results: dict) -> bool:
+    """True when an alert reached NO remote channel — i.e. it was raised into
+    the void and no human will learn of it from this call."""
+    return not any(results.get(c) for c in REMOTE_CHANNELS)
+
+
+def _warn_if_undeliverable(results: dict) -> None:
+    """Say so, loudly, when the alarm itself failed to reach anyone.
+
+    On 2026-07-27 the production fire was blocked by the QC-039 gate and
+    raised a FIRE-ALERT — which returned {'github': False, 'teams': False}
+    because the workflow gave that step no GH_TOKEN and no `issues: write`,
+    and no Teams webhook is configured. The alert existed only as a stderr
+    banner inside a failed job's log and a queue file on a runner that was
+    then destroyed. Michael found out because the report never arrived.
+
+    An alarm that cannot deliver is a silent failure of the thing whose whole
+    job is not being silent, so it must not itself be silent. This prints a
+    distinct, greppable line; QC-076 checks the same condition BEFORE a fire
+    needs the alarm, so a broken channel is found while everything is fine.
+    """
+    if not undeliverable(results):
+        return
+    tried = ", ".join(f"{c}={bool(results.get(c))}" for c in REMOTE_CHANNELS)
+    print(
+        "\n!!! ALERT UNDELIVERABLE — this alarm reached NO remote channel "
+        f"({tried}).\n"
+        "!!! It exists only in this log and in a local queue file. If this "
+        "run is on an ephemeral runner, that queue dies with the container "
+        "and NOBODY WILL BE TOLD.\n"
+        "!!! Fix: give the job `issues: write` + GH_TOKEN (GitHub channel), "
+        "or set TEAMS_WEBHOOK_URL (Teams channel). See QC-076.",
+        file=sys.stderr, flush=True)
 
 
 def main() -> int:
