@@ -81,5 +81,27 @@ try:
             if mod is not None and getattr(mod, "_BLOB_HOST", None) is not None:
                 monkeypatch.setattr(mod, "_BLOB_HOST", False, raising=False)
 
+    @pytest.fixture(autouse=True)
+    def _hermetic_alert_channels(monkeypatch):
+        """Unset every var QC-076 and fire_alert read, for every test.
+
+        Same lesson as _hermetic_blob_host, one incident later. QC-076 keys on
+        HILMAR_NONINTERACTIVE, and .github/workflows/test.yml:136 sets that to
+        "1" for the pytest step precisely so CI mirrors the production-fire
+        env. So a QC-076 test that assumes "attended" passes on a dev box and
+        fails in CI, and one that assumes a channel is absent would pass in CI
+        while a developer with GH_TOKEN exported sees red. Neither is a real
+        defect — it is the test reading its own environment.
+
+        Tests that care about a channel set it explicitly with monkeypatch;
+        this only pins the default so nothing depends on the host. Note that
+        fire_alert.github_configured() ALSO consults the gh CLI, which no env
+        var can unset — tests asserting an absent GitHub channel must patch
+        fire_alert._have_gh, not just the environment.
+        """
+        for var in ("HILMAR_NONINTERACTIVE", "GITHUB_ACTIONS",
+                    "GH_TOKEN", "GITHUB_TOKEN", "TEAMS_WEBHOOK_URL"):
+            monkeypatch.delenv(var, raising=False)
+
 except ImportError:
     pytest = None  # type: ignore

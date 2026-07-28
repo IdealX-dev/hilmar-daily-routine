@@ -26,6 +26,7 @@ a check documented under a sub-variant satisfies the parent and vice versa.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -78,11 +79,36 @@ KNOWN_UNTESTED: frozenset[str] = frozenset({
 _KNOWN_UNTESTED_CEILING = 18
 
 
+#: Log methods that constitute "the engine emitted this check".
+_EMIT_METHODS = frozenset({"ok", "warn", "error", "fix"})
+
+
 def emitted_checks() -> set[str]:
-    """Parent QC IDs the live engine actually emits (PASS/WARN/ERROR/fix
-    log lines all carry the QC-NNN tag)."""
-    text = QC_SELFHEAL.read_text(encoding="utf-8")
-    return _parents_in_text(text)
+    """Parent QC IDs the live engine actually EMITS.
+
+    AST-based, over the string arguments of log.ok/warn/error/fix calls only.
+    This used to regex the whole file, which counted any mention at all — so
+    deleting QC-076's entire emission block left the ratchet green, because a
+    single surviving docstring mention of "QC-076" still matched. A governance
+    check defeated by a comment is not a governance check.
+
+    Anything genuinely removed belongs in RETIRED, which every invariant here
+    already subtracts (QC-038 is the standing example: comment-only, retired
+    2026-05-21, and correctly NOT emitted under this definition).
+    """
+    tree = ast.parse(QC_SELFHEAL.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _EMIT_METHODS):
+            continue
+        # Walk the whole call: the tag can sit in a plain string, an f-string
+        # literal chunk, or a nested concatenation.
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                found |= _parents_in_text(sub.value)
+    return found
 
 
 def documented_checks() -> set[str]:

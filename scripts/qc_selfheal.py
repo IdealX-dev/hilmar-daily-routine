@@ -2040,15 +2040,41 @@ def qc065_internal_leaks(body_text) -> list:
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _import_fire_alert():
+    """Import the sibling fire_alert module, guarding the sys.path insert.
+
+    The unguarded insert this replaced grew sys.path by one entry per call —
+    harmless in production (one call per process) but it accumulated in the
+    test suite, which calls phase_6_rules dozens of times per process. Matches
+    the `if ... not in sys.path` convention used elsewhere in this file."""
+    _d = str(Path(__file__).resolve().parent)
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
+    import fire_alert as _fa
+    return _fa
+
+
 def _fire_alert_teams_configured() -> bool:
-    """True when a Teams webhook is resolvable — the second remote channel
-    QC-076 counts. Delegates to fire_alert so there is ONE definition of
-    "configured" (secret env, then secrets/teams-webhook-url.txt, then
+    """True when a Teams webhook is resolvable — one of the two remote
+    channels QC-076 counts. Delegates to fire_alert so there is ONE definition
+    of "configured" (secret env, then secrets/teams-webhook-url.txt, then
     config.json); a second copy here would drift from the thing it checks."""
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import fire_alert as _fa
-        return bool(_fa._teams_webhook_url())
+        return bool(_import_fire_alert()._teams_webhook_url())
+    except Exception:
+        return False
+
+
+def _fire_alert_github_configured() -> bool:
+    """True when the GitHub channel has a credential to try — the other remote
+    channel QC-076 counts. Delegates for the same reason as teams, and this
+    half USED to be the counter-example: it re-implemented half of
+    _github_issue's auth inline as `GH_TOKEN or GITHUB_TOKEN`, which drifted
+    immediately. _github_issue tries the gh CLI FIRST and needs no env var at
+    all on a box where `gh auth login` was done, so the inline copy called a
+    working channel dead — and called a junk token alive."""
+    try:
+        return bool(_import_fire_alert().github_configured())
     except Exception:
         return False
 
@@ -4091,113 +4117,6 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
 
-    # QC-039 RUNS HERE, NOT WHERE IT USED TO — see the block below, moved
-    # 2026-07-27. It measured ~880 lines earlier, BEFORE the carrier heals
-    # (QC-056 above, _heal_carrier_won in phase_3) had run, so it graded
-    # the data the heals exist to repair. On the 2026-07-27 fire it read
-    # carrier_quoted 291/313 (93.0%) and BLOCKED the client email; QC-056
-    # then backfilled 10 carriers on that same run — 301/313 = 96.2%, over
-    # the 95% gate. A whole day's report was withheld because the gate was
-    # measured too early. Third instance of this shape (batch-5 #15:
-    # aggregates persisted pre-heal; the QC-075 stale-summary false ERROR),
-    # so the rule is now explicit: A GATE MEASURES THE FINAL STATE OF THE
-    # ROWS, AFTER EVERY MUTATING HEAL IN THIS PHASE.
-    # QC-039: PARSER ACCURACY GATE — per Michael 2026-05-17 "this parser and
-    # your system have to run at minimum of 98 percent accuracy no matter
-    # COST." Measures per-field % populated against applicability predicates
-    # in src/hilmar/parser_accuracy.py. Computes:
-    #   - Overall rate (equal-weight mean across fields)
-    #   - Weighted rate (by applicable-row count)
-    # ERROR if overall < ACCURACY_THRESHOLD OR any CRITICAL field falls
-    # below ACCURACY_THRESHOLD. WARN if overall passes but a non-critical
-    # field falls below.
-    # Critical fields: origin, destination, lane, container_count,
-    # teu_requested, carrier_quoted, carrier_won, ol_rate.
-    # 2026-05-19: threshold lowered from 0.98 to 0.95 per Michael "PARSER
-    # MUST REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS". See
-    # src/hilmar/parser_accuracy.py for the gate definition + per-field
-    # threshold table.
-    try:
-        import sys as _sys
-        _src_dir = Path(__file__).resolve().parent.parent / "src"
-        if str(_src_dir) not in _sys.path:
-            _sys.path.insert(0, str(_src_dir))
-        from hilmar.parser_accuracy import ACCURACY_THRESHOLD, CRITICAL_FIELDS, compute_accuracy
-        _acc = compute_accuracy(data.get("requests", []))
-        _pct = f"{_acc['overall_rate']:.1%}"
-        _wpct = f"{_acc['weighted_rate']:.1%}"
-        # Push Sentry metrics — these power the dashboard's "Parser
-        # accuracy trend (90 days)" widget. Gauges represent current
-        # snapshot value; one row per accuracy run.
-        if _sentry is not None:
-            try:
-                _sentry.metric_gauge(
-                    "parser.accuracy_overall",
-                    _acc["overall_rate"],
-                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
-                )
-                _sentry.metric_gauge(
-                    "parser.accuracy_weighted",
-                    _acc["weighted_rate"],
-                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
-                )
-                # Per-field gauges, one tagged metric per field. Lets the
-                # dashboard show "which field is degrading" at a glance.
-                for _field, _stats in _acc.get("field_stats", {}).items():
-                    if _stats.get("n_a"):
-                        continue
-                    _sentry.metric_gauge(
-                        "parser.accuracy_per_field",
-                        _stats["rate"],
-                        field=_field,
-                        critical=str(_field in CRITICAL_FIELDS).lower(),
-                        phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
-                    )
-            except Exception:
-                pass
-        if _acc["critical_failing"]:
-            log.error(
-                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) with "
-                f"{len(_acc['critical_failing'])} CRITICAL field(s) below "
-                f"{ACCURACY_THRESHOLD:.0%}: " +
-                ", ".join(
-                    f"{f}={_acc['field_stats'][f]['populated']}/"
-                    f"{_acc['field_stats'][f]['applicable']} "
-                    f"({_acc['field_stats'][f]['rate']:.1%})"
-                    for f in _acc["critical_failing"]
-                )
-            )
-        elif _acc["failing_fields"]:
-            log.warn(
-                f"QC-039: parser accuracy {_pct} overall (weighted {_wpct}); "
-                f"{len(_acc['failing_fields'])} non-critical field(s) below "
-                f"{ACCURACY_THRESHOLD:.0%}: " +
-                ", ".join(
-                    f"{f}={_acc['field_stats'][f]['rate']:.1%}"
-                    for f in _acc["failing_fields"]
-                )
-            )
-        elif _acc["overall_rate"] < ACCURACY_THRESHOLD:
-            # All individual fields ≥ threshold but the equal-weight mean
-            # falls below (e.g. one big-applicable field at 95% pulls down
-            # several 100%s). Warn — investigate distribution.
-            log.warn(
-                f"QC-039: parser accuracy {_pct} below threshold "
-                f"{ACCURACY_THRESHOLD:.0%} (weighted {_wpct}) — "
-                "no single field failed but equal-weight mean is low"
-            )
-        else:
-            log.ok(
-                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) "
-                f"≥ {ACCURACY_THRESHOLD:.0%} on all {len([f for f in _acc['field_stats'].values() if not f.get('n_a')])} measured fields"
-            )
-    except Exception as _e:
-        # Fail CLOSED, not open: a parser-accuracy gate that cannot evaluate
-        # (import regression, malformed requests, KeyError, ...) must surface
-        # as an ERROR so it gates qc-result status (HAS_ERRORS) and fires
-        # Sentry, not get buried as a non-blocking WARN. Per CLAUDE.md rule #3
-        # (solve root causes, never let a broken gate silently degrade).
-        log.error(f"QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): {_e}")
 
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
@@ -4213,19 +4132,30 @@ def phase_6_rules(log: Log, data: dict):
     # while everything is fine — the same reason QC-032 checks backup
     # freshness rather than waiting for a restore to fail.
     #
-    # Scoped to unattended runs: on a dev box or an interactive Cloud PC run
-    # stderr IS a human-visible channel, so a missing token there is not a
-    # defect. On GitHub Actions nobody is watching stderr.
+    # Scoped to UNATTENDED runs: when a human is at the terminal, stderr IS a
+    # channel and an ERROR here would be crying wolf. The predicate is
+    # HILMAR_NONINTERACTIVE, not GITHUB_ACTIONS — the repo sets that flag on
+    # every unattended host, so keying on it (a) covers a scheduled run
+    # wherever it fires, not just on Actions, and (b) stops this ERROR firing
+    # on CI/PR runs, where test.yml drives qc_selfheal with GITHUB_ACTIONS=true
+    # and no token and no alarm is expected.
+    #
+    # WHAT THIS DOES NOT PROVE: that the channel WORKS. Both halves check that
+    # a credential is resolvable, not that it is powerful. A GH_TOKEN without
+    # the job's `issues: write` passes here and still 403s in _github_issue —
+    # that half of the 2026-07-27 outage is asserted statically against
+    # daily.yml in tests/test_audit_batch7.py instead, because proving it live
+    # would mean spending an API call on every fire to test the alarm. The log
+    # line says "configured", not "delivers", so it cannot be misread as more.
     try:
-        _unattended = bool(os.environ.get("GITHUB_ACTIONS"))
+        _unattended = bool(os.environ.get("HILMAR_NONINTERACTIVE"))
         _ch = {
-            "github": bool(os.environ.get("GH_TOKEN")
-                           or os.environ.get("GITHUB_TOKEN")),
+            "github": bool(_fire_alert_github_configured()),
             "teams": bool(_fire_alert_teams_configured()),
         }
         _live = [k for k, v in _ch.items() if v]
         if _live:
-            log.ok(f"QC-076: out-of-band alarm deliverable via {', '.join(_live)}")
+            log.ok(f"QC-076: out-of-band alarm configured via {', '.join(_live)}")
         elif _unattended:
             log.error(
                 "QC-076: NO out-of-band alert channel is available — a failing "
@@ -4236,7 +4166,7 @@ def phase_6_rules(log: Log, data: dict):
         else:
             log.ok("QC-076: skipped — attended run, stderr reaches the operator")
     except Exception as _e:
-        log.warn(f"QC-076: alarm-deliverability check failed: {_e}")
+        log.warn(f"QC-076: alarm-configuration check failed: {_e}")
 
     # QC-057: INTAKE RECONCILIATION — a staged Lonny RFQ silently dropped.
     # Root cause this guards: ingest.build_requests skips any lonny_outbound
@@ -4840,6 +4770,122 @@ def phase_6_rules(log: Log, data: dict):
                 log.ok(f"QC-016: {len(_all_bk)} backup file(s) (retention {_retain})")
     except Exception as _e:
         log.warn(f"QC-016: check failed with exception: {_e}")
+
+    # ── QC-039 LIVES AT THE END OF THIS PHASE. DO NOT MOVE IT EARLIER. ──
+    # A GATE MEASURES THE FINAL STATE OF THE ROWS, AFTER EVERY MUTATING HEAL.
+    # Twice now it did not, in both directions:
+    #   2026-07-27 (withheld a good report): it measured ~880 lines before the
+    #     carrier heals, read carrier_quoted 291/313 (93.0%) and BLOCKED the
+    #     client email. QC-056 then backfilled 10 carriers on that same run —
+    #     301/313 = 96.2%, over the 95% gate. A business day's report was lost
+    #     to a stale measurement.
+    #   2026-07-28 (would have SHIPPED a bad one): the first fix moved it only
+    #     past QC-056, still ahead of QC-064, which NULLS garbage out of
+    #     client-visible cells — six of QC064_DISPLAY_FIELDS are graded here
+    #     and five are CRITICAL. The gate counted a field populated, QC-064
+    #     blanked it, and the email would ship below threshold with the gate
+    #     reading green. Measuring early can withhold a good report; measuring
+    #     before a NULLING heal ships a bad one, which is worse.
+    # Enforced by tests/test_audit_batch7.py — a real AST walk over every
+    # graded field, including variable-key writes (`r[_f] = None`) and writes
+    # inside helpers this phase calls. The substring test that shipped with the
+    # first fix could not see either, and passed straight through the bug.
+    # QC-039: PARSER ACCURACY GATE — per Michael 2026-05-17 "this parser and
+    # your system have to run at minimum of 98 percent accuracy no matter
+    # COST." Measures per-field % populated against applicability predicates
+    # in src/hilmar/parser_accuracy.py. Computes:
+    #   - Overall rate (equal-weight mean across fields)
+    #   - Weighted rate (by applicable-row count)
+    # ERROR if overall < ACCURACY_THRESHOLD OR any CRITICAL field falls
+    # below ACCURACY_THRESHOLD. WARN if overall passes but a non-critical
+    # field falls below.
+    # Critical fields: origin, destination, lane, container_count,
+    # teu_requested, carrier_quoted, carrier_won, ol_rate.
+    # 2026-05-19: threshold lowered from 0.98 to 0.95 per Michael "PARSER
+    # MUST REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS". See
+    # src/hilmar/parser_accuracy.py for the gate definition + per-field
+    # threshold table.
+    try:
+        import sys as _sys
+        _src_dir = Path(__file__).resolve().parent.parent / "src"
+        if str(_src_dir) not in _sys.path:
+            _sys.path.insert(0, str(_src_dir))
+        from hilmar.parser_accuracy import ACCURACY_THRESHOLD, CRITICAL_FIELDS, compute_accuracy
+        _acc = compute_accuracy(data.get("requests", []))
+        _pct = f"{_acc['overall_rate']:.1%}"
+        _wpct = f"{_acc['weighted_rate']:.1%}"
+        # Push Sentry metrics — these power the dashboard's "Parser
+        # accuracy trend (90 days)" widget. Gauges represent current
+        # snapshot value; one row per accuracy run.
+        if _sentry is not None:
+            try:
+                _sentry.metric_gauge(
+                    "parser.accuracy_overall",
+                    _acc["overall_rate"],
+                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                )
+                _sentry.metric_gauge(
+                    "parser.accuracy_weighted",
+                    _acc["weighted_rate"],
+                    phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                )
+                # Per-field gauges, one tagged metric per field. Lets the
+                # dashboard show "which field is degrading" at a glance.
+                for _field, _stats in _acc.get("field_stats", {}).items():
+                    if _stats.get("n_a"):
+                        continue
+                    _sentry.metric_gauge(
+                        "parser.accuracy_per_field",
+                        _stats["rate"],
+                        field=_field,
+                        critical=str(_field in CRITICAL_FIELDS).lower(),
+                        phase=("pre-patch" if _qc_phase_is_pre_patch() else "post-patch"),
+                    )
+            except Exception:
+                pass
+        if _acc["critical_failing"]:
+            log.error(
+                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) with "
+                f"{len(_acc['critical_failing'])} CRITICAL field(s) below "
+                f"{ACCURACY_THRESHOLD:.0%}: " +
+                ", ".join(
+                    f"{f}={_acc['field_stats'][f]['populated']}/"
+                    f"{_acc['field_stats'][f]['applicable']} "
+                    f"({_acc['field_stats'][f]['rate']:.1%})"
+                    for f in _acc["critical_failing"]
+                )
+            )
+        elif _acc["failing_fields"]:
+            log.warn(
+                f"QC-039: parser accuracy {_pct} overall (weighted {_wpct}); "
+                f"{len(_acc['failing_fields'])} non-critical field(s) below "
+                f"{ACCURACY_THRESHOLD:.0%}: " +
+                ", ".join(
+                    f"{f}={_acc['field_stats'][f]['rate']:.1%}"
+                    for f in _acc["failing_fields"]
+                )
+            )
+        elif _acc["overall_rate"] < ACCURACY_THRESHOLD:
+            # All individual fields ≥ threshold but the equal-weight mean
+            # falls below (e.g. one big-applicable field at 95% pulls down
+            # several 100%s). Warn — investigate distribution.
+            log.warn(
+                f"QC-039: parser accuracy {_pct} below threshold "
+                f"{ACCURACY_THRESHOLD:.0%} (weighted {_wpct}) — "
+                "no single field failed but equal-weight mean is low"
+            )
+        else:
+            log.ok(
+                f"QC-039: parser accuracy {_pct} (weighted {_wpct}) "
+                f"≥ {ACCURACY_THRESHOLD:.0%} on all {len([f for f in _acc['field_stats'].values() if not f.get('n_a')])} measured fields"
+            )
+    except Exception as _e:
+        # Fail CLOSED, not open: a parser-accuracy gate that cannot evaluate
+        # (import regression, malformed requests, KeyError, ...) must surface
+        # as an ERROR so it gates qc-result status (HAS_ERRORS) and fires
+        # Sentry, not get buried as a non-blocking WARN. Per CLAUDE.md rule #3
+        # (solve root causes, never let a broken gate silently degrade).
+        log.error(f"QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): {_e}")
 
 
 # ─────────────────────────────────────────────────────────────────────
