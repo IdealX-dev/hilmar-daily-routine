@@ -3,6 +3,101 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-28 — Reviewing yesterday's fix found it half-done, and its test blind
+
+Michael raised the org's code-review spend limit after the automated reviewer
+skipped PR #126 ("overage spend limit reached") — #126 had already merged on CI
+and self-review alone. Spent the raised limit reviewing what had just shipped.
+It found a defect in my own fix and a test that certified safety that wasn't
+there. Both are corrections to claims I made to Michael yesterday.
+
+1. THE GATE WAS STILL AHEAD OF A HEAL — IN THE DIRECTION THAT SHIPS BAD DATA
+   Yesterday's fix moved QC-039 past QC-056. It was still ahead of QC-064,
+   which NULLS garbage out of client-visible cells. Six of QC064_DISPLAY_FIELDS
+   are graded by the gate and five are CRITICAL, so the gate counted a field
+   populated, QC-064 blanked it, and the email would ship below threshold with
+   the gate reading green. Measured on an 11-row probe: gate saw 100.0%, the
+   shipped rows were 90.9%.
+   Yesterday's instance WITHHELD a good report. This one SHIPS a bad one, which
+   is worse. Not a regression — the old position was also ahead of QC-064 — but
+   the same bug class, left open while I described it as closed.
+   FIX: QC-039 now runs at the END of phase_6_rules, after every row mutation.
+
+2. THE TEST THAT WAS SUPPOSED TO PREVENT #1 COULD NOT SEE IT
+   I told Michael the ordering rule was "enforced by a test that walks the
+   function's AST". It parsed the AST only to slice out the function TEXT, then
+   ran str.find for `["field"] = ` over three of eight CRITICAL fields. Blind to
+   variable-key writes (`r[_f] = None` — exactly QC-064), .update()/.setdefault(),
+   and writes inside helpers the phase calls. One of its three fields
+   (`ol_rate`) has ZERO occurrences in phase_6_rules, so a third of it
+   constrained nothing while reading as thorough.
+   FIX: a real ast.walk over every field in FIELD_REQUIREMENTS, following one
+   level into called helpers, treating computed keys as unsafe; plus a test that
+   the walk cannot go inert, and one asserting the same rule in main() — moving
+   phase_3_entries after phase_6_rules reintroduced yesterday's bug with all
+   2093 tests green.
+
+3. QC-076 CHECKED THAT A STRING WAS NON-EMPTY
+   It read `GH_TOKEN or GITHUB_TOKEN` inline. A junk token passed; a box with
+   `gh auth login` and no token was called dead. The 2026-07-27 outage had TWO
+   causes (no token AND no `issues: write`) and QC-076 covered neither properly.
+   FIX: both halves delegate to fire_alert (one definition of "configured"), the
+   log says "configured" not "deliverable", and the `issues: write` half stays a
+   static assertion against daily.yml. Predicate changed from GITHUB_ACTIONS to
+   HILMAR_NONINTERACTIVE — set on every unattended host, and it stops the ERROR
+   firing on CI runs.
+
+4. THE GITHUB CHANNEL WENT LIVE YESTERDAY, MAKING TWO LATENT BUGS REAL
+   - No dedupe: QC-063 fires on every fire until the failing step is fixed, so a
+     step dead a week would file five identical issues. Now comments on the open
+     issue instead (liveness.yml already did this; fire_alert never did, because
+     the channel was a permanent no-op).
+   - send_alert defaulted to the `cloud-pc-down` label, and liveness.yml closes
+     EVERY open `cloud-pc-down` issue on a fresh heartbeat. A critical alert —
+     assert_fire_integrity's "no verified report shipped" — could be filed and
+     auto-closed within hours by an unrelated watchdog while still true. Default
+     is now `fire-alert` alone.
+   - The UNDELIVERABLE banner could RAISE out of send_alert on a closed or
+     non-UTF-8 stderr, turning "the alarm could not deliver" into "the caller
+     crashed". Wrapped, ASCII-only.
+   - The fire_alert CLI exited 0 for an alert that reached nobody
+     (`any(res.values())` counts stderr and queue). Now uses undeliverable().
+
+5. THE GOVERNANCE RATCHET WAS DEFEATED BY A COMMENT
+   emitted_checks() regexed the whole file, so deleting QC-076's entire emission
+   block left the ratchet green on one surviving docstring mention. Now AST-based
+   over the string arguments of log.ok/warn/error/fix only.
+
+VERIFIED THIS SESSION
+   2105 passed, coverage 91.28%, ruff clean. All NINE mutations caught — gate
+   moved back before the heals (3 tests), post-gate variable-key write (3),
+   phase reorder in main() (1), deleted banner call site (1), teams-delegation
+   drift (1), predicate reverted (2), QC-076 emission deleted with a comment
+   left (3, incl. the ratchet), default label reverted (1), dedupe removed (1).
+   Two of my first mutation probes were themselves inert (a bad anchor string,
+   and one that broke the file) and reported green — re-run correctly before
+   being believed.
+   Tests are now hermetic w.r.t. the alarm env vars: test.yml sets
+   HILMAR_NONINTERACTIVE for the pytest step, so these would have been
+   host-dependent (the 2026-06-15 "green in CI / red in production" class).
+
+TOMORROW'S FIRE — verified on merged main, not assumed
+   QC-056 heal -> QC-039 gate ordering confirmed by AST; production-fire has
+   `issues: write` + job-level GH_TOKEN; exactly one cron proceeds (12:07 UTC,
+   ET offset -0400, the 13:07 tick gated out); SEND_TO resolves to 'full' on a
+   schedule; no same-day sent-flag exists for 2026-07-29 to suppress it.
+
+STILL OPEN
+   - TEAMS_WEBHOOK_URL unset. The durable fix for CORRELATED failure: on
+     2026-07-27 the fire and its watchdog died together because both run on
+     GitHub runners. A GitHub-independent channel is the only thing that
+     survives that. Needs the URL from Michael.
+   - QC-073: stand_260928 has a degenerate lane Oakland -> Oakland. Real error,
+     untouched.
+   - QC-070's TEU heal also writes graded fields; harmless today because
+     core.parse_teu never returns None and _is_populated counts 0 as populated,
+     but it is the same ordering shape and is now covered by the AST walk.
+
 ## 2026-07-27 — Why the report didn't go out, and the two fixes so it can't happen this way again
 
 Michael: "todays reports didn't fire" -> "YOU HAVE TO FIX THIS SO IT DOESN'T
