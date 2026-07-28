@@ -89,16 +89,61 @@ def _append_queue(record: dict) -> bool:
         return False
 
 
+def _existing_open_issue(title: str) -> str:
+    """Number of an already-open issue with this exact title, or "".
+
+    Dedupe, because several alert sources REPEAT by design and this channel
+    only became live on 2026-07-28. QC-063 fires whenever the last 3 fires
+    share a failed step — true on every fire until the step is fixed — so a
+    best-effort step dead for a week would have filed five identical issues.
+    liveness.yml already de-dupes this way (comment on today's issue instead
+    of opening another); fire_alert never did, because until now the channel
+    was a permanent no-op and it did not matter.
+
+    Best-effort and quiet: any failure returns "" and the caller just creates,
+    which is the old behaviour. Duplicate noise is much cheaper than a missed
+    alert, so this must never be able to suppress one.
+    """
+    try:
+        if not _have_gh():
+            return ""
+        r = subprocess.run(
+            ["gh", "issue", "list", "-R", GITHUB_REPO, "--state", "open",
+             "--search", title, "--json", "number,title", "--limit", "50"],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return ""
+        for item in json.loads(r.stdout or "[]"):
+            if (item.get("title") or "").strip() == title.strip():
+                return str(item.get("number") or "")
+    except Exception:
+        pass
+    return ""
+
+
 def _github_issue(title: str, body: str, labels: tuple) -> bool:
     """Create a GitHub issue out-of-band. Prefer the gh CLI (the wrapper
     already uses it for heartbeats); fall back to the REST API with a PAT.
-    Returns False (not raising) when no auth/channel is available."""
+    Returns False (not raising) when no auth/channel is available.
+
+    An identical open issue is COMMENTED on rather than duplicated — see
+    _existing_open_issue. A comment still counts as delivered: it bumps the
+    thread and notifies its subscribers, which is what "the alert got out"
+    means here."""
     label_args = []
     for label in labels:
         label_args += ["--label", label]
     # 1) gh CLI
     try:
         if _have_gh():
+            dupe = _existing_open_issue(title)
+            if dupe:
+                rc = subprocess.run(
+                    ["gh", "issue", "comment", dupe, "-R", GITHUB_REPO,
+                     "--body", body],
+                    capture_output=True, text=True, timeout=60).returncode
+                if rc == 0:
+                    return True
             rc = subprocess.run(
                 ["gh", "issue", "create", "-R", GITHUB_REPO,
                  "--title", title, "--body", body, *label_args],
@@ -130,6 +175,29 @@ def _have_gh() -> bool:
                               timeout=10).returncode == 0
     except Exception:
         return False
+
+
+def github_configured() -> bool:
+    """True when the GitHub channel has *some* credential to try.
+
+    This mirrors _github_issue's two auth paths EXACTLY — gh CLI first (which
+    authenticates from gh's own stored credentials and needs no GH_TOKEN at
+    all), then a PAT for the REST fallback. QC-076 calls this rather than
+    re-reading the env itself: an earlier version checked only GH_TOKEN, so it
+    reported the channel dead on a box with `gh auth login` done, and alive on
+    a runner whose token existed but was powerless.
+
+    HONEST SCOPE — read this before trusting it: a credential existing is not
+    the same as the credential WORKING. The 2026-07-27 outage had two causes
+    (no token AND no `issues: write`); this function can only see the first.
+    A token without `issues: write` still returns True here and still 403s in
+    _github_issue. The permission half is asserted statically against
+    daily.yml in tests/test_audit_batch7.py, because proving it at runtime
+    would mean spending an API call on every fire to test the alarm.
+    """
+    return bool(_have_gh()
+                or os.environ.get("GH_TOKEN")
+                or os.environ.get("GITHUB_TOKEN"))
 
 
 def _teams_webhook_url() -> str:
@@ -178,9 +246,18 @@ def _teams(title: str, body: str) -> bool:
 
 
 def send_alert(title: str, body: str, *, level: str = "error",
-               labels: tuple = ("fire-alert", "cloud-pc-down")) -> dict:
+               labels: tuple = ("fire-alert",)) -> dict:
     """Raise an out-of-band alert on every available channel. Best-effort:
-    a failing channel never blocks the others. Returns {channel: delivered?}."""
+    a failing channel never blocks the others. Returns {channel: delivered?}.
+
+    LABELS: the default is `fire-alert` alone. It used to include
+    `cloud-pc-down`, and liveness.yml's recovery step closes EVERY open
+    `cloud-pc-down` issue the moment it sees a fresh heartbeat. So a critical
+    alert that defaulted its labels — e.g. assert_fire_integrity's "no
+    verified report shipped" — could be filed and then auto-closed within
+    hours by an unrelated watchdog, while the condition it reported was still
+    true. Callers that genuinely mean "the box is down" pass that label
+    explicitly and opt into the auto-close."""
     # Scrub once at the boundary so all four channels share one redaction
     # boundary (parity with the Sentry before_send hook). _scrub_string is
     # idempotent, so double-scrubbing is a harmless no-op.
@@ -228,16 +305,25 @@ def _warn_if_undeliverable(results: dict) -> None:
     """
     if not undeliverable(results):
         return
-    tried = ", ".join(f"{c}={bool(results.get(c))}" for c in REMOTE_CHANNELS)
-    print(
-        "\n!!! ALERT UNDELIVERABLE — this alarm reached NO remote channel "
-        f"({tried}).\n"
-        "!!! It exists only in this log and in a local queue file. If this "
-        "run is on an ephemeral runner, that queue dies with the container "
-        "and NOBODY WILL BE TOLD.\n"
-        "!!! Fix: give the job `issues: write` + GH_TOKEN (GitHub channel), "
-        "or set TEAMS_WEBHOOK_URL (Teams channel). See QC-076.",
-        file=sys.stderr, flush=True)
+    # Wrapped, like _stderr_banner: this runs on the ALREADY-BAD path (both
+    # remote channels dead), and send_alert's contract is best-effort and
+    # never-blocking. An unwrapped print here raises UnicodeEncodeError on a
+    # non-UTF-8 stderr (the em dash) or ValueError on a closed one, turning
+    # "the alarm could not deliver" into "the caller crashed" at the worst
+    # possible moment. ASCII-only text, and swallow anything that's left.
+    try:
+        tried = ", ".join(f"{c}={bool(results.get(c))}" for c in REMOTE_CHANNELS)
+        print(
+            "\n!!! ALERT UNDELIVERABLE - this alarm reached NO remote channel "
+            f"({tried}).\n"
+            "!!! It exists only in this log and in a local queue file. If this "
+            "run is on an ephemeral runner, that queue dies with the container "
+            "and NOBODY WILL BE TOLD.\n"
+            "!!! Fix: give the job `issues: write` + GH_TOKEN (GitHub channel), "
+            "or set TEAMS_WEBHOOK_URL (Teams channel). See QC-076.",
+            file=sys.stderr, flush=True)
+    except Exception:
+        pass
 
 
 def main() -> int:
@@ -249,8 +335,11 @@ def main() -> int:
     args = ap.parse_args()
     res = send_alert(args.title, args.body, level=args.level)
     print(json.dumps(res))
-    # Exit 0 if ANY channel delivered (the alert is out); 1 if all failed.
-    return 0 if any(res.values()) else 1
+    # Exit 0 only if a REMOTE channel took it. `any(res.values())` used to be
+    # the test, but stderr and queue are always True on a healthy process, so
+    # the CLI exited 0 for an alert that reached nobody — the exact condition
+    # undeliverable() names. Same definition as the banner, one source of truth.
+    return 1 if undeliverable(res) else 0
 
 
 if __name__ == "__main__":
