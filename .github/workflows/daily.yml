@@ -203,12 +203,28 @@ jobs:
     permissions:
       contents: read
       actions: write     # to dispatch heartbeat.yml at end of a full fire
+      # 2026-07-27: the fire could not raise its own alarm. fire_alert's
+      # GitHub-issue channel needs BOTH this permission and GH_TOKEN (below);
+      # it had neither, so on a failed fire send_alert returned
+      # {'github': False, 'teams': False} and the FIRE-ALERT reached only
+      # stderr (buried in a log) and a queue file on an ephemeral runner that
+      # is destroyed with it. Nobody was told. Proved on the 2026-07-27 fire.
+      issues: write      # to file the FIRE-ALERT issue when a fire fails
     # All Graph + service secrets are exposed to every step that needs them.
     # App-only Graph (GRAPH_APP_*) is consumed by GraphClient.authenticate()
     # and outlook_send._app_only_send_context(); state sync uses the blob
     # connection string. The pipeline reads the rest from env via the same
     # paths the Cloud PC reads secrets/*.txt.
     env:
+      # THE ALARM'S CREDENTIAL. fire_alert._github_issue tries `gh issue
+      # create` then the REST API; both need a token, and neither the pipeline
+      # step nor the integrity-gate step had one. Set at JOB level so every
+      # step that can raise a FIRE-ALERT can actually deliver it — a failing
+      # fire now opens a labeled issue immediately, instead of depending
+      # entirely on the liveness watchdog (which runs on the same GitHub
+      # runners and therefore fails the same way: on 2026-07-27 the fire and
+      # both liveness ticks all failed to get a runner within one hour).
+      GH_TOKEN: ${{ github.token }}
       GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
       GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
       GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
