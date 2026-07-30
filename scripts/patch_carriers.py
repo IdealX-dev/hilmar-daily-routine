@@ -78,6 +78,12 @@ def _load_stage_subjects_by_mdolx() -> dict[str, list[str]]:
     return out
 
 
+#: imid -> the email's own sentDateTime, harvested alongside the bodies.
+#: refresh_stage.py:546 has always written this; nothing read it until
+#: 2026-07-30, which is why rate recovered here never carried a response time.
+_SENT_BY_IMID: dict[str, str] = {}
+
+
 def _load_bodies_by_imid() -> dict[str, str]:
     """Read stage_emails_bodies.txt and index by message-id (imid).
 
@@ -106,6 +112,12 @@ def _load_bodies_by_imid() -> dict[str, str]:
         body = d.get("text_body") or d.get("body") or d.get("body_text") or d.get("summary_preview") or ""
         if body:
             out[imid] = body
+        # Keep the message's own send time. When a rate is recovered from this
+        # body, that timestamp IS the moment OL quoted — recovering it is not
+        # inventing a value, it is reading one that was already on disk.
+        _sent = d.get("sent") or d.get("sentDateTime") or d.get("received") or ""
+        if _sent:
+            _SENT_BY_IMID[imid] = _sent
     return out
 
 
@@ -322,6 +334,42 @@ def _strip_boilerplate(body: str) -> str:
     return body[:earliest]
 
 
+def _stamp_response_time(r: dict, parsed: dict) -> bool:
+    """Give a recovered quote the send time of the email it came from.
+
+    THE 2026-07-30 DEFECT. OL-USA RESPONSES is bucketed by event date
+    (gen_email.py:186-199, off response_timestamp). PENDING HILMAR is current
+    state and is not windowed. So a row that gains an ol_rate here but no
+    response_timestamp is invisible to OL-USA RESPONSES on EVERY day, forever,
+    while still displaying its quote under PENDING HILMAR. Measured on the
+    stored state: 29 of 315 rows, and the newest response_timestamp anywhere
+    was 2026-07-23 — the section had been silently empty since Jul 24.
+
+    ingest.py:1199-1200 sets rate and timestamp together, and skips any rate
+    response it cannot date at all (`if not sent_dt: continue`). This module is
+    the OTHER way a rate reaches a row, and it only ever recovered the rate.
+
+    This is RECOVERY, NOT FABRICATION, and the distinction is the whole point:
+    the value written is the `sent` of the very message the rate was parsed
+    out of, which refresh_stage.py:546 already stored. Nothing is inferred
+    from a sibling, a lane, or a guess. If that message has no send time, the
+    field stays None — an undated quote is honest, an invented turnaround is
+    not, and QC-077 will keep flagging it.
+
+    Returns True when a timestamp was written.
+    """
+    if r.get("response_timestamp"):
+        return False
+    imid = (parsed or {}).get("_src_imid")
+    if not imid:
+        return False
+    sent = _SENT_BY_IMID.get(imid)
+    if not sent:
+        return False
+    r["response_timestamp"] = sent
+    return True
+
+
 def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> dict:
     """Return the full parsed quote from any source body — carrier, rate, ETD,
     ETA, vessel/voyage, transshipment, free-time, POL/POD.
@@ -343,6 +391,7 @@ def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str,
             # Canonicalize carrier name
             canon = C.normalize_carrier(parsed["carrier_quoted"]) or parsed["carrier_quoted"]
             parsed["carrier_quoted"] = canon
+            parsed["_src_imid"] = key
             return parsed
         # Fallback prose-scan for carrier+rate (still useful for non-table bodies)
         truncated = _strip_boilerplate(body)
@@ -363,7 +412,8 @@ def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str,
                 rate_val = float(rate_m.group(1).replace(",", ""))
             except ValueError:
                 rate_val = None
-            return {"carrier_quoted": best_canon, "ol_rate": rate_val}
+            return {"carrier_quoted": best_canon, "ol_rate": rate_val,
+                    "_src_imid": key}
     return {}
 
 
@@ -446,6 +496,7 @@ def main():
     patched_lane = 0
     patched_ql_carrier = 0
     patched_rate = 0
+    patched_resp_ts = 0
     auto_hits: list[str] = []
     manual_hits: list[str] = []
     body_hits: list[str] = []
@@ -645,6 +696,8 @@ def main():
                     r["ol_rate"] = parsed["ol_rate"]
                     r["quoted"] = True   # a recovered rate IS a quote — never NQ
                     patched_rate += 1
+                    if _stamp_response_time(r, parsed):
+                        patched_resp_ts += 1
                 status_tag = "Q&L" if r.get("status") == "LOSS" else "PND"
                 print(f"  PATCH {status_tag}  {r.get('request_id')[:16]} -> {canon}"
                       + (f" @ ${parsed['ol_rate']:.0f}" if parsed.get('ol_rate') else ""))
@@ -662,6 +715,8 @@ def main():
                 r["ol_rate"] = parsed["ol_rate"]
                 r["quoted"] = True   # a recovered rate IS a quote — never NQ
                 patched_rate += 1
+                if _stamp_response_time(r, parsed):
+                    patched_resp_ts += 1
 
         # PASS 2b: destination + lane from the row's own POD. A bare
         # booking amendment has no lane in subject/body and no sibling
@@ -873,7 +928,8 @@ def main():
           f"({len(auto_hits)} auto / {len(manual_hits)} manual / {patched_pass4} PASS-4 stage-scan), "
           f"{patched_lane} lane patches, "
           f"{patched_ql_carrier} Q&L-carrier patches (via body scan), "
-          f"{patched_rate} rate patches, "
+          f"{patched_rate} rate patches "
+          f"({patched_resp_ts} dated from the source email), "
           f"{patched_fields} field backfills "
           f"({', '.join(f'{k}:{v}' for k, v in sorted(field_hits.items()))})")
 
