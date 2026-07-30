@@ -208,10 +208,80 @@ def main() -> int:
     if not created:
         print("  nothing to clean up (no probe was created)")
 
+    # ---- overwrite=True, the exact call push() makes -----------------------
+    # The probes above used overwrite=False (If-None-Match: *). push() uses
+    # overwrite=True and got the same 404, but prove it rather than assume.
+    _line("WRITE probe with overwrite=True (push()'s exact call shape)")
+    ow_name = f"_diag/probe-overwrite-{stamp}.txt"
+    try:
+        cc.get_blob_client(ow_name).upload_blob(b"diag", overwrite=True)
+        created.append(ow_name)
+        print(f"  overwrite=True  -> OK      ({ow_name})")
+        try:
+            cc.get_blob_client(ow_name).delete_blob()
+            created.remove(ow_name)
+            print("  cleaned up")
+        except Exception as e:
+            print(f"  could NOT delete {ow_name}: {_describe_error(e)}")
+    except Exception as e:
+        print(f"  overwrite=True  -> FAILED  {_describe_error(e)}")
+
+    # ---- is the denial CONTAINER-scoped or ACCOUNT-scoped? -----------------
+    # This is the question the first probe could not answer. If a brand-new
+    # container also refuses writes, nothing about `hilmar-state` is at fault
+    # and the problem is the account or the credential's power over it.
+    _line("container-level operations")
+    print("  create_container() on the EXISTING container:")
+    print("    (state_store._container_client swallows this exception with")
+    print("     contextlib.suppress at state_store.py:172 — it may have been")
+    print("     saying something useful all along)")
+    try:
+        cc.create_container()
+        print("    -> OK (it did not exist and was just created?!)")
+    except Exception as e:
+        print(f"    -> {_describe_error(e)}")
+        print("       ContainerAlreadyExists/409 here is NORMAL and healthy.")
+
+    probe_container = f"hilmar-diag-{stamp}".lower()[:63]
+    print(f"\n  create a NEW container ({probe_container}):")
+    made_container = False
+    try:
+        svc.create_container(probe_container)
+        made_container = True
+        print("    -> OK — the credential CAN create containers")
+        try:
+            svc.get_container_client(probe_container).get_blob_client(
+                "probe.txt").upload_blob(b"diag", overwrite=False)
+            print("    -> write into the new container OK")
+            print("       => the denial is scoped to the hilmar-state container")
+        except Exception as e:
+            print(f"    -> write into the new container FAILED {_describe_error(e)}")
+            print("       => the denial is ACCOUNT-WIDE, not container-specific")
+    except Exception as e:
+        print(f"    -> {_describe_error(e)}")
+        print("       => the credential cannot create containers either")
+    finally:
+        if made_container:
+            try:
+                svc.delete_container(probe_container)
+                print(f"    cleaned up container {probe_container}")
+            except Exception as e:
+                print(f"    could NOT delete container {probe_container}: "
+                      f"{_describe_error(e)}")
+
+    _line("containers visible to this credential")
+    try:
+        names = [c.name for c in svc.list_containers()]
+        print(f"  {len(names)}: {', '.join(names)}")
+    except Exception as e:
+        print(f"  list_containers FAILED: {_describe_error(e)}")
+
     _line("verdict hint")
     print("  writes OK  -> the 404 was transient or specific to the real paths")
     print("  all writes 404/403 -> credential scope or account policy, not code")
     print("  root OK but prefixed 404 -> hierarchical-namespace directory issue")
+    print("  new container writes OK -> the hilmar-state container is the problem")
+    print("  new container writes 404 too -> account-wide write denial")
     return 0
 
 
