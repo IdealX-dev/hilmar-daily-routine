@@ -439,3 +439,37 @@ def test_undated_quotes_excludes_standalones_like_the_check_does():
             _quoted_row(rid="r2", response_timestamp=None)]
     got = gen_email.undated_quotes({"requests": rows})
     assert [r["request_id"] for r in got] == ["r2"]
+
+
+# ── the dashboard is an offline artifact ───────────────────────────────────
+
+def test_the_dashboard_fetches_nothing_from_the_network():
+    """It ships as an EMAIL ATTACHMENT. It is opened from Outlook, often
+    offline, often behind OL's proxy — so every byte it needs must already be
+    in the file.
+
+    This is not about the old font link being broken; it had a fallback stack
+    and degraded gracefully. It is about rendering being DETERMINISTIC: the
+    same document should look the same on Michael's laptop, on a plane, and on
+    a locked-down client machine, rather than quietly picking a different
+    typeface based on whether a CDN was reachable.
+    """
+    src = (SCRIPTS / "gen_dashboard.py").read_text(encoding="utf-8")
+    for needle in ("fonts.googleapis.com", "fonts.gstatic.com",
+                   "cdn.jsdelivr.net", "unpkg.com", "cdnjs.cloudflare.com"):
+        assert needle not in src, (
+            f"gen_dashboard.py pulls {needle} — the dashboard is opened as an "
+            "email attachment and must be self-contained")
+
+
+def test_the_dashboard_sets_a_mono_stack_for_figures():
+    """Decimals that line up down a column is the single biggest readability
+    win in the reference document, and it needs a real monospace stack rather
+    than tabular-nums alone."""
+    src = (SCRIPTS / "gen_dashboard.py").read_text(encoding="utf-8")
+    assert "--mono:" in src, "no monospace custom property defined"
+    assert "ui-monospace" in src, (
+        "the mono stack should lead with ui-monospace so each OS picks its "
+        "own best monospace face without a download")
+    assert ".kpi .value" in src and "var(--mono)" in src, (
+        "KPI figures must use the mono stack")

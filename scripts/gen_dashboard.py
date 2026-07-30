@@ -296,15 +296,20 @@ def render(cfg: dict, data: dict) -> str:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hilmar Ingredients — Shipment Tracker Dashboard</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+:root{{--bg:#f4f3ef;--card:#ffffff;--ink:#1f2328;--muted:#5f6670;--line:#e3e1da;
+  --mono:ui-monospace,'SF Mono','Cascadia Mono','Segoe UI Mono',Menlo,Consolas,'Liberation Mono',monospace;
+  --sans:'Segoe UI',-apple-system,BlinkMacSystemFont,Inter,Helvetica,Arial,sans-serif}}
 *{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;background:#f5f7fa;color:#0f172a;padding:24px;font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-feature-settings:'tnum' 1,'cv11' 1,'ss01' 1;font-variant-numeric:tabular-nums}}
+body{{font-family:var(--sans);background:var(--bg);color:var(--ink);padding:28px 22px 60px;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-variant-numeric:tabular-nums}}
+/* Every figure in mono so decimals align down the column — the single
+   biggest readability win in the reference doc Michael flagged. */
+.kpi .value,td.num,th.num,.basis{{font-family:var(--mono)}}
+.basis{{color:var(--muted);font-size:11px;font-family:var(--mono);text-align:right;white-space:nowrap}}
+.docfoot{{margin-top:34px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px}}
 table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
 .kpi .value,td,th{{font-variant-numeric:tabular-nums}}
-.header{{background:linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%);color:white;padding:24px 28px;border-radius:12px;margin-bottom:20px;box-shadow:0 4px 12px rgba(0,0,0,0.08)}}
+.header{{background:{B.HILMAR_NAVY};color:white;padding:22px 26px;border-radius:8px;margin-bottom:20px;border:1px solid {B.HILMAR_NAVY}}}
 .header h1{{font-size:26px;margin-bottom:6px;font-weight:700;letter-spacing:-0.3px}}
 .header .subtitle{{opacity:0.92;font-size:15px;font-weight:500}}
 .header .tz-note{{opacity:0.7;font-size:12px;margin-top:10px}}
@@ -314,11 +319,11 @@ table{{font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1}}
 /* 2026-05-19 PM (Michael "all boxes should be clickable"): every KPI tile
    is an <a> anchor link to its detail section. Hover lifts the card and
    underlines the value for affordance. Cursor:pointer signals click. */
-a.kpi{{text-decoration:none;color:inherit;display:block;background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1;transition:transform 0.12s ease,box-shadow 0.12s ease;cursor:pointer}}
+a.kpi{{text-decoration:none;color:inherit;display:block;background:var(--card);padding:14px;border-radius:8px;text-align:center;border:1px solid var(--line);border-top:3px solid #cbd5e1;transition:border-color 0.12s ease;cursor:pointer}}
 a.kpi:hover{{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,0.10)}}
 a.kpi:hover .value{{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}}
 a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
-.kpi{{background:white;padding:14px;border-radius:10px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,0.05);border-top:3px solid #cbd5e1}}
+.kpi{{background:var(--card);padding:14px;border-radius:8px;text-align:center;border:1px solid var(--line);border-top:3px solid #cbd5e1}}
 .kpi .value{{font-size:28px;font-weight:800;line-height:1.05;letter-spacing:-0.5px}}
 .kpi .label{{font-size:11.5px;color:#475569;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;font-weight:600}}
 .kpi .sub{{font-size:12px;color:#64748b;margin-top:3px;font-weight:500}}
@@ -334,13 +339,13 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .kpi.teal{{border-top-color:#14b8a6}} .kpi.teal .value{{color:#0d9488}}
 .kpi.slate{{border-top-color:#64748b}} .kpi.slate .value{{color:#475569}}
 
-.section{{background:white;border-radius:10px;padding:18px 20px;margin-bottom:14px;box-shadow:0 2px 6px rgba(0,0,0,0.05)}}
+.section{{background:var(--card);border-radius:8px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--line)}}
 .section h2{{font-size:17px;margin-bottom:14px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;font-weight:700;letter-spacing:-0.3px}}
 .section h3{{font-size:14px;color:#1e293b;margin:14px 0 8px 0;font-weight:600;letter-spacing:-0.1px}}
 table{{width:100%;border-collapse:collapse;font-size:13.5px}}
-th{{background:#f1f5f9;padding:10px 8px;text-align:left;font-weight:700;color:#334155;border-bottom:2px solid #cbd5e1;font-size:11.5px;text-transform:uppercase;letter-spacing:0.5px}}
+th{{background:#fbfaf7;padding:9px 11px;text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em}}
 td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
-tr:hover td{{background:#f8fafc}}
+tr:hover td{{background:#fbfaf7}}
 .win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#d97706}} .pending{{color:#7c3aed}}
 .win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #f59e0b}} .pending-row{{border-left:3px solid #a855f7}}
 .ta-fast{{color:#059669;font-weight:700}} .ta-medium{{color:#2563eb}} .ta-slow{{color:#dc2626;font-weight:700}}
