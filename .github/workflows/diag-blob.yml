@@ -1,0 +1,40 @@
+name: Diagnose blob state store
+
+# MANUAL ONLY. Runs scripts/diag_blob.py on a runner, which is the only place
+# AZURE_STORAGE_CONNECTION_STRING exists. Answers the 2026-07-28 question:
+# the state store can be READ but not WRITTEN, and the daily fire dies at the
+# snapshot-backup step before the pipeline ever runs.
+#
+# Read-only except for uniquely-named probe blobs under a `_diag/` prefix,
+# uploaded with overwrite=False and deleted on the way out. It cannot touch
+# real state. It never prints the connection string, the account key, or a SAS
+# signature.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Probe the blob state store
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the storage SDK
+        run: python -m pip install --quiet azure-storage-blob
+
+      - name: Probe
+        run: python3 scripts/diag_blob.py
