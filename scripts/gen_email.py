@@ -204,7 +204,6 @@ def _today_events(data, today_date):
                 status_changes.append((r, h))
         if r.get("status") == "PENDING":
             pending_today.append(r)
-
     return new_requests, ol_responses, status_changes, pending_today
 
 
@@ -544,7 +543,73 @@ def _status_change_pill(status, r, other_status=None):
     return V.pending_pill(sub)
 
 
-def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
+def undated_quotes(data) -> list:
+    """Rows carrying a real quote that no daily report can ever date.
+
+    OL-USA RESPONSES buckets on response_timestamp (_today_events). A row with
+    an ol_rate or a carrier_quoted but no response_timestamp has `resp_d is
+    None`, so it matches no day and is invisible to that section forever —
+    while PENDING HILMAR, which is current state and not windowed, keeps
+    showing its quote. That is what made the 2026-07-29 report look
+    self-contradictory rather than plainly broken.
+
+    STANDALONE BOOKINGS ARE EXCLUDED, and that exclusion is the whole
+    difference between a useful check and one that cries wolf. A `stand_*` row
+    is a booking seen without any rate-response email; ingest.py:887 sets
+    response_timestamp to None DELIBERATELY there, to signal "we never saw a
+    rate response" rather than polluting it with the booking time. Counting
+    those as defects would flag correct behaviour — 5 of the 29 rows found on
+    2026-07-30 were exactly that.
+
+    Kept as a module-level function, separate from _today_events, so the
+    latter keeps its four-tuple contract; widening that broke every caller and
+    test that unpacks it, for no benefit.
+    """
+    out = []
+    for r in data.get("requests", []):
+        if str(r.get("request_id") or "").startswith("stand_"):
+            continue
+        if r.get("response_timestamp"):
+            continue
+        if r.get("ol_rate") is not None or r.get("carrier_quoted"):
+            out.append(r)
+    return out
+
+
+def _undated_quotes_note(undated) -> str:
+    """Say, in the report, how many real quotes it cannot date — and so is not
+    showing above.
+
+    OL-USA RESPONSES is bucketed on response_timestamp (see _today_events). A
+    row with an ol_rate or a carrier_quoted but no response_timestamp is
+    invisible to that section on EVERY day, while still rendering its quote
+    under PENDING HILMAR. On 2026-07-30 that was 29 of 315 rows, and the
+    newest response_timestamp in the whole dataset was 2026-07-23 — the
+    section had been silently empty since Jul 24 and the report never said so.
+
+    It is NOT the report's job to invent a date for these. Synthesising one
+    would fabricate turnaround timing and corrupt the time-to-quote metrics.
+    An empty section that is honest about being incomplete is worth far more
+    than one that looks complete and isn't. QC-077 errors on the same
+    condition so it gets fixed at the ingest end.
+    """
+    if not undated:
+        return ""
+    n = len(undated)
+    return (
+        f'<p style="margin:4px 0 0;font-size:11px;color:#b45309;'
+        f'background:#fffbeb;border-left:3px solid #f59e0b;padding:6px 9px">'
+        f'⚠️ {n} further quote{"" if n == 1 else "s"} '
+        f'{"is" if n == 1 else "are"} recorded with a rate or carrier but no '
+        f'response time, so {"it" if n == 1 else "they"} cannot be dated and '
+        f'{"is" if n == 1 else "are"} not counted above. '
+        f'{"It appears" if n == 1 else "They appear"} under PENDING HILMAR. '
+        f'See QC-077 in the audit.</p>'
+    )
+
+
+def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
+                      undated_quotes=()):
     """Render the 'What Happened on <day>' block. The label `report_label` is
     TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
     fire runs AFTER Lonny's PT office has closed for the day, so today's data
@@ -909,6 +974,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending):
 
   <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
   {resp_table}
+  {_undated_quotes_note(undated_quotes)}
 
   <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}
@@ -1991,6 +2057,7 @@ def build_body(data, cfg):
     updated_label = _fmt_date(now_et, "%B %-d, %Y at %-I:%M %p ET")
 
     new_req, ol_resp, status_ch, pending = _today_events(data, report_date)
+    undated_q = undated_quotes(data)
     week_rows = _week_rows(data)
     carrier_rows = _carrier_rows(data)
     winning_lanes = _winning_lane_rows(data)
@@ -2002,7 +2069,8 @@ def build_body(data, cfg):
     pend_rows = _pending_rows(data)
 
     html_body = _header_html(report_label, date_range, updated_label)
-    html_body += _today_block_html(report_label, new_req, ol_resp, status_ch, pending)
+    html_body += _today_block_html(report_label, new_req, ol_resp, status_ch,
+                                   pending, undated_q)
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.

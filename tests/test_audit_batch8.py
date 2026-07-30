@@ -335,3 +335,107 @@ def test_the_prereq_gate_still_catches_a_bare_key_paste(monkeypatch):
     ok, msg = V.check_storage("Zm9vYmFyYmF6")
     assert not ok
     assert "connection string" in msg.lower()
+
+
+# ── QC-077: a real quote the daily report can never show ───────────────────
+
+def _qc_mod():
+    import qc_selfheal
+    return qc_selfheal
+
+
+def _fire_phase6(rows):
+    """Drive the production phase, not a hand-rolled copy of it."""
+    import contextlib
+    import io
+    QC = _qc_mod()
+    data = {"requests": rows, "summary": {}, "lane_summary": {},
+            "carrier_summary": {}}
+    log = QC.Log()
+    with contextlib.redirect_stdout(io.StringIO()):
+        QC.phase_5_summaries(log, data)
+        QC.phase_6_rules(log, data)
+    return log
+
+
+def _quoted_row(rid="r1", **over):
+    row = {
+        "request_id": rid, "status": "Q&L", "quoted": True,
+        "lane": "Oakland → Busan", "origin": "Oakland", "destination": "Busan",
+        "ol_rate": 3150.0, "carrier_quoted": "CMA CGM",
+        "request_timestamp": "2026-07-29T17:15:00+00:00",
+        "request_date": "2026-07-29",
+        "response_timestamp": "2026-07-29T19:02:00+00:00",
+        "status_history": [],
+    }
+    row.update(over)
+    return row
+
+
+def test_qc077_errors_on_a_quote_with_no_response_timestamp():
+    """THE 2026-07-29 SHAPE. A row with a rate and a carrier but no
+    response_timestamp is invisible to OL-USA RESPONSES on every day, while
+    PENDING HILMAR keeps showing its quote — which is why the report looked
+    self-contradictory rather than broken. 29 of 315 real rows were like this
+    and nothing said so."""
+    log = _fire_phase6([_quoted_row(response_timestamp=None)])
+    hits = [e for e in log.errors if "QC-077" in e]
+    assert hits, "a quote with no response_timestamp did not raise QC-077"
+    assert "OL-USA RESPONSES" in hits[0], (
+        "the error must name the section the row is invisible in")
+
+
+def test_qc077_silent_when_the_quote_is_dateable():
+    log = _fire_phase6([_quoted_row()])
+    assert not [e for e in log.errors if "QC-077" in e]
+
+
+def test_qc077_ignores_standalone_bookings():
+    """A stand_* row is a booking seen with no rate-response email at all;
+    ingest.py:887 leaves response_timestamp None there DELIBERATELY. Five of
+    the 29 rows found on 2026-07-30 were exactly that, and flagging them would
+    be crying wolf over correct behaviour."""
+    log = _fire_phase6([_quoted_row(rid="stand_260426", status="WIN",
+                                    response_timestamp=None)])
+    assert not [e for e in log.errors if "QC-077" in e], (
+        "QC-077 fired on a standalone booking, which legitimately has no "
+        "response_timestamp")
+
+
+def test_qc077_does_not_name_another_check_in_its_message():
+    """Test helpers and the governance ratchet both scan fired messages by
+    substring, so quoting another 'QC-0xx' in prose makes that check look like
+    it fired from here — it broke two QC-056 tests when this check was first
+    written."""
+    log = _fire_phase6([_quoted_row(response_timestamp=None)])
+    msg = [e for e in log.errors if "QC-077" in e][0]
+    others = {t for t in __import__("re").findall(r"QC-\d+", msg)} - {"QC-077"}
+    assert not others, (
+        f"QC-077's message names other checks {sorted(others)} — substring "
+        "scanners cannot tell that apart from those checks firing")
+
+
+def test_the_report_says_how_many_quotes_it_cannot_show():
+    """An empty section that is honest about being incomplete beats one that
+    looks complete and isn't. The report must never render 'No activity' over
+    real OL work without saying so."""
+    import gen_email
+    undated = gen_email.undated_quotes(
+        {"requests": [_quoted_row(response_timestamp=None)]})
+    assert len(undated) == 1
+    note = gen_email._undated_quotes_note(undated)
+    assert "cannot be dated" in note
+    assert "PENDING HILMAR" in note, (
+        "the note must tell the reader where the quote DID go")
+    assert gen_email._undated_quotes_note([]) == "", (
+        "a clean day must not carry a scary empty warning")
+
+
+def test_undated_quotes_excludes_standalones_like_the_check_does():
+    """The report's filter and QC-077's filter must agree, or the count in the
+    note contradicts the count in the audit."""
+    import gen_email
+    rows = [_quoted_row(rid="stand_1", response_timestamp=None),
+            _quoted_row(rid="r2", response_timestamp=None)]
+    got = gen_email.undated_quotes({"requests": rows})
+    assert [r["request_id"] for r in got] == ["r2"]

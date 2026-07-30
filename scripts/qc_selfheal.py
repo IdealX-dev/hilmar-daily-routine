@@ -4117,6 +4117,71 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
 
+    # QC-077: A QUOTE THE DAILY REPORT CAN NEVER SHOW.
+    #
+    # 2026-07-30, Michael on the Jul 29 report: "lots of data missing all
+    # broken." NEW REQUESTS (3) and PENDING HILMAR (3) were populated — the
+    # latter showing a real carrier and rate — while OL-USA RESPONSES,
+    # STATUS CHANGES and PENDING OL all rendered "No activity".
+    #
+    # The two sections are not the same kind of thing. gen_email buckets OL
+    # responses by EVENT DATE (gen_email.py:186-199, `resp_d == today_date`
+    # off response_timestamp), while PENDING HILMAR is CURRENT STATE and is
+    # not windowed at all (gen_email.py:800-801). So a row that carries an
+    # ol_rate or a carrier_quoted but has NO response_timestamp is invisible
+    # to OL-USA RESPONSES on every day, forever, while still displaying its
+    # quote under PENDING HILMAR.
+    #
+    # Measured on the stored state: 29 of 315 rows (9.2%) are in exactly that
+    # shape, and the newest response_timestamp anywhere is 2026-07-23 — so the
+    # section had been silently empty since Jul 24 and nothing said so.
+    # ingest.py:1200 is the ONLY place a matched rate response sets the field;
+    # the sibling-lane fallback (ingest.py:1345) and QC-056's backfill both
+    # set carrier_quoted without it.
+    #
+    # This does NOT heal. Synthesising a timestamp would fabricate turnaround
+    # timing and corrupt the time-to-quote metrics, which CLAUDE.md forbids
+    # outright. The honest move is to make the gap loud so it is fixed at the
+    # ingest end, and to let the report say how many quotes it cannot date
+    # (gen_email renders that count under the section).
+    try:
+        # Standalone bookings are EXCLUDED, and that exclusion is what keeps
+        # this check honest. A stand_* row is a booking seen with no
+        # rate-response email at all; ingest.py:887 leaves response_timestamp
+        # None there DELIBERATELY, to signal "we never saw a rate response"
+        # rather than polluting the field with the booking time. Five of the
+        # 29 rows found on 2026-07-30 were exactly that — flagging them would
+        # be crying wolf over correct behaviour.
+        _q_nots = [
+            r for r in data.get("requests", [])
+            if (r.get("ol_rate") is not None or r.get("carrier_quoted"))
+            and not r.get("response_timestamp")
+            and not str(r.get("request_id") or "").startswith("stand_")
+        ]
+        if _q_nots:
+            _lanes = ", ".join(
+                str(r.get("lane") or f"{r.get('origin')} → {r.get('destination')}")
+                for r in _q_nots[:6])
+            log.error(
+                f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
+                f"NO response_timestamp — every one is a real quote that "
+                f"OL-USA RESPONSES can NEVER show, because that section is "
+                f"bucketed on response_timestamp. They still render under "
+                f"PENDING HILMAR, so the report looks inconsistent rather than "
+                # Deliberately does NOT name another check's ID in the emitted
+                # text. Test helpers and the governance ratchet both scan
+                # fired messages by substring, so quoting "QC-0xx" in prose
+                # makes that check look like it fired from here. The
+                # cross-reference lives in the comment above instead.
+                f"broken. Fix at ingest: only ingest.py:1200 sets the field — "
+                f"the sibling-lane fallback and the carrier backfill do not. "
+                f"Lanes: {_lanes}"
+                + (f" … +{len(_q_nots) - 6} more" if len(_q_nots) > 6 else ""))
+        else:
+            log.ok("QC-077: every quoted row has a response_timestamp and can "
+                   "appear in OL-USA RESPONSES")
+    except Exception as _e:
+        log.warn(f"QC-077: check failed with exception: {_e}")
 
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
