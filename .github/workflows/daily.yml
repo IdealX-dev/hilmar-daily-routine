@@ -324,10 +324,46 @@ jobs:
         run: python3 scripts/state_store.py pull
 
       - name: Snapshot backup to blob store
+        id: snapshot
         # Dated gzip of the just-pulled state — i.e. yesterday's end-state,
         # before today's fire mutates it. QC-032's durable target on this
         # host (the OneDrive/local backup dirs only exist on the Cloud PC).
+        #
+        # NON-FATAL SINCE 2026-07-30, AND THAT IS THE POINT.
+        # This is a SAFETY NET, not the product. It ran under the default
+        # `bash -e`, so when the blob store started refusing writes on
+        # 2026-07-27 (reads and listing still fine — every write 404s
+        # account-wide; see scripts/diag_blob.py) this step exited 1 and took
+        # the whole job with it. Steps 9-13 — validate, run the pipeline,
+        # SEND THE DAILY EMAIL, send the client email, integrity gate — were
+        # all skipped. Three business days of client reports were lost to a
+        # failing backup, which is strictly worse than a missing snapshot.
+        #
+        # The failure stays LOUD, it just stops being fatal: the next step
+        # raises an out-of-band alert, and QC-032 independently errors on a
+        # stale backup during the run's own audit, so a silently-missing
+        # snapshot cannot hide. What must never happen again is a safety net
+        # holding the client report hostage.
+        continue-on-error: true
         run: python3 scripts/state_store.py backup
+
+      - name: Say so if the snapshot backup failed
+        if: steps.snapshot.outcome == 'failure'
+        # Belt and braces: an ALERT step must never be the thing that kills
+        # the fire. `|| true` below already guarantees exit 0, but a future
+        # edit that drops it would silently re-arm the exact failure mode
+        # this whole change exists to remove.
+        continue-on-error: true
+        # Out-of-band, because the lesson of 2026-07-27 is that an alarm
+        # riding the failing subsystem is no alarm. fire_alert exits 1 when
+        # no REMOTE channel took the alert, and a dead alarm must not become
+        # a dead fire — QC-076 covers that case separately.
+        run: |
+          python3 scripts/fire_alert.py \
+            --level warning \
+            --title "Snapshot backup FAILED — fire continuing without it" \
+            --body "state_store.py backup exited non-zero on run ${{ github.run_id }}. The fire is proceeding deliberately: a failed snapshot must not block the client report (2026-07-30). State is NOT backed up for this run — check the blob store's write path, and see QC-032 in this run's audit for backup staleness." \
+            || true
 
       - name: Validate prerequisites for real — name any wrong secret
         # The non-empty loop above can't catch a wrong-field paste (storage
