@@ -473,3 +473,110 @@ def test_the_dashboard_sets_a_mono_stack_for_figures():
         "own best monospace face without a download")
     assert ".kpi .value" in src and "var(--mono)" in src, (
         "KPI figures must use the mono stack")
+
+
+# ── recovering a quote's real send time (not inventing one) ────────────────
+
+def _pc():
+    import patch_carriers
+    return patch_carriers
+
+
+def test_a_recovered_rate_is_dated_from_the_email_it_came_from(monkeypatch):
+    """THE FIX for the 29 undated quotes. ingest.py:1199-1200 sets rate and
+    timestamp together; patch_carriers is the OTHER way a rate reaches a row
+    and it only ever recovered the rate — so those rows could never appear in
+    OL-USA RESPONSES."""
+    PC = _pc()
+    monkeypatch.setitem(PC._SENT_BY_IMID, "abc@ol", "2026-07-29T19:02:00Z")
+    row = {"request_id": "r1"}
+    assert PC._stamp_response_time(row, {"_src_imid": "abc@ol"}) is True
+    assert row["response_timestamp"] == "2026-07-29T19:02:00Z", (
+        "the timestamp must be the send time of the message the rate was "
+        "parsed out of — not a sibling's, not a guess")
+
+
+def test_an_undateable_quote_is_left_undated_rather_than_invented(monkeypatch):
+    """An undated quote is honest; an invented turnaround is not. CLAUDE.md
+    forbids fabricating values, and a wrong time-to-quote is worse than a
+    missing one because it silently poisons the SLA metrics."""
+    PC = _pc()
+    PC._SENT_BY_IMID.pop("nope@ol", None)
+    row = {"request_id": "r1"}
+    assert PC._stamp_response_time(row, {"_src_imid": "nope@ol"}) is False
+    assert row.get("response_timestamp") is None
+    # and with no provenance at all
+    assert PC._stamp_response_time(row, {"ol_rate": 3150.0}) is False
+    assert row.get("response_timestamp") is None
+
+
+def test_an_existing_response_time_is_never_overwritten(monkeypatch):
+    """ingest's value comes from the matched rate response and is the better
+    source. This is a backfill, not a correction."""
+    PC = _pc()
+    monkeypatch.setitem(PC._SENT_BY_IMID, "abc@ol", "2026-07-29T19:02:00Z")
+    row = {"request_id": "r1", "response_timestamp": "2026-07-28T12:00:00Z"}
+    assert PC._stamp_response_time(row, {"_src_imid": "abc@ol"}) is False
+    assert row["response_timestamp"] == "2026-07-28T12:00:00Z"
+
+
+def test_the_body_loader_harvests_the_send_time(tmp_path, monkeypatch):
+    """refresh_stage.py:546 has always written `sent` into the bodies file.
+    Nothing read it until 2026-07-30, which is the entire reason recovered
+    rates were undateable."""
+    import json as _json
+    PC = _pc()
+    bodies = tmp_path / "scripts" / "stage_emails_bodies.txt"
+    bodies.parent.mkdir(parents=True)
+    bodies.write_text(_json.dumps({
+        "imid": "<xyz@ol>", "text_body": "rate USD 3,150 CMA CGM",
+        "sent": "2026-07-29T19:02:00Z"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(PC, "ROOT", tmp_path)
+    PC._SENT_BY_IMID.clear()
+    out = PC._load_bodies_by_imid()
+    assert "xyz@ol" in out, "body not indexed"
+    assert PC._SENT_BY_IMID.get("xyz@ol") == "2026-07-29T19:02:00Z", (
+        "the send time on disk was not harvested — recovered rates will stay "
+        "undateable and invisible in OL-USA RESPONSES")
+
+
+def test_every_rate_recovery_dates_the_quote():
+    """THE WIRING, not the helper.
+
+    Deleting the _stamp_response_time call from patch_carriers' rate paths
+    left all 2135 tests green — every other test here calls the helper
+    directly, so nothing exercised the one thing that makes it run in
+    production. That is the identical gap that let a deleted
+    _warn_if_undeliverable call site pass earlier the same day.
+
+    Rule: every write of r["ol_rate"] in patch_carriers must be followed
+    immediately by an attempt to date it. A recovered rate with no timestamp
+    is invisible in OL-USA RESPONSES forever.
+    """
+    import ast
+
+    src = (SCRIPTS / "patch_carriers.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    rate_writes, stamp_calls = [], []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign):
+            for t in n.targets:
+                if (isinstance(t, ast.Subscript)
+                        and isinstance(t.slice, ast.Constant)
+                        and t.slice.value == "ol_rate"):
+                    rate_writes.append(n.lineno)
+        elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+              and n.func.id == "_stamp_response_time"):
+            stamp_calls.append(n.lineno)
+
+    assert rate_writes, (
+        "no r['ol_rate'] assignment found in patch_carriers — this guard has "
+        "gone inert and would pass on anything")
+
+    undated = [ln for ln in rate_writes
+               if not any(0 < c - ln <= 4 for c in stamp_calls)]
+    assert not undated, (
+        f"r['ol_rate'] is written at line(s) {undated} without a following "
+        "_stamp_response_time call. That rate can never appear in OL-USA "
+        "RESPONSES — see QC-077.")
