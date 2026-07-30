@@ -155,14 +155,34 @@ def check_storage(conn: str) -> tuple[bool, str]:
             "keys (starts with 'DefaultEndpointsProtocol=https;AccountName='), "
             "not the bare Key."
         )
+    # Ping with the operations the FIRE ACTUALLY DEPENDS ON, which are reads.
+    #
+    # This used to call svc.get_service_properties(). That is an
+    # account-CONFIGURATION surface the pipeline never touches, and this check
+    # is fatal — it can stop the client report. On 2026-07-27 the account
+    # began refusing every write while serving every read (see
+    # scripts/diag_blob.py), and no fire got as far as this line to find out
+    # whether that call still answered, because they all died at the snapshot
+    # step first. Gating the daily report on a call the report does not need
+    # is the same mistake as gating it on the backup.
+    #
+    # get_account_information() and container.exists() are both MEASURED
+    # working under the current account state (run 30538461306), and between
+    # them they prove what the fire needs: the key authenticates, the account
+    # answers, and the state container is reachable for the pull.
     try:
-        svc.get_service_properties()
+        svc.get_account_information()
+        container = os.environ.get("HILMAR_STATE_CONTAINER", "hilmar-state")
+        svc.get_container_client(container).exists()
     except Exception as e:
         return False, (
-            f"Storage account unreachable with this connection string ({type(e).__name__}: {e}). "
-            "Re-copy it from Access keys (the key may have been rotated)."
+            f"Storage account unreadable with this connection string "
+            f"({type(e).__name__}: {e}). Re-copy it from Access keys (the key "
+            "may have been rotated). NOTE: this checks READS only — the fire "
+            "needs the pull. Writes failing is reported separately by the "
+            "snapshot and push steps, and must not block the report."
         )
-    return True, "AZURE_STORAGE_CONNECTION_STRING parses and the account responds"
+    return True, "AZURE_STORAGE_CONNECTION_STRING parses and the account reads back"
 
 
 def main() -> int:

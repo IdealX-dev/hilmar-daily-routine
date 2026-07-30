@@ -530,10 +530,30 @@ jobs:
           fi
 
       - name: Push pipeline state back to blob store
+        id: push
         # ALWAYS — even on a failed fire we persist whatever state advanced,
         # so the next run doesn't re-ingest from a stale snapshot.
+        #
+        # STAYS FATAL, deliberately. It runs AFTER both sends, so it cannot
+        # block the report, and a red job here is the correct signal: the
+        # sent-flags did not persist. That is a real double-send hazard, and
+        # it should not be dressed up as success.
         if: always()
         run: python3 scripts/state_store.py push
+
+      - name: Warn that state did not persist
+        if: always() && steps.push.outcome == 'failure'
+        # A failed push means today's sent-flags are not in the blob store, so
+        # a second dispatch on a fresh runner will not see them. The durable
+        # guard is outlook_send's mailbox check, not these flags — but nobody
+        # should be re-dispatching on that assumption without being told.
+        continue-on-error: true
+        run: |
+          python3 scripts/fire_alert.py \
+            --level error \
+            --title "State push FAILED — today's sent-flags did not persist" \
+            --body "Run ${{ github.run_id }}: the report may have shipped, but state did not. A second dispatch on a fresh runner will not see today's flag. Do NOT re-dispatch until the blob store accepts writes again — see scripts/diag_blob.py." \
+            || true
 
       - name: Emit liveness heartbeat
         # liveness.yml alerts when no successful heartbeat.yml run landed in

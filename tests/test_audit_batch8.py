@@ -199,3 +199,139 @@ def test_each_essential_step_still_exists(step_name):
     something."""
     assert step_name in {_name(s) for s in _steps()}, (
         f"{step_name!r} is listed as essential but is not in daily.yml")
+
+
+def test_the_push_failure_is_announced_with_the_double_send_warning():
+    """A failed push means the sent-flags did not persist. The step stays
+    fatal — it runs after both sends, so red is the correct signal — but
+    nobody should re-dispatch without being told what that implies."""
+    names = [_name(s) for s in _steps()]
+    assert "Warn that state did not persist" in names
+    warn = [s for s in _steps() if _name(s) == "Warn that state did not persist"][0]
+    assert "steps.push.outcome" in str(warn.get("if", ""))
+    body = str(warn.get("run", ""))
+    assert "fire_alert" in body
+    assert "re-dispatch" in body.lower(), (
+        "the warning must say what the operator should NOT do")
+
+
+# ── the prereq gate must test reads, not an unrelated write-plane surface ──
+
+CONN = ("DefaultEndpointsProtocol=https;AccountName=acct;"
+        "AccountKey=Zm9v;EndpointSuffix=core.windows.net")
+
+
+class _FakeContainer:
+    def __init__(self, ok=True):
+        self._ok = ok
+
+    def exists(self):
+        if not self._ok:
+            raise RuntimeError("container unreadable")
+        return True
+
+
+class _FakeSvc:
+    """A storage account in EXACTLY the 2026-07-27 state: reads answer, the
+    write plane 404s, and get_service_properties is treated as unknown —
+    calling it at all is the defect under test."""
+
+    def __init__(self, *, reads_ok=True, service_props_raises=True):
+        self._reads_ok = reads_ok
+        self._service_props_raises = service_props_raises
+        self.called_service_properties = False
+
+    @classmethod
+    def make(cls, **kw):
+        inst = cls(**kw)
+        return lambda conn: inst
+
+    def get_account_information(self):
+        if not self._reads_ok:
+            raise RuntimeError("account unreadable")
+        return {"account_kind": "StorageV2"}
+
+    def get_container_client(self, name):
+        return _FakeContainer(ok=self._reads_ok)
+
+    def get_service_properties(self):
+        self.called_service_properties = True
+        if self._service_props_raises:
+            raise RuntimeError("ResourceNotFound — the write plane is dead")
+        return {}
+
+
+def _patch_sdk(monkeypatch, svc):
+    """Install a fake azure.storage.blob.
+
+    The real SDK is not a test dependency (it is only needed on a runner that
+    actually syncs), so check_storage would otherwise short-circuit on the
+    import guard and every assertion below would be vacuous — the exact
+    shape of decorative test this repo keeps getting bitten by.
+    """
+    import types
+
+    def from_connection_string(conn):
+        # Mirror the real SDK: a bare key, not a connection string, raises
+        # ValueError. check_storage's own message for that case is what
+        # caught the 2026-06-10 wrong-field paste.
+        if "AccountName=" not in conn:
+            raise ValueError("Connection string missing required connection details.")
+        return svc
+
+    blob_mod = types.ModuleType("azure.storage.blob")
+    blob_mod.BlobServiceClient = type(
+        "BlobServiceClient", (),
+        {"from_connection_string": staticmethod(from_connection_string)})
+    storage_mod = types.ModuleType("azure.storage")
+    storage_mod.blob = blob_mod
+    azure_mod = types.ModuleType("azure")
+    azure_mod.storage = storage_mod
+
+    monkeypatch.setitem(sys.modules, "azure", azure_mod)
+    monkeypatch.setitem(sys.modules, "azure.storage", storage_mod)
+    monkeypatch.setitem(sys.modules, "azure.storage.blob", blob_mod)
+
+
+def test_the_prereq_gate_passes_when_reads_work_even_if_the_write_plane_is_dead(monkeypatch):
+    """THE 2026-07-30 RISK. Every fire since 07-27 died at the snapshot step,
+    so nothing ever reached this check to discover whether its call still
+    answered. It is FATAL: if it had failed, the report would have died three
+    steps before the send with the snapshot fix already in place.
+
+    The fire needs the state PULL, which is a read. Gate on that.
+    """
+    import verify_fire_prereqs as V
+
+    svc = _FakeSvc(reads_ok=True, service_props_raises=True)
+    _patch_sdk(monkeypatch, svc)
+
+    ok, msg = V.check_storage(CONN)
+    assert ok, f"the prereq gate failed on an account whose reads all work: {msg}"
+    assert not svc.called_service_properties, (
+        "check_storage still calls get_service_properties — an account-"
+        "configuration surface the pipeline never touches, gating the client "
+        "report on something it does not need")
+
+
+def test_the_prereq_gate_still_fails_when_reads_are_genuinely_broken(monkeypatch):
+    """Teeth retained: if the pull could not work, the fire must not proceed —
+    the delegated token cache arrives via that pull, so there would be no
+    Graph auth at all."""
+    import verify_fire_prereqs as V
+
+    _patch_sdk(monkeypatch, _FakeSvc(reads_ok=False))
+    ok, msg = V.check_storage(CONN)
+    assert not ok, "unreadable storage no longer blocks the fire"
+    assert "unreadable" in msg.lower()
+
+
+def test_the_prereq_gate_still_catches_a_bare_key_paste(monkeypatch):
+    """The 2026-06-10 failure: the secret held the bare AccountKey, not the
+    connection string. That must stay fatal and keep saying what to paste."""
+    import verify_fire_prereqs as V
+
+    _patch_sdk(monkeypatch, _FakeSvc())
+    ok, msg = V.check_storage("Zm9vYmFyYmF6")
+    assert not ok
+    assert "connection string" in msg.lower()
