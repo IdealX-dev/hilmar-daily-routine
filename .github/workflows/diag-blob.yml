@@ -12,6 +12,11 @@ name: Diagnose blob state store
 
 on:
   workflow_dispatch:
+    inputs:
+      window_date:
+        description: "Report date to inspect (YYYY-MM-DD). Blank = latest present."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -38,3 +43,12 @@ jobs:
 
       - name: Probe
         run: python3 scripts/diag_blob.py
+
+      - name: Inspect the report rows (read-only)
+        # Answers the 2026-07-30 question: rows show a carrier + rate under
+        # PENDING HILMAR while OL-USA RESPONSES renders empty. gen_email
+        # buckets OL responses on response_timestamp, so a quoted row without
+        # one is invisible there forever. Reads only.
+        env:
+          DIAG_WINDOW_DATE: ${{ inputs.window_date }}
+        run: python3 scripts/diag_rows.py
