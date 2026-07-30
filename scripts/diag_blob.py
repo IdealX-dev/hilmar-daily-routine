@@ -230,6 +230,19 @@ def main() -> int:
     # This is the question the first probe could not answer. If a brand-new
     # container also refuses writes, nothing about `hilmar-state` is at fault
     # and the problem is the account or the credential's power over it.
+    # The exact call verify_fire_prereqs.check_storage used to make, and which
+    # is FATAL to the fire. No fire reached it between 2026-07-27 and 07-30 —
+    # they all died at the snapshot step first — so whether it still answers
+    # was never measured. Measure it.
+    _line("READ probe — get_service_properties (the old fatal prereq check)")
+    try:
+        svc.get_service_properties()
+        print("  get_service_properties -> OK")
+    except Exception as e:
+        print(f"  get_service_properties -> FAILED  {_describe_error(e)}")
+        print("     (this would have killed the fire at step 9, three steps")
+        print("      before the send, even with the snapshot step non-fatal)")
+
     _line("container-level operations")
     print("  create_container() on the EXISTING container:")
     print("    (state_store._container_client swallows this exception with")
