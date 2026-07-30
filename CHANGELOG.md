@@ -3,6 +3,134 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-07-30 — The report was down three days for a reason nobody had looked at
+
+Michael: "this report hasn't run in days" -> "storage account. no clue.. that's
+for you to figure out" -> on the Jul 29 report, "lots of data missing all broken".
+
+FIRST, A CORRECTION TO THIS FILE. The 2026-07-28 entry recorded that Friday
+2026-07-24 "never got its own daily email". WRONG. Run 30099554766 shows the
+daily send, the client send and the integrity gate all green. Friday shipped.
+The outage was Mon 27, Tue 28, Wed 29 — three business days, not two.
+
+1. THE ACTUAL BLOCKER WAS A BACKUP, NOT THE PARSER
+   Mon 27 was runner allocation + the QC-039 gate. Tue and Wed were something
+   else: the blob store began refusing WRITES, and the snapshot-backup step —
+   under the default `bash -e` — exited 1 and took the whole job with it.
+   Steps 9-13 (validate, run pipeline, SEND THE DAILY EMAIL, client email,
+   integrity gate) all skipped.
+   A dated gzip snapshot is a SAFETY NET. The daily report is the PRODUCT. Two
+   further days of reports were lost to a backup that could not be written,
+   which is strictly worse than having no backup for two days.
+   FIX (#131): snapshot is continue-on-error and raises an out-of-band alert;
+   the alert step is itself continue-on-error, because an alarm must never be
+   the thing that kills the fire. tests/test_audit_batch8.py asserts the
+   GENERAL rule: no step before the send may abort the fire unless it is named
+   in ESSENTIAL_BEFORE_SEND with the reason it earns that power.
+
+2. THE STORAGE ACCOUNT — MEASURED, NOT GUESSED
+   Michael handed this back, so it was diagnosed from the runner (the only
+   place the credential exists). scripts/diag_blob.py + a manual-dispatch
+   workflow (#130, #132), run three times ~75 min apart with identical results:
+     account rgidealxautomation9439, StorageV2, Standard_LRS
+     auth = ACCOUNT KEY (not SAS)      -> not a permission-scope problem
+     is_hns_enabled = False            -> not a directory problem
+     immutability/legal hold = False, lease unlocked, tier Hot
+     ALL reads, lists, properties      -> OK
+     ALL writes                        -> 404 ResourceNotFound
+     create_container on the EXISTING container -> 404 (not the healthy 409)
+     create_container on a NEW container       -> 404
+     get_service_properties                    -> OK
+   create_container returning 404 is the tell: no blob is involved and the
+   container demonstrably exists. Every read path works; every write path at
+   every level 404s. That is account-scope Azure state — not our code, not the
+   container, not the credential's validity. WHY is control-plane and needs
+   Portal/ARM access nobody in this session has. Last successful write
+   2026-07-27 18:29:06, exactly when the reports stopped.
+   NOTE: airprofits-state shares that account. If anything else writes there it
+   has been failing silently since Monday too.
+   DO NOT re-paste AZURE_STORAGE_CONNECTION_STRING. It is proven-good (it
+   authenticates; every read passes) and write-only in GitHub, so overwriting
+   destroys the only copy of the one input nobody can inspect.
+
+3. VERIFIED THE FIX BY FIRING, WITH MICHAEL'S APPROVAL
+   Dispatched mode=production-fire send_to=test (Michael only, --force
+   --no-flag, Lonny receives nothing). First report to leave the pipeline
+   since Friday: PIPELINE COMPLETE in 61.9s, two sends with request-ids, fire
+   integrity OK. Both new alerts fired as designed, and the push-failure alert
+   returned {'stderr': true, 'queue': true, 'github': true, 'teams': false} —
+   the GitHub channel wired on 07-27 reaching a human for the first time.
+
+4. THE NEXT FATAL BLOB CALL, FOUND BY AUDIT (#133)
+   verify_fire_prereqs.check_storage pinged with svc.get_service_properties(),
+   and that check is FATAL — three steps before the send. No fire had reached
+   that line since Jul 24, so it was untested for three days while sitting
+   directly in the path of the fix just shipped. Now pings with
+   get_account_information() + container.exists(), both MEASURED working.
+   HONESTY NOTE: it was later probed and it PASSES. It was an untested fatal
+   dependency, not an averted outage; saying otherwise overstated it.
+
+5. QC-077 — A REAL QUOTE THE REPORT CAN NEVER SHOW (#136, #137)
+   Michael's "data missing" was real. OL-USA RESPONSES buckets by EVENT DATE
+   (gen_email.py:186-199, off response_timestamp); PENDING HILMAR is CURRENT
+   STATE and not windowed (gen_email.py:800-801). A row with an ol_rate or
+   carrier_quoted but no response_timestamp matches no day and is invisible to
+   that section FOREVER, while PENDING HILMAR keeps showing its quote — which
+   is why the report looked self-contradictory rather than broken.
+   Measured: 29 of 315 rows (9.2%), and the newest response_timestamp anywhere
+   is 2026-07-23. The section had been silently empty since Jul 24.
+   ingest.py:1200 is the only place a matched rate response sets it; the
+   sibling-lane fallback (ingest.py:1345) and the carrier backfill do not.
+   NO HEAL, deliberately — synthesising a timestamp would fabricate turnaround
+   timing. QC-077 errors, and the report now prints how many quotes it cannot
+   date instead of rendering "No activity" over real OL work.
+   STILL OPEN: the ingest fix itself. QC-077 makes it visible; it does not
+   populate the field.
+
+6. DASHBOARD RESTYLED (#138)
+   Michael shared an OL air-freight comparison and called the formatting
+   gorgeous. Took the craft: warm paper ground, hairline rules instead of drop
+   shadows, mono for every figure so decimals align, quiet uppercase table
+   headers, a .basis class for the derivation text that makes a number
+   auditable. Class names untouched, so no HTML generation was restructured.
+   Also removed the CDN font fetch: the dashboard ships as an email attachment
+   opened offline or behind OL's proxy, and rendering should be deterministic.
+   HONESTY NOTE: the old link had a fallback stack and degraded gracefully. It
+   was called a defect here first; that was overstated. gen_email.py's link is
+   LEFT ALONE — it is MSO-guarded progressive enhancement, a different case.
+   Michael wants all three surfaces. PDF and email body are NOT done; the
+   email needs the design rebuilt table-based to survive Outlook's Word
+   renderer, not ported.
+
+MISTAKES MADE TODAY, ON THE RECORD
+   - Reasoned for a long stretch believing the date was 07-28 when it was
+     07-30, so the outage was one day worse than stated until caught.
+   - TWO mutation probes were INERT and read as passes: one argument-order bug
+     in the harness (`mut A "desc"` against `desc="$1"; shift`), one bad anchor
+     string. A third destroyed an uncommitted daily.yml fix via
+     `git checkout --` and the resulting failures were misread as the
+     mutation's. Harness now aborts if a mutation does not apply, and work is
+     committed before mutating.
+   - QC-077's first version flagged standalone bookings, which legitimately
+     have no response_timestamp (ingest.py:887 sets None deliberately). 5 of
+     the 29. It would have cried wolf on every run.
+   - QC-077's message quoted "QC-056" in prose, which broke two QC-056 tests:
+     helpers and the ratchet both scan fired messages by substring, so an ID in
+     prose is indistinguishable from that check firing. Same shape as the
+     ratchet defect fixed on 07-28.
+   - Widening _today_events' return arity broke 34 tests for no benefit.
+
+STILL OPEN
+   - The storage account write path. Nothing in the repo can fix it.
+   - The ingest response_timestamp fix (see 5).
+   - The PDF and email-body restyle (see 6).
+   - TEAMS_WEBHOOK_URL unset — still the only channel that survives GitHub
+     itself failing.
+   - Scheduled runs land ~2h late: ~14:05-14:30 UTC against a `7 12` cron, so
+     the report arrives ~10:00-10:30 ET, not 8 AM.
+   - The automated PR reviewer has skipped SIX consecutive PRs on the org
+     overage spend limit. Everything today merged on CI + self-review.
+
 ## 2026-07-28 — Reviewing yesterday's fix found it half-done, and its test blind
 
 Michael raised the org's code-review spend limit after the automated reviewer
@@ -173,6 +301,9 @@ WHAT I GOT WRONG TODAY, ON THE RECORD
      see it. That design is sound; the watchdog simply never got a runner.
 
 STILL OPEN
+   * [CORRECTED 2026-07-30 — THIS WAS WRONG. Run 30099554766 shows Friday's
+     daily send, client send and integrity gate all green. Friday SHIPPED.
+     Leaving the original line below so the error is visible, not erased.]
    * Friday 2026-07-24 never got its own daily email. The DATA is intact and
      the weekly covers it; the one daily send is gone. Tomorrow's fire reports
      Monday.
