@@ -57,9 +57,9 @@ on:
   # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
   # the one matching the current ET offset, so DST never doubles or skips.
   #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
-  schedule:
-    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+  # PAUSED 2026-08-03 — schedule removed entirely
+  # PAUSED 2026-08-03 — - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
+  # PAUSED 2026-08-03 — - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -136,9 +136,13 @@ jobs:
         # proceeds (and also reports the prior business day).
         run: |
           echo "window=previous" >> "$GITHUB_OUTPUT"
-          # PAUSE gate, checked before anything else. Scheduled fires only.
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
-            echo "::warning::Hilmar reports are PAUSED (HILMAR_REPORTS_PAUSED=true in daily.yml). Scheduled fire suppressed — nothing sent. Manual dispatch still works."
+          # HARD STOP, checked before anything else, for EVERY event type.
+          # Michael 2026-08-03: "make it stop  zero to go out". The earlier
+          # version gated the schedule only and left manual dispatch open;
+          # "zero" means zero, so a dispatch cannot send either. The cron
+          # triggers are commented out above as well, so nothing even spawns.
+          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+            echo "::warning::Hilmar reports are HARD-STOPPED (HILMAR_REPORTS_PAUSED=true). Nothing will be sent by ANY trigger, including manual dispatch."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

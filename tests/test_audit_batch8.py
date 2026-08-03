@@ -659,3 +659,33 @@ def test_liveness_stands_down_rather_than_alarming_while_paused():
         "liveness does not clear no_fire while paused — it will alarm about "
         "the intentional silence")
     assert "exit 0" in window, "the pause branch does not short-circuit"
+
+
+def test_no_workflow_can_spawn_a_scheduled_report_while_hard_stopped():
+    """Michael 2026-08-03: "make it stop  zero to go out".
+
+    A gate is not enough on its own. The 2026-07-30 pause gated the schedule
+    correctly, but the weekly still fired on 08-03 at 12:33 UTC because the
+    RUN had already been created from a pre-pause commit — GitHub checks out
+    the SHA at spawn time, so a gate merged 24 minutes later cannot help. The
+    only thing that guarantees zero is having no trigger to spawn from.
+    """
+    for name in ("daily", "weekly"):
+        on = _wf(name).get(True) or _wf(name).get("on")
+        assert "schedule" not in on, (
+            f"{name}.yml still has a cron trigger while reports are "
+            "hard-stopped — a run can still spawn and race the gate")
+
+
+def test_the_hard_stop_blocks_manual_dispatch_too():
+    """"Zero to go out" means zero. The earlier pause deliberately left manual
+    dispatch open so a deliberate send stayed possible; that is the right
+    design for a pause and the wrong one for a hard stop."""
+    for name in ("daily", "weekly"):
+        gate = _wf(name)["jobs"]["gate" if name == "daily" else list(_wf(name)["jobs"])[0]]
+        run = gate["steps"][0]["run"]
+        i = run.index("HILMAR_REPORTS_PAUSED")
+        before = run[:i]
+        assert 'event_name }}" != "schedule"' not in before, (
+            f"{name}.yml checks the dispatch branch BEFORE the hard stop — a "
+            "manual dispatch would slip through and send")
