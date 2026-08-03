@@ -17,9 +17,9 @@ name: Weekly exec summary
 # one matching the current ET offset so DST never doubles. dow 1 = Monday.
 
 on:
-  schedule:
-    - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
-    - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
+  # PAUSED 2026-08-03 — schedule removed entirely
+  # PAUSED 2026-08-03 — - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
+  # PAUSED 2026-08-03 — - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
   workflow_dispatch:
     inputs:
       send_to:
@@ -67,14 +67,16 @@ jobs:
         # proceeds). Keying on offset (not wall-clock) survives GitHub's
         # multi-hour cron lateness.
         run: |
+          # HARD STOP FIRST, for EVERY event type. Michael 2026-08-03
+          # "make it stop  zero to go out" — so a manual dispatch cannot send
+          # either. Placed before the dispatch branch on purpose: putting it
+          # after would leave dispatch open, which is what "zero" rules out.
+          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+            echo "::warning::Hilmar reports are HARD-STOPPED — weekly summary suppressed by ANY trigger, nothing sent."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "Manual dispatch — gate open."; echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          # PAUSE gate — see daily.yml. Michael 2026-07-30 "pause all hilmar
-          # reports". Scheduled only; manual dispatch above already returned.
-          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
-            echo "::warning::Hilmar reports are PAUSED — weekly summary suppressed, nothing sent."
-            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           offset=$(TZ=America/New_York date +%z)
           cron_hour=$(echo "${{ github.event.schedule }}" | awk '{print $2}')
