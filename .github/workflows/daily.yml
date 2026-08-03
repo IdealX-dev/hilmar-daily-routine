@@ -92,7 +92,28 @@ concurrency:
   group: hilmar-daily-fire
   cancel-in-progress: false
 
+# ─────────────────────────────────────────────────────────────────────
+# REPORTS PAUSED — Michael, 2026-07-30: "pause all hilmar reports".
+#
+# HILMAR_REPORTS_PAUSED gates the SCHEDULE only. While it is "true":
+#   - no scheduled fire sends anything to staff or to the client
+#   - manual dispatch still works, so a deliberate send is still possible
+#   - liveness does NOT alarm about the silence, because the silence is
+#     intentional; a watchdog that pages about a decision you made is a
+#     watchdog you learn to ignore
+#
+# TO RESUME: set this to "false" here. One word, one file, and the tests
+# in tests/test_audit_batch8.py assert the switch is actually honoured
+# rather than merely present.
+#
+# WHY PAUSED (context for whoever resumes): the blob state store has
+# refused every write since 2026-07-27 18:29 UTC, so state does not
+# persist between runs and the tracker is frozen. Reports still SEND, but
+# they report a dataset that stops advancing. Resuming before the storage
+# account is fixed means shipping increasingly stale numbers to Lonny.
+# ─────────────────────────────────────────────────────────────────────
 env:
+  HILMAR_REPORTS_PAUSED: "true"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
@@ -115,6 +136,12 @@ jobs:
         # proceeds (and also reports the prior business day).
         run: |
           echo "window=previous" >> "$GITHUB_OUTPUT"
+          # PAUSE gate, checked before anything else. Scheduled fires only.
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+            echo "::warning::Hilmar reports are PAUSED (HILMAR_REPORTS_PAUSED=true in daily.yml). Scheduled fire suppressed — nothing sent. Manual dispatch still works."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "Manual dispatch — gate open (window=previous)."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
