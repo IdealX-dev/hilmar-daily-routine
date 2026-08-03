@@ -84,8 +84,29 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          # Mirrors daily.yml's switch. Michael 2026-07-30: "pause all hilmar
+          # reports". Kept as a literal rather than read from daily.yml so
+          # this workflow has no cross-file parse to get wrong; a test in
+          # tests/test_audit_batch8.py asserts the two never drift apart.
+          HILMAR_REPORTS_PAUSED: "true"
         run: |
           set -e
+          # PAUSE gate. The fire is intentionally suppressed, so its silence
+          # is expected and must NOT page anyone. A watchdog that alarms about
+          # a decision you deliberately made is a watchdog you learn to ignore
+          # — and then it is worthless on the day something is genuinely wrong.
+          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+            echo "::notice::Hilmar reports are PAUSED — liveness is standing down. No missing-fire alarm will be raised while the pause is in effect."
+            echo "no_fire=false" >> "$GITHUB_OUTPUT"
+            echo "reason=paused" >> "$GITHUB_OUTPUT"
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "conclusion=" >> "$GITHUB_OUTPUT"
+            echo "created=" >> "$GITHUB_OUTPUT"
+            echo "age_h=" >> "$GITHUB_OUTPUT"
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Heartbeat = successful run of heartbeat.yml triggered by the
           # Cloud PC's wrapper at end of fire (2026-06-01 redesign).
           latest=$(gh run list --workflow=heartbeat.yml --branch=main \

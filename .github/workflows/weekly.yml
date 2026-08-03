@@ -40,6 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  HILMAR_REPORTS_PAUSED: "true"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 
@@ -68,6 +69,12 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "Manual dispatch — gate open."; echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # PAUSE gate — see daily.yml. Michael 2026-07-30 "pause all hilmar
+          # reports". Scheduled only; manual dispatch above already returned.
+          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+            echo "::warning::Hilmar reports are PAUSED — weekly summary suppressed, nothing sent."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           offset=$(TZ=America/New_York date +%z)
           cron_hour=$(echo "${{ github.event.schedule }}" | awk '{print $2}')

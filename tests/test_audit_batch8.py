@@ -580,3 +580,82 @@ def test_every_rate_recovery_dates_the_quote():
         f"r['ol_rate'] is written at line(s) {undated} without a following "
         "_stamp_response_time call. That rate can never appear in OL-USA "
         "RESPONSES — see QC-077.")
+
+
+# ── the pause switch (Michael 2026-07-30: "pause all hilmar reports") ──────
+
+WORKFLOWS = ROOT / ".github" / "workflows"
+
+
+def _wf(name: str) -> dict:
+    return yaml.safe_load((WORKFLOWS / f"{name}.yml").read_text(encoding="utf-8"))
+
+
+def _wf_text(name: str) -> str:
+    return (WORKFLOWS / f"{name}.yml").read_text(encoding="utf-8")
+
+
+def _paused(name: str):
+    return (_wf(name).get("env") or {}).get("HILMAR_REPORTS_PAUSED")
+
+
+def test_the_daily_and_weekly_share_one_pause_switch():
+    """One switch, one word to flip. A pause spread across several files is a
+    pause somebody half-resumes."""
+    assert _paused("daily") is not None, "daily.yml has no pause switch"
+    assert _paused("weekly") is not None, "weekly.yml has no pause switch"
+    assert _paused("daily") == _paused("weekly"), (
+        f"daily is {_paused('daily')!r} but weekly is {_paused('weekly')!r} — "
+        "one report would resume without the other")
+
+
+def test_liveness_agrees_with_the_daily_about_whether_reports_are_paused():
+    """liveness.yml holds its own literal rather than parsing daily.yml, so
+    the only thing keeping them honest is this test. Drift means either the
+    watchdog pages about an intentional silence, or it stays asleep after the
+    reports resume — and the second is the dangerous one."""
+    live = _wf_text("liveness")
+    assert "HILMAR_REPORTS_PAUSED" in live, "liveness has no pause guard"
+    import re
+    m = re.search(r'HILMAR_REPORTS_PAUSED:\s*"(\w+)"', live)
+    assert m, "could not read liveness's pause literal"
+    assert m.group(1) == _paused("daily"), (
+        f"liveness says {m.group(1)!r}, daily says {_paused('daily')!r} — "
+        "resume both or neither")
+
+
+def test_the_pause_actually_suppresses_the_scheduled_fire():
+    """Presence is not enforcement. The gate must READ the switch and set
+    proceed=false, or the flag is decoration and the fire still sends."""
+    gate = _wf("daily")["jobs"]["gate"]["steps"][0]["run"]
+    assert "HILMAR_REPORTS_PAUSED" in gate, (
+        "the daily gate never reads the pause switch — scheduled fires would "
+        "still send")
+    pause_at = gate.index("HILMAR_REPORTS_PAUSED")
+    assert "proceed=false" in gate[pause_at:pause_at + 400], (
+        "the pause branch does not set proceed=false")
+    assert "schedule" in gate[max(0, pause_at - 200):pause_at + 200], (
+        "the pause must be scoped to scheduled runs — a manual dispatch has "
+        "to stay available for a deliberate send")
+
+
+def test_a_manual_dispatch_still_works_while_paused():
+    """Pausing must not remove the ability to send on purpose — otherwise the
+    only way to ship a report is to edit and merge a workflow file."""
+    gate = _wf("daily")["jobs"]["gate"]["steps"][0]["run"]
+    assert 'github.event_name }}" != "schedule"' in gate, (
+        "the manual-dispatch branch is gone")
+    assert "proceed=true" in gate, "no path sets proceed=true any more"
+
+
+def test_liveness_stands_down_rather_than_alarming_while_paused():
+    """A watchdog that pages about a silence you chose is one you learn to
+    ignore, and then it is worthless on the day something is genuinely
+    wrong."""
+    live = _wf_text("liveness")
+    i = live.index('if [ "$HILMAR_REPORTS_PAUSED" = "true" ]')
+    window = live[i:i + 700]
+    assert "no_fire=false" in window, (
+        "liveness does not clear no_fire while paused — it will alarm about "
+        "the intentional silence")
+    assert "exit 0" in window, "the pause branch does not short-circuit"
