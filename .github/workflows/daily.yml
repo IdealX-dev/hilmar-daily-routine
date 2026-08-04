@@ -113,7 +113,7 @@ concurrency:
 # account is fixed means shipping increasingly stale numbers to Lonny.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  HILMAR_REPORTS_PAUSED: "true"
+  HILMAR_REPORTS_PAUSED: "false"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
