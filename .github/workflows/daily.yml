@@ -57,9 +57,9 @@ on:
   # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
   # the one matching the current ET offset, so DST never doubles or skips.
   #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
-  # PAUSED 2026-08-03 — schedule removed entirely
-  # PAUSED 2026-08-03 — - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-  # PAUSED 2026-08-03 — - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+  schedule:
+    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
+    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -93,24 +93,30 @@ concurrency:
   cancel-in-progress: false
 
 # ─────────────────────────────────────────────────────────────────────
-# REPORTS PAUSED — Michael, 2026-07-30: "pause all hilmar reports".
+# REPORTS LIVE — resumed 2026-08-04. Michael: "crons back on".
 #
-# HILMAR_REPORTS_PAUSED gates the SCHEDULE only. While it is "true":
-#   - no scheduled fire sends anything to staff or to the client
-#   - manual dispatch still works, so a deliberate send is still possible
-#   - liveness does NOT alarm about the silence, because the silence is
-#     intentional; a watchdog that pages about a decision you made is a
-#     watchdog you learn to ignore
+# History, because the next pause should be cheaper than the last one:
+#   2026-07-30  "pause all hilmar reports" — flag set to "true".
+#   2026-08-03  "why is hilmar still sending  just sent again  make it
+#               stop  zero to go out". The flag was right and insufficient:
+#               a scheduled run pins its SHA when it SPAWNS, so the weekly
+#               that fired at 12:33 was running the pre-pause file and
+#               never saw the gate. Removing the cron triggers was the
+#               only thing that produced zero.
+#   2026-08-04  Azure writes recovered ("AZURE IS BACK AND RUNNING"), the
+#               backfill pushed state successfully for the first time
+#               since 2026-07-27 18:29, and the crons came back.
 #
-# TO RESUME: set this to "false" here. One word, one file, and the tests
-# in tests/test_audit_batch8.py assert the switch is actually honoured
-# rather than merely present.
+# TO PAUSE AGAIN, BOTH HALVES OR NEITHER:
+#   1. set HILMAR_REPORTS_PAUSED: "true" below (and in weekly.yml and
+#      liveness.yml — tests assert all three agree), AND
+#   2. comment out the cron triggers above.
+# The flag alone stops future spawns from seeing an open gate; removing the
+# triggers stops the spawn. tests/test_audit_batch8.py enforces the pairing
+# so a half-pause fails CI instead of failing in Lonny's inbox.
 #
-# WHY PAUSED (context for whoever resumes): the blob state store has
-# refused every write since 2026-07-27 18:29 UTC, so state does not
-# persist between runs and the tracker is frozen. Reports still SEND, but
-# they report a dataset that stops advancing. Resuming before the storage
-# account is fixed means shipping increasingly stale numbers to Lonny.
+# While paused, liveness stands down rather than alarming: a watchdog that
+# pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
   HILMAR_REPORTS_PAUSED: "false"
@@ -137,10 +143,15 @@ jobs:
         run: |
           echo "window=previous" >> "$GITHUB_OUTPUT"
           # HARD STOP, checked before anything else, for EVERY event type.
-          # Michael 2026-08-03: "make it stop  zero to go out". The earlier
-          # version gated the schedule only and left manual dispatch open;
-          # "zero" means zero, so a dispatch cannot send either. The cron
-          # triggers are commented out above as well, so nothing even spawns.
+          # Michael 2026-08-03: "make it stop  zero to go out". Gating the
+          # schedule alone is not enough — "zero" means a manual dispatch
+          # cannot send either, so this is checked before the dispatch branch
+          # below. Setting HILMAR_REPORTS_PAUSED=true is HALF a stop on its
+          # own: a run already spawned from a pre-pause SHA carries its own
+          # copy of this file, so the cron triggers must come out too (that is
+          # how 2026-08-03's weekly still fired 24 minutes after the pause
+          # merged). tests/test_audit_batch8.py enforces the pairing.
+          # RESUMED 2026-08-04 — Michael: "crons back on".
           if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
             echo "::warning::Hilmar reports are HARD-STOPPED (HILMAR_REPORTS_PAUSED=true). Nothing will be sent by ANY trigger, including manual dispatch."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
@@ -482,13 +493,13 @@ jobs:
           else
             echo "VERIFICATION send — michael.deitchman@idealx.us only (send_to=test) — PDF=$MAIN_PDF"
             python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
-              --force --no-flag \
+              --verification \
               --subject-from-file reports/email-subject.txt \
               --body-from-file reports/email-body.html \
               --attach reports/hilmar-dashboard.html "$MAIN_PDF" $EXTRA_ATTACH
             if [ "$COMBINED_OK" != "true" ]; then
               python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
-                --force --no-flag \
+                --verification \
                 --subject-from-file reports/improvements-subject.txt \
                 --body-from-file reports/improvements-report.html
             fi
@@ -501,8 +512,10 @@ jobs:
         # send does it go to the client recipients (with --flag-name
         # client-sent, its own idempotency namespace, synced via state_store).
         # Otherwise a SAMPLE goes to sample_to (Michael only) with
-        # --force --no-flag so it never touches idempotency state. QC-065 pins
-        # the approved to/cc and scans the body for internal-analytics leaks.
+        # --verification, which tags the subject [VERIFY] and implies
+        # --force --no-flag so it never touches idempotency state AND can
+        # never consume the real client send's mailbox guard. QC-065 pins the
+        # approved to/cc and scans the body for internal-analytics leaks.
         # BEST-EFFORT: this step must never fail the job — the staff email has
         # already shipped by this point; every branch exits 0.
         run: |
@@ -532,7 +545,7 @@ jobs:
             printf '[SAMPLE - internal preview, Lonny does NOT receive this] %s' \
               "$(cat reports/client-email-subject.txt)" > reports/client-email-subject-sample.txt
             python3 scripts/outlook_send.py daily --to $SAMPLE_TO \
-              --force --no-flag \
+              --verification \
               --subject-from-file reports/client-email-subject-sample.txt \
               --body-from-file reports/client-email-body.html \
               || echo "Client SAMPLE send failed (best-effort — never fails the job)"

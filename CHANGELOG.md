@@ -63,15 +63,61 @@ about the OL air-freight comparison doc, meaning dashboard AND PDF AND email.
    stream — there is no rasterizer on this host, so nobody has LOOKED at the
    PDF. Previews were sent to Michael for that.
 
-STILL OPEN — CARRIED FROM THE ENTRY BELOW
-- The staff send is BLOCKED by a real defect, not by a decision. The mailbox
-  guard dedupes on subject, and the 21:04 verification send used the SAME
-  subject the staff send would. A plain send_to=full will refuse, send
-  nothing, and write a weekly-sent flag claiming it shipped. Same foot-gun as
-  2026-07-30. Fix before sending: tag verification subjects "[VERIFY]" so a
-  test send can never consume a real send's guard, plus a deliberate one-run
-  override for today's collision.
-- Crons back on: Michael said yes; not done yet.
+5. A VERIFICATION SEND CAN NO LONGER EAT A REAL SEND (the actual blocker)
+   Michael: "staff list yes and crons back on". The staff send could not have
+   worked. `_sent_today_in_mailbox` dedupes on EXACT SUBJECT across hosts, and
+   the 21:04 catch-up preview used the SAME subject the staff run would build.
+   A plain send_to=full would have found it, printed "already sent today",
+   returned 0, and written a weekly-sent flag recording a delivery that never
+   happened. Not theory: this is what blocked the real staff send on
+   2026-07-30, and it was queued to do it again.
+   --force alone is NOT the fix — forcing the real send past the guard turns
+   the guard off for the send that actually matters. The fix is to make a test
+   copy a DIFFERENT MESSAGE:
+     outlook_send.py --verification  → prefixes VERIFY_PREFIX "[VERIFY] " and
+     implies --force --no-flag. The three properties travel as one flag so
+     they can never be half-applied.
+   Wired into EVERY test-send path in daily.yml (staff, improvements, client
+   sample) and weekly.yml — a test asserts no raw `--force --no-flag` survives
+   in either workflow, because "helper written, wiring not" has now cost three
+   incidents.
+   weekly.yml also gains a `force_send` dispatch input, default false, for the
+   ONE case the tagging cannot retroactively fix: a subject already burned by
+   an untagged preview (today's). It logs a ::warning:: when used.
+
+6. CRONS BACK ON — AND PAUSING IS NOW ONE OPERATION, NOT TWO
+   daily.yml: "7 12 * * 1-5" / "7 13 * * 1-5" (~8:07 AM ET, DST-gated).
+   weekly.yml: "7 9 * * 1" / "7 10 * * 1" (~5:07 AM ET Monday).
+   HILMAR_REPORTS_PAUSED stays "false" in daily, weekly and liveness.
+   The 2026-08-03 lesson is now enforced instead of remembered: a scheduled
+   run pins its SHA when it SPAWNS, so the flag alone is HALF a pause. The
+   test that used to assert "there are no cron triggers" asserted an
+   OPERATIONAL STATE and would have gone red the moment Michael said resume —
+   a test that fails on the day the state legitimately changes teaches people
+   to edit tests to ship. Rewritten as the conditional invariant that is true
+   in both states: paused ⇒ flag AND no triggers; live ⇒ flag AND triggers.
+   A second test asserts daily and weekly are never in different states,
+   because half-paused is exactly how 2026-08-03 happened.
+
+7. ANOTHER COMMENT-VS-CODE SCANNER, CAUGHT THE SAME WAY
+   test_the_pause_actually_suppresses_the_scheduled_fire located the pause
+   branch with gate.index("HILMAR_REPORTS_PAUSED") and scanned 400 chars for
+   proceed=false. Adding a comment ABOVE the branch pushed the code out of the
+   window and the test went red while the shell was untouched. Now anchored on
+   the actual condition `if [ "$HILMAR_REPORTS_PAUSED" = "true" ]` with
+   comment lines stripped first (_gate_code). Third instance of this family
+   this week — an identifier in prose is indistinguishable from an identifier
+   in code unless you strip one.
+
+   VERIFIED: full suite 2221 passed, 0 failed; ruff clean; both workflows
+   parse as YAML. NOTHING HAS BEEN SENT TO THE STAFF LIST YET.
+
+STILL OPEN — AWAITING MICHAEL
+- His eye on the restyled email/PDF/dashboard previews. Everything else is
+  ready to go the moment he likes the look.
+- gen_client_email.py (Lonny's report) is the one artifact still on the old
+  navy-bar look. It is also the only one that leaves the building, so it was
+  not restyled without asking.
 
 ## 2026-08-04 — The backfill loaded the data and then reported one day of it
 

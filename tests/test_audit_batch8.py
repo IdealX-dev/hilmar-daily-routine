@@ -628,6 +628,26 @@ def _paused(name: str):
     return (_wf(name).get("env") or {}).get("HILMAR_REPORTS_PAUSED")
 
 
+def _gate_code(name: str) -> str:
+    """The gate step's shell with COMMENT LINES STRIPPED.
+
+    These tests scan for identifiers like HILMAR_REPORTS_PAUSED and locate the
+    branch around them. The gate is heavily commented — deliberately, it is
+    the most dangerous step in the repo — so the first textual occurrence of
+    any identifier is usually in prose, not in code. Anchoring on prose means
+    the test measures how the comment is worded, and it went red on
+    2026-08-04 for exactly that: a comment explaining the pause was added
+    above the branch and pushed `proceed=false` outside the scan window,
+    while the shell was untouched.
+
+    Same family as the QC-ID substring scanners: an identifier in prose is
+    indistinguishable from an identifier in code unless you strip one.
+    """
+    job = "gate" if name == "daily" else list(_wf(name)["jobs"])[0]
+    run = _wf(name)["jobs"][job]["steps"][0]["run"]
+    return "\n".join(ln for ln in run.splitlines() if not ln.lstrip().startswith("#"))
+
+
 def test_the_daily_and_weekly_share_one_pause_switch():
     """One switch, one word to flip. A pause spread across several files is a
     pause somebody half-resumes."""
@@ -656,16 +676,16 @@ def test_liveness_agrees_with_the_daily_about_whether_reports_are_paused():
 def test_the_pause_actually_suppresses_the_scheduled_fire():
     """Presence is not enforcement. The gate must READ the switch and set
     proceed=false, or the flag is decoration and the fire still sends."""
-    gate = _wf("daily")["jobs"]["gate"]["steps"][0]["run"]
+    gate = _gate_code("daily")
     assert "HILMAR_REPORTS_PAUSED" in gate, (
         "the daily gate never reads the pause switch — scheduled fires would "
         "still send")
-    pause_at = gate.index("HILMAR_REPORTS_PAUSED")
+    pause_at = gate.index('if [ "$HILMAR_REPORTS_PAUSED" = "true" ]')
     assert "proceed=false" in gate[pause_at:pause_at + 400], (
         "the pause branch does not set proceed=false")
-    assert "schedule" in gate[max(0, pause_at - 200):pause_at + 200], (
-        "the pause must be scoped to scheduled runs — a manual dispatch has "
-        "to stay available for a deliberate send")
+    assert "exit 0" in gate[pause_at:pause_at + 400], (
+        "the pause branch does not short-circuit — execution falls through "
+        "into the branches that set proceed=true")
 
 
 def test_a_manual_dispatch_still_works_while_paused():
@@ -690,7 +710,7 @@ def test_liveness_stands_down_rather_than_alarming_while_paused():
     assert "exit 0" in window, "the pause branch does not short-circuit"
 
 
-def test_no_workflow_can_spawn_a_scheduled_report_while_hard_stopped():
+def test_pausing_removes_the_cron_triggers_not_just_the_flag():
     """Michael 2026-08-03: "make it stop  zero to go out".
 
     A gate is not enough on its own. The 2026-07-30 pause gated the schedule
@@ -698,12 +718,34 @@ def test_no_workflow_can_spawn_a_scheduled_report_while_hard_stopped():
     RUN had already been created from a pre-pause commit — GitHub checks out
     the SHA at spawn time, so a gate merged 24 minutes later cannot help. The
     only thing that guarantees zero is having no trigger to spawn from.
+
+    Written as a CONDITIONAL invariant rather than as "there are no crons".
+    The first version asserted the absence outright, which was true while the
+    hard stop was on and became a false failure the moment Michael said
+    "crons back on" (2026-08-04) — a test that pins an operational state
+    fails on the day the state legitimately changes, and teaches people to
+    edit tests to ship. The rule that is true in BOTH states is the pairing:
+    paused means flag AND no triggers; live means flag AND triggers.
     """
     for name in ("daily", "weekly"):
         on = _wf(name).get(True) or _wf(name).get("on")
-        assert "schedule" not in on, (
-            f"{name}.yml still has a cron trigger while reports are "
-            "hard-stopped — a run can still spawn and race the gate")
+        if _paused(name) == "true":
+            assert "schedule" not in on, (
+                f"{name}.yml is flagged paused but still has a cron trigger — "
+                "a run can spawn from the pre-pause SHA and never see the gate")
+        else:
+            assert "schedule" in on, (
+                f"{name}.yml is not paused but has no cron trigger — it would "
+                "only ever run by hand, which is a silent outage")
+
+
+def test_a_half_pause_is_impossible_across_the_two_report_workflows():
+    """Both report workflows must be in the same state. Half-paused is how
+    2026-08-03 happened, and it is invisible unless something checks."""
+    states = {n: (_paused(n), "schedule" in (_wf(n).get(True) or _wf(n).get("on")))
+              for n in ("daily", "weekly")}
+    assert states["daily"] == states["weekly"], (
+        f"daily and weekly disagree about whether reports are live: {states}")
 
 
 def test_the_hard_stop_blocks_manual_dispatch_too():
@@ -711,9 +753,8 @@ def test_the_hard_stop_blocks_manual_dispatch_too():
     dispatch open so a deliberate send stayed possible; that is the right
     design for a pause and the wrong one for a hard stop."""
     for name in ("daily", "weekly"):
-        gate = _wf(name)["jobs"]["gate" if name == "daily" else list(_wf(name)["jobs"])[0]]
-        run = gate["steps"][0]["run"]
-        i = run.index("HILMAR_REPORTS_PAUSED")
+        run = _gate_code(name)
+        i = run.index('if [ "$HILMAR_REPORTS_PAUSED" = "true" ]')
         before = run[:i]
         assert 'event_name }}" != "schedule"' not in before, (
             f"{name}.yml checks the dispatch branch BEFORE the hard stop — a "

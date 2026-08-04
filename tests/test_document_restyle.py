@@ -312,3 +312,100 @@ def test_the_pdf_draws_hairlines_not_a_cage(tmp_path):
     assert re.search(rb"\.9 w", blob), "0.9pt rule under the table head missing"
     assert not re.search(rb"0?\.3 w", blob), (
         "the old 0.3pt full GRID is back — that is the cage the restyle removes")
+
+
+# ── a verification send must never consume a real send's guard ─────────────
+#
+# Filed here rather than in a new module because it is the same root cause the
+# restyle work kept running into: two things that must differ are allowed to
+# be identical, and nothing checks.
+
+def _outlook_send():
+    import outlook_send
+    return outlook_send
+
+
+class _Args:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_a_verification_send_is_tagged_and_cannot_touch_idempotency(tmp_path, capsys):
+    """THE regression. The mailbox guard dedupes on EXACT subject across
+    hosts, so an untagged test copy makes the later real send look like a
+    duplicate: it returns 0, sends nothing, and writes a flag recording a
+    delivery that never happened.
+
+    Live twice: 2026-07-30 a verification fire blocked the real staff send,
+    and 2026-08-04 the 21:04 catch-up preview blocked its own staff run.
+    """
+    OS_ = _outlook_send()
+    subj = tmp_path / "s.txt"
+    body = tmp_path / "b.html"
+    subj.write_text("Hilmar — Weekly Executive Summary (week of Jul 27)", encoding="utf-8")
+    body.write_text("<p>x</p>", encoding="utf-8")
+
+    args = _Args(subject_from_file=str(subj), body_from_file=str(body),
+                 to=["michael.deitchman@idealx.us"], cc=None, to_from_config=False,
+                 attach=None, dry=True, force=False, no_flag=False,
+                 flag_name=None, verification=True)
+    OS_.cmd_daily(args)
+
+    assert args.force is True, "--verification must imply --force"
+    assert args.no_flag is True, "--verification must imply --no-flag"
+    out = capsys.readouterr().out
+    # Assert on the SUBJECT LINE THAT WOULD BE SENT, not merely that the
+    # prefix appeared somewhere in the log — a banner saying "tagged" while
+    # the untagged subject goes out is precisely the failure being prevented.
+    assert (f"→ SUBJECT: {OS_.VERIFY_PREFIX}Hilmar — Weekly Executive Summary "
+            f"(week of Jul 27)") in out, (
+        "the verification send did not tag the subject it actually sends — it "
+        "stays indistinguishable from the real message in the sent-items the "
+        f"guard reads. Got:\n{out}")
+
+
+def test_the_verify_prefix_is_not_applied_twice(tmp_path, capsys):
+    """A re-run must not produce '[VERIFY] [VERIFY] …' — the guard keys on the
+    exact string, so a prefix that grows each run stops matching its own
+    earlier sends and the dedupe quietly dies."""
+    OS_ = _outlook_send()
+    subj = tmp_path / "s.txt"
+    body = tmp_path / "b.html"
+    subj.write_text(f"{OS_.VERIFY_PREFIX}Hilmar — already tagged", encoding="utf-8")
+    body.write_text("<p>x</p>", encoding="utf-8")
+    args = _Args(subject_from_file=str(subj), body_from_file=str(body),
+                 to=["michael.deitchman@idealx.us"], cc=None, to_from_config=False,
+                 attach=None, dry=True, force=False, no_flag=False,
+                 flag_name=None, verification=True)
+    OS_.cmd_daily(args)
+    line = [ln for ln in capsys.readouterr().out.splitlines()
+            if ln.startswith("→ SUBJECT:")][0]
+    assert line.count(OS_.VERIFY_PREFIX) == 1, f"prefix applied twice: {line}"
+
+
+def test_a_real_send_is_never_tagged(tmp_path, capsys):
+    """The tag marks a test copy. Putting it on a staff send would be worse
+    than the bug it fixes."""
+    OS_ = _outlook_send()
+    subj = tmp_path / "s.txt"
+    body = tmp_path / "b.html"
+    subj.write_text("Hilmar — Weekly Executive Summary (week of Jul 27)", encoding="utf-8")
+    body.write_text("<p>x</p>", encoding="utf-8")
+    args = _Args(subject_from_file=str(subj), body_from_file=str(body),
+                 to=None, cc=None, to_from_config=False, attach=None, dry=True,
+                 force=False, no_flag=True, flag_name="weekly-sent",
+                 verification=False)
+    OS_.cmd_daily(args)
+    assert OS_.VERIFY_PREFIX not in capsys.readouterr().out
+
+
+def test_every_test_send_path_in_the_workflows_uses_verification():
+    """Helper written, wiring not — three times in one day. The flag only
+    protects the paths that actually pass it."""
+    for wf in ("daily.yml", "weekly.yml"):
+        text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
+        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+        assert "--force --no-flag" not in code, (
+            f"{wf} still has a raw --force --no-flag test send; route it through "
+            "--verification so the subject is tagged too")
+        assert "--verification" in code, f"{wf} has no verification-tagged send path"
