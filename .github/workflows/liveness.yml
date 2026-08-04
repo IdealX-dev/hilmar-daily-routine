@@ -88,7 +88,7 @@ jobs:
           # reports". Kept as a literal rather than read from daily.yml so
           # this workflow has no cross-file parse to get wrong; a test in
           # tests/test_audit_batch8.py asserts the two never drift apart.
-          HILMAR_REPORTS_PAUSED: "true"
+          HILMAR_REPORTS_PAUSED: "false"
         run: |
           set -e
           # PAUSE gate. The fire is intentionally suppressed, so its silence

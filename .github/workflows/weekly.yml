@@ -40,7 +40,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  HILMAR_REPORTS_PAUSED: "true"
+  HILMAR_REPORTS_PAUSED: "false"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 
