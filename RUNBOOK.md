@@ -348,6 +348,31 @@ python scripts/refresh_stage.py --days-back 60 --pdf-backfill
 ```
 python scripts/gen_weekly_summary.py --force
 ```
+`--force` reports the PREVIOUS Mon–Fri, anchored on `today - 7 days`. It is
+the right tool only when the gap is exactly that week.
+
+### Recover a period the dailies missed (catch-up summary)
+When the dailies were down for a stretch, `--force` under-reports it: run on a
+Tuesday it covers the previous Mon–Fri and drops everything after. Name the
+window instead — ISO dates, inclusive, both required:
+```
+python scripts/gen_weekly_summary.py --start 2026-07-27 --end 2026-08-04
+```
+- Implies `--force` (an explicit period IS the request; no weekday gate).
+- Baseline for the ▲▼ deltas is the same-length window immediately before,
+  not the previous calendar week.
+- Bad or reversed dates exit **2** and write nothing.
+- Subject becomes `Hilmar — Catch-Up Executive Summary (…)` — deliberately
+  distinct from the weekly subject, which the cross-host mailbox guard
+  dedupes on.
+
+Same thing from Actions: **Weekly exec summary → Run workflow**, fill `start`
+and `end`, leave `send_to` on `test` (Michael only) until the output has been
+eyeballed. Leave both blank for the ordinary previous-week run.
+
+The email subject is written by `gen_weekly_summary.py` into
+`reports/weekly-subject.txt`; `weekly.yml` sends whatever is in that file and
+fails closed if it is missing. Do not reintroduce shell date math for it.
 
 ### Restore a backup
 ```

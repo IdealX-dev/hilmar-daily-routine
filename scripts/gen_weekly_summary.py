@@ -246,8 +246,34 @@ def four_week_trend(all_rows, today):
     return trend
 
 
-def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend):
-    """Compact one-page HTML — easy to PDF and Slack-share."""
+def _range_label(start, end):
+    """Human range label: 'Jul 27–31, 2026'.
+
+    Cross-month gives 'Jul 27–Aug 4, 2026'; cross-year gives
+    'Dec 28, 2026–Jan 1, 2027'. A Mon-Fri week never leaves its month, so the
+    original dropped the end month unconditionally — an explicit period can
+    straddle one, and 'Jul 27–4, 2026' is not a date range. This is the
+    caption directly above the numbers it describes.
+    """
+    d = "%#d" if sys.platform == "win32" else "%-d"
+    if start.year != end.year:
+        return f"{start.strftime(f'%b {d}, %Y')}–{end.strftime(f'%b {d}, %Y')}"
+    if start.month != end.month:
+        return f"{start.strftime(f'%b {d}')}–{end.strftime(f'%b {d}, %Y')}"
+    return f"{start.strftime(f'%b {d}')}–{end.strftime(f'{d}, %Y')}"
+
+
+def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
+                period_label="Previous week", compare_label=None):
+    """Compact one-page HTML — easy to PDF and Slack-share.
+
+    `period_label` names the reported span in the header; `compare_label`
+    names what the ▲/▼ deltas are measured against. Both default to the
+    Monday-fire wording so the scheduled run renders byte-identically to
+    before. An explicit --start/--end catch-up passes its own strings,
+    because "Previous week" on a 7-business-day recovery window would be a
+    caption that contradicts the numbers under it.
+    """
     def _delta(curr, prev, fmt="d"):
         if not isinstance(curr, (int, float)) or not isinstance(prev, (int, float)):
             return ""
@@ -259,7 +285,17 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend):
         fmtspec = "+d" if fmt == "d" else "+.1f"
         return f'<span style="color:{color};font-size:12px;margin-left:6px">{arrow} {d:{fmtspec}}</span>'
 
-    wk_label = f"{week[0].strftime('%b %-d')}–{week[1].strftime('%-d, %Y')}" if sys.platform != "win32" else f"{week[0].strftime('%b %#d')}–{week[1].strftime('%#d, %Y')}"
+    wk_label = _range_label(week[0], week[1])
+
+    _custom = period_label != "Previous week"
+    _glance_title = "Period at a glance" if _custom else "Week at a glance"
+    _compare_note = (
+        f'<p style="margin:0 0 8px;font-size:11px;color:#94a3b8">'
+        f'▲▼ vs the preceding {compare_label}</p>'
+    ) if compare_label else ""
+    _footer_note = (f"scripts/gen_weekly_summary.py · explicit period {wk_label}"
+                    if _custom else
+                    "scripts/gen_weekly_summary.py · Monday 5 AM ET · previous week")
 
     win_rows = "".join(
         f'<tr><td style="padding:6px 8px">{r["lane"]}</td>'
@@ -353,9 +389,10 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 </style></head><body><div class="container">
 {f'<div style="margin-bottom:12px">{B.logo_html(height=42)}</div>' if B.has_logo() else ''}
 <h1>{'' if B.has_logo() else '🗓 '}Hilmar Weekly Summary</h1>
-<p style="margin:0 0 16px;color:#64748b">Previous week: <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
+<p style="margin:0 0 16px;color:#64748b">{period_label}: <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
 
-<h2>Week at a glance</h2>
+<h2>{_glance_title}</h2>
+{_compare_note}
 <div style="margin-bottom:8px">
   <div class="kpi"><span class="val">{this_week["total"]}</span><span class="lbl">Requests {_delta(this_week["total"], prev_week["total"])}</span></div>
   <div class="kpi"><span class="val">{this_week["wins"]} <span style="color:#16a34a">({this_week["teu_won"]} TEU)</span></span><span class="lbl">Wins {_delta(this_week["wins"], prev_week["wins"])}</span></div>
@@ -385,21 +422,77 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 {trend_rows}
 </table>
 
-<p style="margin-top:20px;font-size:11px;color:#94a3b8">Auto-generated weekly summary · scripts/gen_weekly_summary.py · Monday 5 AM ET · previous week</p>
+<p style="margin-top:20px;font-size:11px;color:#94a3b8">Auto-generated weekly summary · {_footer_note}</p>
 </div></body></html>"""
+
+
+def _explicit_period(start_s, end_s):
+    """Resolve --start/--end into (start, end, prev_start, prev_end).
+
+    The comparison baseline is the SAME-LENGTH window ending the day before
+    `start`, not the previous calendar week: a catch-up window is rarely
+    Mon-Fri, and comparing 7 business days against 5 would print a delta that
+    is an artifact of the window length rather than the business.
+
+    Raises ValueError with an operator-readable message — main() turns that
+    into exit code 2 rather than a traceback, because this runs unattended in
+    a workflow where a traceback is just noise in a log nobody reads.
+    """
+    if bool(start_s) != bool(end_s):
+        raise ValueError("--start and --end must be given together")
+    try:
+        start = datetime.strptime(start_s, "%Y-%m-%d").date()
+        end = datetime.strptime(end_s, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError(f"--start/--end must be ISO dates (YYYY-MM-DD): {exc}") from exc
+    if end < start:
+        raise ValueError(f"--end {end} is before --start {start}")
+    span = (end - start).days + 1
+    prev_end = start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=span - 1)
+    return start, end, prev_start, prev_end
+
+
+def _subject_for(mon, fri, custom):
+    """The one place the weekly's email subject is built.
+
+    weekly.yml used to derive it in shell (`date -u -d 'last monday -7 days'`),
+    duplicating the anchor math this module already does. Two clocks, one
+    header — and the subject is what the cross-host mailbox guard dedupes on,
+    so a drift between them is a silently suppressed or a doubled send.
+    """
+    if custom:
+        return f"Hilmar — Catch-Up Executive Summary ({_range_label(mon, fri)})"
+    return f"Hilmar — Weekly Executive Summary (week of {mon.strftime('%b %-d')})"
 
 
 def main(argv=None, now=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true",
                     help="Generate even if today isn't Monday (default: Monday-only)")
+    ap.add_argument("--start", default="",
+                    help="ISO date (YYYY-MM-DD): first day of an explicit reporting "
+                         "period. Requires --end. Implies --force.")
+    ap.add_argument("--end", default="",
+                    help="ISO date (YYYY-MM-DD): last day of the period, inclusive.")
     args = ap.parse_args(argv)
+
+    custom = bool(args.start or args.end)
+    if custom:
+        try:
+            c_start, c_end, c_prev_start, c_prev_end = _explicit_period(args.start, args.end)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
 
     # ONE aware instant drives both the Monday gate and the week bounds — ET,
     # never the runner's UTC/local date.
     now = now or datetime.now(timezone.utc)
     today = _fire_day_et(now)
-    if not should_generate(now=now, force=args.force):
+    # An explicit period IS the request. Making the caller also pass --force
+    # would mean a wrong weekday could silently drop a recovery run that was
+    # asked for by date, which is the failure this option exists to fix.
+    if not should_generate(now=now, force=args.force or custom):
         print(f"Fire day is {today.strftime('%A')} ET, not Monday — skipping "
               f"(use --force to override)")
         return 0
@@ -407,11 +500,20 @@ def main(argv=None, now=None):
     data = json.loads(DATA.read_text(encoding="utf-8"))
     rows = data.get("requests", []) or []
 
-    # The Monday fire summarizes the PREVIOUS (just-completed) week — anchor the
-    # week bounds on 7 days ago so "this week" in the report is LAST Mon-Fri.
-    report_anchor = today - timedelta(days=7)
-    mon, fri = _week_bounds(report_anchor)
-    prev_mon, prev_fri = mon - timedelta(weeks=1), fri - timedelta(weeks=1)
+    if custom:
+        mon, fri = c_start, c_end
+        prev_mon, prev_fri = c_prev_start, c_prev_end
+        # Trend anchors on the LAST day reported, so the newest sparkline
+        # column is the week the period ends in rather than a week the
+        # report never mentions.
+        report_anchor = fri
+    else:
+        # The Monday fire summarizes the PREVIOUS (just-completed) week — anchor
+        # the week bounds on 7 days ago so "this week" in the report is LAST
+        # Mon-Fri.
+        report_anchor = today - timedelta(days=7)
+        mon, fri = _week_bounds(report_anchor)
+        prev_mon, prev_fri = mon - timedelta(weeks=1), fri - timedelta(weeks=1)
     this_rows = _filter_rows(rows, mon, fri)
     prev_rows = _filter_rows(rows, prev_mon, prev_fri)
     # Wins are filtered SEPARATELY, by the date the booking landed rather than
@@ -426,14 +528,26 @@ def main(argv=None, now=None):
     cow = carrier_of_week(this_rows, this_wins)
     trend = four_week_trend(rows, report_anchor)
 
-    html = render_html((mon, fri), this_metrics, prev_metrics, top_win, top_loss, cow, trend)
+    _span = (fri - mon).days + 1
+    html = render_html(
+        (mon, fri), this_metrics, prev_metrics, top_win, top_loss, cow, trend,
+        period_label="Reporting period" if custom else "Previous week",
+        compare_label=(f"{_span} days ({prev_mon.isoformat()} → {prev_fri.isoformat()})"
+                       if custom else None),
+    )
     REPORTS.mkdir(parents=True, exist_ok=True)
     dated = REPORTS / f"weekly-summary-{fri.isoformat()}.html"
     latest = REPORTS / "weekly-summary.html"
+    subject = REPORTS / "weekly-subject.txt"
     dated.write_text(html, encoding="utf-8")
     latest.write_text(html, encoding="utf-8")
+    # weekly.yml sends whatever is in this file — see _subject_for.
+    subject.write_text(_subject_for(mon, fri, custom), encoding="utf-8")
 
     print(f"✅ Weekly summary: {dated.name}")
+    print(f"   Period:    {mon.isoformat()} → {fri.isoformat()} ({_span} days)")
+    print(f"   Baseline:  {prev_mon.isoformat()} → {prev_fri.isoformat()}")
+    print(f"   Subject:   {_subject_for(mon, fri, custom)}")
     print(f"   This week: {this_metrics['total']} req / {this_metrics['wins']} W "
           f"/ {this_metrics['teu_won']} TEU / {this_metrics['win_rate']}% win rate")
     print(f"   Prev week: {prev_metrics['total']} req / {prev_metrics['wins']} W "

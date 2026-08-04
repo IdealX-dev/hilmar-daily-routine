@@ -30,6 +30,16 @@ on:
         options:
           - test
           - full
+      start:
+        description: "Catch-up start date YYYY-MM-DD (blank = normal previous-week anchor)"
+        required: false
+        default: ""
+        type: string
+      end:
+        description: "Catch-up end date YYYY-MM-DD, inclusive (required with start)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   # SAME group as daily.yml. These two jobs share one blob store: weekly pulls
@@ -121,22 +131,43 @@ jobs:
         # tracking-data-v2.json + the delegated token cache the send needs.
         run: python3 scripts/state_store.py pull
 
-      - name: Build the previous-week exec summary
+      - name: Build the exec summary
         if: steps.gate.outputs.proceed == 'true'
+        env:
+          PERIOD_START: ${{ github.event.inputs.start }}
+          PERIOD_END: ${{ github.event.inputs.end }}
         # --force: this workflow IS the Monday trigger, so always generate;
         # gen_weekly_summary anchors on the prior week regardless of the exact
         # weekday it runs.
-        run: python3 scripts/gen_weekly_summary.py --force
+        #
+        # A manual dispatch may pass start/end to report an explicit window
+        # instead — used to recover a period the daily fires missed, where the
+        # previous-week anchor would report one week and leave the rest dark.
+        # Bad dates exit 2 from the generator and fail the step; nothing is
+        # sent, because the send step reads files this step must write.
+        run: |
+          if [ -n "$PERIOD_START" ] || [ -n "$PERIOD_END" ]; then
+            echo "Explicit period: '$PERIOD_START' → '$PERIOD_END'"
+            python3 scripts/gen_weekly_summary.py --start "$PERIOD_START" --end "$PERIOD_END"
+          else
+            python3 scripts/gen_weekly_summary.py --force
+          fi
 
-      - name: Send the weekly exec summary (INTERNAL staff list only)
+      - name: Send the exec summary (INTERNAL staff list only)
         if: steps.gate.outputs.proceed == 'true'
         run: |
           if [ ! -f reports/weekly-summary.html ]; then
             echo "::error::weekly-summary.html not generated — nothing to send"; exit 1
           fi
-          LABEL=$(date -u -d 'last monday -7 days' +'%b %-d' 2>/dev/null || date +'%b %-d')
-          SUBJECT="Hilmar — Weekly Executive Summary (week of $LABEL)"
-          printf '%s' "$SUBJECT" > reports/weekly-subject.txt
+          # The SUBJECT comes from the generator (scripts/gen_weekly_summary.py
+          # _subject_for), not from shell date math. It has to describe the
+          # period the HTML actually covers: this subject is what the
+          # cross-host mailbox guard dedupes on, so a subject computed from a
+          # second clock can suppress a real send or double a sent one.
+          if [ ! -s reports/weekly-subject.txt ]; then
+            echo "::error::weekly-subject.txt missing or empty — refusing to send an unlabeled summary"; exit 1
+          fi
+          echo "SUBJECT: $(cat reports/weekly-subject.txt)"
           if [ "$SEND_TO" = "full" ]; then
             echo "FULL staff distribution (config.json distribution.full_list)"
             python3 scripts/outlook_send.py daily --to-from-config \
