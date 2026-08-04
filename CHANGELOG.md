@@ -64,7 +64,31 @@ He was right, and the data was never the problem.
    same-month, cross-month and cross-year; all three are parametrized.
 
    VERIFIED THIS SESSION: full suite 2175 passed, 0 failed; ruff clean on both
-   changed files; weekly.yml parses as YAML. Nothing has been sent.
+   changed files; weekly.yml parses as YAML. CI run 30950446416 green on all
+   14 steps, including the production-fire env-parity suite. Merged as #144.
+
+6. THE CATCH-UP WENT OUT — TO MICHAEL ONLY
+   Run 30950686216, dispatched on the merge commit a9131b3f with
+   send_to=test, start=2026-07-27, end=2026-08-04:
+     Explicit period: '2026-07-27' -> '2026-08-04'
+     Period:    2026-07-27 -> 2026-08-04 (9 days)
+     Baseline:  2026-07-18 -> 2026-07-26
+     Subject:   Hilmar - Catch-Up Executive Summary (Jul 27-Aug 4, 2026)
+     This week: 20 req / 9 W / 34 TEU / 33.3% win rate
+     Prev week: 12 req / 3 W /  8 TEU / 23.1% win rate
+     Carrier of week: Evergreen (100.0%)
+     TO (1): ['michael.deitchman@idealx.us']  BODY: 18,004 bytes
+     Sent. request-id=b3a32828-6d3e-4c8b-9b53-0e25dd6361a4
+   20 requests against the ONE day the backfill report showed. "Push state
+   back" correctly skipped (SEND_TO=test), so tracking-data-v2.json was not
+   touched. Nothing reached the staff list; the weekly never goes to the
+   client, so Lonny received nothing.
+   READ WITH IT: 9 wins + 18 Q&L against 20 requests does not add up, and that
+   is the DESIGN, not a defect. Wins are dated by when the booking landed;
+   Q&L and the request total are dated by when the RFQ came in, so a win here
+   can belong to an RFQ from before Jul 27. That mix is the identical formula
+   the daily's KPI block uses, and matching it is what stopped the weekly and
+   the daily contradicting each other (finding #19).
 
 DECISIONS
 - Michael: recover the week via the weekly exec summary (option 1), not via
@@ -74,6 +98,11 @@ DECISIONS
   he had just called out.
 - Claude: first dispatch goes to send_to=test (Michael only) for review before
   anything reaches the staff list. The weekly never goes to the client.
+
+STILL OPEN — AWAITING MICHAEL
+- Whether the Jul 27-Aug 4 catch-up goes to the STAFF list. Same dispatch,
+  send_to=full. Not sent; needs his word.
+- Whether to turn the crons back on.
 
 STILL OPEN
 - Crons remain OFF in daily.yml and weekly.yml (`# PAUSED 2026-08-03`).
