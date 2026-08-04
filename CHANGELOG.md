@@ -3,6 +3,76 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-04 (2) — "i like it all" finally means all three
+
+Michael, after asking for the staff send and the crons: "but first the
+formatting changes i wanted." Fair — he said "i like it all" on 2026-07-22
+about the OL air-freight comparison doc, meaning dashboard AND PDF AND email.
+#138 shipped only the dashboard. This is the other two.
+
+1. ONE SET OF TOKENS, NOT THREE COPIES
+   The palette #138 put inline in gen_dashboard.py moved to branding.DOC_*
+   and all three renderers now read it. Every hex was read out of the
+   reference document's :root block. THREE COPIES OF A PALETTE IS NOT A
+   DESIGN LANGUAGE — a test asserts the dashboard, the email and the PDF
+   resolve the same paper token, so re-hardcoding one is caught.
+     DOC_PAPER #f4f3ef  DOC_CARD #ffffff  DOC_INK  #1f2328
+     DOC_MUTED #5f6670  DOC_LINE #e3e1da  DOC_TH_BG #fbfaf7
+     DOC_GOOD #1f7a4d   DOC_WARN #b9740f  DOC_BAD  #b03030
+
+2. WHAT ACTUALLY CHANGED (visual language only — no data path touched)
+   - warm paper ground; white cards held by a hairline
+   - table heads: muted uppercase over ONE ink rule, replacing three
+     different saturated bars (navy #1e3a5f, green #059669, dark-red
+     #7f1d1d) with white text. The data is the loud part now.
+   - PDF: the full 0.3pt GRID cage is gone; 0.25pt hairline below rows,
+     0.9pt rule under the head. Eight tables repeated the same six inline
+     commands — they now share gen_pdf.table_style().
+   - every figure in mono (Courier in the PDF, DOC_MONO_STACK in HTML) so
+     decimals align down the column
+   - email KPI tiles: were saturated blocks with white text, now white
+     cards with the colour demoted to a 3px top rule
+   - email header: the navy→blue gradient is gone. QC-045's rule is now
+     satisfied by construction rather than by a solid-colour fallback.
+
+3. EMAIL IS NOT THE WEB — AND IT BIT, EXACTLY ONCE
+   Desktop Outlook renders with Word's engine: no CSS custom properties, no
+   flex, no grid. So the tokens are resolved to literal hex in Python before
+   the message is built. First pass, THREE styles went into plain '' strings
+   instead of f'' strings and rendered the literal text "{TH_STYLE}" into the
+   body. Caught by rendering the email, not by reading the source.
+   tests/test_document_restyle.py now fails on ANY unrendered placeholder in
+   the output — that is the only place this class of bug is visible.
+   Also dropped the fonts.googleapis.com link from the email, same call as
+   the dashboard in #138: remote content trips Outlook's "download pictures?"
+   bar and OL's proxy, and the same report should render the same on every
+   desk.
+
+4. A #138 TEST THAT WAS TESTING THE WRONG THING
+   test_the_dashboard_sets_a_mono_stack_for_figures scanned
+   gen_dashboard.py's SOURCE for "ui-monospace". Centralizing the stack into
+   branding turned it red while the emitted CSS was byte-identical. A
+   source-substring test fails on a refactor that changes nothing a reader
+   sees, and passes on a definition that is never emitted. Rewritten to
+   assert on the RENDERED dashboard. (Same family as the QC-ID substring
+   scanners — an ID in prose is indistinguishable from an ID emitted.)
+
+   VERIFIED THIS SESSION: full suite 2216 passed, 0 failed; ruff clean across
+   scripts/ and tests/. The PDF's paper ground, its 0.25/0.9pt rules and its
+   Courier figures are asserted by decoding the generated PDF's own content
+   stream — there is no rasterizer on this host, so nobody has LOOKED at the
+   PDF. Previews were sent to Michael for that.
+
+STILL OPEN — CARRIED FROM THE ENTRY BELOW
+- The staff send is BLOCKED by a real defect, not by a decision. The mailbox
+  guard dedupes on subject, and the 21:04 verification send used the SAME
+  subject the staff send would. A plain send_to=full will refuse, send
+  nothing, and write a weekly-sent flag claiming it shipped. Same foot-gun as
+  2026-07-30. Fix before sending: tag verification subjects "[VERIFY]" so a
+  test send can never consume a real send's guard, plus a deliberate one-run
+  override for today's collision.
+- Crons back on: Michael said yes; not done yet.
+
 ## 2026-08-04 — The backfill loaded the data and then reported one day of it
 
 Michael, on the backfill run: "you failed in your backfill.. lots more work

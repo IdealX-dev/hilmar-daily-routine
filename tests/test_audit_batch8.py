@@ -26,6 +26,7 @@ correct. Every exception is named, with the reason it earns fatality.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -462,17 +463,45 @@ def test_the_dashboard_fetches_nothing_from_the_network():
             "email attachment and must be self-contained")
 
 
+def _dash_cfg():
+    return json.loads((ROOT / "config.json").read_text())
+
+
+def _dash_data():
+    return json.loads((ROOT / "tests" / "fixtures" / "golden_day.json").read_text())
+
+
 def test_the_dashboard_sets_a_mono_stack_for_figures():
     """Decimals that line up down a column is the single biggest readability
     win in the reference document, and it needs a real monospace stack rather
-    than tabular-nums alone."""
-    src = (SCRIPTS / "gen_dashboard.py").read_text(encoding="utf-8")
-    assert "--mono:" in src, "no monospace custom property defined"
-    assert "ui-monospace" in src, (
+    than tabular-nums alone.
+
+    Asserts on the RENDERED dashboard, not on gen_dashboard.py's source. The
+    first version of this test scanned the source for "ui-monospace" and went
+    red the moment the stack was centralized into branding.DOC_MONO_STACK —
+    even though the emitted CSS was byte-identical. A source-substring test
+    fails on a refactor that changes nothing a reader sees, and passes on a
+    definition that is never emitted. What matters is what the file contains
+    when it lands in Michael's inbox.
+    """
+    import gen_dashboard
+    html = gen_dashboard.render(_dash_cfg(), _dash_data())
+    assert "--mono:" in html, "no monospace custom property in the output"
+    assert "ui-monospace" in html, (
         "the mono stack should lead with ui-monospace so each OS picks its "
         "own best monospace face without a download")
-    assert ".kpi .value" in src and "var(--mono)" in src, (
+    assert ".kpi .value" in html and "var(--mono)" in html, (
         "KPI figures must use the mono stack")
+
+
+def test_the_dashboard_paints_the_warm_paper_ground():
+    """The one token that makes the dashboard, the PDF and the email read as
+    one document family rather than three house styles."""
+    import branding
+    import gen_dashboard
+    html = gen_dashboard.render(_dash_cfg(), _dash_data())
+    assert branding.DOC_PAPER in html
+    assert branding.DOC_LINE in html
 
 
 # ── recovering a quote's real send time (not inventing one) ────────────────

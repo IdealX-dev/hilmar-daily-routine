@@ -72,15 +72,67 @@ except Exception as _e:
     print(f"[gen_pdf] Inter registration failed ({_e}); falling back to Helvetica", file=sys.stderr)
 
 # ── Brand palette ─────────────────────────────────────────────────────────
-NAVY = colors.HexColor("#0f172a")
-SLATE = colors.HexColor("#475569")
-LIGHT = colors.HexColor("#f8fafc")
-BORDER = colors.HexColor("#e2e8f0")
-GREEN = colors.HexColor("#059669")
-RED = colors.HexColor("#dc2626")
-AMBER = colors.HexColor("#d97706")
-BLUE = colors.HexColor("#2563eb")
-PURPLE = colors.HexColor("#7c3aed")
+# Sourced from branding.DOC_* — the same tokens the dashboard and the email
+# body use, so the three artifacts a reader sees in one sitting are one
+# document family rather than three house styles. The NAMES are unchanged
+# because ~40 call sites reference them; only what they point AT moved.
+NAVY = colors.HexColor(B.DOC_INK)      # body/heading ink, not a brand navy
+SLATE = colors.HexColor(B.DOC_MUTED)   # labels, captions, table headers
+LIGHT = colors.HexColor(B.DOC_TH_BG)   # header ground / zebra band
+BORDER = colors.HexColor(B.DOC_LINE)   # hairline
+GREEN = colors.HexColor(B.DOC_GOOD)
+RED = colors.HexColor(B.DOC_BAD)
+AMBER = colors.HexColor(B.DOC_WARN)
+BLUE = colors.HexColor("#2C5F8A")      # reference --dt
+PURPLE = colors.HexColor("#8E44AD")    # reference --es
+PAPER = colors.HexColor(B.DOC_PAPER)   # page ground
+
+# ReportLab always has Courier; a TTF mono is not worth shipping for this.
+# Figures go in mono so decimals align down the column — the single biggest
+# readability win in the document Michael flagged.
+MONO_FONT = "Courier"
+MONO_FONT_BOLD = "Courier-Bold"
+
+
+def table_style(cmds=None, *, header=True, zebra=True, first_col_left=True):
+    """The ONE table look: quiet header, hairline rules, no cage.
+
+    Every table in this PDF used to repeat the same six commands inline —
+    solid NAVY header bar, white header text, a full GRID at 0.3pt. That is
+    the SaaS-app look the restyle is moving away from, and eight copies of it
+    is eight places for it to drift. This builds the shared style; `cmds`
+    appends per-table extras (column alignment, conditional backgrounds).
+
+    A header here is muted uppercase text on a near-card ground with a single
+    ink rule under it. The rule is what separates head from body; the old
+    solid bar shouted it.
+    """
+    base = [
+        ("FONTNAME", (0, 0), (-1, -1), BODY_FONT),
+        ("TEXTCOLOR", (0, 0), (-1, -1), NAVY),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        # Hairline BELOW each row only — no vertical rules. Columns are
+        # separated by alignment and whitespace, which is how the reference
+        # does it and why it reads as a document.
+        ("LINEBELOW", (0, 0), (-1, -2), 0.25, BORDER),
+    ]
+    if header:
+        base += [
+            ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
+            ("TEXTCOLOR", (0, 0), (-1, 0), SLATE),
+            ("FONTNAME", (0, 0), (-1, 0), BODY_FONT_BOLD),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.9, NAVY),
+        ]
+    if zebra:
+        base.append(("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                     [colors.white, colors.HexColor(B.DOC_TH_BG)]))
+    if first_col_left:
+        base.append(("ALIGN", (0, 0), (0, -1), "LEFT"))
+    return TableStyle(base + list(cmds or []))
 
 # ── Styles ────────────────────────────────────────────────────────────────
 def make_styles():
@@ -93,7 +145,12 @@ def make_styles():
     ss.add(ParagraphStyle("Tiny", parent=ss["BodyText"], fontName=BODY_FONT, fontSize=7.5, textColor=SLATE, leading=10))
     ss.add(ParagraphStyle("Callout", parent=ss["BodyText"], fontName=BODY_FONT, fontSize=9, textColor=NAVY, leading=13,
                           leftIndent=8, rightIndent=8, spaceBefore=4, spaceAfter=4))
-    ss.add(ParagraphStyle("KPINum", parent=ss["BodyText"], fontName=BODY_FONT_BOLD, fontSize=20, textColor=NAVY, alignment=TA_CENTER, leading=22))
+    # KPI figures in mono: the tiles sit in a row and their decimals should
+    # line up with each other and with the table columns below them.
+    # fontName is the REGULAR mono — kpi_cell wraps the value in <b>, and
+    # reportlab resolves that through the registered Courier family. Setting
+    # the bold face here would make it look for the bold OF a bold.
+    ss.add(ParagraphStyle("KPINum", parent=ss["BodyText"], fontName=MONO_FONT, fontSize=20, textColor=NAVY, alignment=TA_CENTER, leading=22))
     ss.add(ParagraphStyle("KPILabel", parent=ss["BodyText"], fontName=BODY_FONT_MED, fontSize=7.5, textColor=SLATE, alignment=TA_CENTER, leading=10))
     return ss
 
@@ -115,6 +172,11 @@ def _fmt_int(v):
 def _header_footer(canvas, doc, client, provider, generated):
     canvas.saveState()
     w, h = LETTER
+    # Warm paper ground, painted first so everything else sits on top of it.
+    # This is the single change that makes the PDF read as the same document
+    # family as the dashboard rather than as a white-page export.
+    canvas.setFillColor(PAPER)
+    canvas.rect(0, 0, w, h, stroke=0, fill=1)
     # Footer
     canvas.setFont(BODY_FONT, 7.5)
     canvas.setFillColor(SLATE)
@@ -138,7 +200,9 @@ def kpi_cell(label, value, subline="", color=NAVY):
         rowHeights=[0.42 * inch, 0.22 * inch, 0.18 * inch],
     )
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), LIGHT),
+        # A card is white on the paper ground, held by a hairline — not a
+        # tinted block. Same rule as the dashboard's .kpi.
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
         ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
@@ -241,12 +305,13 @@ def build_dod(story, styles, data):
         rows.append([label, "—", "—", f"+{delta}" if delta else "0"])
 
     t = Table(rows, colWidths=[2.0*inch, 1.3*inch, 1.3*inch, 1.3*inch])
-    t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),9),
-        ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
+    # Cols 1..3 are Yesterday/Today/Δ — all figures, so all mono.
+    t.setStyle(table_style([
+        ("FONTSIZE",(0,0),(-1,-1),9),
+        ("ALIGN",(1,0),(-1,-1),"CENTER"),
+        ("FONTNAME",(1,1),(-1,-1),MONO_FONT),
         ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
-    ]))
+    ], zebra=False))
     story.append(t)
     story.append(Spacer(1, 10))
 
@@ -295,11 +360,11 @@ def build_turnaround(story, styles, data):
                 _pct(cm.get("win_rate", 0)),
             ])
         t = Table(rows, colWidths=[2.1*inch, 0.8*inch, 1.1*inch, 0.8*inch, 1.0*inch])
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8.5),
-            ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
+        # Cols 1..4 = Quotes / Avg biz-hrs / Wins / Win rate — all figures.
+        t.setStyle(table_style([
+            ("FONTSIZE",(0,0),(-1,-1),8.5),
+            ("ALIGN",(1,0),(-1,-1),"CENTER"),
+            ("FONTNAME",(1,1),(-1,-1),MONO_FONT),
             ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
         ]))
         story.append(t)
@@ -350,11 +415,12 @@ def build_carriers(story, styles, data):
         value_extractor=lambda s: float(str(s).rstrip("%")) if s and "%" in str(s) else None,
         vmin=0, vmax=100, mode="good_high",
     )
-    t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
-        ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
+    # Cols 1..8 are counts/rates. Col 9 ("Avg ETD fit") carries prose like
+    # "+2d (late)" / "no ETA on req", so it stays in the sans face.
+    t.setStyle(table_style([
+        ("FONTSIZE",(0,0),(-1,-1),8),
+        ("ALIGN",(1,0),(-1,-1),"CENTER"),
+        ("FONTNAME",(1,1),(8,-1),MONO_FONT),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
     ] + win_pct_cmds))
     story.append(t)
@@ -417,17 +483,21 @@ def build_trade_regions(story, styles, data):
         value_extractor=lambda s: float(str(s).rstrip("%")) if s and "%" in str(s) else None,
         vmin=0, vmax=100, mode="good_high",
     )
-    t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),9),
-        ("ALIGN",(1,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
-        ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white, LIGHT]),
-        # Highlight Unmapped row in red, totals row in bold gray
-        ("FONTNAME",(0,-1),(-1,-1),BODY_FONT_BOLD),
-        ("BACKGROUND",(0,-1),(-1,-1),colors.HexColor("#e2e8f0")),
-        ("LINEABOVE",(0,-1),(-1,-1),1.5,NAVY),
+    t.setStyle(table_style([
+        ("FONTSIZE",(0,0),(-1,-1),9),
+        ("ALIGN",(1,0),(-1,-1),"CENTER"),
+        ("FONTNAME",(1,1),(-1,-1),MONO_FONT),
+        # The totals row proves reconciliation, so it gets the emphasis a
+        # total earns in a document: a rule above it and bold mono figures,
+        # not a grey fill band.
+        ("FONTNAME",(0,-1),(0,-1),BODY_FONT_BOLD),
+        ("FONTNAME",(1,-1),(-1,-1),MONO_FONT_BOLD),
+        ("LINEABOVE",(0,-1),(-1,-1),1.0,NAVY),
+        ("BACKGROUND",(0,-1),(-1,-1),colors.white),
+        # Zebra stops one row short so it never bands the totals row.
+        ("ROWBACKGROUNDS",(0,1),(-1,-2),[colors.white, colors.HexColor(B.DOC_TH_BG)]),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-    ] + win_pct_cmds))
+    ] + win_pct_cmds, zebra=False))
     story.append(t)
     story.append(Spacer(1, 6))
     _unresolved_note = (
@@ -484,7 +554,7 @@ def build_lanes(story, styles, data):
     win_pct_cmds = []
     teu_bar_cmds = VP.bar_style_cmds(rows, col_idx=7,
                                        value_extractor=lambda s: float(str(s).replace(",","")) if str(s).replace(",","").isdigit() else 0,
-                                       max_value=max_teu_won, color="#059669")
+                                       max_value=max_teu_won, color=B.DOC_GOOD)
     for r_idx, row in enumerate(rows):
         if r_idx == 0: continue
         try:
@@ -502,15 +572,17 @@ def build_lanes(story, styles, data):
     # a 3-carrier list wraps to two lines instead of overflowing.
     t = Table(rows, colWidths=[1.8*inch, 0.5*inch, 0.45*inch, 0.45*inch, 0.4*inch,
                                0.55*inch, 0.7*inch, 0.8*inch, 1.75*inch])
-    t.setStyle(TableStyle([
-        ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
+    t.setStyle(table_style([
+        ("FONTSIZE",(0,0),(-1,-1),8),
         # Numeric columns (1..7) centered; the carriers column (last) is a
         # left-aligned wrapping Paragraph. VALIGN MIDDLE keeps the numbers and
         # bars centered against a carriers cell that may run to two lines.
         ("ALIGN",(1,0),(7,-1),"CENTER"),("ALIGN",(8,1),(8,-1),"LEFT"),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("GRID",(0,0),(-1,-1),0.3,BORDER),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
+        # Mono stops at col 7 on purpose — col 8 is a carrier-name list, and
+        # prose in a mono face is the thing that makes a document look like a
+        # terminal instead of a report.
+        ("FONTNAME",(1,1),(7,-1),MONO_FONT),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
         ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
     ] + win_pct_cmds + teu_bar_cmds))
     story.append(t)
@@ -552,11 +624,13 @@ def build_pending_trends_qc(story, styles, data):
                 f"{ta:.1f}" if ta else "—",
             ])
         t = Table(rows, colWidths=[1.1*inch, 1.5*inch, 0.5*inch, 1.3*inch, 1.0*inch, 1.1*inch])
-        t.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
-            ("GRID",(0,0),(-1,-1),0.3,BORDER),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
+        # ["Waiting On", "Lane", "TEU", "Carrier quoted", "Rate", "Aging"]
+        # — cols 2, 4, 5 are figures; 0, 1, 3 are names. Mono only the three.
+        t.setStyle(table_style([
+            ("FONTSIZE",(0,0),(-1,-1),8),
+            ("FONTNAME",(2,1),(2,-1),MONO_FONT),
+            ("FONTNAME",(4,1),(5,-1),MONO_FONT),
+            ("ALIGN",(2,0),(2,-1),"RIGHT"),("ALIGN",(4,0),(5,-1),"RIGHT"),
             ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
         ]))
         story.append(t)
@@ -583,11 +657,11 @@ def build_pending_trends_qc(story, styles, data):
                 f"{'+' if pct>0 else ''}{pct:.1f}%",
             ])
         tt = Table(rows, colWidths=[1.2*inch, 1.8*inch, 0.7*inch, 1.1*inch, 1.1*inch, 0.7*inch])
-        tt.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),NAVY),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTNAME",(0,0),(-1,0),BODY_FONT_BOLD),("FONTSIZE",(0,0),(-1,-1),8),
-            ("ALIGN",(2,0),(-1,-1),"CENTER"),("GRID",(0,0),(-1,-1),0.3,BORDER),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, LIGHT]),
+        # ["Carrier","Lane","Samples","First","Latest","Δ %"] — cols 2..5.
+        tt.setStyle(table_style([
+            ("FONTSIZE",(0,0),(-1,-1),8),
+            ("ALIGN",(2,0),(-1,-1),"CENTER"),
+            ("FONTNAME",(2,1),(-1,-1),MONO_FONT),
             ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
         ]))
         story.append(tt)
