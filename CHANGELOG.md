@@ -3,6 +3,86 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-04 — The backfill loaded the data and then reported one day of it
+
+Michael, on the backfill run: "you failed in your backfill.. lots more work
+happened this week including today" -> "and this is only the lonny report".
+He was right, and the data was never the problem.
+
+1. WHAT THE BACKFILL ACTUALLY DID
+   Run 30949044542 (mode=production-fire, send_to=test, force_resend=true)
+   completed in 248.9s and pushed 6 files — tracking-data-v2.json,
+   scripts/stage_emails.txt, scripts/stage_emails_bodies.txt,
+   secrets/token-cache.bin, secrets/token-cache.json, data/quote-history.db.
+   First successful push since 2026-07-27 18:29. new_quotes_appended 335,
+   new_wins_appended 74; the store went 315 -> 335 rows.
+   THE INGEST WORKED. The reporting did not.
+
+2. WHY THE REPORT SHOWED ONE DAY
+   The daily is hard-wired to the prior business day, so it rendered Aug 3 and
+   nothing else. The weekly declined outright — "Fire day is Tuesday ET, not
+   Monday". Six business days of recovered work (Jul 28, 29, 30, 31, Aug 3,
+   Aug 4) had no report that covered them.
+   Michael chose option 1, the weekly summary. Verified before building it:
+   `--force` alone does NOT cover the outage. main() anchors on
+   `today - 7 days`, so dispatched Tuesday Aug 4 it reports Jul 27-31 and drops
+   Aug 3 and Aug 4 — including the day he was looking at. A recovery run that
+   silently reports less than the gap is the same failure again, quieter.
+
+3. FIX — REPORT THE WINDOW THAT WAS MISSED (#143)
+   scripts/gen_weekly_summary.py gains `--start` / `--end` (ISO, inclusive,
+   both-or-neither). An explicit period implies --force, because otherwise a
+   wrong weekday could drop a run that was asked for BY DATE. Bad or reversed
+   dates exit 2 and write nothing — and the send step reads files the build
+   step must write, so a typo'd date sends nothing rather than the wrong
+   window.
+   The comparison baseline is the SAME-LENGTH window immediately before the
+   period, not the previous calendar week: a 9-day catch-up measured against a
+   5-day Mon-Fri prints a delta manufactured by the window length.
+   The header says "Reporting period", not "Previous week", and the deltas
+   state what they are measured against. The default path renders exactly as
+   before — that is the run nobody watches.
+   weekly.yml gains matching `start` / `end` dispatch inputs and passes them
+   through; with both blank it takes the unchanged `--force` path.
+
+4. THE SUBJECT NOW COMES FROM THE GENERATOR, NOT FROM SHELL DATE MATH
+   weekly.yml built the subject with `date -u -d 'last monday -7 days'`,
+   duplicating the anchor arithmetic the Python already does. Two clocks, one
+   header — and the subject is what the cross-host mailbox guard dedupes on,
+   so a drift between them silently suppresses a real send or doubles a sent
+   one. `_subject_for` is now the single source; the send step fails closed if
+   the file is missing or empty. A test pins the default string byte-for-byte
+   against what the shell produced, so this refactor cannot move it.
+   A catch-up gets its OWN subject ("Catch-Up Executive Summary"), so it can
+   never be deduped against a real weekly.
+
+5. A BUG THE TESTS CAUGHT BEFORE MICHAEL DID
+   The week label was one line that dropped the end month unconditionally —
+   correct for a Mon-Fri week, which never leaves its month. The first
+   cross-month period rendered "Jul 27-4, 2026". Not a date range, and it sits
+   directly above the numbers it describes. `_range_label` now handles
+   same-month, cross-month and cross-year; all three are parametrized.
+
+   VERIFIED THIS SESSION: full suite 2175 passed, 0 failed; ruff clean on both
+   changed files; weekly.yml parses as YAML. Nothing has been sent.
+
+DECISIONS
+- Michael: recover the week via the weekly exec summary (option 1), not via
+  six replayed dailies.
+- Claude: build the period override rather than dispatch a bare --force that
+  would have reported Jul 27-31 and left Aug 3-4 dark — the exact shortfall
+  he had just called out.
+- Claude: first dispatch goes to send_to=test (Michael only) for review before
+  anything reaches the staff list. The weekly never goes to the client.
+
+STILL OPEN
+- Crons remain OFF in daily.yml and weekly.yml (`# PAUSED 2026-08-03`).
+  Re-enable when Michael says so; nothing fires on a schedule until then.
+- PDF and email-body restyle ("i like it all") — only the dashboard shipped
+  (#138).
+- TEAMS_WEBHOOK_URL still unset.
+- QC-073: stand_260928 degenerate lane Oakland -> Oakland.
+
 ## 2026-07-30 — The report was down three days for a reason nobody had looked at
 
 Michael: "this report hasn't run in days" -> "storage account. no clue.. that's
