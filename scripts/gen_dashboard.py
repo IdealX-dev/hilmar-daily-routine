@@ -297,9 +297,11 @@ def render(cfg: dict, data: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hilmar Ingredients — Shipment Tracker Dashboard</title>
 <style>
-:root{{--bg:#f4f3ef;--card:#ffffff;--ink:#1f2328;--muted:#5f6670;--line:#e3e1da;
-  --mono:ui-monospace,'SF Mono','Cascadia Mono','Segoe UI Mono',Menlo,Consolas,'Liberation Mono',monospace;
-  --sans:'Segoe UI',-apple-system,BlinkMacSystemFont,Inter,Helvetica,Arial,sans-serif}}
+/* Tokens come from branding.py so the dashboard, the PDF and the email
+   body cannot drift apart — see the DOC_* block there. */
+:root{{--bg:{B.DOC_PAPER};--card:{B.DOC_CARD};--ink:{B.DOC_INK};--muted:{B.DOC_MUTED};--line:{B.DOC_LINE};
+  --mono:{B.DOC_MONO_STACK};
+  --sans:{B.DOC_SANS_STACK}}}
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:var(--sans);background:var(--bg);color:var(--ink);padding:28px 22px 60px;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-variant-numeric:tabular-nums}}
 /* Every figure in mono so decimals align down the column — the single
@@ -343,9 +345,9 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .section h2{{font-size:17px;margin-bottom:14px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:8px;font-weight:700;letter-spacing:-0.3px}}
 .section h3{{font-size:14px;color:#1e293b;margin:14px 0 8px 0;font-weight:600;letter-spacing:-0.1px}}
 table{{width:100%;border-collapse:collapse;font-size:13.5px}}
-th{{background:#fbfaf7;padding:9px 11px;text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em}}
+th{{background:{B.DOC_TH_BG};padding:9px 11px;text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em}}
 td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
-tr:hover td{{background:#fbfaf7}}
+tr:hover td{{background:{B.DOC_TH_BG}}}
 .win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#d97706}} .pending{{color:#7c3aed}}
 .win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #f59e0b}} .pending-row{{border-left:3px solid #a855f7}}
 .ta-fast{{color:#059669;font-weight:700}} .ta-medium{{color:#2563eb}} .ta-slow{{color:#dc2626;font-weight:700}}

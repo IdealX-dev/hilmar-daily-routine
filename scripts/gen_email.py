@@ -433,19 +433,44 @@ def _pending_rows(data):
 # HTML builders
 # ─────────────────────────────────────────────────────────────────────
 
-# 2026-05-19 PM 4th pass: Outlook strips CSS linear-gradient — leaves text
-# rendered without the background, which collapses the visual hierarchy
-# (and on header rows in tables, makes white text invisible on white
-# background). Keep the gradient string for clients that support it but
-# pair every use with a solid-color background-color fallback. Inline
-# styles ALWAYS list `background-color:` before `background:` so Outlook
-# sees the solid color when it strips the gradient line.
-HEADER_GRADIENT = f"linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%)"
-HEADER_BG_SOLID = B.HILMAR_NAVY  # solid fallback for Outlook
+# 2026-05-19 PM 4th pass: Outlook strips CSS linear-gradient — it left text
+# rendered without its background, which collapsed the visual hierarchy (and
+# on header rows made white text invisible on white). The workaround was a
+# solid `background-color:` listed BEFORE the gradient so Outlook saw the
+# solid one. 2026-08-04: the gradient is gone entirely — the restyle wants a
+# flat header anyway, so the client that renders it and the client that
+# strips it now agree by construction rather than by fallback. QC-045 still
+# guards the rule for any header that comes later.
+HEADER_BG_SOLID = B.HILMAR_NAVY
 
+# ── Document restyle ──────────────────────────────────────────────────────
+# Michael 2026-07-22 on an internal OL comparison doc: "gorgeous" → "i like
+# it all" (dashboard, PDF, email). #138 did the dashboard; these are the same
+# branding.DOC_* tokens so the email body cannot drift from it.
+#
+# EMAIL IS NOT THE WEB. Desktop Outlook renders HTML with Word's engine: no
+# CSS custom properties, no flex, no grid, and <style> blocks are ignored
+# outside @media. So the tokens are interpolated into INLINE styles as
+# literal hex — one source in Python, resolved before it ever reaches a mail
+# client. Do not "simplify" these to var().
+DOC_PAPER, DOC_CARD = B.DOC_PAPER, B.DOC_CARD
+DOC_INK, DOC_MUTED, DOC_LINE = B.DOC_INK, B.DOC_MUTED, B.DOC_LINE
+DOC_TH_BG = B.DOC_TH_BG
 
-EMAIL_FONT_STACK = "'Inter','Segoe UI',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif"
-EMAIL_TNUM = "font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1"
+# The quiet table header: muted uppercase on a near-card ground with one ink
+# rule beneath. Replaces the solid navy / green / dark-red bars with white
+# text. Written once and reused so the three tables that used three different
+# loud bars now read as one document.
+TH_STYLE = (f"padding:8px;background-color:{DOC_TH_BG};color:{DOC_MUTED};"
+            f"font-size:11px;font-weight:600;text-transform:uppercase;"
+            f"letter-spacing:0.04em;border-bottom:2px solid {DOC_INK}")
+# Section rule: ink text, hairline under. Was #1e3a5f over a 2px #e5e7eb bar.
+H2_STYLE = (f"color:{DOC_INK};font-size:15px;margin:22px 0 10px;"
+            f"border-bottom:1px solid {DOC_LINE};padding-bottom:7px;font-weight:700")
+
+EMAIL_FONT_STACK = B.DOC_SANS_STACK
+EMAIL_MONO_STACK = B.DOC_MONO_STACK
+EMAIL_TNUM = B.DOC_TNUM
 
 def _header_html(today_label, range_label, updated_label):
     # Use the CID variant — Outlook blocks data: URIs in HTML email bodies
@@ -492,13 +517,16 @@ def _header_html(today_label, range_label, updated_label):
 }
 </style>
 """
+    # NO CDN FONT LINK. The old header pulled Inter from fonts.googleapis.com
+    # behind an mso conditional. This is email: remote content trips Outlook's
+    # "download pictures?" bar and OL's proxy, and the same report should look
+    # the same on every desk whether or not the fetch succeeds. The local
+    # stack in branding.DOC_SANS_STACK renders deterministically.
     return f"""
 {mobile_style}
-<!--[if !mso]><!-->
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<!--<![endif]-->
-<div class="hx-wrap" style="max-width:1040px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
-  <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
+<div style="background-color:{DOC_PAPER};padding:18px 0">
+<div class="hx-wrap" style="max-width:1040px;margin:0 auto;background-color:{DOC_CARD};border:1px solid {DOC_LINE};border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+  <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};color:#ffffff;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Reporting {_esc(today_label)} — the prior business day · {_esc(range_label)} | Updated: {_esc(updated_label)}</p>
@@ -643,13 +671,11 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
         return "<colgroup>" + "".join(
             f'<col style="width:{w}%">' for w in widths) + "</colgroup>"
     _TH_STYLE = (
-        'style="padding:6px 8px;background:#1e3a5f;color:#ffffff;'
-        'font-size:11px;font-weight:600;text-align:left;'
-        'border-bottom:1px solid #1e3a5f"'
+        f'style="{TH_STYLE};text-align:left"'
     )
     _TD_STYLE = (
-        'style="padding:5px 8px;font-size:12px;color:#1f2937;'
-        'border-bottom:1px solid #e5e7eb"'
+        f'style="padding:5px 8px;font-size:12px;color:{DOC_INK};'
+        f'border-bottom:1px solid {DOC_LINE}"'
     )
     _EMPTY_ROW = (
         f'<tr><td colspan="99" {_TD_STYLE.replace("text-align:left", "text-align:center")}>'
@@ -1004,16 +1030,25 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
     "Quoted &amp; Lost" double-escapes to "&amp;amp;" which Outlook renders
     literally. Caught 2026-05-19 PM screenshot.
     """
+    # RESTYLE 2026-08-04: the tile was a solid saturated block with white
+    # text — six of them in a row is the loudest thing on the page, and it
+    # made the FRAME the subject instead of the number. Now it is a white
+    # card on the paper ground, held by a hairline, with `bg` demoted to a
+    # 3px top rule that still colour-codes the tile. Same signature, same
+    # call sites, same colour argument: only what it paints changed.
+    #
+    # The figure goes mono so the six values line up with each other and
+    # with the table columns underneath.
     sub_html = (
-        f'<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">{_esc(sublabel)}</div>'
+        f'<div style="font-size:10px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">{_esc(sublabel)}</div>'
         if sublabel else
-        '<div style="font-size:10px;opacity:0.88;margin-top:3px;line-height:1.25">&nbsp;</div>'
+        f'<div style="font-size:10px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">&nbsp;</div>'
     )
     return f"""
 <td class="hx-kpi" style="padding:4px;width:{width};vertical-align:top">
-  <div class="hx-kpi-card" style="background:{bg};color:white;border-radius:8px;padding:14px 10px 16px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
-    <div style="font-size:22px;font-weight:bold;line-height:1.1">{_esc(value)}</div>
-    <div style="font-size:11px;opacity:0.94;margin-top:4px;line-height:1.25">{_esc(label)}</div>
+  <div class="hx-kpi-card" style="background-color:{DOC_CARD};border:1px solid {DOC_LINE};border-top:3px solid {bg};border-radius:8px;padding:13px 10px 15px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
+    <div style="font-size:22px;font-weight:bold;line-height:1.1;color:{bg};font-family:{EMAIL_MONO_STACK}">{_esc(value)}</div>
+    <div style="font-size:11px;color:{DOC_MUTED};margin-top:4px;line-height:1.25;text-transform:uppercase;letter-spacing:0.03em">{_esc(label)}</div>
     {sub_html}
   </div>
 </td>
@@ -1171,7 +1206,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color="#8b5cf6")
 
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
+<h2 style="{H2_STYLE}">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
@@ -1189,7 +1224,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     <td style="padding:0 4px;text-align:center">{spark_pend}</td>
   </tr>
 </table>
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
+<h2 style="{H2_STYLE}">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
 <p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
   <tr>
@@ -1272,10 +1307,10 @@ def _week_block_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📅 This Week vs Last Week</h2>
+<h2 style="{H2_STYLE}">📅 This Week vs Last Week</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
-  <tr style="background:#1e3a5f;color:white">
+  <tr>
     <th style="padding:8px;text-align:left" title="ISO week range (Mon-Sun) in ET">Week</th>
     <th style="padding:8px;text-align:center" title="Number of requests, with TEU asked-for beneath">Requests (# · TEU)</th>
     <th style="padding:8px;text-align:center" title="Bookings won, with TEU won beneath">Won (# · TEU)</th>
@@ -1342,7 +1377,7 @@ def _carrier_block_html(rows):
 """
     # Totals footer — reconciles to the data range
     body += f"""
-<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #1e3a5f">
+<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid {DOC_INK}">
   <td style="padding:8px">TOTAL (all carriers)</td>
   <td style="padding:8px;text-align:center">{quoted_total}</td>
   <td style="padding:8px;text-align:center;color:#16a34a">{wins_total}</td>
@@ -1356,10 +1391,10 @@ def _carrier_block_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🚢 Carrier Performance — All requests in current dataset</h2>
+<h2 style="{H2_STYLE}">🚢 Carrier Performance — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#1e3a5f;color:white">
+  <tr>
     <th style="padding:8px;text-align:left">Carrier</th>
     <th style="padding:8px;text-align:center" title="Distinct requests where this carrier was quoted">Times<br>Quoted (#)</th>
     <th style="padding:8px;text-align:center" title="Wins booked">Wins (#)</th>
@@ -1426,19 +1461,19 @@ def _winning_lanes_html(rows):
     # background → white text on white = invisible header. Switched to
     # solid #059669 (winning) / #7f1d1d (losing) which Outlook honors.
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📈 Top Winning Lanes — All requests in current dataset</h2>
+<h2 style="{H2_STYLE}">📈 Top Winning Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background-color:#059669;color:#ffffff">
-    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Lane (origin → destination)</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Bookings won on this lane">Wins (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Quoted & Lost — OL responded but Lonny chose elsewhere">Q&amp;L (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Not Quoted — OL didn't respond with a rate">NQ (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Awaiting Lonny's decision">Pending (#)</th>
-    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff" title="Sum of TEU on this lane's WIN rows">TEU Won</th>
-    <th style="padding:8px;text-align:center;background-color:#059669;color:#ffffff" title="Wins / (Wins + Q&L + NQ). Per-lane. NOT a parser metric.">Win Rate</th>
-    <th style="padding:8px;text-align:left;background-color:#059669;color:#ffffff">Winning Carriers</th>
+  <tr>
+    <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
+    <th style="{TH_STYLE};text-align:center" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
+    <th style="{TH_STYLE};text-align:center" title="Bookings won on this lane">Wins (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Quoted & Lost — OL responded but Lonny chose elsewhere">Q&amp;L (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Not Quoted — OL didn't respond with a rate">NQ (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Awaiting Lonny's decision">Pending (#)</th>
+    <th style="{TH_STYLE};text-align:left" title="Sum of TEU on this lane's WIN rows">TEU Won</th>
+    <th style="{TH_STYLE};text-align:center" title="Wins / (Wins + Q&L + NQ). Per-lane. NOT a parser metric.">Win Rate</th>
+    <th style="{TH_STYLE};text-align:left">Winning Carriers</th>
   </tr>
   {body}
 </table>
@@ -1480,19 +1515,19 @@ def _losing_lanes_html(rows):
 """
     # 2026-05-19 PM 4th pass: solid bg for Outlook (was gradient → invisible).
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">📉 Top Losing Lanes — All requests in current dataset</h2>
+<h2 style="{H2_STYLE}">📉 Top Losing Lanes — All requests in current dataset</h2>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background-color:#7f1d1d;color:#ffffff">
-    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Lane (origin → destination)</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Q&L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Not Quoted rows on this lane (OL didn't respond)">NQ (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Awaiting Lonny decision">Pending (#)</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Bookings WON on this lane (context)">Wins (#)</th>
-    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff" title="Sum of TEU on Q&L rows">TEU Lost</th>
-    <th style="padding:8px;text-align:center;background-color:#7f1d1d;color:#ffffff" title="Wins / (Wins + Q&L + NQ). Same number that appears in Winning Lanes for this lane.">Win Rate</th>
-    <th style="padding:8px;text-align:left;background-color:#7f1d1d;color:#ffffff">Winning Carriers (on the wins)</th>
+  <tr>
+    <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
+    <th style="{TH_STYLE};text-align:center" title="ALL shipments up for offer on this lane (every status) · their total TEU — the denominator behind the percentages">Offered (# · TEU)</th>
+    <th style="{TH_STYLE};text-align:center" title="Q&L rows on this lane (quoted but lost)">Q&amp;L (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Not Quoted rows on this lane (OL didn't respond)">NQ (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Awaiting Lonny decision">Pending (#)</th>
+    <th style="{TH_STYLE};text-align:center" title="Bookings WON on this lane (context)">Wins (#)</th>
+    <th style="{TH_STYLE};text-align:left" title="Sum of TEU on Q&L rows">TEU Lost</th>
+    <th style="{TH_STYLE};text-align:center" title="Wins / (Wins + Q&L + NQ). Same number that appears in Winning Lanes for this lane.">Win Rate</th>
+    <th style="{TH_STYLE};text-align:left">Winning Carriers (on the wins)</th>
   </tr>
   {body}
 </table>
@@ -1941,7 +1976,7 @@ def _trade_region_html(data, summary):
     sum_teu_req = sum(m["teu_requested"] for m in ordered)
     sum_teu_won = sum(m["teu_won"] for m in ordered)
     rows_html += (
-        '<tr style="background:#e2e8f0;font-weight:bold;border-top:2px solid #1e3a5f">'
+        f'<tr style="background-color:{DOC_TH_BG};font-weight:bold;border-top:2px solid {DOC_INK}">'
         '<td style="padding:6px 8px">TOTAL</td>'
         f'<td style="padding:6px 8px;text-align:center">{sum_req}</td>'
         f'<td style="padding:6px 8px;text-align:center">{sum_w}</td>'
@@ -1964,11 +1999,11 @@ def _trade_region_html(data, summary):
     dates = sorted(r.get("request_date", "") for r in reqs if r.get("request_date"))
     period_str = f"{dates[0]} – {dates[-1]}" if dates else "all time"
     return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #cbd5e1;padding-bottom:8px">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
+<h2 style="{H2_STYLE}">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
 <p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
 <p style="margin:0 0 8px;font-size:11px;color:#64748b">{_esc(recon)}</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#1e3a5f;color:white">
+  <tr>
     <th style="padding:8px;text-align:left">Region</th>
     <th style="padding:8px;text-align:center" title="Number of distinct requests from Lonny">Requests<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
     <th style="padding:8px;text-align:center" title="Wins — booked + confirmed via MDOLX">Wins<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
@@ -2018,29 +2053,29 @@ def _ai_insights_business_html(cfg=None):
         if not snippet or len(snippet.encode("utf-8")) > INSIGHTS_SNIPPET_MAX_BYTES:
             return ""
         return f"""
-<h2 style="color:#1e3a5f;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #e5e7eb;padding-bottom:8px">🤖 AI Insights — Business</h2>
+<h2 style="{H2_STYLE}">🤖 AI Insights — Business</h2>
 <div style="font-size:13px;line-height:1.6;color:#1f2937">{snippet}</div>
 """
     except Exception:
         return ""
 
 
-FOOTER_HTML = """
-<div style="background:#f0f4f8;border:1px solid #cbd5e1;border-radius:8px;padding:16px;margin-bottom:20px">
-  <h3 style="margin:0 0 8px;color:#1e3a5f;font-size:14px">📎 ATTACHED FILES:</h3>
+FOOTER_HTML = f"""
+<div style="background-color:{DOC_TH_BG};border:1px solid {DOC_LINE};border-radius:8px;padding:16px;margin-bottom:20px">
+  <h3 style="margin:0 0 8px;color:{DOC_INK};font-size:14px">📎 ATTACHED FILES:</h3>
   <p style="margin:4px 0;font-size:12px">• <b>hilmar-dashboard.html</b> — Open in any browser (works mobile + desktop, no software needed)</p>
   <p style="margin:4px 0;font-size:12px">• <b>hilmar-report.pdf</b> — Printable report</p>
   <p style="margin:4px 0;font-size:12px">• <b>user-manual.html</b> — How to read every section, status and metric (rebuilt with each run, always current)</p>
-  <h3 style="margin:12px 0 8px;color:#1e3a5f;font-size:14px">📖 DASHBOARD TAB GUIDE:</h3>
+  <h3 style="margin:12px 0 8px;color:{DOC_INK};font-size:14px">📖 DASHBOARD TAB GUIDE:</h3>
   <p style="margin:4px 0;font-size:12px">• 📊 <b>Summary</b> — KPIs, confirmed wins with MDOLX, not-quoted requests</p>
   <p style="margin:4px 0;font-size:12px">• ⏱️ <b>Turnaround Timeline</b> — Lonny request time (PT) vs OL response (ET), business-hours adjusted</p>
   <p style="margin:4px 0;font-size:12px">• 📅 <b>Dates: Requested vs Offered</b> — Lonny's cutoff/ETD/ETA vs OL's offer side-by-side</p>
   <p style="margin:4px 0;font-size:12px">• 🚢 <b>Carriers &amp; Lanes</b> — Win/loss rates with lane-level breakdowns, TEU &amp; equipment for rate negotiations</p>
   <p style="margin:4px 0;font-size:12px">• 🔍 <b>QC</b> — Data quality checks and warnings</p>
 </div>
-<div style="border-top:2px solid #e5e7eb;padding-top:12px;margin-top:20px;text-align:center">
-  <p style="font-size:11px;color:#6b7280">Auto-generated from the Hilmar Shipment Tracker</p>
-  <p style="font-size:11px;color:#6b7280">Files also on OneDrive: IdealX → Hilmar folder</p>
+<div style="border-top:1px solid {DOC_LINE};padding-top:12px;margin-top:20px;text-align:center">
+  <p style="font-size:11px;color:{DOC_MUTED}">Auto-generated from the Hilmar Shipment Tracker</p>
+  <p style="font-size:11px;color:{DOC_MUTED}">Files also on OneDrive: IdealX → Hilmar folder</p>
 </div>
 """
 
@@ -2087,7 +2122,9 @@ def build_body(data, cfg):
         [r for r in pend_rows if core.pending_substate(r) == "PENDING_HILMAR"])
     html_body += _ai_insights_business_html(cfg)
     html_body += FOOTER_HTML
-    html_body += "</div></div>"
+    # Three closes: .hx-pad, .hx-wrap, and the paper-ground div the header
+    # opens around the whole card.
+    html_body += "</div></div></div>"
     return html_body
 
 

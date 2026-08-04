@@ -46,6 +46,48 @@ HILMAR_BLUE = "#1a3d9c"
 HILMAR_GREEN = "#76b82a"
 HILMAR_NAVY = "#0a2350"
 
+# ── Document design tokens ────────────────────────────────────────────────
+# Michael shared an internal OL air-freight comparison on 2026-07-22 and
+# called the formatting gorgeous, then "i like it all" — dashboard, PDF and
+# email. #138 restyled the dashboard against it; these constants are the
+# same palette lifted out so the other two renderers cannot drift from it.
+# THREE COPIES OF A PALETTE IS NOT A DESIGN LANGUAGE. Every hex below was
+# read out of that reference document's :root block.
+#
+# The idea, in one line: warm paper ground, hairline rules instead of drop
+# shadows, every figure in monospace so decimals align down the column, and
+# quiet uppercase table headers so the DATA is the loud part.
+DOC_PAPER = "#f4f3ef"    # warm paper ground (reference --bg)
+DOC_CARD = "#ffffff"     # card / table surface (--card)
+DOC_INK = "#1f2328"      # body text (--ink)
+DOC_MUTED = "#5f6670"    # labels, captions, table headers (--muted)
+DOC_LINE = "#e3e1da"     # hairline rule — replaces every box-shadow (--line)
+DOC_TH_BG = "#fbfaf7"    # table-header ground, a half-step off the card
+
+# Semantic accents, also from the reference. Deliberately desaturated
+# against the old SaaS palette (#059669 / #dc2626): on paper they read as
+# annotation rather than as alert.
+DOC_GOOD = "#1f7a4d"     # (--best)
+DOC_GOOD_BG = "#eaf6ef"  # (--bestbg)
+DOC_WARN = "#b9740f"     # (--warn)
+DOC_WARN_BG = "#fdf4e3"  # (--warnbg)
+DOC_BAD = "#b03030"      # (--red)
+DOC_BAD_BG = "#fdeeee"   # no reference equivalent; tinted from DOC_BAD
+
+# The reference loads IBM Plex from a CDN. We deliberately do NOT: these
+# documents ship as email bodies and email attachments, opened from Outlook,
+# often offline and always behind OL's proxy. A local stack renders the same
+# document the same way on every desk. Mono is what makes a column of
+# figures readable, so it is the stack that matters most.
+DOC_MONO_STACK = ("ui-monospace,'SF Mono','Cascadia Mono','Segoe UI Mono',"
+                  "Menlo,Consolas,'Liberation Mono',monospace")
+DOC_SANS_STACK = ("'Segoe UI',-apple-system,BlinkMacSystemFont,Inter,"
+                  "Helvetica,Arial,sans-serif")
+
+# Tabular figures: same advance width for every digit, so numbers line up
+# column-over-column even outside a mono face.
+DOC_TNUM = "font-variant-numeric:tabular-nums;font-feature-settings:'tnum' 1"
+
 
 def has_logo() -> bool:
     """True if any logo file is available on disk."""

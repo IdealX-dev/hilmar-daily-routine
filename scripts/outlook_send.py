@@ -73,6 +73,13 @@ INLINE_ATTACH_LIMIT = 3 * 1024 * 1024  # 3 MB safety under Graph's 4 MB hard cap
 #: Access Policy must grant Mail.Send.Shared scoped to this mailbox.
 SEND_MAILBOX = os.environ.get("HILMAR_SEND_MAILBOX", "MBD_OceanExportBookingShared@ol-usa.com")
 
+# Every verification/test send carries this. The mailbox guard keys on EXACT
+# subject, so an untagged test copy is indistinguishable from the real thing
+# and silently consumes its idempotency — see cmd_daily's --verification
+# handling for the two live incidents this prevents. Trailing space is part
+# of it: the subject reads "[VERIFY] Hilmar — ...".
+VERIFY_PREFIX = "[VERIFY] "
+
 
 def _app_only_send_context():
     """Return (token, send_url) when app-only Graph auth is configured via
@@ -350,6 +357,27 @@ def _flag_date(now_et) -> str:
 def cmd_daily(args) -> int:
     subject = Path(args.subject_from_file).read_text(encoding="utf-8").strip()
     body = Path(args.body_from_file).read_text(encoding="utf-8")
+
+    # VERIFICATION SENDS MUST BE DISTINGUISHABLE IN THE MAILBOX.
+    #
+    # The mailbox guard below dedupes on EXACT SUBJECT across hosts. A test
+    # send that reuses the real subject therefore consumes the real send's
+    # guard: the staff run finds "already sent today", returns 0, and writes a
+    # flag recording a delivery that never happened. That is not theory —
+    # 2026-07-30 a verification fire blocked the real staff send, and on
+    # 2026-08-04 the 21:04 catch-up preview blocked its own staff run.
+    #
+    # --force alone does NOT fix it: forcing the real send past the guard
+    # means the guard is off for the send that actually matters. The fix is to
+    # make a test copy a DIFFERENT message. The prefix travels with
+    # --force/--no-flag as one flag so the three can never be half-applied.
+    if getattr(args, "verification", False):
+        args.force = True
+        args.no_flag = True
+        if not subject.startswith(VERIFY_PREFIX):
+            subject = f"{VERIFY_PREFIX}{subject}"
+        print(f"🔎 VERIFICATION SEND — subject tagged '{VERIFY_PREFIX.strip()}', "
+              f"idempotency untouched. It cannot consume a real send's guard.")
     if args.to_from_config:
         to, cc = _load_distribution_from_config()
     else:
@@ -563,6 +591,10 @@ def main() -> int:
                     help="Override the derived idempotency flag name so a distinct "
                          "send shape gets its own namespace (e.g. 'client-sent' for "
                          "the client-facing email). Absent = derived as before.")
+    pd.add_argument("--verification", action="store_true",
+                    help="This is a TEST send. Prefixes the subject with "
+                         f"'{VERIFY_PREFIX.strip()}' and implies --force --no-flag. "
+                         "Use it for every send_to=test path — see VERIFY_PREFIX.")
     pd.set_defaults(func=cmd_daily)
 
     pn = sub.add_parser("nudge", help="Send a one-off internal nudge")

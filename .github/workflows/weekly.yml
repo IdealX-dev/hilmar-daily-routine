@@ -17,9 +17,9 @@ name: Weekly exec summary
 # one matching the current ET offset so DST never doubles. dow 1 = Monday.
 
 on:
-  # PAUSED 2026-08-03 — schedule removed entirely
-  # PAUSED 2026-08-03 — - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
-  # PAUSED 2026-08-03 — - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
+  schedule:
+    - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
+    - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
   workflow_dispatch:
     inputs:
       send_to:
@@ -40,6 +40,11 @@ on:
         required: false
         default: ""
         type: string
+      force_send:
+        description: "Override the mailbox guard for THIS run (only when a preview already burned the subject)"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   # SAME group as daily.yml. These two jobs share one blob store: weekly pulls
@@ -81,6 +86,9 @@ jobs:
           # "make it stop  zero to go out" — so a manual dispatch cannot send
           # either. Placed before the dispatch branch on purpose: putting it
           # after would leave dispatch open, which is what "zero" rules out.
+          # Pausing means BOTH this flag and the cron triggers above — this
+          # workflow is the one that proved a flag alone is not enough.
+          # RESUMED 2026-08-04 — Michael: "crons back on".
           if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
             echo "::warning::Hilmar reports are HARD-STOPPED — weekly summary suppressed by ANY trigger, nothing sent."
             echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
@@ -155,6 +163,8 @@ jobs:
 
       - name: Send the exec summary (INTERNAL staff list only)
         if: steps.gate.outputs.proceed == 'true'
+        env:
+          FORCE_SEND: ${{ github.event.inputs.force_send }}
         run: |
           if [ ! -f reports/weekly-summary.html ]; then
             echo "::error::weekly-summary.html not generated — nothing to send"; exit 1
@@ -170,14 +180,32 @@ jobs:
           echo "SUBJECT: $(cat reports/weekly-subject.txt)"
           if [ "$SEND_TO" = "full" ]; then
             echo "FULL staff distribution (config.json distribution.full_list)"
-            python3 scripts/outlook_send.py daily --to-from-config \
+            # force_send exists for ONE situation: a preview already went out
+            # under this exact subject BEFORE --verification tagging existed,
+            # so the mailbox guard would suppress the real send and then write
+            # a weekly-sent flag claiming it shipped. Defaults false, and with
+            # [VERIFY] tagging in place a new collision should be impossible —
+            # if you find yourself reaching for this, ask what re-burned the
+            # subject rather than reaching again.
+            FORCE_FLAG=""
+            if [ "$FORCE_SEND" = "true" ]; then
+              FORCE_FLAG="--force"
+              echo "::warning::force_send=true — mailbox guard bypassed for this run. Check the mailbox afterwards for a duplicate."
+            fi
+            python3 scripts/outlook_send.py daily --to-from-config $FORCE_FLAG \
               --flag-name weekly-sent \
               --subject-from-file reports/weekly-subject.txt \
               --body-from-file reports/weekly-summary.html
           else
             echo "VERIFICATION send — michael.deitchman@idealx.us only"
+            # --verification tags the subject [VERIFY] and implies
+            # --force --no-flag. Without the tag this copy reuses the REAL
+            # subject, and the cross-host mailbox guard then treats the later
+            # staff send as a duplicate: it returns 0, sends nothing, and
+            # writes a weekly-sent flag recording a delivery that never
+            # happened. That is what blocked 2026-07-30's staff send.
             python3 scripts/outlook_send.py daily --to michael.deitchman@idealx.us \
-              --force --no-flag \
+              --verification \
               --subject-from-file reports/weekly-subject.txt \
               --body-from-file reports/weekly-summary.html
           fi

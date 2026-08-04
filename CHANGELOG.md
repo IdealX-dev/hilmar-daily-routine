@@ -3,6 +3,122 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-04 (2) — "i like it all" finally means all three
+
+Michael, after asking for the staff send and the crons: "but first the
+formatting changes i wanted." Fair — he said "i like it all" on 2026-07-22
+about the OL air-freight comparison doc, meaning dashboard AND PDF AND email.
+#138 shipped only the dashboard. This is the other two.
+
+1. ONE SET OF TOKENS, NOT THREE COPIES
+   The palette #138 put inline in gen_dashboard.py moved to branding.DOC_*
+   and all three renderers now read it. Every hex was read out of the
+   reference document's :root block. THREE COPIES OF A PALETTE IS NOT A
+   DESIGN LANGUAGE — a test asserts the dashboard, the email and the PDF
+   resolve the same paper token, so re-hardcoding one is caught.
+     DOC_PAPER #f4f3ef  DOC_CARD #ffffff  DOC_INK  #1f2328
+     DOC_MUTED #5f6670  DOC_LINE #e3e1da  DOC_TH_BG #fbfaf7
+     DOC_GOOD #1f7a4d   DOC_WARN #b9740f  DOC_BAD  #b03030
+
+2. WHAT ACTUALLY CHANGED (visual language only — no data path touched)
+   - warm paper ground; white cards held by a hairline
+   - table heads: muted uppercase over ONE ink rule, replacing three
+     different saturated bars (navy #1e3a5f, green #059669, dark-red
+     #7f1d1d) with white text. The data is the loud part now.
+   - PDF: the full 0.3pt GRID cage is gone; 0.25pt hairline below rows,
+     0.9pt rule under the head. Eight tables repeated the same six inline
+     commands — they now share gen_pdf.table_style().
+   - every figure in mono (Courier in the PDF, DOC_MONO_STACK in HTML) so
+     decimals align down the column
+   - email KPI tiles: were saturated blocks with white text, now white
+     cards with the colour demoted to a 3px top rule
+   - email header: the navy→blue gradient is gone. QC-045's rule is now
+     satisfied by construction rather than by a solid-colour fallback.
+
+3. EMAIL IS NOT THE WEB — AND IT BIT, EXACTLY ONCE
+   Desktop Outlook renders with Word's engine: no CSS custom properties, no
+   flex, no grid. So the tokens are resolved to literal hex in Python before
+   the message is built. First pass, THREE styles went into plain '' strings
+   instead of f'' strings and rendered the literal text "{TH_STYLE}" into the
+   body. Caught by rendering the email, not by reading the source.
+   tests/test_document_restyle.py now fails on ANY unrendered placeholder in
+   the output — that is the only place this class of bug is visible.
+   Also dropped the fonts.googleapis.com link from the email, same call as
+   the dashboard in #138: remote content trips Outlook's "download pictures?"
+   bar and OL's proxy, and the same report should render the same on every
+   desk.
+
+4. A #138 TEST THAT WAS TESTING THE WRONG THING
+   test_the_dashboard_sets_a_mono_stack_for_figures scanned
+   gen_dashboard.py's SOURCE for "ui-monospace". Centralizing the stack into
+   branding turned it red while the emitted CSS was byte-identical. A
+   source-substring test fails on a refactor that changes nothing a reader
+   sees, and passes on a definition that is never emitted. Rewritten to
+   assert on the RENDERED dashboard. (Same family as the QC-ID substring
+   scanners — an ID in prose is indistinguishable from an ID emitted.)
+
+   VERIFIED THIS SESSION: full suite 2216 passed, 0 failed; ruff clean across
+   scripts/ and tests/. The PDF's paper ground, its 0.25/0.9pt rules and its
+   Courier figures are asserted by decoding the generated PDF's own content
+   stream — there is no rasterizer on this host, so nobody has LOOKED at the
+   PDF. Previews were sent to Michael for that.
+
+5. A VERIFICATION SEND CAN NO LONGER EAT A REAL SEND (the actual blocker)
+   Michael: "staff list yes and crons back on". The staff send could not have
+   worked. `_sent_today_in_mailbox` dedupes on EXACT SUBJECT across hosts, and
+   the 21:04 catch-up preview used the SAME subject the staff run would build.
+   A plain send_to=full would have found it, printed "already sent today",
+   returned 0, and written a weekly-sent flag recording a delivery that never
+   happened. Not theory: this is what blocked the real staff send on
+   2026-07-30, and it was queued to do it again.
+   --force alone is NOT the fix — forcing the real send past the guard turns
+   the guard off for the send that actually matters. The fix is to make a test
+   copy a DIFFERENT MESSAGE:
+     outlook_send.py --verification  → prefixes VERIFY_PREFIX "[VERIFY] " and
+     implies --force --no-flag. The three properties travel as one flag so
+     they can never be half-applied.
+   Wired into EVERY test-send path in daily.yml (staff, improvements, client
+   sample) and weekly.yml — a test asserts no raw `--force --no-flag` survives
+   in either workflow, because "helper written, wiring not" has now cost three
+   incidents.
+   weekly.yml also gains a `force_send` dispatch input, default false, for the
+   ONE case the tagging cannot retroactively fix: a subject already burned by
+   an untagged preview (today's). It logs a ::warning:: when used.
+
+6. CRONS BACK ON — AND PAUSING IS NOW ONE OPERATION, NOT TWO
+   daily.yml: "7 12 * * 1-5" / "7 13 * * 1-5" (~8:07 AM ET, DST-gated).
+   weekly.yml: "7 9 * * 1" / "7 10 * * 1" (~5:07 AM ET Monday).
+   HILMAR_REPORTS_PAUSED stays "false" in daily, weekly and liveness.
+   The 2026-08-03 lesson is now enforced instead of remembered: a scheduled
+   run pins its SHA when it SPAWNS, so the flag alone is HALF a pause. The
+   test that used to assert "there are no cron triggers" asserted an
+   OPERATIONAL STATE and would have gone red the moment Michael said resume —
+   a test that fails on the day the state legitimately changes teaches people
+   to edit tests to ship. Rewritten as the conditional invariant that is true
+   in both states: paused ⇒ flag AND no triggers; live ⇒ flag AND triggers.
+   A second test asserts daily and weekly are never in different states,
+   because half-paused is exactly how 2026-08-03 happened.
+
+7. ANOTHER COMMENT-VS-CODE SCANNER, CAUGHT THE SAME WAY
+   test_the_pause_actually_suppresses_the_scheduled_fire located the pause
+   branch with gate.index("HILMAR_REPORTS_PAUSED") and scanned 400 chars for
+   proceed=false. Adding a comment ABOVE the branch pushed the code out of the
+   window and the test went red while the shell was untouched. Now anchored on
+   the actual condition `if [ "$HILMAR_REPORTS_PAUSED" = "true" ]` with
+   comment lines stripped first (_gate_code). Third instance of this family
+   this week — an identifier in prose is indistinguishable from an identifier
+   in code unless you strip one.
+
+   VERIFIED: full suite 2221 passed, 0 failed; ruff clean; both workflows
+   parse as YAML. NOTHING HAS BEEN SENT TO THE STAFF LIST YET.
+
+STILL OPEN — AWAITING MICHAEL
+- His eye on the restyled email/PDF/dashboard previews. Everything else is
+  ready to go the moment he likes the look.
+- gen_client_email.py (Lonny's report) is the one artifact still on the old
+  navy-bar look. It is also the only one that leaves the building, so it was
+  not restyled without asking.
+
 ## 2026-08-04 — The backfill loaded the data and then reported one day of it
 
 Michael, on the backfill run: "you failed in your backfill.. lots more work
