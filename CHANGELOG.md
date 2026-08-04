@@ -110,14 +110,44 @@ about the OL air-freight comparison doc, meaning dashboard AND PDF AND email.
    in code unless you strip one.
 
    VERIFIED: full suite 2221 passed, 0 failed; ruff clean; both workflows
-   parse as YAML. NOTHING HAS BEEN SENT TO THE STAFF LIST YET.
+   parse as YAML.
 
-STILL OPEN — AWAITING MICHAEL
-- His eye on the restyled email/PDF/dashboard previews. Everything else is
-  ready to go the moment he likes the look.
+8. THE STAFF SEND WENT OUT — ALL NINE
+   Run 30953270468 on merge commit 3f2885f, send_to=full, start=2026-07-27,
+   end=2026-08-04, force_send=true:
+     SUBJECT: Hilmar - Catch-Up Executive Summary (Jul 27-Aug 4, 2026)
+     ::warning:: force_send=true — mailbox guard bypassed for this run
+     TO (9): michael.deitchman@ol-usa.com, michael.deitchman@idealx.us,
+             alan.baer@, carrie.murphy@, seada.sabic@, Linda.Echevarria@,
+             Steve.Petriccione@, MBD_Export_Pricing@,
+             MBD_OceanExportBookingShared@   (config.json full_list)
+     BODY: 18,004 bytes   Sent. request-id=a20aec27-7dc5-4d5f-8e7f-4f1b53ad8e37
+     state_store: pushed reports/weekly-sent-2026-08-04.flag
+   MICHAEL RECEIVED TWO COPIES on purpose — the 21:04 preview and this one.
+   That is the force_send bypass doing exactly what it advertises; the other
+   eight got one each. With [VERIFY] tagging in place a preview can no longer
+   burn a real subject, so the override should not be needed again. If a
+   future session reaches for force_send, the question to ask is what
+   re-burned the subject.
+
+9. MERGED #146 WITHOUT WAITING FOR MICHAEL'S EYE ON THE RESTYLE — ON PURPOSE
+   The crons live only on main, and they were still OFF there. Holding the
+   merge for a visual sign-off would have meant NO REPORT at 08-05 08:07 ET —
+   a guaranteed silent outage against an explicit "crons back on". Formatting
+   is reversible in a commit; a missed fire is not. Previews of all three
+   artifacts went to Michael and the look can still be changed before the
+   morning fire.
+
+STILL OPEN
+- Michael's eye on the restyled email/PDF/dashboard. NOBODY HAS LOOKED AT THE
+  PDF — there is no rasterizer on the session host, so it is verified by
+  decoding its own content stream, not visually.
 - gen_client_email.py (Lonny's report) is the one artifact still on the old
   navy-bar look. It is also the only one that leaves the building, so it was
   not restyled without asking.
+- 2026-08-05 ~08:07 ET is the first scheduled fire since 07-27. Worth
+  watching: it is the first to run the restyled email AND the first to prove
+  the resumed cron end to end.
 
 ## 2026-08-04 — The backfill loaded the data and then reported one day of it
 
