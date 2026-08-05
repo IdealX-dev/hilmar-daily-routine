@@ -526,7 +526,7 @@ def _header_html(today_label, range_label, updated_label):
 {mobile_style}
 <div style="background-color:{DOC_PAPER};padding:18px 0">
 <div class="hx-wrap" style="max-width:1040px;margin:0 auto;background-color:{DOC_CARD};border:1px solid {DOC_LINE};border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
-  <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};color:#ffffff;font-family:{EMAIL_FONT_STACK}">
+  <div style="padding:14px 28px;background-color:{HEADER_BG_SOLID};color:{B.DOC_CARD};font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:22px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">{'' if logo_html else '🚢 '}Hilmar Ingredients — Daily Shipment Tracker</h1>
     <p style="margin:4px 0 0;font-size:14px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Reporting {_esc(today_label)} — the prior business day · {_esc(range_label)} | Updated: {_esc(updated_label)}</p>
@@ -632,8 +632,8 @@ def _undated_quotes_note(undated) -> str:
         return ""
     n = len(undated)
     return (
-        f'<p style="margin:4px 0 0;font-size:11px;color:#b45309;'
-        f'background:#fffbeb;border-left:3px solid #f59e0b;padding:6px 9px">'
+        f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_WARN};'
+        f'background:{B.DOC_WARN_BG};border-left:3px solid {B.DOC_WARN};padding:6px 9px">'
         f'⚠️ {n} further quote{"" if n == 1 else "s"} '
         f'{"is" if n == 1 else "are"} recorded with a rate or carrier but no '
         f'response time, so {"it" if n == 1 else "they"} cannot be dated and '
@@ -660,7 +660,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     _TABLE_OPEN = (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
-        'margin:4px 0 14px 0;border:1px solid #d1d5db">'
+        f'margin:4px 0 14px 0;border:1px solid {B.DOC_LINE}">'
     )
     # Fixed-layout variant for the WIDE tables (OL Responses = 11 cols, Status
     # Changes = 7 cols). Without table-layout:fixed + an explicit <colgroup>,
@@ -671,7 +671,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     _TABLE_OPEN_FIXED = (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
-        'table-layout:fixed;margin:4px 0 14px 0;border:1px solid #d1d5db">'
+        f'table-layout:fixed;margin:4px 0 14px 0;border:1px solid {B.DOC_LINE}">'
     )
 
     def _colgroup(*widths):
@@ -686,7 +686,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     )
     _EMPTY_ROW = (
         f'<tr><td colspan="99" {_TD_STYLE.replace("text-align:left", "text-align:center")}>'
-        f'<em style="color:#64748b">No activity</em></td></tr>'
+        f'<em style="color:{B.DOC_MUTED}">No activity</em></td></tr>'
     )
 
     # 2026-05-19 PM (Michael "the timing should also be on the cover email.
@@ -733,10 +733,10 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
         coded green ≤4h, amber 4–24h, red >24h."""
         tb = r.get("turnaround_biz_hours")
         if isinstance(tb, (int, float)):
-            color = "#16a34a" if tb <= 4 else ("#d97706" if tb <= 24 else "#dc2626")
+            color = B.DOC_GOOD if tb <= 4 else (B.DOC_WARN if tb <= 24 else B.DOC_BAD)
             suffix = " (AH)" if r.get("after_hours_request") else ""
             return f"{tb:.1f}h{suffix}", color
-        return "—", "#64748b"
+        return "—", B.DOC_MUTED
 
     # ── 1. NEW REQUESTS FROM LONNY (6 columns) ───────────────────────
     new_rows = ""
@@ -998,27 +998,27 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     )
 
     return f"""
-<div style="background:#eff6ff;border:2px solid #3b82f6;border-radius:8px;padding:20px;margin-bottom:24px">
-  <h2 style="margin:0 0 8px;color:#1e40af;font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
-  <p style="margin:0 0 14px;font-size:11px;color:#64748b">Activity for {_esc(report_label)} — the prior business day. The tracker runs ~8 AM ET the next business morning, after that day's California (PT) business is complete, so its quotes and bookings are final.</p>
+<div style="background:{B.DOC_INFO_BG};border:2px solid {B.DOC_INFO};border-radius:8px;padding:20px;margin-bottom:24px">
+  <h2 style="margin:0 0 8px;color:{B.DOC_INFO};font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
+  <p style="margin:0 0 14px;font-size:11px;color:{B.DOC_MUTED}">Activity for {_esc(report_label)} — the prior business day. The tracker runs ~8 AM ET the next business morning, after that day's California (PT) business is complete, so its quotes and bookings are final.</p>
 
-  <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
+  <h3 style="margin:14px 0 4px;color:{B.DOC_INFO};font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
   {new_table}
 
-  <h3 style="margin:14px 0 4px;color:#1e40af;font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
+  <h3 style="margin:14px 0 4px;color:{B.DOC_INFO};font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
   {resp_table}
   {_undated_quotes_note(undated_quotes)}
 
-  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
+  <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}
 
-  <h3 style="margin:14px 0 4px;color:#b45309;font-size:13px">⏳ PENDING OL ({len(pending_ol)}) — awaiting OL quote</h3>
+  <h3 style="margin:14px 0 4px;color:{B.DOC_WARN};font-size:13px">⏳ PENDING OL ({len(pending_ol)}) — awaiting OL quote</h3>
   {pol_table}
 
-  <h3 style="margin:14px 0 4px;color:#7c3aed;font-size:13px">⏳ PENDING HILMAR ({len(pending_hil)}) — awaiting Lonny decision</h3>
+  <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">⏳ PENDING HILMAR ({len(pending_hil)}) — awaiting Lonny decision</h3>
   {pend_table}
 
-  <p style="margin:14px 0 0;font-size:13px;color:#374151;font-weight:bold">{_esc(summary_line)}</p>
+  <p style="margin:14px 0 0;font-size:13px;color:{B.DOC_INK};font-weight:bold">{_esc(summary_line)}</p>
 </div>
 """
 
@@ -1206,22 +1206,22 @@ def _kpi_block_html(summary, requests=None, report_date=None):
         d = report_date - _td(days=i)
         s = _today_summary(requests or [], report_date=d)
         trend_days.append(s)
-    spark_total = V.sparkline_svg([s['total'] for s in trend_days], width=80, height=18, color="#3b82f6")
-    spark_wins = V.sparkline_svg([s['wins'] for s in trend_days], width=80, height=18, color="#22c55e")
-    spark_ql = V.sparkline_svg([s['quoted_lost'] for s in trend_days], width=80, height=18, color="#ef4444")
-    spark_nq = V.sparkline_svg([s['not_quoted'] for s in trend_days], width=80, height=18, color="#f59e0b")
-    spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color="#8b5cf6")
+    spark_total = V.sparkline_svg([s['total'] for s in trend_days], width=80, height=18, color=B.DOC_INFO)
+    spark_wins = V.sparkline_svg([s['wins'] for s in trend_days], width=80, height=18, color=B.DOC_GOOD)
+    spark_ql = V.sparkline_svg([s['quoted_lost'] for s in trend_days], width=80, height=18, color=B.DOC_BAD)
+    spark_nq = V.sparkline_svg([s['not_quoted'] for s in trend_days], width=80, height=18, color=B.DOC_WARN)
+    spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color=B.DOC_PENDING)
 
     return f"""
-<h2 style="{H2_STYLE}">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:#64748b;font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
+<h2 style="{H2_STYLE}">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:{B.DOC_MUTED};font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
+<p style="margin:-8px 0 8px;font-size:11px;color:{B.DOC_MUTED}">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
-    {_kpi_card(day['total'], f"Requests — {day_short}", "#3b82f6", "20%", sublabel=(f"{day.get('total',0)} entries" + (f" · {day['won_later']} booked a later day" if day.get('won_later') else "")))}
-    {_kpi_card(day['wins'], f"Won — {day_short}", "#22c55e", "20%", sublabel=f"{day['teu_won']} TEU · booked that day")}
-    {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", "#ef4444", "20%", sublabel="OL quoted; not booked")}
-    {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", "#f59e0b", "20%", sublabel="OL did not respond")}
-    {_kpi_card(day['pending'], f"Pending — {day_short}", "#8b5cf6", "20%", sublabel=f"{day_pend_ol} Pending OL · {day_pend_hil} Pending Hilmar")}
+    {_kpi_card(day['total'], f"Requests — {day_short}", B.DOC_INFO, "20%", sublabel=(f"{day.get('total',0)} entries" + (f" · {day['won_later']} booked a later day" if day.get('won_later') else "")))}
+    {_kpi_card(day['wins'], f"Won — {day_short}", B.DOC_GOOD, "20%", sublabel=f"{day['teu_won']} TEU · booked that day")}
+    {_kpi_card(day['quoted_lost'], f"Quoted & Lost — {day_short}", B.DOC_BAD, "20%", sublabel="OL quoted; not booked")}
+    {_kpi_card(day['not_quoted'], f"Not Quoted — {day_short}", B.DOC_WARN, "20%", sublabel="OL did not respond")}
+    {_kpi_card(day['pending'], f"Pending — {day_short}", B.DOC_PENDING, "20%", sublabel=f"{day_pend_ol} Pending OL · {day_pend_hil} Pending Hilmar")}
   </tr>
   <tr>
     <td style="padding:0 4px;text-align:center">{spark_total}</td>
@@ -1232,25 +1232,25 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   </tr>
 </table>
 <h2 style="{H2_STYLE}">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:#64748b">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
+<p style="margin:-8px 0 8px;font-size:11px;color:{B.DOC_MUTED}">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
   <tr>
-    {_kpi_card(total, "Total Requests", "#3b82f6", sublabel="(all statuses)")}
-    {_kpi_card(wins, "Won · this period", "#22c55e", sublabel=f"{teu_won} TEU won")}
-    {_kpi_card(ql, "Quoted & Lost", "#ef4444", sublabel=f"{teu_ql} TEU · lost on price")}
-    {_kpi_card(nq, "Not Quoted", "#f59e0b", sublabel=f"{teu_nq} TEU · OL silent")}
+    {_kpi_card(total, "Total Requests", B.DOC_INFO, sublabel="(all statuses)")}
+    {_kpi_card(wins, "Won · this period", B.DOC_GOOD, sublabel=f"{teu_won} TEU won")}
+    {_kpi_card(ql, "Quoted & Lost", B.DOC_BAD, sublabel=f"{teu_ql} TEU · lost on price")}
+    {_kpi_card(nq, "Not Quoted", B.DOC_WARN, sublabel=f"{teu_nq} TEU · OL silent")}
   </tr>
   <tr>
-    {_kpi_card(pending, "Pending", "#8b5cf6", sublabel=f"{pend_ol} Pending OL · {pend_hil} Pending Hilmar · {teu_pending} TEU")}
-    {_kpi_card(f"{wr:.1f}%", "Win Rate", "#22c55e", sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
-    {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", "#f59e0b", sublabel=f"{nq} NQ ÷ {decided_all} total")}
-    {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", "#6366f1", sublabel="Lonny → OL quote")}
+    {_kpi_card(pending, "Pending", B.DOC_PENDING, sublabel=f"{pend_ol} Pending OL · {pend_hil} Pending Hilmar · {teu_pending} TEU")}
+    {_kpi_card(f"{wr:.1f}%", "Win Rate", B.DOC_GOOD, sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
+    {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", B.DOC_WARN, sublabel=f"{nq} NQ ÷ {decided_all} total")}
+    {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", B.DOC_PENDING, sublabel="Lonny → OL quote")}
   </tr>
 </table>
 
 <!-- 2026-05-19 PM 7th pass (Michael "i'm lost win rate 45.4 percent what
      is wins / wins + q&l"): plain-English explainer of Win Rate. -->
-<div style="background:#f0fdf4;border-left:4px solid #16a34a;padding:10px 14px;margin:-8px 0 16px;border-radius:4px;font-size:12px;color:#166534;line-height:1.5">
+<div style="background:{B.DOC_GOOD_BG};border-left:4px solid {B.DOC_GOOD};padding:10px 14px;margin:-8px 0 16px;border-radius:4px;font-size:12px;color:{B.DOC_GOOD};line-height:1.5">
   <strong>How Win Rate is computed:</strong> Win Rate = wins ÷ decided contests.
   A "decided contest" is every time OL gave Lonny a rate AND Lonny chose
   (so it's <strong>Wins + Q&amp;L</strong> — wins are the times Lonny picked us,
@@ -1283,7 +1283,7 @@ def _week_block_html(rows):
     body = ""
     alt = True
     for label, b in rows:
-        bg = "#ffffff" if alt else "#f0f4f8"
+        bg = B.DOC_CARD if alt else B.DOC_TH_BG
         alt = not alt
         # Strip MDOLX prefix from every booking-ref so the column is uniform
         mdolx_clean = [_re.sub(r"^MDOLX", "", m) for m in (b.get("mdolx") or [])]
@@ -1300,22 +1300,22 @@ def _week_block_html(rows):
             wk_code, date_range = label, ""
         week_cell = (
             f'<strong>{_esc(wk_code)}</strong>'
-            + (f'<br><span style="font-size:10px;color:#64748b;font-weight:400">{_esc(date_range)}</span>' if date_range else '')
+            + (f'<br><span style="font-size:10px;color:{B.DOC_MUTED};font-weight:400">{_esc(date_range)}</span>' if date_range else '')
         )
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px;white-space:nowrap">{week_cell}</td>
-  <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:10px;color:#64748b">{teu_req} TEU</span></td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}<br><span style="font-size:10px;color:#16a34a;opacity:0.75">{teu_won} TEU</span></td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626">{b['ql']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#d97706">{b['nq']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed">{b['pending']}</td>
+  <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:10px;color:{B.DOC_MUTED}">{teu_req} TEU</span></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};font-weight:bold">{b['won']}<br><span style="font-size:10px;color:{B.DOC_GOOD};opacity:0.75">{teu_won} TEU</span></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_BAD}">{b['ql']}</td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_WARN}">{b['nq']}</td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING}">{b['pending']}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(mdolx)}</td>
 </tr>
 """
     return f"""
 <h2 style="{H2_STYLE}">📅 This Week vs Last Week</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left" title="ISO week range (Mon-Sun) in ET">Week</th>
@@ -1354,7 +1354,7 @@ def _carrier_block_html(rows):
     # every row.
     teu_pending_total = 0
     for name, b, wr in rows:
-        bg = "#ffffff" if alt else "#f0f4f8"
+        bg = B.DOC_CARD if alt else B.DOC_TH_BG
         alt = not alt
         teu_won = b.get('teu_won', 0) or 0
         teu_lost = b.get('teu_lost', 0) or 0
@@ -1372,34 +1372,34 @@ def _carrier_block_html(rows):
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:bold">{_esc(name)}</td>
   <td style="padding:6px 8px;text-align:center">{b['quoted']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold">{b['won']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626">{b['ql']}</td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed">{b['pending']}</td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};font-weight:bold">{b['won']}</td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_BAD}">{b['ql']}</td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING}">{b['pending']}</td>
   <td style="padding:6px 8px;text-align:center">{wr:.1f}%</td>
   <td style="padding:6px 8px;text-align:right;font-weight:600">{teu_offered}</td>
-  <td style="padding:6px 8px;text-align:right;color:#16a34a;font-weight:bold">{teu_won}</td>
-  <td style="padding:6px 8px;text-align:right;color:#dc2626">{teu_lost}</td>
-  <td style="padding:6px 8px;text-align:right;color:#7c3aed">{teu_pend}</td>
+  <td style="padding:6px 8px;text-align:right;color:{B.DOC_GOOD};font-weight:bold">{teu_won}</td>
+  <td style="padding:6px 8px;text-align:right;color:{B.DOC_BAD}">{teu_lost}</td>
+  <td style="padding:6px 8px;text-align:right;color:{B.DOC_PENDING}">{teu_pend}</td>
 </tr>
 """
     # Totals footer — reconciles to the data range
     body += f"""
-<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid {DOC_INK}">
+<tr style="background:{B.DOC_LINE};font-weight:bold;border-top:2px solid {DOC_INK}">
   <td style="padding:8px">TOTAL (all carriers)</td>
   <td style="padding:8px;text-align:center">{quoted_total}</td>
-  <td style="padding:8px;text-align:center;color:#16a34a">{wins_total}</td>
-  <td style="padding:8px;text-align:center;color:#dc2626">{ql_total}</td>
-  <td style="padding:8px;text-align:center;color:#7c3aed">{pending_total}</td>
-  <td style="padding:8px;text-align:center;color:#64748b">—</td>
+  <td style="padding:8px;text-align:center;color:{B.DOC_GOOD}">{wins_total}</td>
+  <td style="padding:8px;text-align:center;color:{B.DOC_BAD}">{ql_total}</td>
+  <td style="padding:8px;text-align:center;color:{B.DOC_PENDING}">{pending_total}</td>
+  <td style="padding:8px;text-align:center;color:{B.DOC_MUTED}">—</td>
   <td style="padding:8px;text-align:right">{teu_offered_total}</td>
-  <td style="padding:8px;text-align:right;color:#16a34a">{teu_won_total}</td>
-  <td style="padding:8px;text-align:right;color:#dc2626">{teu_lost_total}</td>
-  <td style="padding:8px;text-align:right;color:#7c3aed">{teu_pending_total}</td>
+  <td style="padding:8px;text-align:right;color:{B.DOC_GOOD}">{teu_won_total}</td>
+  <td style="padding:8px;text-align:right;color:{B.DOC_BAD}">{teu_lost_total}</td>
+  <td style="padding:8px;text-align:right;color:{B.DOC_PENDING}">{teu_pending_total}</td>
 </tr>
 """
     return f"""
 <h2 style="{H2_STYLE}">🚢 Carrier Performance — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left">Carrier</th>
@@ -1434,12 +1434,12 @@ def _winning_lanes_html(rows):
     max_teu = max((b['teu_won'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
-    _MICRO = 'style="font-size:9px;color:#94a3b8;font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
+    _MICRO = f'style="font-size:9px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
-        bg = "#ffffff" if alt else "#ecfdf5"
+        bg = B.DOC_CARD if alt else B.DOC_GOOD_BG
         alt = not alt
         carriers = ", ".join(sorted(b.get("carriers") or [])) or "—"
-        teu_bar = V.bar_cell(b['teu_won'], max_teu, color="#16a34a", label=str(b['teu_won']), width_px=80)
+        teu_bar = V.bar_cell(b['teu_won'], max_teu, color=B.DOC_GOOD, label=str(b['teu_won']), width_px=80)
         # 2026-05-19 PM 6th pass: per-lane Win Rate now matches global
         # definition — Wins / (Wins + Q&L). NQ excluded (different failure
         # mode). Pending excluded (not decided yet).
@@ -1453,10 +1453,10 @@ def _winning_lanes_html(rows):
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
   <td style="padding:6px 8px;text-align:center;font-weight:600;vertical-align:top">{b['total']} · {b.get('teu_req', 0)}<div {_MICRO}>Offered (# · TEU)</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;font-weight:bold;vertical-align:top">{b['won']}<div {_MICRO}>Wins</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626;vertical-align:top">{ql_count}<div {_MICRO}>Q&amp;L</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed;vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};font-weight:bold;vertical-align:top">{b['won']}<div {_MICRO}>Wins</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_BAD};vertical-align:top">{ql_count}<div {_MICRO}>Q&amp;L</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_WARN};vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING};vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
   <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Won</div></td>
   <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
   <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(carriers)}<div {_MICRO}>Winning Carriers</div></td>
@@ -1469,7 +1469,7 @@ def _winning_lanes_html(rows):
     # solid #059669 (winning) / #7f1d1d (losing) which Outlook honors.
     return f"""
 <h2 style="{H2_STYLE}">📈 Top Winning Lanes — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
@@ -1494,11 +1494,11 @@ def _losing_lanes_html(rows):
     max_teu = max((b['teu_lost'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
-    _MICRO = 'style="font-size:9px;color:#94a3b8;font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
+    _MICRO = f'style="font-size:9px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
-        bg = "#ffffff" if alt else "#fef2f2"
+        bg = B.DOC_CARD if alt else B.DOC_BAD_BG
         alt = not alt
-        teu_bar = V.bar_cell(b['teu_lost'], max_teu, color="#dc2626", label=str(b['teu_lost']), width_px=80)
+        teu_bar = V.bar_cell(b['teu_lost'], max_teu, color=B.DOC_BAD, label=str(b['teu_lost']), width_px=80)
         # 2026-05-19 PM 6th pass: same Win Rate redefinition as winning side
         won_count = b.get('won', 0)
         _decided_comp = won_count + b['lost']
@@ -1511,10 +1511,10 @@ def _losing_lanes_html(rows):
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:600;vertical-align:top">{_esc(lane)}<div {_MICRO}>Lane</div></td>
   <td style="padding:6px 8px;text-align:center;font-weight:600;vertical-align:top">{b['total']} · {b.get('teu_req', 0)}<div {_MICRO}>Offered (# · TEU)</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#dc2626;font-weight:bold;vertical-align:top">{b['lost']}<div {_MICRO}>Q&amp;L</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#d97706;vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#7c3aed;vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
-  <td style="padding:6px 8px;text-align:center;color:#16a34a;vertical-align:top">{won_count}<div {_MICRO}>Wins</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_BAD};font-weight:bold;vertical-align:top">{b['lost']}<div {_MICRO}>Q&amp;L</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_WARN};vertical-align:top">{nq_count}<div {_MICRO}>NQ</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING};vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};vertical-align:top">{won_count}<div {_MICRO}>Wins</div></td>
   <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Lost</div></td>
   <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
   <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(winning_carriers)}<div {_MICRO}>Winning Carriers</div></td>
@@ -1523,7 +1523,7 @@ def _losing_lanes_html(rows):
     # 2026-05-19 PM 4th pass: solid bg for Outlook (was gradient → invisible).
     return f"""
 <h2 style="{H2_STYLE}">📉 Top Losing Lanes — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
@@ -1567,24 +1567,24 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     body = ""
     alt = True
     for r in rows:
-        bg = "#ffffff" if alt else "#fffbeb"
+        bg = B.DOC_CARD if alt else B.DOC_WARN_BG
         alt = not alt
         request_ts = r.get('request_timestamp') or ''
         imid_short = (r.get('source_imids') or ['—'])[0]
         if imid_short and imid_short != '—':
             imid_short = imid_short[:24] + '…' if len(imid_short) > 24 else imid_short
         body += f"""
-<tr style="background:{bg};border-bottom:1px solid #fde68a">
+<tr style="background:{bg};border-bottom:1px solid {B.DOC_WARN_BG}">
   <td style="padding:6px 8px;white-space:nowrap">{_esc(r.get('request_date') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px;color:#64748b">{_esc(r.get('lonny_time_pt') or '—')}</td>
+  <td style="padding:6px 8px;font-size:11px;color:{B.DOC_MUTED}">{_esc(r.get('lonny_time_pt') or '—')}</td>
   <td style="padding:6px 8px">{_esc(r.get('origin') or '—')}</td>
   <td style="padding:6px 8px">{_esc(r.get('destination') or '—')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(r.get('teu_requested') or '—')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or 'no ETA on request')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('ol_responder') or '—')}</td>
-  <td style="padding:6px 8px;text-align:center;font-weight:bold;color:#b45309">{_age_days(request_ts)}</td>
-  <td style="padding:6px 8px;font-size:10px;color:#64748b;font-family:monospace">{_esc(imid_short)}</td>
+  <td style="padding:6px 8px;text-align:center;font-weight:bold;color:{B.DOC_WARN}">{_age_days(request_ts)}</td>
+  <td style="padding:6px 8px;font-size:10px;color:{B.DOC_MUTED};font-family:monospace">{_esc(imid_short)}</td>
 </tr>
 """
     # Build header with both visible-window count + total tally for rate-negotiation context
@@ -1594,10 +1594,10 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     older_note = (f" • {older_count} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden from listing "
                   f"but counted in volume tally for rate negotiation") if older_count > 0 else ""
     return f"""
-<h2 style="color:#d97706;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fde68a;padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
+<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN_BG};padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#d97706;color:white">
+  <tr style="background:{B.DOC_WARN};color:white">
     <th style="padding:8px;text-align:left">Date</th>
     <th style="padding:8px;text-align:left">Lonny Sent (PT)</th>
     <th style="padding:8px;text-align:left">Origin</th>
@@ -1644,7 +1644,7 @@ def _pending_ol_html(rows):
     for r in rows:
         req_dt = core.parse_iso(r.get("request_timestamp"))
         wait_s = "—"
-        wait_color = "#374151"
+        wait_color = B.DOC_INK
         overdue = False
         if req_dt:
             # BUSINESS hours (ET 8:30-17:30 Mon-Fri) — the same clock as the
@@ -1655,11 +1655,11 @@ def _pending_ol_html(rows):
                 wait_h = 0.0
             wait_s = f"{wait_h:.1f}h"
             overdue = core.pending_ol_overdue(req_dt, now)
-            wait_color = "#dc2626" if overdue else "#16a34a"
+            wait_color = B.DOC_BAD if overdue else B.DOC_GOOD
             if overdue:
                 wait_s += " ⚠"
         body += f"""
-<tr style="border-bottom:1px solid #e5e7eb">
+<tr style="border-bottom:1px solid {B.DOC_LINE}">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(str(r.get('teu_requested') or '—'))}</td>
@@ -1669,23 +1669,23 @@ def _pending_ol_html(rows):
 </tr>
 """
     body += f"""
-<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #b45309">
+<tr style="background:{B.DOC_LINE};font-weight:bold;border-top:2px solid {B.DOC_WARN}">
   <td style="padding:8px" colspan="2">TOTAL ({len(rows)} awaiting OL)</td>
   <td style="padding:8px;text-align:center">{total_teu}</td>
   <td style="padding:8px" colspan="3">&nbsp;</td>
 </tr>
 """
     return f"""
-<h2 style="color:#b45309;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #fcd34d;padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
+<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN_BG};padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#b45309;color:white">
-    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Lane</th>
-    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Equipment</th>
-    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff">TEU</th>
-    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff">Product</th>
-    <th style="padding:8px;text-align:left;background-color:#b45309;color:#ffffff" title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>
-    <th style="padding:8px;text-align:center;background-color:#b45309;color:#ffffff" title="Business hours since the RFQ with no OL quote — red means OL has blown the response SLA">Waiting on OL</th>
+  <tr style="background:{B.DOC_WARN};color:white">
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_WARN};color:{B.DOC_CARD}">Lane</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_WARN};color:{B.DOC_CARD}">Equipment</th>
+    <th style="padding:8px;text-align:center;background-color:{B.DOC_WARN};color:{B.DOC_CARD}">TEU</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_WARN};color:{B.DOC_CARD}">Product</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_WARN};color:{B.DOC_CARD}" title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>
+    <th style="padding:8px;text-align:center;background-color:{B.DOC_WARN};color:{B.DOC_CARD}" title="Business hours since the RFQ with no OL quote — red means OL has blown the response SLA">Waiting on OL</th>
   </tr>
   {body}
 </table>
@@ -1751,7 +1751,7 @@ def _pending_html(rows):
     alt = True
     total_teu = 0
     for r in rows:
-        bg = "#ffffff" if alt else "#f5f3ff"
+        bg = B.DOC_CARD if alt else B.DOC_PENDING_BG
         alt = not alt
         teu = r.get('teu_requested') or 0
         total_teu += teu
@@ -1769,13 +1769,13 @@ def _pending_html(rows):
         ttq_clock = r.get('turnaround_hours')
         if isinstance(ttq_biz, (int, float)):
             ttq_s = f"{ttq_biz:.1f}h"
-            ttq_color = "#16a34a" if ttq_biz <= 4 else ("#d97706" if ttq_biz <= 24 else "#dc2626")
+            ttq_color = B.DOC_GOOD if ttq_biz <= 4 else (B.DOC_WARN if ttq_biz <= 24 else B.DOC_BAD)
         elif isinstance(ttq_clock, (int, float)):
             ttq_s = f"{ttq_clock:.1f}h (clock)"
-            ttq_color = "#64748b"
+            ttq_color = B.DOC_MUTED
         else:
             ttq_s = "—"
-            ttq_color = "#64748b"
+            ttq_color = B.DOC_MUTED
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
@@ -1792,27 +1792,27 @@ def _pending_html(rows):
 """
     # Totals row for TEU reconciliation
     body += f"""
-<tr style="background:#e5e7eb;font-weight:bold;border-top:2px solid #7c3aed">
+<tr style="background:{B.DOC_LINE};font-weight:bold;border-top:2px solid {B.DOC_PENDING}">
   <td style="padding:8px" colspan="2">TOTAL ({len(rows)} pending)</td>
   <td style="padding:8px;text-align:center">{total_teu}</td>
   <td style="padding:8px" colspan="7">&nbsp;</td>
 </tr>
 """
     return f"""
-<h2 style="color:#7c3aed;font-size:16px;margin:20px 0 12px;border-bottom:2px solid #c4b5fd;padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
+<h2 style="color:{B.DOC_PENDING};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_PENDING};padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
-  <tr style="background:#7c3aed;color:white">
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Lane</th>
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Equipment</th>
-    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff">TEU</th>
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Carrier Quoted</th>
-    <th style="padding:8px;text-align:right;background-color:#7c3aed;color:#ffffff">Rate ($/container)</th>
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff">Who Quoted (OL signer)</th>
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff" title="When Lonny sent the RFQ (Pacific Time, Lonny's office)">Lonny Requested (PT)</th>
-    <th style="padding:8px;text-align:left;background-color:#7c3aed;color:#ffffff" title="When OL responded with the rate (Eastern Time, OL's office)">OL Quoted (ET)</th>
-    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff" title="Biz-hours from Lonny's RFQ to OL's rate response. Green ≤4h, amber 4–24h, red &gt;24h. Counts only OL business hours (8:30 AM – 5:30 PM ET weekdays).">Time to Quote</th>
-    <th style="padding:8px;text-align:center;background-color:#7c3aed;color:#ffffff" title="Time elapsed since OL's quote arrived — chase candidates &gt;24h">Hours since OL quote</th>
+  <tr style="background:{B.DOC_PENDING};color:white">
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Lane</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Equipment</th>
+    <th style="padding:8px;text-align:center;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">TEU</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Carrier Quoted</th>
+    <th style="padding:8px;text-align:right;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Rate ($/container)</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Who Quoted (OL signer)</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}" title="When Lonny sent the RFQ (Pacific Time, Lonny's office)">Lonny Requested (PT)</th>
+    <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}" title="When OL responded with the rate (Eastern Time, OL's office)">OL Quoted (ET)</th>
+    <th style="padding:8px;text-align:center;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}" title="Biz-hours from Lonny's RFQ to OL's rate response. Green ≤4h, amber 4–24h, red &gt;24h. Counts only OL business hours (8:30 AM – 5:30 PM ET weekdays).">Time to Quote</th>
+    <th style="padding:8px;text-align:center;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}" title="Time elapsed since OL's quote arrived — chase candidates &gt;24h">Hours since OL quote</th>
   </tr>
   {body}
 </table>
@@ -1848,22 +1848,22 @@ def _loss_reason_mix_html(data) -> str:
     # ("needs investigation") so Michael's eye lands on it as a research
     # signal rather than a tag to push carriers on.
     _REASON_META = {
-        "PRICE":             ("Price (rate-driven)",      "#0a2350"),   # Hilmar navy
-        "ETD_MISS":          ("ETD missed",               "#1e40af"),   # blue
-        "NO_RESPONSE":       ("OL didn't respond",        "#7c2d12"),   # rust
-        "RESPONSE_NO_RATE":  ("OL acked but no rate",     "#9a3412"),
-        "SEND_NO_BOOKING":   ("Send w/o MDOLX booking",   "#b45309"),   # amber-deep
-        "UNDIFFERENTIATED":  ("Undifferentiated — needs investigation", "#64748b"),  # slate-500
-        "QUOTED_NOT_BOOKED": ("Quoted, generic no-fit",   "#475569"),   # slate-600
-        "COVERED":           ("Lonny covered w/ competitor", "#5b21b6"),
-        "DRAFT_ONLY":        ("Booking draft-only",       "#475569"),
-        "OTHER":             ("Other",                    "#94a3b8"),
+        "PRICE":             ("Price (rate-driven)",      B.DOC_INK),   # Hilmar navy
+        "ETD_MISS":          ("ETD missed",               B.DOC_INFO),   # blue
+        "NO_RESPONSE":       ("OL didn't respond",        B.DOC_WARN),   # rust
+        "RESPONSE_NO_RATE":  ("OL acked but no rate",     B.DOC_WARN),
+        "SEND_NO_BOOKING":   ("Send w/o MDOLX booking",   B.DOC_WARN),   # amber-deep
+        "UNDIFFERENTIATED":  ("Undifferentiated — needs investigation", B.DOC_MUTED),  # slate-500
+        "QUOTED_NOT_BOOKED": ("Quoted, generic no-fit",   B.DOC_MUTED),   # slate-600
+        "COVERED":           ("Lonny covered w/ competitor", B.DOC_PENDING),
+        "DRAFT_ONLY":        ("Booking draft-only",       B.DOC_MUTED),
+        "OTHER":             ("Other",                    B.DOC_MUTED),
     }
     _ACTIONABLE_META = {
-        "rate_driven": ("Push carriers — rate-driven",  "#0a2350"),
-        "etd_driven":  ("Push ops — ETD-driven",        "#1e40af"),
-        "ol_silent":   ("Push OL — silent or late",     "#b45309"),
-        "other":       ("Other",                         "#94a3b8"),
+        "rate_driven": ("Push carriers — rate-driven",  B.DOC_INK),
+        "etd_driven":  ("Push ops — ETD-driven",        B.DOC_INFO),
+        "ol_silent":   ("Push OL — silent or late",     B.DOC_WARN),
+        "other":       ("Other",                         B.DOC_MUTED),
     }
 
     def _bar_row(label, count, total, color):
@@ -1876,14 +1876,14 @@ def _loss_reason_mix_html(data) -> str:
         # width %, no flexbox/SVG/gradient (QC-045's lesson).
         return (
             '<tr>'
-            f'<td style="padding:6px 12px 6px 0;color:#0f172a;font-size:13px;'
+            f'<td style="padding:6px 12px 6px 0;color:{B.DOC_INK};font-size:13px;'
             f'white-space:nowrap;font-weight:500;vertical-align:middle">{_esc(label)}</td>'
             f'<td style="padding:6px 0;width:60%;vertical-align:middle">'
             f'<table cellspacing="0" cellpadding="0" border="0" '
             f'style="width:100%;border-collapse:collapse"><tr>'
             f'<td style="width:{max(pct, 4):.0f}%;background:{color};'
             f'border-radius:3px;line-height:16px;font-size:12px">&nbsp;</td>'
-            f'<td style="padding-left:8px;white-space:nowrap;color:#0f172a;'
+            f'<td style="padding-left:8px;white-space:nowrap;color:{B.DOC_INK};'
             f'font-size:12px;font-weight:600;font-variant-numeric:tabular-nums">'
             f'{count} &middot; {pct:.0f}%</td>'
             f'</tr></table>'
@@ -1894,9 +1894,9 @@ def _loss_reason_mix_html(data) -> str:
         if mix["total"] == 0:
             return ""
         out = (
-            f'<div style="margin:14px 0 6px 0;font-size:13px;color:#475569;'
+            f'<div style="margin:14px 0 6px 0;font-size:13px;color:{B.DOC_MUTED};'
             f'font-weight:600;letter-spacing:0.02em">'
-            f'{label} &nbsp;&middot;&nbsp; <span style="color:#0f172a;'
+            f'{label} &nbsp;&middot;&nbsp; <span style="color:{B.DOC_INK};'
             f'font-variant-numeric:tabular-nums">{mix["total"]} losses</span>'
             f'</div>'
             f'<table cellspacing="0" cellpadding="0" border="0" '
@@ -1904,7 +1904,7 @@ def _loss_reason_mix_html(data) -> str:
         )
         # By-reason bars (top 6 by count).
         for reason, count in mix["ranked"][:6]:
-            label_str, color = _REASON_META.get(reason, (reason, "#94a3b8"))
+            label_str, color = _REASON_META.get(reason, (reason, B.DOC_MUTED))
             out += _bar_row(label_str, count, mix["total"], color)
         out += '</table>'
         # Actionable summary line.
@@ -1923,17 +1923,17 @@ def _loss_reason_mix_html(data) -> str:
             )
         if chunks:
             out += (
-                f'<div style="margin:8px 0 0 0;font-size:11px;color:#64748b;'
+                f'<div style="margin:8px 0 0 0;font-size:11px;color:{B.DOC_MUTED};'
                 f'line-height:1.8">{ "".join(chunks) }</div>'
             )
         return out
 
     html = (
         '<div style="margin:28px 0 8px 0">'
-        '<h2 style="font-size:15px;color:#0a2350;margin:0 0 4px 0;'
+        f'<h2 style="font-size:15px;color:{B.DOC_INK};margin:0 0 4px 0;'
         'font-weight:700;letter-spacing:-0.01em">Why We Lost &mdash; '
         'Loss-Reason Mix</h2>'
-        '<div style="font-size:12px;color:#64748b;margin-bottom:4px">'
+        f'<div style="font-size:12px;color:{B.DOC_MUTED};margin-bottom:4px">'
         'Where the deals went. Buckets tag the action that follows: '
         '<em>Push carriers</em> when rate-driven dominates, '
         '<em>Push ops</em> on ETD misses, '
@@ -1958,9 +1958,9 @@ def _trade_region_html(data, summary):
     rows_html = ""
     alt = True
     for m in ordered:
-        bg = "#ffffff" if alt else "#f8fafc"
+        bg = B.DOC_CARD if alt else B.DOC_TH_BG
         if m["region"] == "Unmapped":
-            bg = "#fef2f2"
+            bg = B.DOC_BAD_BG
         alt = not alt
         rows_html += (
             f'<tr style="background:{bg}">'
@@ -2007,8 +2007,8 @@ def _trade_region_html(data, summary):
     period_str = f"{dates[0]} – {dates[-1]}" if dates else "all time"
     return f"""
 <h2 style="{H2_STYLE}">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
-<p style="margin:0 0 4px;font-size:11px;color:#64748b">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
-<p style="margin:0 0 8px;font-size:11px;color:#64748b">{_esc(recon)}</p>
+<p style="margin:0 0 4px;font-size:11px;color:{B.DOC_MUTED}">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">{_esc(recon)}</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left">Region</th>
@@ -2061,7 +2061,7 @@ def _ai_insights_business_html(cfg=None):
             return ""
         return f"""
 <h2 style="{H2_STYLE}">🤖 AI Insights — Business</h2>
-<div style="font-size:13px;line-height:1.6;color:#1f2937">{snippet}</div>
+<div style="font-size:13px;line-height:1.6;color:{B.DOC_INK}">{snippet}</div>
 """
     except Exception:
         return ""
