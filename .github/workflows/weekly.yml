@@ -161,6 +161,30 @@ jobs:
             python3 scripts/gen_weekly_summary.py --force
           fi
 
+      - name: Build the client weekly rollup
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          PERIOD_START: ${{ github.event.inputs.start }}
+          PERIOD_END: ${{ github.event.inputs.end }}
+        # The CLIENT rollup was built only by run_pipeline, which runs in
+        # daily.yml — so weekly.yml had no copy of it at all, and enabling the
+        # send without this step would have shipped whatever stale file the
+        # runner happened to have, or nothing. It takes the SAME explicit
+        # period as the staff summary above so a catch-up dispatch produces a
+        # client rollup covering the same window, not a different one.
+        #
+        # BEST-EFFORT: a failure here must never stop the staff exec summary,
+        # which is the deliverable this workflow existed for first.
+        run: |
+          set +e
+          if [ -n "$PERIOD_START" ] || [ -n "$PERIOD_END" ]; then
+            python3 scripts/gen_client_weekly.py --start "$PERIOD_START" --end "$PERIOD_END"
+          else
+            python3 scripts/gen_client_weekly.py
+          fi
+          [ $? -eq 0 ] || echo "::warning::client weekly build failed — the send step will skip"
+          exit 0
+
       - name: Send the exec summary (INTERNAL staff list only)
         if: steps.gate.outputs.proceed == 'true'
         env:
@@ -210,8 +234,62 @@ jobs:
               --body-from-file reports/weekly-summary.html
           fi
 
+      - name: Send the client weekly rollup (gated)
+        if: steps.gate.outputs.proceed == 'true'
+        # The CLIENT-facing weekly (gen_client_weekly.py). Mirrors the daily's
+        # client-send block deliberately: the two client artifacts should be
+        # gated the same way, so an operator who has read one gate understands
+        # the other. Reaching the client requires BOTH client_weekly.enabled
+        # AND send_to=full; anything else sends a clearly-labeled SAMPLE to
+        # sample_to and Lonny receives nothing.
+        #
+        # Own flag namespace (client-weekly-sent) so it can never consume or
+        # be consumed by the staff weekly's idempotency.
+        #
+        # BEST-EFFORT: the staff exec summary has already shipped by this
+        # point and must not be retroactively failed by a client-send problem.
+        # Every branch exits 0.
+        run: |
+          set +e
+          CFG='import json;c=json.load(open("config.json")).get("client_weekly",{});'
+          ENABLED=$(python3 -c "${CFG}print(str(c.get('enabled',False)).lower())" 2>/dev/null || echo "false")
+          CLIENT_TO=$(python3 -c "${CFG}print(' '.join(c.get('to',[])))" 2>/dev/null || echo "")
+          CLIENT_CC=$(python3 -c "${CFG}print(' '.join(c.get('cc',[])))" 2>/dev/null || echo "")
+          SAMPLE_TO=$(python3 -c "${CFG}print(' '.join(c.get('sample_to',['michael.deitchman@idealx.us'])))" 2>/dev/null || echo "michael.deitchman@idealx.us")
+          if [ ! -s reports/client-weekly.html ] || [ ! -s reports/client-weekly-subject.txt ]; then
+            echo "Client weekly artifacts missing or empty — skipping (nothing sent)."
+            exit 0
+          fi
+          if [ "$ENABLED" = "true" ] && [ "$SEND_TO" = "full" ] && [ -n "$CLIENT_TO" ]; then
+            echo "CLIENT WEEKLY send — client_weekly.enabled=true and send_to=full → TO=$CLIENT_TO CC=$CLIENT_CC"
+            python3 scripts/outlook_send.py daily --to $CLIENT_TO --cc $CLIENT_CC \
+              --flag-name client-weekly-sent \
+              --subject-from-file reports/client-weekly-subject.txt \
+              --body-from-file reports/client-weekly.html \
+              || echo "Client weekly send failed (best-effort — the staff summary already shipped)"
+          else
+            echo "SAMPLE — client_weekly disabled or send_to=test → $SAMPLE_TO only. Lonny receives NOTHING."
+            # Labeled, for the reason the daily's sample is labeled: Michael
+            # mistook an unlabeled client sample for a gutted staff report on
+            # 2026-07-11. Also load-bearing — an unprefixed sample shares the
+            # real subject, and the mailbox guard would then suppress the real
+            # client send later.
+            printf '[SAMPLE - internal preview, Lonny does NOT receive this] %s' \
+              "$(cat reports/client-weekly-subject.txt)" > reports/client-weekly-subject-sample.txt
+            python3 scripts/outlook_send.py daily --to $SAMPLE_TO \
+              --verification \
+              --subject-from-file reports/client-weekly-subject-sample.txt \
+              --body-from-file reports/client-weekly.html \
+              || echo "Client weekly SAMPLE send failed (best-effort — never fails the job)"
+          fi
+          exit 0
+
       - name: Push state back (weekly-sent flag)
         if: steps.gate.outputs.proceed == 'true' && env.SEND_TO == 'full'
         # Weekly owns its OWN flag and nothing else. It never mutates
         # tracking-data-v2.json, so it must not upload it.
-        run: python3 scripts/state_store.py push --only weekly-sent
+        # COMMA-separated, not space — --only takes one string and a second
+        # bare word would land as a positional and be silently dropped, so the
+        # client-weekly flag would never persist and every Monday would look
+        # like the first.
+        run: python3 scripts/state_store.py push --only weekly-sent,client-weekly-sent

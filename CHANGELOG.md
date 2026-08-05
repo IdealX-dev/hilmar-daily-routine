@@ -3,6 +3,59 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-05 (5) — client weekly LIVE (Michael: "flip client weekly")
+
+FLIPPING THE FLAG ALONE WOULD HAVE DONE NOTHING, which is worth recording
+because it was by design and the design nearly hid the work. gen_client_weekly
+shipped with client_weekly.enabled=false AND no send path anywhere — a
+deliberate two-way gate, with a test asserting both. So "flip it on" meant
+building the other half:
+
+  - weekly.yml had NO build step for the client rollup. Only run_pipeline
+    built it, and run_pipeline runs in daily.yml. Enabling a send without
+    adding the build would have shipped whatever stale file the runner
+    happened to have, or nothing at all. Added, taking the SAME explicit
+    start/end as the staff summary so a catch-up dispatch produces a client
+    rollup covering the same window rather than a different one.
+  - the send, mirroring the daily's client block on purpose: reaching Lonny
+    requires client_weekly.enabled=true AND send_to=full. Anything else is a
+    labeled sample to sample_to. Own flag namespace (client-weekly-sent) so it
+    can never consume or be consumed by the staff weekly's guard — the exact
+    collision that blocked 2026-07-30.
+  - --only weekly-sent,client-weekly-sent. COMMA-joined: --only takes one
+    string, and a second bare word lands as a positional and is silently
+    dropped, so the flag would never persist and every Monday would look like
+    the first. Caught reading the arg parser, not in production.
+  - config.json client_weekly.enabled=true, recipients unchanged.
+
+QC-065 NOW COVERS BOTH CLIENT ARTIFACTS, VIA ONE DEFINITION. The check was
+inline and client_report-only. Extracted to qc065_check_client_block(cfg, key,
+body_path) and called for both. Writing a QC-078 for the weekly would have
+been a second definition of "safe client artifact" — the precise mistake this
+repo spent today undoing (five spellings of one rate predicate, two
+vocabularies for one status). Recipients are validated even while DISABLED,
+because a wrong address is harmless right up until the flag flips.
+
+TWO TESTS WENT RED, CORRECTLY, AND WERE THE WRONG SHAPE
+  test_send_is_disabled_in_shipped_config and
+  test_no_pipeline_step_sends_the_client_weekly asserted enabled is False and
+  that no send path existed. Both true and useful for exactly one day. They
+  pinned an OPERATIONAL STATE the operator is entitled to change — the same
+  defect as the cron test that went red the morning Michael said resume.
+  Rewritten as invariants that hold in BOTH states: the send requires two
+  conditions, the disabled path reaches only the labeled sample, the rollup is
+  built before it is sent, it owns its own flag, and recipients equal the
+  approved pair whenever enabled.
+
+WHAT I RECOMMENDED AND HE OVERRODE: I asked that a real rendered week be read
+before flipping. Michael flipped without one; that is his call and it is
+recorded here rather than argued. The first live send is Monday ~5 AM ET. A
+send_to=test dispatch produces a labeled sample from real data at any time
+before then, which is the review I was asking for, available without delaying
+anything.
+
+Suite 2494 passed, 0 failed. ruff clean. weekly.yml parses.
+
 ## 2026-08-05 (4) — "do it all asap": the send, the palette, Lonny's weekly
 
 1. THE JUL 27–AUG 4 CATCH-UP WENT, AND THE LOG SAYS SO

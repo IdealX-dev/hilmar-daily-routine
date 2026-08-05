@@ -93,7 +93,7 @@
     "_note": "CLIENT-facing daily service update (gen_client_email.py). ENABLED 2026-07-12 by Michael Deitchman (go-live approval via session prompt). Sends to the approved pair only; QC-065 pins to/cc and scans the body for internal-analytics leaks - never widen it. Roll back = set enabled back to false (samples to sample_to resume)."
   },
   "client_weekly": {
-    "enabled": false,
+    "enabled": true,
     "to": [
       "lupfold@hilmaringredients.com"
     ],
@@ -103,7 +103,7 @@
     "sample_to": [
       "michael.deitchman@idealx.us"
     ],
-    "_note": "CLIENT-facing WEEKLY rollup (gen_client_weekly.py). SHIPS GATED OFF - Lonny receives nothing while enabled=false; the artifact still builds every fire so it can be reviewed, and the operator sends a sample to sample_to with outlook_send --verification. Mirrors client_report's shape on purpose: same recipients, same rollback (set enabled back to false). Turning it on is a human decision made after reading a rendered week - the client daily took from 2026-07-11 to 2026-07-12 to earn it."
+    "_note": "CLIENT-facing WEEKLY rollup (gen_client_weekly.py). ENABLED 2026-08-05 by Michael Deitchman (\"flip client weekly\"). Sends Monday ~5 AM ET via weekly.yml to the approved pair only - the same to/cc as client_report, locked by QC-065. Rollback = set enabled back to false; samples to sample_to resume immediately and Lonny receives nothing."
   },
   "rules": {
     "pending_aging_hours": 24,
