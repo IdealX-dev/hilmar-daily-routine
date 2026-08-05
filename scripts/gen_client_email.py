@@ -249,13 +249,37 @@ def _client_sections(data, report_date):
     # Every bucket is filtered through _lane_resolved so a "Lane unresolved" /
     # placeholder-destination row can never render in any section. If this
     # empties a section, the existing empty-section collapse handles it.
-    return {
+    out = {
         "requests": [r for r in new_req if _lane_resolved(r)],
         "quotes": [r for r in quotes if _lane_resolved(r)],
         "bookings": [r for r in bookings if _lane_resolved(r)],
         "awaiting": [r for r in awaiting if _lane_resolved(r)],
         "in_progress": [r for r in in_progress if _lane_resolved(r)],
     }
+    # Quotes we are SHOWING but cannot date.
+    #
+    # 2026-08-05, Michael: "requests received show yesterdays requests.. are we
+    # sure they weren't won yesterday and still waiting for lonny". Chasing it
+    # surfaced something worse than the date wording. `quotes` is bucketed on
+    # response_timestamp (via _today_events); `awaiting` is CURRENT STATE and
+    # is not windowed. A quote with a rate but no timestamp therefore counts
+    # ZERO in "Quotes delivered" while its rate is printed under "Awaiting your
+    # decision" — and the narrative went on to tell the customer "we received 3
+    # rate requests and returned 0 quotes; 3 quotes await your decision", in
+    # one sentence.
+    #
+    # That is not a formatting slip. It is OL telling its own customer it did
+    # not respond, on a day it demonstrably did — the rates are right there on
+    # the page. qc_selfheal._heal_undated_quote now dates every row it can
+    # reach, but a row whose source message has aged out of the body cache
+    # stays undated forever, so the renderer must not depend on that heal
+    # having succeeded. It reports what it can prove instead.
+    out["undated_quotes"] = [
+        r for r in out["awaiting"]
+        if (r.get("ol_rate") or r.get("carrier_quoted"))
+        and not r.get("response_timestamp")
+    ]
+    return out
 
 
 def _active_shipments(data, report_date):
@@ -373,6 +397,21 @@ def _section_or_line(title, note, quiet_text, headers, row_values):
     return _quiet_section(title, quiet_text)
 
 
+def _quotes_sublabel(s):
+    """TEU under the Quotes-delivered tile, plus the undated ones if any.
+
+    A "0" tile sitting above a table of three priced quotes is the same
+    contradiction the narrative had. The tile counts what it can date; the
+    sublabel says out loud that more are on the page but undated, so the
+    number reads as a limit of the data rather than as OL's service record.
+    """
+    n_undated = len(s.get("undated_quotes") or [])
+    base = f"{_teu_sum(s['quotes'])} TEU"
+    if n_undated:
+        return f"{base} · {n_undated} more undated"
+    return base
+
+
 def _kpi_strip(s):
     """Hero KPI strip — 4 tiles via gen_email._kpi_card (same td.hx-kpi /
     .hx-kpi-card markup, so the mobile display:block stacking is shared).
@@ -381,7 +420,7 @@ def _kpi_strip(s):
 <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:2px 0 8px">
   <tr>
     {_kpi_card(len(s["requests"]), "Requests received", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
-    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=f"{_teu_sum(s['quotes'])} TEU")}
+    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=_quotes_sublabel(s))}
     {_kpi_card(len(s["bookings"]), "Bookings confirmed", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
     {_kpi_card(len(s["awaiting"]), "Awaiting your decision", "#f59e0b", "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
   </tr>
@@ -434,9 +473,19 @@ def _narrative(s):
                  f"(average {avg_h:.1f} business hours, Pacific)")
     else:
         speed = ""
-    line = (f"We received {_plural(n_req, 'rate request')} and returned "
-            f"{_plural(n_quo, 'quote')}{speed}; "
-            f"{_plural(n_book, 'booking')} confirmed.")
+    # NEVER assert a delivered-quote count the table below contradicts.
+    # When quotes are on the page that we cannot date, "returned 0 quotes" is
+    # a false statement to the customer about our own responsiveness — see
+    # _client_sections' undated_quotes note. State the requests and bookings,
+    # which are dated and certain, and let the quote table speak for itself.
+    n_undated = len(s.get("undated_quotes") or [])
+    if n_undated and not n_quo:
+        line = (f"We received {_plural(n_req, 'rate request')}; "
+                f"{_plural(n_book, 'booking')} confirmed.")
+    else:
+        line = (f"We received {_plural(n_req, 'rate request')} and returned "
+                f"{_plural(n_quo, 'quote')}{speed}; "
+                f"{_plural(n_book, 'booking')} confirmed.")
     n_wait = len(s["awaiting"])
     if n_wait:
         verb = "awaits" if n_wait == 1 else "await"

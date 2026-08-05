@@ -902,3 +902,98 @@ def test_a_departed_sailing_is_marked_not_dropped():
     html = gce.build_body(data, {})
     assert "Oakland → Xingang" in html, "the open quote was dropped, not marked"
     assert "sailed, ask us to requote" in html
+
+
+# ── 7. The email must never contradict its own tables ────────────────────
+#
+# Michael 2026-08-05: "requests received show yesterdays requests.. are we
+# sure they weren't won yesterday and still waiting for lonny". Chasing that
+# surfaced something worse than the date wording: the Aug 4 client email told
+# Lonny "We received 2 rate requests and returned 0 quotes ... 3 quotes await
+# your decision below" — in ONE sentence — while printing three rates.
+#
+# `quotes` buckets on response_timestamp; `awaiting` is current state and is
+# unwindowed. An undated quote therefore counts zero as delivered while its
+# rate is on the page. That is OL telling its own customer it did not respond
+# on a day it demonstrably did.
+
+
+def _undated_quotes_data():
+    """Exactly the screenshot: priced quotes on the table, none with a
+    response_timestamp."""
+    d = _rd().isoformat()
+    return {"requests": [
+        _row("q1", status="PENDING", quoted=True, ol_rate=4874.0,
+             carrier_quoted="CMA CGM", request_date=d,
+             request_timestamp=f"{d}T15:00:00Z", lane="Oakland → Algeciras"),
+        _row("q2", status="PENDING", quoted=True, ol_rate=725.0,
+             carrier_quoted="CMA CGM", request_date=d,
+             request_timestamp=f"{d}T15:00:00Z", lane="Oakland → Xingang"),
+    ]}
+
+
+def test_undated_quotes_are_identified_as_such():
+    s = gce._client_sections(_undated_quotes_data(), _rd())
+    assert len(s["awaiting"]) == 2
+    assert len(s["quotes"]) == 0, (
+        "premise check: an undated quote cannot bucket into the report day")
+    assert len(s["undated_quotes"]) == 2
+
+
+def test_the_narrative_never_claims_zero_quotes_while_showing_quotes():
+    """THE regression. 'returned 0 quotes' next to '3 quotes await your
+    decision' is not a formatting slip — it is a false statement to the
+    customer about our own responsiveness."""
+    s = gce._client_sections(_undated_quotes_data(), _rd())
+    line = gce._narrative(s)
+    assert "returned 0 quotes" not in line, (
+        f"the email tells the client we returned nothing while listing "
+        f"{len(s['awaiting'])} priced quotes: {line!r}")
+    assert "await your decision" in line
+
+
+def test_the_quotes_tile_says_when_more_are_undated():
+    """A '0' tile above a table of priced quotes is the same contradiction.
+    The number stays honest; the sublabel says it is a limit of the data."""
+    s = gce._client_sections(_undated_quotes_data(), _rd())
+    assert "2 more undated" in gce._quotes_sublabel(s)
+
+
+def test_a_normal_day_still_reports_the_quote_count():
+    """The honest-fallback path must not swallow a real count on a day when
+    the quotes ARE dated."""
+    d = _rd().isoformat()
+    data = {"requests": [
+        _row("q1", status="PENDING", quoted=True, ol_rate=4874.0,
+             carrier_quoted="CMA CGM", request_date=d,
+             request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z", lane="Oakland → Algeciras"),
+    ]}
+    s = gce._client_sections(data, _rd())
+    assert len(s["quotes"]) == 1 and not s["undated_quotes"]
+    line = gce._narrative(s)
+    assert "returned 1 quote" in line
+    assert "undated" not in gce._quotes_sublabel(s)
+
+
+def test_a_booked_row_is_never_also_awaiting_lonnys_decision():
+    """Michael's actual question: could a row won yesterday still be sitting
+    in 'Awaiting your decision'? The buckets are disjoint by construction —
+    bookings requires the PERSISTED status to still be WIN, and awaiting
+    excludes anything in bookings by identity."""
+    d = _rd().isoformat()
+    data = {"requests": [
+        _row("w1", status="WIN", quoted=True, ol_rate=4250.0,
+             carrier_quoted="MSC", carrier_won="MSC", mdolx_ref="MDOLX-1",
+             request_date=d, request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z", lane="Oakland → Tokyo",
+             status_history=[{"from": "PENDING", "to": "WIN",
+                              "at": f"{d}T20:00:00Z", "reason": "booked"}]),
+    ]}
+    s = gce._client_sections(data, _rd())
+    booked = {r["request_id"] for r in s["bookings"]}
+    waiting = {r["request_id"] for r in s["awaiting"]}
+    assert booked == {"w1"}
+    assert not (booked & waiting), (
+        "a confirmed booking is also being shown as awaiting Lonny's "
+        "decision — the most expensive place to contradict ourselves")
