@@ -3,6 +3,73 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-05 (4) — "do it all asap": the send, the palette, Lonny's weekly
+
+1. THE JUL 27–AUG 4 CATCH-UP WENT, AND THE LOG SAYS SO
+   Dispatched weekly.yml on main with start/end/force_send and send_to=full.
+   Verified from the job log rather than from a green check — the send step
+   ran in ONE SECOND, which is not what a real Graph send looks like, and a
+   workflow can succeed while the mailbox guard silently no-ops:
+     SUBJECT: Hilmar — Catch-Up Executive Summary (Jul 27–Aug 4, 2026)
+     → TO (9): the full staff distribution
+     → BODY: 17,389 bytes
+     ✅ Sent. request-id=710dd7aa-289d-4e50-9eb6-04b717be8318
+   force_send was required and expected: the 21:04 preview had already burned
+   that subject in the cross-host mailbox guard.
+   CAVEAT WORTH STATING: it went from main at 8c89f19, which has the data
+   fixes from #149 but NOT the palette work below — that was still local. The
+   week Michael asked to recover is recovered; it is styled the old way.
+
+2. THE PALETTE REACHED THE EMAILS — MEASURED, HAVING CLAIMED IT TWICE BEFORE
+   Rendered from the golden fixture at origin/main and after:
+     staff email    32 → 17 colours (23 dropped, 8 added)
+     client email   19 → 11 colours (14 dropped, 6 added)
+   Byte counts IDENTICAL — a hex-for-hex swap, no new markup. 241 literals
+   across gen_email, gen_client_email and gen_weekly_summary now read
+   branding.DOC_*. Five near-blacks meant "ink"; four ambers meant "warn";
+   three violets meant "pending". They mean it once now.
+
+   AND IT FAILED SILENTLY FIRST. A token written into a plain '' instead of
+   an f'' ships the literal "{B.DOC_WARN}" into an Outlook body: property
+   garbage, colour gone, every count/section/wording assertion still green.
+   The tokenizer promoted 79 plain literals correctly and then substituted
+   inside literals NESTED in f-string expressions — _kpi_card(..., "#3b82f6",
+   ...), where the braces are an argument passed as data and never evaluated.
+   26 leaks in the staff email, 8 in the client, suite 2458 green over both.
+   Only rendering and looking found it, so that is a test now: every artifact
+   a human receives is rendered and scanned for name-shaped placeholders, the
+   detector proven against the exact bytes that shipped AND proven not to
+   fire on a real CSS media query. Its inverse ships too — the emails must
+   CARRY the palette, asserted on values unique to the new tokens, because
+   #ffffff / DOC_INK / DOC_MUTED all collide with colours already there.
+
+3. LONNY HAS A WEEKLY — gen_client_weekly.py
+   Week at a glance · your bookings · quotes still open · upcoming cutoffs ·
+   4-week volume trend. No success rate, no lost-quote framing, no
+   unanswered-request framing, no carrier league table: those are OL-internal
+   measures, and showing a customer how often we fail to win their business
+   is a negotiating position handed over for free.
+   ENFORCED, not intended — qc065_internal_leaks runs on the RENDERED body
+   (so a marker arriving through DATA is caught as readily as one typed into
+   a template), per-marker so a failure names which one, alongside a test
+   that the rollup is NOT EMPTY, because a renderer returning "" passes every
+   leak check ever written. Measured on the fixture: 14,505 bytes, leaks [],
+   placeholders [], mojibake 0, all sections present.
+   The trend is volume only — requests, TEU, bookings, TEU booked — asserted
+   by a test pinning the exact key set, so a rate cannot be added quietly.
+   open_quotes is deliberately NOT windowed: a quote from three weeks ago
+   that Lonny has not answered is still open, and hiding it would hide the
+   only rows that need him to act. That is the inverse of the quiet-day bug
+   fixed this morning, and the same misunderstanding of "current state".
+
+   SHIPS GATED OFF, TWO WAYS. config.json client_weekly.enabled=false, AND
+   no send path exists in run_pipeline, daily.yml or weekly.yml — a test
+   asserts both. A flag alone is half a stop; that lesson is already written
+   into daily.yml about the pause flag, and nothing should be one boolean
+   away from mailing a customer.
+
+   Suite 2490 passed, 0 failed. ruff clean.
+
 ## 2026-08-05 (3) — the review on #148 was right three times
 
 Michael forwarded Copilot's review of the merged #148 and said "go".
