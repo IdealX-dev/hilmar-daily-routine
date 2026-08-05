@@ -49,7 +49,7 @@ def _resolve_url() -> str | None:
     if url:
         return url
     if URL_FILE.exists():
-        url = URL_FILE.read_text().strip()
+        url = URL_FILE.read_text(encoding="utf-8").strip()
         if url:
             return url
     return None

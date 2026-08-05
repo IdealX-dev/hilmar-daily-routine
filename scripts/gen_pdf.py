@@ -601,7 +601,7 @@ def build_pending_trends_qc(story, styles, data):
     # (Michael 2026-06-27: "one should be 'pending OL' and one is 'pending
     # Hilmar' for how you show pending".) "Waiting On" leads the table and the
     # rows group OL-first so the two buckets read cleanly.
-    pending = [r for r in reqs if r.get("status") == "PENDING"]
+    pending = [r for r in reqs if core.is_pending(r)]
     n_ol = sum(1 for r in pending if core.pending_substate(r) == "PENDING_OL")
     n_hil = sum(1 for r in pending if core.pending_substate(r) == "PENDING_HILMAR")
     story.append(Paragraph(
@@ -693,7 +693,7 @@ def main():
         print(f"Data not found: {data_path}", file=sys.stderr)
         sys.exit(1)
 
-    data = json.loads(data_path.read_text())
+    data = json.loads(data_path.read_text(encoding="utf-8"))
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     client = cfg["client"]["name"]
     provider = cfg["provider"]["name"]

@@ -777,7 +777,7 @@ def main() -> int:
     ap.add_argument("--config", default=str(ROOT / "config.json"))
     args = ap.parse_args()
     cfg = core.load_config(args.config)
-    data = json.loads(Path(cfg["paths"]["data"]).read_text())
+    data = json.loads(Path(cfg["paths"]["data"]).read_text(encoding="utf-8"))
 
     body = build_body(data, cfg)
     subject = build_subject(data, cfg)

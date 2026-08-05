@@ -6,7 +6,7 @@ import sys
 
 for p in sys.argv[1:]:
     try:
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             arr = json.load(f)
         obj = json.loads(arr[0]["text"])
         subj = obj.get("subject", "?")

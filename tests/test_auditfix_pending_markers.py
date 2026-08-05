@@ -15,20 +15,38 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import branding as B  # noqa: E402
 import viz as V  # noqa: E402
 
 
 def test_pending_ol_marker_is_amber_and_labeled():
+    """Amber = chase OL.
+
+    2026-08-05: asserts the SHARED token rather than the literal "#f59e0b".
+    The palette moved onto branding.DOC_* so the pills, the dashboard badges
+    and the PDF stop being four dialects of the same idea, and this test went
+    red on a change that altered nothing it actually guards — the marker is
+    still amber and still says PENDING OL. A test that pins a hex fails the
+    day the hex legitimately moves, which teaches people to edit tests to
+    ship. Pin the MEANING: amber, and the amber everything else uses.
+    """
     html = V.pending_pill("PENDING_OL")
     assert "PENDING OL" in html
-    assert "#f59e0b" in html  # amber border — chase OL
+    assert B.DOC_WARN in html, "the chase-OL marker is no longer the shared amber"
 
 
 def test_pending_hilmar_marker_is_violet_and_labeled():
+    """Violet = chase Hilmar. Deliberately an IDENTITY hue, not a status one:
+    "waiting on Hilmar" is not a verdict on the row, so it must not borrow the
+    good/warn/bad vocabulary."""
     html = V.pending_pill("PENDING_HILMAR")
     assert "HILMAR" in html          # Michael: "pending Hilmar", not "Lonny"
     assert "LONNY" not in html
-    assert "#7c3aed" in html  # violet border — chase Hilmar
+    assert B.DOC_PENDING in html, "the chase-Hilmar marker lost its violet"
+    for status_hue in (B.DOC_GOOD, B.DOC_WARN, B.DOC_BAD):
+        assert status_hue not in html, (
+            "the chase-Hilmar marker is using a STATUS colour — it would read "
+            "as a verdict on the quote rather than as whose turn it is")
 
 
 def test_two_pending_markers_are_visually_distinct():

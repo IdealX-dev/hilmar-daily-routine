@@ -123,7 +123,7 @@ def run_core_tests():
 
     @_test("aggregate_summary reproduces fixture win_rate")
     def t12():
-        fx = json.loads((FIXTURES / "golden_day.json").read_text())
+        fx = json.loads((FIXTURES / "golden_day.json").read_text(encoding="utf-8"))
         s = core.aggregate_summary(fx["requests"])
         # Decided = wins + quoted_lost + not_quoted = 2 + 1 + 1 = 4; wins=2 → 50%
         assert abs(s["win_rate"] - 50.0) < 0.5, f"got {s['win_rate']}"
@@ -140,7 +140,7 @@ def run_core_tests():
         tmp = Path(tempfile.mkdtemp(prefix="hilmar_pathheal_"))
         try:
             stale_root = "/sessions/does-not-exist-xyz-12345/mnt/PROJECT HILMAR"
-            cfg_src = json.loads((ROOT / "config.json").read_text())
+            cfg_src = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
             cfg_src["paths"] = {
                 "root": stale_root,
                 "data": stale_root + "/tracking-data-v2.json",
@@ -157,7 +157,7 @@ def run_core_tests():
                 "escalation_log": stale_root + "/escalation-log.json",
             }
             cfg_path = tmp / "config.json"
-            cfg_path.write_text(json.dumps(cfg_src, indent=2))
+            cfg_path.write_text(json.dumps(cfg_src, indent=2), encoding="utf-8")
             healed = core.load_config(cfg_path)
             # Compare via Path.resolve() so Windows 8.3 short names (MICHAE~1)
             # don't fail equality vs the resolved long form.
@@ -172,7 +172,7 @@ def run_core_tests():
                 assert v_resolved.startswith(tmp_resolved), \
                     f"paths[{k}] not under live root: {v_resolved}"
             # Disk file must NOT be mutated.
-            on_disk = json.loads(cfg_path.read_text())
+            on_disk = json.loads(cfg_path.read_text(encoding="utf-8"))
             assert on_disk["paths"]["root"] == stale_root, \
                 "load_config mutated config.json on disk — must be in-memory only"
         finally:
@@ -185,7 +185,7 @@ def run_core_tests():
         # the caller knows what they're doing.
         tmp = Path(tempfile.mkdtemp(prefix="hilmar_pathnoop_"))
         try:
-            cfg_src = json.loads((ROOT / "config.json").read_text())
+            cfg_src = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
             cfg_src["paths"] = {
                 "root": str(tmp),
                 "data": str(tmp / "tracking-data-v2.json"),
@@ -205,7 +205,7 @@ def run_core_tests():
             other_dir = Path(tempfile.mkdtemp(prefix="hilmar_cfgdir_"))
             try:
                 cfg_path = other_dir / "config.json"
-                cfg_path.write_text(json.dumps(cfg_src, indent=2))
+                cfg_path.write_text(json.dumps(cfg_src, indent=2), encoding="utf-8")
                 healed = core.load_config(cfg_path)
                 # tmp exists → no rewrite, even though config file is elsewhere.
                 assert healed["paths"]["root"] == str(tmp), \
@@ -226,13 +226,13 @@ def run_core_tests():
         tmp = Path(tempfile.mkdtemp(prefix="hilmar_pathperm_"))
         try:
             stale_root = "/some/locked/foreign/session/PROJECT HILMAR"
-            cfg_src = json.loads((ROOT / "config.json").read_text())
+            cfg_src = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
             cfg_src["paths"] = {
                 "root": stale_root,
                 "data": stale_root + "/tracking-data-v2.json",
             }
             cfg_path = tmp / "config.json"
-            cfg_path.write_text(json.dumps(cfg_src, indent=2))
+            cfg_path.write_text(json.dumps(cfg_src, indent=2), encoding="utf-8")
 
             real_is_dir = Path.is_dir
             def fake_is_dir(self):
@@ -260,15 +260,15 @@ def run_schema_tests():
 
     @_test("golden fixture has all required top-level keys")
     def t1():
-        schema = json.loads((ROOT / "schema.json").read_text())
-        fx = json.loads((FIXTURES / "golden_day.json").read_text())
+        schema = json.loads((ROOT / "schema.json").read_text(encoding="utf-8"))
+        fx = json.loads((FIXTURES / "golden_day.json").read_text(encoding="utf-8"))
         for key in schema["required"]:
             assert key in fx, f"missing top-level key: {key}"
 
     @_test("every request has required per-request fields")
     def t2():
-        schema = json.loads((ROOT / "schema.json").read_text())
-        fx = json.loads((FIXTURES / "golden_day.json").read_text())
+        schema = json.loads((ROOT / "schema.json").read_text(encoding="utf-8"))
+        fx = json.loads((FIXTURES / "golden_day.json").read_text(encoding="utf-8"))
         req_fields = schema["definitions"]["request"]["required"]
         for i, r in enumerate(fx["requests"]):
             for f in req_fields:
@@ -276,7 +276,7 @@ def run_schema_tests():
 
     @_test("status values are from enum")
     def t3():
-        fx = json.loads((FIXTURES / "golden_day.json").read_text())
+        fx = json.loads((FIXTURES / "golden_day.json").read_text(encoding="utf-8"))
         for r in fx["requests"]:
             assert r["status"] in ("WIN", "LOSS", "PENDING"), r["status"]
 
@@ -293,7 +293,7 @@ def run_pipeline_smoke(verbose=False):
         shutil.copy2(FIXTURES / "golden_day.json", tmp / "tracking-data-v2.json")
         shutil.copy2(ROOT / "schema.json", tmp / "schema.json")
         # Build a test-only config
-        cfg_src = json.loads((ROOT / "config.json").read_text())
+        cfg_src = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         cfg_src["paths"] = {
             "root": str(tmp),
             "data": str(tmp / "tracking-data-v2.json"),
@@ -310,7 +310,7 @@ def run_pipeline_smoke(verbose=False):
             "escalation_log": str(tmp / "escalation-log.json"),
         }
         cfg_path = tmp / "config.json"
-        cfg_path.write_text(json.dumps(cfg_src, indent=2))
+        cfg_path.write_text(json.dumps(cfg_src, indent=2), encoding="utf-8")
 
         def run_step(label, script):
             r = subprocess.run(

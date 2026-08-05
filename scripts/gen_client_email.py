@@ -462,9 +462,28 @@ def _narrative(s):
     it is omitted rather than guessed when today's quotes carry no usable
     request/response timestamps."""
     n_req, n_quo, n_book = len(s["requests"]), len(s["quotes"]), len(s["bookings"])
+    n_wait = len(s["awaiting"])
     if not (n_req or n_quo or n_book):
-        return ("A quiet day on new activity — no new requests, quotes, or "
-                "bookings. Your active shipments are summarized below.")
+        # The quiet-day sentence used to return here unconditionally, before
+        # anything consulted `awaiting`. But `awaiting` is CURRENT STATE, not
+        # today's window — _today_events collects every PENDING row regardless
+        # of date — so a day with no new activity can still be carrying priced
+        # quotes from earlier in the week. On those days the narrative said
+        # "a quiet day" while the tile and the table directly beneath it
+        # showed Lonny a live quote with a reply-to-book call to action.
+        #
+        # The sentence was never false — those quotes genuinely are not new —
+        # which is exactly why it survived: it reads as correct right up until
+        # you compare it with the rest of the page. Same narrative-vs-table
+        # split #148 existed to close, one branch further down. Found by
+        # Copilot on that PR.
+        quiet = ("A quiet day on new activity — no new requests, quotes, or "
+                 "bookings.")
+        if n_wait:
+            verb = "awaits" if n_wait == 1 else "await"
+            return (f"{quiet} {_plural(n_wait, 'quote')} from earlier {verb} "
+                    f"your decision below.")
+        return f"{quiet} Your active shipments are summarized below."
     stats = _pt_reply_stats(s["quotes"])
     if stats:
         avg_h, same_day, n = stats
@@ -486,7 +505,6 @@ def _narrative(s):
         line = (f"We received {_plural(n_req, 'rate request')} and returned "
                 f"{_plural(n_quo, 'quote')}{speed}; "
                 f"{_plural(n_book, 'booking')} confirmed.")
-    n_wait = len(s["awaiting"])
     if n_wait:
         verb = "awaits" if n_wait == 1 else "await"
         line += f" {_plural(n_wait, 'quote')} {verb} your decision below."

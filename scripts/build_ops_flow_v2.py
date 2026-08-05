@@ -125,11 +125,11 @@ def in_window(ts_iso):
 def load_raw(folder: Path):
     requests, responses = [], []
     for f in sorted(folder.glob("request_*.json")):
-        m = json.loads(f.read_text())
+        m = json.loads(f.read_text(encoding="utf-8"))
         m["_src_file"] = f.name
         requests.append(m)
     for f in sorted(folder.glob("response_*.json")):
-        m = json.loads(f.read_text())
+        m = json.loads(f.read_text(encoding="utf-8"))
         m["_src_file"] = f.name
         responses.append(m)
     return requests, responses
@@ -197,7 +197,7 @@ def parse_ol_options(body_text: str) -> list[dict]:
 
 def build():
     requests, responses = load_raw(RAW)
-    with open(MDOLX_PATH) as f:
+    with open(MDOLX_PATH, encoding="utf-8") as f:
         mdolx = json.load(f).get("confirmations", [])
     now = datetime.now(timezone.utc)
 
@@ -467,7 +467,7 @@ def build():
             "MDOLX260426 = BOOKING_CANCELED",
         ],
     }
-    OUT.write_text(json.dumps(out, indent=2, default=str))
+    OUT.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
     print(f"[wrote] {OUT}")
     print()
     print("=== Totals ===")

@@ -338,19 +338,19 @@ def normalize_carrier(name: str | None) -> str | None:
 
 def load_config(path: Path | str | None = None) -> dict:
     path = Path(path) if path else CONFIG_PATH
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def load_data(path: Path | str) -> dict:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_data(data: dict, path: Path | str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str)
 
 

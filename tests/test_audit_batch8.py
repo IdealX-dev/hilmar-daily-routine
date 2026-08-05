@@ -921,3 +921,120 @@ def test_the_sentinel_exemption_cannot_wave_through_a_real_rate():
     # the deliberate NQ-contamination write.
     tree = ast.parse('r["ol_rate"] = "Not Quoted"')
     assert tree.body[0].value.value.strip().lower() in sentinels
+
+
+# ── one predicate for "is there a real rate here" (Copilot, PR #149) ─────────
+
+def test_the_report_note_and_the_audit_banner_agree_on_the_nq_sentinel():
+    """The bug Copilot found on #148, and the invariant
+    test_undated_quotes_excludes_standalones_like_the_check_does already
+    stated in its own docstring: "The report's filter and QC-077's filter must
+    agree, or the count in the note contradicts the count in the audit."
+
+    #148 added _is_real_rate and routed QC-077 through it, so the banner
+    stopped counting rows the NQ heal had stamped "Not Quoted". It left
+    gen_email.undated_quotes — the twin consumer feeding the STAFF email's
+    note — still spelling the test as `ol_rate is not None`, which that
+    sentinel passes. Two counts, one dataset, and the tests all used numeric
+    rates so nothing saw it.
+    """
+    import gen_email as GE
+    import qc_selfheal as QC
+    row = {"request_id": "r1", "ol_rate": "Not Quoted", "carrier_quoted": None}
+    assert QC._is_real_rate(row["ol_rate"]) is False
+    assert GE.undated_quotes({"requests": [row]}) == [], (
+        "the staff email counts an NQ-sentinel row the audit banner excludes"
+    )
+
+
+def test_the_two_filters_agree_on_every_sentinel_not_just_the_one_we_saw():
+    """Per-value, over the whole sentinel list. A test naming only
+    "Not Quoted" proves only the case someone already hit."""
+    import core
+    import gen_email as GE
+    for sentinel in core.NON_RATE_SENTINELS:
+        row = {"request_id": "r", "ol_rate": sentinel}
+        assert not core.has_quote_evidence(row)
+        assert GE.undated_quotes({"requests": [row]}) == [], (
+            f"ol_rate={sentinel!r} counted as a quote by the staff email")
+
+
+def test_a_real_rate_or_a_carrier_still_counts():
+    """The other direction — a fix that silences the note entirely would pass
+    every assertion above and destroy the check."""
+    import gen_email as GE
+    assert len(GE.undated_quotes({"requests": [{"request_id": "a", "ol_rate": 3150.0}]})) == 1
+    assert len(GE.undated_quotes({"requests": [{"request_id": "b", "carrier_quoted": "MSC"}]})) == 1
+
+
+def test_the_quoted_flag_reconciler_uses_the_shared_predicate():
+    """It carried its own three-sentinel list, so ol_rate="N/A" read as a real
+    rate and would flip quoted=True on a row with no quote."""
+    import core
+    assert core.has_quote_evidence({"ol_rate": "N/A"}) is False
+    assert core.has_quote_evidence({"ol_rate": "—"}) is False
+    assert core.has_quote_evidence({"ol_rate": 3150.0}) is True
+
+
+def test_no_module_rolls_its_own_rate_sentinel_list():
+    """The ratchet. This predicate had FIVE spellings across two modules; #148
+    added a sixth (the correct one) instead of replacing them, which is how
+    the counts diverged. A new inline sentinel tuple is the same mistake."""
+    import re
+    ROOT_ = Path(__file__).resolve().parent.parent
+    offenders = {}
+    for path in sorted((ROOT_ / "scripts").glob("*.py")):
+        if path.name == "core.py":
+            continue          # where the list is defined
+        hits = [
+            f"line {i}: {line.strip()[:100]}"
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            # an ol_rate compared against a tuple/list that mentions the NQ
+            # sentinel — i.e. a hand-rolled copy of NON_RATE_SENTINELS
+            if re.search(r'ol_rate.*\b(?:not )?in \(.*"Not Quoted"', line)
+        ]
+        if hits:
+            offenders[path.name] = hits
+    # The NQ-contamination heal keeps its own guard on purpose: it asks "is
+    # this ALREADY the sentinel", which is a different question with a
+    # different answer for "—", and normalising is not detecting.
+    offenders.pop("qc_selfheal.py", None)
+    assert not offenders, (
+        f"a module rolled its own rate-sentinel list: {offenders} — "
+        "use core.is_real_rate / core.has_quote_evidence")
+
+
+# ── QC-077's survivor split explains every survivor ─────────────────────────
+
+def test_the_undated_reason_split_is_exhaustive():
+    """Copilot on #149: _no_body tested whether the imid was in the bodies
+    index AT ALL, but the heal needs sent/sentDateTime/received. A row whose
+    message is cached but carries none of them was counted in neither bucket,
+    so the banner's two numbers could sum to less than the total they claimed
+    to explain — a diagnostic that adds up only because nobody checked."""
+    import qc_selfheal as QC
+    idx = {"ok": {"imid": "ok", "sent": "2026-04-01T10:00:00Z"},
+           "timeless": {"imid": "timeless", "text_body": "..."}}
+    rows = [
+        {"ol_rate": 3150.0},                                    # no imids
+        {"ol_rate": 3150.0, "source_imids": ["gone"]},          # not cached
+        {"ol_rate": 3150.0, "source_imids": ["timeless"]},      # cached, no time
+        {"ol_rate": 3150.0, "source_imids": ["ok"]},            # dateable
+    ]
+    labels = [QC._undated_reason(r, idx) for r in rows]
+    assert labels == ["no_imids", "no_body", "no_send_time", "unexplained"]
+    assert len(labels) == len(rows), "a row fell into no bucket"
+
+
+def test_the_classifier_and_the_heal_read_the_same_fields():
+    """They diverged because the classifier re-derived the heal's success
+    condition. Both go through _body_send_time now, so they cannot."""
+    import qc_selfheal as QC
+    for field in QC._BODY_SEND_FIELDS:
+        rec = {"imid": "m", field: "2026-04-01T10:00:00Z"}
+        assert QC._body_send_time(rec)
+        r = {"ol_rate": 3150.0, "source_imids": ["m"]}
+        assert QC._undated_reason(r, {"m": rec}) == "unexplained", (
+            f"the classifier ignores {field}, which the heal accepts")
+        r2 = {"ol_rate": 3150.0, "source_imids": ["m"]}
+        assert QC._stamp_response_time_from_bodies(r2, {"m": rec}) is True

@@ -147,7 +147,7 @@ def main() -> int:
     all_records: dict[str, dict] = {}
     for f in files:
         try:
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 for d in data:
                     if 'text' in d:
@@ -197,7 +197,7 @@ def main() -> int:
     existing_ids: set[str] = set()
     existing_rows: list[dict] = []
     if STAGE_PATH.exists():
-        for line in STAGE_PATH.read_text().splitlines():
+        for line in STAGE_PATH.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
             row = json.loads(line)
@@ -211,7 +211,7 @@ def main() -> int:
     print(f"New rate-response rows to append: {len(new_rows)}")
 
     # Write back
-    with STAGE_PATH.open('a') as f:
+    with STAGE_PATH.open('a', encoding="utf-8") as f:
         for r in new_rows:
             f.write(json.dumps(r, ensure_ascii=False) + '\n')
 

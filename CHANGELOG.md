@@ -3,6 +3,202 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-05 (3) — the review on #148 was right three times
+
+Michael forwarded Copilot's review of the merged #148 and said "go".
+
+1. FIVE SPELLINGS OF ONE PREDICATE, AND #148 ADDED A SIXTH
+   qc_selfheal's NQ heal writes the STRING "Not Quoted" into ol_rate, so
+   `ol_rate is not None` reads that sentinel as a quote. #148 added
+   _is_real_rate to fix QC-077 — and left every other spelling in place:
+     - gen_email.undated_quotes: `ol_rate is not None` — the twin consumer,
+       feeding the STAFF email's undated-quotes note. Reproduced: QC-077
+       excluded the sentinel row, the email counted it. Two numbers, one
+       dataset. test_undated_quotes_excludes_standalones_like_the_check_does
+       had ALREADY written that invariant into its own docstring, and passed
+       throughout, because every test used numeric rates.
+     - the quoted-flag reconciler: its own three-sentinel list, so
+       ol_rate="N/A" or "—" read as a real rate and flipped quoted=True on a
+       row with no quote.
+   Now core.is_real_rate / core.has_quote_evidence, one home both modules can
+   import — gen_email cannot import qc_selfheal, which is how the second
+   spelling got written in the first place. qc_selfheal keeps the old private
+   names as aliases. Ratchet: a test fails any module that rolls its own
+   ol_rate sentinel tuple. The NQ-contamination heal is exempt BY NAME — it
+   asks "is this already the sentinel", which is normalising, not detecting,
+   and genuinely wants a different answer for "—".
+
+2. A BREAKDOWN THAT ADDED UP ONLY BECAUSE NOBODY CHECKED
+   QC-077's survivor split counted "_no_body" as "imid absent from the bodies
+   index". The heal needs sent/sentDateTime/received. A row whose message IS
+   cached but carries none of them landed in neither bucket, so the two
+   numbers could sum to less than the total the banner claimed to explain —
+   in a banner whose whole purpose is that the number names its own lever.
+   The cause is that the classifier RE-DERIVED the heal's success condition.
+   Both read _body_send_time now, and _undated_reason returns exactly one
+   label per row, so the split is exhaustive by construction rather than by
+   three counters happening to agree. A third case (cached but timeless) and
+   anything unclassified are reported, not dropped.
+
+3. A QUIET DAY THAT HID A LIVE QUOTE
+   _narrative early-returned "a quiet day on new activity" before anything
+   consulted `awaiting`. But `awaiting` is CURRENT STATE, not today's window —
+   _today_events collects every PENDING row regardless of date — so a slow day
+   can still carry priced quotes from earlier in the week. The narrative said
+   quiet while the KPI tile and the table directly beneath it showed Lonny a
+   live quote with a reply-to-book call to action.
+   The sentence was never FALSE, and that is exactly why it survived: it reads
+   as correct until you compare it with the rest of the page. Same
+   narrative-vs-table split #148 existed to close, one branch further down.
+
+   Suite 2458 passed, 0 failed. ruff clean.
+
+THE PATTERN, SAID PLAINLY
+   Three findings, one shape: a fix applied at the site where the symptom was
+   observed rather than to the predicate the symptom came from. #148's own
+   narrative claimed "all rate tests now go through _is_real_rate" — that
+   sentence was false when it was written. Each fix here ships with the
+   invariant asserted over the whole domain (every sentinel, every send-time
+   field, both narrative branches) instead of over the one case that was seen.
+
+## 2026-08-05 (2) — three screenshots, three real defects
+
+Michael sent three shots of the dashboard preview: "not sure the fonts used
+as illegible characters", "bad data", "unmapped shouldn't exist". All three
+were genuine. None was a font.
+
+1. "ILLEGIBLE CHARACTERS" — MOJIBAKE, AND THE READ THAT CANNOT FAIL
+   `Oakland â†' Shanghai` is `Oakland → Shanghai` after the three bytes of
+   "→" were decoded as cp1252. That decode never raises — every byte is a
+   legal cp1252 character — so the wrong string flows on and, once written
+   back as utf-8, the original bytes are gone.
+     - tests/fixtures/golden_day.json carried 11 mangled strings: every lane
+       arrow, every `3Ã—40'RF` equipment cell, and a subject em dash.
+       Repaired by a verified round-trip (encode cp1252 → decode utf-8, and
+       only accepted where re-mangling reproduces the original byte for
+       byte). It is the fixture the dashboard, PDF, client-email and schema
+       tests all render from, so those tests had been asserting mangled
+       output was correct for as long as it sat there.
+     - 71 text reads/writes across 24 modules used the platform default
+       codec, INCLUDING core.load_data — the funnel every renderer goes
+       through. utf-8 on the Linux CI runners, cp1252 on the Windows Cloud
+       PC that runs the pipeline: invisible everywhere it could be caught,
+       permanent where it matters. All 71 now name utf-8.
+     - tests/test_no_mojibake.py guards all three layers, and asserts ZERO
+       unpinned sites rather than a shrinking allowlist — the fix is one
+       keyword argument, so no site is too expensive to convert.
+
+2. "BAD DATA" — TWO VOCABULARIES FOR ONE FACT
+   A loss is stored either LEGACY (status="LOSS" + `quoted`) or STRICT
+   (status="Q&L"/"NQ"). core.py has carried display_status / is_loss /
+   is_quoted_and_lost / is_not_quoted since 2026-06-02 to absorb exactly
+   that, and its own comment says the point is that nothing else should
+   inline the logic. The renderers were never converted. They compared
+   `status == "LOSS"` — half the vocabulary — so STRICT rows fell out of
+   every bucket with no error and no gap in the layout:
+     - the Week-over-Week column holding the Q&L and NQ rows drew NOTHING
+       under a label reading "2req". Zero segments render as blank space.
+     - the Not Quoted header read "0 listed • 0 total • 10 TEU" — counts
+       from the dropped rows, TEU from the summary block, which was right
+       all along. Individually defensible, jointly impossible: the signature
+       of two derivations of one fact.
+   Converted 17 sites across gen_dashboard, gen_weekly_summary, gen_pdf and
+   gen_email; added core.is_win / core.is_pending so a bucketing loop can be
+   written entirely in accessors with no literal left to pick a side. The
+   WoW bucketer now counts what it cannot classify, so a column can never
+   again disagree with the caption printed under it.
+   tests/test_status_form_agnostic.py renders one fixture in BOTH forms and
+   asserts the numbers are identical — that binds any renderer written next
+   month, not just the ones fixed today. An AST scan is the backstop; it
+   found a 17th site (`!= "LOSS"`) the hand pass missed.
+
+3. "UNMAPPED SHOULDN'T EXIST" — THE MAP WAS NEVER THE PROBLEM
+   All five rows sat under Unmapped, flagging Shanghai, Busan, Qingdao and
+   Yokohama. Every one was ALREADY in _TRADE_REGION_MAP. The data spells
+   them "Shanghai, CN"; the lookup tried the whole string then the part
+   before "(", so a comma-qualified name missed both. Worse, the standing
+   rule that Unmapped means "extend the map" aimed every earlier
+   investigation at the one thing that was correct.
+   trade_region_for now peels comma segments off the tail, longest first,
+   and only ever matches a key genuinely present — it cannot infer a region
+   from a country code, so Unmapped still means extend the map. The test
+   asserts the property over the WHOLE map, not the four ports we happened
+   to see fail.
+
+4. THE PALETTE THE SCREENSHOT WAS ACTUALLY SHOWING
+   The WoW bars were #10b981/#ef4444/#f59e0b/#a855f7 — the old SaaS palette
+   — under a legend of four emoji circles that only APPROXIMATED them, in
+   whatever hues the reader's font vendor picked, and that would stay put
+   when the bars moved. A legend that can disagree with its chart is worse
+   than none; it is swatches now, drawn from the same tokens as the bars.
+   18 hardcoded hexes left gen_dashboard.py (KPI tiles, row accents,
+   badges, callouts, pending-severity rows, trend arrows, filter banner).
+   "Pending" alone had been three different purples on one page; it is
+   branding.DOC_PENDING now — deliberately an IDENTITY hue and not
+   good/warn/bad, because "whose turn is it" is not a verdict on the row.
+
+   Measured on the golden fixture, not asserted: 42,472 → 43,215 bytes;
+   18 colours dropped, 2 added; mojibake 21 → 0; WoW segments 2 → 4;
+   "0 total • 10 TEU" → "1 total • 10 TEU"; the Unmapped region row gone.
+
+   Suite 2445 passed, 0 failed. ruff clean.
+
+STORAGE, ESTABLISHED — AND A CORRECTION TO THE TWO ENTRIES ABOVE
+   Michael, same session: "figure out the storage.. are you using turso".
+   Both answers change how items 1 and 2 should be read, so they are
+   recorded here rather than left as an open question.
+
+   WHAT WE STORE ON
+     - canonical state: tracking-data-v2.json, a JSON FILE written atomically
+       by core.save_data, pulled/pushed to Azure Blob by state_store.py
+     - quote history: data/quote-history.db, a PLAIN SQLITE file through the
+       same blob store
+     - no Turso of our own. historian.py CAN speak libSQL, but daily.yml sets
+       HILMAR_HISTORIAN_SQLITE and requirements.txt leaves libsql-experimental
+       commented out, so the driver is not even installed (Michael 2026-07-11:
+       "you handle turso tokens... i cannot read this as it works").
+     - the ONE Turso in the picture belongs to ol-quote-tracker, a peer
+       product. sync_to_quote_tracker.py POSTs entities to its HTTP API. We
+       never speak libSQL to it and we do not own that table.
+
+   STORAGE FORM IS LEGACY. [Certain], by code inspection:
+     1. run_pipeline.STEPS runs scripts/ingest.py, not src/hilmar/ingest.py
+     2. ingest writes status at four sites: literal "PENDING", literal "WIN"
+        twice, and r["status"] = decision.status
+     3. core.decide_status can only return WIN / LOSS / PENDING
+     4. nothing in scripts/ or src/hilmar/ ever assigns "Q&L" or "NQ" to a
+        request's status
+     5. core.validate_data REJECTS any status outside {WIN, LOSS, PENDING}
+
+   SO, CORRECTING ITEM 2: the empty WoW column and the "0 total • 10 TEU"
+   header were NOT firing on production data. They are latent, and the
+   STRICT fixture is what exposed them. The fix stands — src/hilmar/ingest.py
+   does write STRICT, QC-040 exists to police exactly that divergence, and
+   the accessors were built in June for exactly this — but "bad data" as
+   Michael saw it was the preview, not the live report.
+
+   AND CORRECTING ITEM 1, WHICH OVERSTATED THE RISK: the claim that cp1252
+   was decoding on "the Windows Cloud PC that runs the pipeline" is wrong
+   twice over. daily.yml runs on ubuntu-latest with PYTHONUTF8=1, and the
+   Windows fallback hosts set it too — run_daily_laptop.cmd:33-34,
+   run_chase_evening.cmd:45-46, setup_cloudpc.ps1:136. So on every known
+   entry point the platform default was ALREADY utf-8, and the 71 unpinned
+   sites were not corrupting anything. Pinning them is defence in depth, not
+   a live-bug fix: the guarantee belongs in the code rather than in an env
+   var a new entry point can forget to set. Worth having, overstated when
+   shipped.
+
+   WHAT REMAINS GENUINELY BROKEN, not latent:
+     - the fixture mojibake. Real, and it meant every golden test had been
+       certifying mangled output as correct. Origin unexplained — no current
+       entry point produces it.
+     - the trade-region lookup. Broken for any "City, CC" destination.
+       Whether live data carries them is [Unverified] — the file is not in
+       this container — but "sturgis mi" sitting in the map as a key, with
+       the comma hand-stripped, is a strong tell that someone hit this before
+       and worked around it one port at a time.
+     - the palette.
+
 ## 2026-08-04 (2) — "i like it all" finally means all three
 
 Michael, after asking for the staff send and the crons: "but first the

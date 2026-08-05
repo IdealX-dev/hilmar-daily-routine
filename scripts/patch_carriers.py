@@ -489,7 +489,7 @@ def _discover_lane_from_subjects(subjects: list[str]) -> tuple[str | None, str |
 def main():
     cfg = C.load_config()
     data_path = Path(cfg["paths"]["data"])
-    data = json.loads(data_path.read_text())
+    data = json.loads(data_path.read_text(encoding="utf-8"))
 
     requests = data.get("requests", [])
     patched_carrier = 0

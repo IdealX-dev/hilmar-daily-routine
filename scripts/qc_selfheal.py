@@ -394,16 +394,12 @@ def _heal_containers(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> Non
 # QC-077 came to count rows with no quote to date — on a check whose whole
 # job is to be believed. Anything that asks "is there a rate here" goes
 # through _is_real_rate.
-_NON_RATE_SENTINELS = ("", "not quoted", "n/a", "none", "null", "—", "-")
-
-
-def _is_real_rate(v) -> bool:
-    """True only when ol_rate holds an actual quoted amount."""
-    if v is None:
-        return False
-    if isinstance(v, (int, float)) and not isinstance(v, bool):
-        return True
-    return str(v).strip().lower() not in _NON_RATE_SENTINELS
+# Moved to core 2026-08-05 so gen_email can reach it — it cannot import
+# qc_selfheal, which is how the second spelling of this predicate got written
+# and how the two counts came to disagree. These names stay as aliases: they
+# are referenced across this file and pinned by tests/test_audit_batch8.
+_NON_RATE_SENTINELS = core.NON_RATE_SENTINELS
+_is_real_rate = core.is_real_rate
 
 
 def _stamp_response_time_from_bodies(r: dict, bodies_idx: dict, imid: str | None = None) -> bool:
@@ -428,11 +424,43 @@ def _stamp_response_time_from_bodies(r: dict, bodies_idx: dict, imid: str | None
         # inbound copy of a message can carry `received` without `sent` —
         # reading only "sent" would leave those rows undated for a reason
         # that has nothing to do with the data being missing.
-        sent = rec.get("sent") or rec.get("sentDateTime") or rec.get("received")
+        sent = _body_send_time(rec)
         if sent:
             r["response_timestamp"] = sent
             return True
     return False
+
+
+# The fields a cached body can carry a send time in. Read through
+# _body_send_time by BOTH the heal above and the survivor classifier below —
+# the QC-077 breakdown originally re-derived "can this row be dated" as "is
+# the imid in the index at all", and an indexed record with none of these
+# fields then fell into no bucket, so the banner's two numbers could sum to
+# less than the total they claimed to explain.
+_BODY_SEND_FIELDS = ("sent", "sentDateTime", "received")
+
+
+def _body_send_time(rec) -> str | None:
+    for f in _BODY_SEND_FIELDS:
+        v = (rec or {}).get(f)
+        if v:
+            return v
+    return None
+
+
+def _undated_reason(r: dict, bodies_idx: dict) -> str:
+    """Why this row could not be auto-dated. Exactly one label per row, so the
+    breakdown is exhaustive by construction rather than by three counters
+    happening to agree."""
+    imids = r.get("source_imids") or []
+    if not imids:
+        return "no_imids"
+    recs = [bodies_idx.get(i) for i in imids]
+    if not any(recs):
+        return "no_body"
+    if not any(_body_send_time(rec) for rec in recs if rec):
+        return "no_send_time"
+    return "unexplained"
 
 
 def _heal_undated_quote(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> None:
@@ -517,7 +545,7 @@ def _load_bodies_index() -> dict:
     if not path.exists():
         return out
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -1000,8 +1028,10 @@ def phase_3_entries(log: Log, data: dict):
         # the OL response table showed the $3,076 rate while the request row was
         # counted Not Quoted). Previously this only DEFAULTED when the key was
         # absent, so a stored quoted=False desync survived. Now it also REPAIRS.
-        _has_rate = bool(
-            (r.get("ol_rate") not in (None, "", "Not Quoted")) or r.get("carrier_quoted"))
+        # Was its own three-sentinel list, so ol_rate="N/A" or "—" read as a
+        # real rate and flipped quoted=True on a row with no quote. Same
+        # question as QC-077 asks, so it uses the same predicate now.
+        _has_rate = core.has_quote_evidence(r)
         if "quoted" not in r:
             r["quoted"] = bool(r.get("response_timestamp") or _has_rate)
             log.fix(f"{rid_label}: Defaulted quoted={r['quoted']}")
@@ -4269,11 +4299,18 @@ def phase_6_rules(log: Log, data: dict):
             # cache, or fix the ingest link. Everything reachable was already
             # dated by _heal_undated_quote before this check runs.
             _bodies_qc = _load_bodies_index()
-            _no_imids = sum(1 for r in _q_nots if not (r.get("source_imids") or []))
-            _no_body = sum(
-                1 for r in _q_nots
-                if (r.get("source_imids") or [])
-                and not any(_bodies_qc.get(i) for i in (r.get("source_imids") or [])))
+            _why = Counter(_undated_reason(r, _bodies_qc) for r in _q_nots)
+            _no_imids = _why["no_imids"]
+            _no_body = _why["no_body"]
+            # The two named reasons no longer have to account for everything.
+            # A row whose message IS cached but carries no send time is a third
+            # case, and a bucket that adds up only because nobody looked is how
+            # a diagnostic starts lying. Anything left over is reported as
+            # unexplained rather than dropped.
+            _rest = len(_q_nots) - _no_imids - _no_body
+            _rest_note = (
+                f", {_rest} link to a cached message that carries no send time "
+                f"or could not be classified" if _rest else "")
             log.error(
                 f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
                 f"NO response_timestamp — every one is a real quote that "
@@ -4288,7 +4325,7 @@ def phase_6_rules(log: Log, data: dict):
                 f"broken. These are the rows the auto-dating heal could NOT "
                 f"reach — {_no_imids} have no source message linked at all, "
                 f"{_no_body} link to a message no longer in the body cache "
-                f"(90-day retention). Re-pull with "
+                f"(90-day retention){_rest_note}. Re-pull with "
                 f"`refresh_stage.py --days-back N` to widen the cache, or fix "
                 f"at ingest so the link is recorded when the rate is. "
                 f"Lanes: {_lanes}"
@@ -5241,7 +5278,7 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
         },
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(result_path, "w") as f:
+    with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     log.ok(f"Wrote {result_path}")
     return result
@@ -5323,7 +5360,7 @@ def main() -> int:
     if not phase_2_structure(log, data):
         log.error("BLOCKING: structural integrity failure")
         result = {"status": "BLOCKED", "errors": log.errors}
-        with open(result_path, "w") as f:
+        with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
         return 1
     phase_3_entries(log, data)

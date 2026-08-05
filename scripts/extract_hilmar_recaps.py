@@ -145,7 +145,7 @@ MDOLX_RE = re.compile(r"MDOLX\d{5,8}", re.IGNORECASE)
 
 
 def load_email(overflow_path: str) -> tuple[str, str, str]:
-    with open(overflow_path) as f:
+    with open(overflow_path, encoding="utf-8") as f:
         arr = json.load(f)
     obj = json.loads(arr[0]["text"])
     return obj.get("id", ""), obj.get("subject", ""), obj.get("body", {}).get("content", "")
@@ -548,7 +548,7 @@ def main():
         ),
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    with open(OUT, "w") as f:
+    with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=2)
     print(f"wrote {OUT}", file=sys.stderr)
     print(f"  recaps: {len(recaps_processed)}", file=sys.stderr)

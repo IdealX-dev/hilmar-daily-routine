@@ -70,3 +70,51 @@ def test_production_maps_every_operator_added_destination():
 def test_production_truly_unknown_is_unmapped_not_other():
     assert SC.trade_region_for("Totally Fake Port 9000") == "Unmapped"
     assert SC.trade_region_for(None) == "Unmapped"
+
+
+# ── country-qualified destinations resolve to the bare port's region ─────────
+# Michael 2026-08-05, on a dashboard where all five rows sat under Unmapped:
+# "unmapped shouldn't exist". Every flagged destination — Shanghai, Busan,
+# Qingdao, Yokohama — was already in the map. The LOOKUP was dropping them: it
+# tried the whole string, then the part before "(", so "Shanghai, CN" missed on
+# both. The standing "Unmapped means extend the map" rule then aimed every
+# previous look at the one thing that was already correct.
+
+def test_country_qualified_destinations_resolve_like_the_bare_port():
+    """The exact four from the 2026-08-05 dashboard."""
+    for qualified, bare in [("Shanghai, CN", "Shanghai"), ("Busan, KR", "Busan"),
+                            ("Qingdao, CN", "Qingdao"), ("Yokohama, JP", "Yokohama")]:
+        assert SC.trade_region_for(qualified) == SC.trade_region_for(bare) != "Unmapped"
+
+
+def test_every_mapped_port_survives_a_country_suffix():
+    """The property the four cases are instances of, asserted over the WHOLE
+    map so the next port to arrive comma-qualified is covered before it ships.
+    A per-destination test only ever proves the destinations someone already
+    saw fail."""
+    broken = [
+        port for port in SC._TRADE_REGION_MAP
+        if SC.trade_region_for(f"{port}, XX") != SC._TRADE_REGION_MAP[port]
+    ]
+    assert not broken, (
+        f"{len(broken)} mapped port(s) go Unmapped once a country suffix is "
+        f"appended: {broken[:10]}"
+    )
+
+
+def test_a_country_suffix_cannot_invent_a_region():
+    """Peeling comma segments must only ever match a key that is genuinely in
+    the map. It must not infer a region from the country code — otherwise
+    'Unmapped' stops meaning 'extend the map' and starts meaning 'we guessed'."""
+    assert SC.trade_region_for("Totally Fake Port 9000, CN") == "Unmapped"
+    assert SC.trade_region_for(", CN") == "Unmapped"
+    assert SC.trade_region_for("CN") == "Unmapped"
+
+
+def test_paren_qualified_keys_still_beat_the_bare_port():
+    """'Manzanillo (Panama)' is its own key because a bare 'Manzanillo' is a
+    different port on a different coast. Trying the whole string first is what
+    stops the comma/paren peeling from collapsing them."""
+    assert SC.trade_region_for("Manzanillo (Panama)") == "Central America"
+    assert SC.trade_region_for("Manzanillo (Panama), PA") == "Central America"
+    assert SC.trade_region_for("HCMC (Cat Lai)") == "SE Asia"

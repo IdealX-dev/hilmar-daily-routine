@@ -599,7 +599,14 @@ def undated_quotes(data) -> list:
             continue
         if r.get("response_timestamp"):
             continue
-        if r.get("ol_rate") is not None or r.get("carrier_quoted"):
+        # core.has_quote_evidence, NOT `ol_rate is not None`. qc_selfheal's
+        # NQ-contamination heal writes the STRING "Not Quoted" into ol_rate,
+        # which is not None, so the old spelling counted rows with no quote at
+        # all — inflating this note while QC-077, fixed in #148, excluded them.
+        # Two numbers off one dataset, and the docstring of
+        # test_undated_quotes_excludes_standalones_like_the_check_does had
+        # already written down that they must agree.
+        if core.has_quote_evidence(r):
             out.append(r)
     return out
 
@@ -1111,9 +1118,9 @@ def _today_summary(requests, report_date=None):
         "wins":         len(day_wins),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                             for r in day_wins),
-        "quoted_lost":  sum(1 for r in day_reqs if r.get("status") == "LOSS" and r.get("quoted")),
-        "not_quoted":   sum(1 for r in day_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
-        "pending":      sum(1 for r in day_reqs if r.get("status") == "PENDING"),
+        "quoted_lost":  sum(1 for r in day_reqs if core.is_quoted_and_lost(r)),
+        "not_quoted":   sum(1 for r in day_reqs if core.is_not_quoted(r)),
+        "pending":      sum(1 for r in day_reqs if core.is_pending(r)),
         "won_later":    len(won_later),
         "total":        len(day_reqs),
         "as_of_label":  f"{rd_iso} (ET)",
@@ -2133,7 +2140,7 @@ def main() -> int:
     ap.add_argument("--config", default=str(ROOT / "config.json"))
     args = ap.parse_args()
     cfg = core.load_config(args.config)
-    data = json.loads(Path(cfg["paths"]["data"]).read_text())
+    data = json.loads(Path(cfg["paths"]["data"]).read_text(encoding="utf-8"))
     body = build_body(data, cfg)
     subject = build_subject(data, cfg)
     body_path = Path(cfg["paths"]["email_body"])

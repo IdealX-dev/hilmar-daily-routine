@@ -827,3 +827,49 @@ def test_every_test_send_path_in_the_workflows_uses_verification():
             f"{wf} still has a raw --force --no-flag test send; route it through "
             "--verification so the subject is tagged too")
         assert "--verification" in code, f"{wf} has no verification-tagged send path"
+
+
+# ── a semantic hue is never spelled as a series index ────────────────────────
+
+def test_no_call_site_indexes_the_carrier_series():
+    """DOC_SERIES is the CARRIER-IDENTITY palette, reached through
+    doc_series_colour(). A renderer that writes DOC_SERIES[2] to mean "pending"
+    has borrowed a value to express a meaning, and the two then move together
+    by accident: repurposing the series — a palette decision — would silently
+    repaint semantics, and a reader cannot tell "the pending hue" from
+    "whichever carrier sorted third".
+
+    That is exactly what shipped on 2026-08-05. DOC_PENDING was added so call
+    sites would stop spelling the index, and then four sites in gen_dashboard
+    plus one in viz kept spelling it — the helper-written-wiring-not pattern,
+    for the fourth time in this repo. Copilot caught it on PR #149.
+
+    Named tokens (DOC_PENDING, DOC_INFO) are the fix; this is the ratchet.
+    branding.py itself is exempt — that is where the tuple is defined and where
+    the aliases are declared.
+    """
+    import re
+    offenders = {}
+    for path in sorted((ROOT / "scripts").glob("*.py")):
+        if path.name == "branding.py":
+            continue
+        hits = [
+            f"line {i}: {line.strip()[:90]}"
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if re.search(r"DOC_SERIES\s*\[\s*\d+\s*\]", line)
+        ]
+        if hits:
+            offenders[path.name] = hits
+    assert not offenders, (
+        "a semantic colour is spelled as a carrier-series index: "
+        f"{offenders} — add a named token in branding.py (see DOC_PENDING) "
+        "and use it here"
+    )
+
+
+def test_the_named_semantic_tokens_are_actually_used():
+    """The other half of the ratchet. A token nothing references is a token
+    the next edit deletes, and then the call sites go back to the index."""
+    dash = (ROOT / "scripts" / "gen_dashboard.py").read_text(encoding="utf-8")
+    assert "B.DOC_PENDING" in dash, "the dashboard stopped using the named pending hue"
+    assert "B.DOC_INFO" in dash, "the dashboard stopped using the named info hue"

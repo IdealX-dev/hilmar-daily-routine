@@ -212,7 +212,7 @@ def phase6_covered_honor(data: dict, log: dict) -> None:
 def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     cfg = core.load_config(config_path)
     data_path = Path(cfg["paths"]["data"])
-    data = json.loads(data_path.read_text())
+    data = json.loads(data_path.read_text(encoding="utf-8"))
 
     log = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
@@ -280,13 +280,13 @@ def run(config_path: str, auto_heal: bool = False, dry: bool = False) -> int:
     # Write report
     out_path = Path(cfg["paths"].get("reports") or (ROOT / "reports")) / "drift-result.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(log, indent=2, default=str))
+    out_path.write_text(json.dumps(log, indent=2, default=str), encoding="utf-8")
 
     # Persist data if any auto-heal happened (and not --dry)
     if auto_heal and not dry and (
         log["phase1"].get("healed") or log["phase4"].get("issues")
     ):
-        data_path.write_text(json.dumps(data, indent=2, default=str))
+        data_path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
         log["persisted"] = True
     else:
         log["persisted"] = False

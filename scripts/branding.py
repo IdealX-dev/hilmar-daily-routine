@@ -78,6 +78,36 @@ DOC_WARN_BG = "#fdf4e3"  # (--warnbg)
 DOC_BAD = "#b03030"      # (--red)
 DOC_BAD_BG = "#fdeeee"   # no reference equivalent; tinted from DOC_BAD
 
+# PENDING is deliberately NOT one of the three above. Good/warn/bad are
+# verdicts on a row; "still pending" is a statement about whose turn it is,
+# and colouring it as a verdict is how a reader concludes an open quote has
+# already gone wrong. So it takes an IDENTITY hue — the reference's wisteria,
+# which is also DOC_SERIES[2].
+#
+# That shared value is a real, accepted collision: a carrier that hashes to
+# series index 2 gets a dot the same colour as a pending marker. It is
+# tolerable because the two never carry meaning alone — a carrier dot always
+# sits beside the carrier's NAME (see the DOC_SERIES note below) and a pending
+# marker always sits inside a pill that says PENDING. Named here rather than
+# spelled DOC_SERIES[2] at each call site so the intent survives the next edit:
+# three different purples used to mean "pending" across the dashboard alone.
+DOC_PENDING = "#8e44ad"
+DOC_PENDING_BG = "#f3ecf7"
+
+# Neutral information — "quoted", "biz hours", a middling turnaround. Not a
+# verdict either, so it stays out of good/warn/bad for the same reason
+# DOC_PENDING does. Shares the reference's steel blue with DOC_SERIES[3] on
+# the same accepted-collision terms as DOC_PENDING above.
+DOC_INFO = "#2c5f8a"
+DOC_INFO_BG = "#e8eff5"
+
+# Both of the above exist so no CALL SITE ever spells DOC_SERIES[n]. An
+# integer index into a carrier-identity tuple cannot say what it means: a
+# reader cannot tell "the pending hue" from "whichever carrier sorted third",
+# and repurposing the series — which is a palette-level decision — would
+# silently repaint semantics that merely borrowed a value. Named tokens make
+# the two independent. tests/test_document_restyle.py enforces it.
+
 # The reference loads IBM Plex from a CDN. We deliberately do NOT: these
 # documents ship as email bodies and email attachments, opened from Outlook,
 # often offline and always behind OL's proxy. A local stack renders the same

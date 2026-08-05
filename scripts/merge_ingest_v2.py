@@ -157,13 +157,13 @@ def parse_subject(subj):
     return mdolx, subj_carrier, dest
 
 def main():
-    responses = json.loads(RESPONSES.read_text())
+    responses = json.loads(RESPONSES.read_text(encoding="utf-8"))
     uri_by_id = {r["id"]: r["uri"] for r in responses}
 
     records = []
     for i in range(40):
         fp = BODIES / f"body_{i:02d}.json"
-        raw = fp.read_text()
+        raw = fp.read_text(encoding="utf-8")
         obj = json.loads(raw)
         body_html = (obj.get("body") or {}).get("content","") or ""
         body_len = len(body_html)
@@ -199,7 +199,7 @@ def main():
         }
         records.append(rec)
 
-    OUT.write_text(json.dumps(records, indent=2, default=str))
+    OUT.write_text(json.dumps(records, indent=2, default=str), encoding="utf-8")
 
     # Summary
     total = len(records)
