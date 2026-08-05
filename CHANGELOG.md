@@ -85,12 +85,61 @@ were genuine. None was a font.
 
    Suite 2445 passed, 0 failed. ruff clean.
 
-WHAT IS NOT VERIFIED
-   Which storage form today's live tracking file uses. It is not in this
-   container, so whether the WoW chart is currently wrong ON PRODUCTION DATA
-   is [Unverified] — scripts/ingest.py writes LEGACY, which the old code
-   handled, so it is likely the live dashboard was not showing this. The fix
-   is correct under both forms either way.
+STORAGE, ESTABLISHED — AND A CORRECTION TO THE TWO ENTRIES ABOVE
+   Michael, same session: "figure out the storage.. are you using turso".
+   Both answers change how items 1 and 2 should be read, so they are
+   recorded here rather than left as an open question.
+
+   WHAT WE STORE ON
+     - canonical state: tracking-data-v2.json, a JSON FILE written atomically
+       by core.save_data, pulled/pushed to Azure Blob by state_store.py
+     - quote history: data/quote-history.db, a PLAIN SQLITE file through the
+       same blob store
+     - no Turso of our own. historian.py CAN speak libSQL, but daily.yml sets
+       HILMAR_HISTORIAN_SQLITE and requirements.txt leaves libsql-experimental
+       commented out, so the driver is not even installed (Michael 2026-07-11:
+       "you handle turso tokens... i cannot read this as it works").
+     - the ONE Turso in the picture belongs to ol-quote-tracker, a peer
+       product. sync_to_quote_tracker.py POSTs entities to its HTTP API. We
+       never speak libSQL to it and we do not own that table.
+
+   STORAGE FORM IS LEGACY. [Certain], by code inspection:
+     1. run_pipeline.STEPS runs scripts/ingest.py, not src/hilmar/ingest.py
+     2. ingest writes status at four sites: literal "PENDING", literal "WIN"
+        twice, and r["status"] = decision.status
+     3. core.decide_status can only return WIN / LOSS / PENDING
+     4. nothing in scripts/ or src/hilmar/ ever assigns "Q&L" or "NQ" to a
+        request's status
+     5. core.validate_data REJECTS any status outside {WIN, LOSS, PENDING}
+
+   SO, CORRECTING ITEM 2: the empty WoW column and the "0 total • 10 TEU"
+   header were NOT firing on production data. They are latent, and the
+   STRICT fixture is what exposed them. The fix stands — src/hilmar/ingest.py
+   does write STRICT, QC-040 exists to police exactly that divergence, and
+   the accessors were built in June for exactly this — but "bad data" as
+   Michael saw it was the preview, not the live report.
+
+   AND CORRECTING ITEM 1, WHICH OVERSTATED THE RISK: the claim that cp1252
+   was decoding on "the Windows Cloud PC that runs the pipeline" is wrong
+   twice over. daily.yml runs on ubuntu-latest with PYTHONUTF8=1, and the
+   Windows fallback hosts set it too — run_daily_laptop.cmd:33-34,
+   run_chase_evening.cmd:45-46, setup_cloudpc.ps1:136. So on every known
+   entry point the platform default was ALREADY utf-8, and the 71 unpinned
+   sites were not corrupting anything. Pinning them is defence in depth, not
+   a live-bug fix: the guarantee belongs in the code rather than in an env
+   var a new entry point can forget to set. Worth having, overstated when
+   shipped.
+
+   WHAT REMAINS GENUINELY BROKEN, not latent:
+     - the fixture mojibake. Real, and it meant every golden test had been
+       certifying mangled output as correct. Origin unexplained — no current
+       entry point produces it.
+     - the trade-region lookup. Broken for any "City, CC" destination.
+       Whether live data carries them is [Unverified] — the file is not in
+       this container — but "sturgis mi" sitting in the map as a key, with
+       the comma hand-stripped, is a strong tell that someone hit this before
+       and worked around it one port at a time.
+     - the palette.
 
 ## 2026-08-04 (2) — "i like it all" finally means all three
 
