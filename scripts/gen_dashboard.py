@@ -71,13 +71,25 @@ def _ta_class(h):
 
 
 def _status_badge(r):
+    """Status as a token-driven pill.
+
+    2026-08-05: routed through branding.doc_badge_html so the dashboard, the
+    email and the PDF all express "this row won" the same way. The four local
+    .badge-* classes said the same thing in a fourth dialect, and a dialect
+    per renderer is how the palette drifted in the first place.
+
+    Tone is chosen from what the status MEANS to the desk, not from the enum:
+    a win is good, a quoted loss is bad, a no-quote is our own miss (warn),
+    and pending is not a judgement at all (neutral). Colour that encodes a
+    verdict is annotation; colour that just distinguishes labels is chrome.
+    """
     if r["status"] == "WIN":
-        return '<span class="badge badge-green">✅ Won</span>'
+        return B.doc_badge_html("✅ Won", "ok")
     if r["status"] == "PENDING":
-        return '<span class="badge badge-purple">⏳ Pending</span>'
+        return B.doc_badge_html("⏳ Pending", "neutral")
     if r.get("quoted"):
-        return '<span class="badge badge-red">❌ Q&amp;L</span>'
-    return '<span class="badge badge-amber">⚠️ NQ</span>'
+        return B.doc_badge_html("❌ Q&L", "bad")
+    return B.doc_badge_html("⚠️ NQ", "warn")
 
 
 def _row_class(r):
@@ -563,7 +575,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                 mdolx_cell = f'<code>{_safe(_mdolx)}</code>'
             else:
                 mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
-            html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{_safe(w.get("carrier_won"))}</td></tr>\n'
+            html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{B.doc_dot_html(w.get("carrier_won"))}{_safe(w.get("carrier_won"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">No wins yet in this period.</p>'
@@ -921,7 +933,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             # "—" for a row we cannot date, matching gen_email's PENDING
             # HILMAR table. Previously these rows were dropped entirely.
             _age = "—" if r.get("_hours_since") is None else f'{r["_hours_since"]}h'
-            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{_age}</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
+            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{_age}</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{B.doc_dot_html(r.get("carrier_quoted"))}{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">Nothing pending right now.</p>'

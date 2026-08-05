@@ -21,7 +21,15 @@ Used by:
 """
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
+from pathlib import Path
+
+# viz is imported both as `viz` (scripts/ on sys.path) and from modules that
+# add scripts/ themselves, so anchor on this file's own directory rather than
+# assuming the caller arranged the path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import branding as B  # noqa: E402  shared DOC_* design tokens
 
 
 def _esc(s) -> str:
@@ -162,21 +170,34 @@ def bar_cell(value: float, max_value: float, color: str = "#3b82f6",
 # Status pill badge
 # ─────────────────────────────────────────────────────────────────────
 
+# Driven by branding.DOC_* — 2026-08-05.
+#
+# These were a fifth private palette (the dashboard had .badge-*, the email had
+# these, the PDF had its own colours, the client email another). Same idea said
+# five ways is how a "design language" becomes five house styles that drift
+# apart one edit at a time. The tuples are (bg, text, border) exactly as
+# before, so status_pill's unpacking and every caller are untouched — only the
+# hexes moved onto the shared tokens.
+#
+# The tints are the reference document's: pale grounds carrying dark text,
+# rather than the saturated SaaS greens and reds that shouted over the data.
 _PILL_PALETTE = {
-    "WIN":     ("#dcfce7", "#166534", "#16a34a"),  # bg, text, border
-    "LOSS":    ("#fee2e2", "#991b1b", "#dc2626"),
-    "PENDING": ("#fef3c7", "#92400e", "#f59e0b"),
+    "WIN":     (B.DOC_GOOD_BG, B.DOC_GOOD, B.DOC_GOOD),  # bg, text, border
+    "LOSS":    (B.DOC_BAD_BG, B.DOC_BAD, B.DOC_BAD),
+    "PENDING": (B.DOC_WARN_BG, B.DOC_WARN, B.DOC_WARN),
     # Pending is two materially different waits — give each a DISTINCT marker so
     # the reader sees at a glance who to chase, not just one amber "PENDING".
     # Amber = waiting on OL to quote (chase OL); violet = OL quoted, waiting on
-    # Lonny to decide (chase Lonny). Colors match the detail-section headers.
-    "PENDING_OL":     ("#fef3c7", "#92400e", "#f59e0b"),  # amber — chase OL
-    "PENDING_HILMAR": ("#ede9fe", "#5b21b6", "#7c3aed"),  # violet — chase Hilmar
-    "QUOTED":  ("#dbeafe", "#1e40af", "#3b82f6"),
-    "OK":      ("#dcfce7", "#166534", "#16a34a"),
-    "WARN":    ("#fef3c7", "#92400e", "#f59e0b"),
-    "ERROR":   ("#fee2e2", "#991b1b", "#dc2626"),
-    "CLEAN":   ("#dcfce7", "#166534", "#16a34a"),
+    # Lonny to decide (chase Lonny). The violet is an IDENTITY hue rather than a
+    # status one on purpose: "waiting on Hilmar" is not a verdict on the row,
+    # so it must not borrow the good/warn/bad vocabulary.
+    "PENDING_OL":     (B.DOC_WARN_BG, B.DOC_WARN, B.DOC_WARN),      # chase OL
+    "PENDING_HILMAR": ("#f3ecf7", "#6b3f8c", B.DOC_SERIES[2]),      # chase Hilmar
+    "QUOTED":  ("#e8eff5", "#245073", B.DOC_SERIES[3]),
+    "OK":      (B.DOC_GOOD_BG, B.DOC_GOOD, B.DOC_GOOD),
+    "WARN":    (B.DOC_WARN_BG, B.DOC_WARN, B.DOC_WARN),
+    "ERROR":   (B.DOC_BAD_BG, B.DOC_BAD, B.DOC_BAD),
+    "CLEAN":   (B.DOC_GOOD_BG, B.DOC_GOOD, B.DOC_GOOD),
 }
 
 # Friendly labels so a pill reads as the ACTION, not the enum. Pending splits
