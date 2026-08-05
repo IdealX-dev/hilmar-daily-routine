@@ -2160,6 +2160,59 @@ def qc065_internal_leaks(body_text) -> list:
     return [m for m in QC065_INTERNAL_MARKERS if m in low]
 
 
+def qc065_check_client_block(cfg: dict, key: str, body_path: Path) -> list:
+    """Validate ONE client-facing artifact's config block + rendered body.
+
+    Parameterised because there are two of them now — the daily
+    (`client_report`) and, from 2026-08-05, the weekly (`client_weekly`) — and
+    the invariants are identical: never a staff address, never more than the
+    one approved recipient, exactly the approved to/cc while enabled, and zero
+    internal analytics in the rendered HTML.
+
+    A second inline copy of this for the weekly is precisely the mistake this
+    codebase spent today undoing (five spellings of one rate predicate, two
+    vocabularies for one status). Two client artifacts, ONE definition of what
+    makes a client artifact safe.
+
+    Recipients are checked even while DISABLED: a wrong address is not a
+    problem until the flag flips, and then it is a problem instantly.
+    """
+    problems = []
+    block = cfg.get(key)
+    if block is not None:
+        full = [str(a).lower() for a in
+                (cfg.get("distribution", {}).get("full_list", []) or [])]
+        to = [str(a).lower() for a in (block.get("to") or [])]
+        cc = [str(a).lower() for a in (block.get("cc") or [])]
+        staff = [a for a in to if a in full]
+        if staff:
+            problems.append(
+                f"staff/full_list recipient(s) in {key}.to: {staff} "
+                f"(a client artifact must never go to the internal distribution)")
+        if len(to) > 1:
+            problems.append(
+                f"{key}.to has {len(to)} recipients {to} — "
+                f"only 1 approved client recipient allowed")
+        if block.get("enabled"):
+            if to != [a.lower() for a in QC065_APPROVED_TO]:
+                problems.append(f"{key} ENABLED with unapproved to={to} "
+                                f"(approved: {list(QC065_APPROVED_TO)})")
+            if cc != [a.lower() for a in QC065_APPROVED_CC]:
+                problems.append(f"{key} ENABLED with unapproved cc={cc} "
+                                f"(approved: {list(QC065_APPROVED_CC)})")
+    if body_path.exists():
+        leaks = qc065_internal_leaks(body_path.read_text(encoding="utf-8", errors="ignore"))
+        if leaks:
+            problems.append(
+                f"internal analytics leaked into {body_path.name}: {leaks} — "
+                f"fix the generator, never ship these to the client")
+    return problems
+
+
+QC065_CLIENT_WEEKLY_BODY_PATH = (
+    Path(__file__).resolve().parent.parent / "reports" / "client-weekly.html")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Phase 6 — cross-check rules
 # ─────────────────────────────────────────────────────────────────────
@@ -4874,52 +4927,34 @@ def phase_6_rules(log: Log, data: dict):
     # approved-recipient tuples or trim the marker list to make this pass.
     try:
         _problems65 = []
-        _cr65 = None
+        _blocks65 = {}
         if QC065_CONFIG_PATH.exists():
             import json as _json
             _cfg65 = _json.loads(QC065_CONFIG_PATH.read_text(encoding="utf-8"))
-            _cr65 = _cfg65.get("client_report")
-            if _cr65 is not None:
-                _full65 = [str(a).lower() for a in
-                           (_cfg65.get("distribution", {}).get("full_list", []) or [])]
-                _to65 = [str(a).lower() for a in (_cr65.get("to") or [])]
-                _cc65 = [str(a).lower() for a in (_cr65.get("cc") or [])]
-                _staff65 = [a for a in _to65 if a in _full65]
-                if _staff65:
-                    _problems65.append(
-                        f"staff/full_list recipient(s) in client_report.to: {_staff65} "
-                        f"(the client email must never go to the internal distribution)")
-                if len(_to65) > 1:
-                    _problems65.append(
-                        f"client_report.to has {len(_to65)} recipients {_to65} — "
-                        f"only 1 approved client recipient allowed")
-                if _cr65.get("enabled"):
-                    if _to65 != [a.lower() for a in QC065_APPROVED_TO]:
-                        _problems65.append(
-                            f"ENABLED with unapproved to={_to65} "
-                            f"(approved: {list(QC065_APPROVED_TO)})")
-                    if _cc65 != [a.lower() for a in QC065_APPROVED_CC]:
-                        _problems65.append(
-                            f"ENABLED with unapproved cc={_cc65} "
-                            f"(approved: {list(QC065_APPROVED_CC)})")
-        if QC065_CLIENT_BODY_PATH.exists():
-            _leaks65 = qc065_internal_leaks(
-                QC065_CLIENT_BODY_PATH.read_text(encoding="utf-8", errors="ignore"))
-            if _leaks65:
-                _problems65.append(
-                    f"internal analytics leaked into client-email-body.html: "
-                    f"{_leaks65} — fix gen_client_email.py, never ship these to the client")
+            # BOTH client artifacts, one definition. client_weekly went live
+            # 2026-08-05; adding it here rather than writing a QC-078 is the
+            # point — the invariants are identical, so a second check would be
+            # a second thing to drift.
+            for _key65, _body65 in (("client_report", QC065_CLIENT_BODY_PATH),
+                                    ("client_weekly", QC065_CLIENT_WEEKLY_BODY_PATH)):
+                _blocks65[_key65] = _cfg65.get(_key65)
+                _problems65 += qc065_check_client_block(_cfg65, _key65, _body65)
         if _problems65:
-            log.error("QC-065: client-report invariant violations: "
+            log.error("QC-065: client-artifact invariant violations: "
                       + "; ".join(_problems65))
-        elif _cr65 is None:
-            log.ok("QC-065: no client_report block in config.json — client email path inert")
-        elif not _cr65.get("enabled"):
-            log.ok("QC-065: client_report disabled — sample-only mode (client receives "
-                   "nothing); recipients + rendered content clean")
         else:
-            log.ok("QC-065: client_report ENABLED — recipients locked to the approved "
-                   "to/cc pair; rendered content clean")
+            _live65 = sorted(k for k, v in _blocks65.items() if (v or {}).get("enabled"))
+            _off65 = sorted(k for k, v in _blocks65.items()
+                            if v is not None and not (v or {}).get("enabled"))
+            _absent65 = sorted(k for k, v in _blocks65.items() if v is None)
+            _bits65 = []
+            if _live65:
+                _bits65.append(f"ENABLED {_live65} — recipients locked to the approved to/cc pair")
+            if _off65:
+                _bits65.append(f"disabled {_off65} — sample-only, the client receives nothing")
+            if _absent65:
+                _bits65.append(f"absent {_absent65} — path inert")
+            log.ok("QC-065: " + "; ".join(_bits65) + "; rendered content clean")
     except Exception as _e:
         log.warn(f"QC-065: check failed with exception: {_e}")
 

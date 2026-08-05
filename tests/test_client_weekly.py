@@ -176,30 +176,95 @@ def test_subject_names_the_period(cfg):
     assert QC.qc065_internal_leaks(subj) == []
 
 
-# ── it ships GATED OFF ───────────────────────────────────────────────────────
+# ── the gate ────────────────────────────────────────────────────────────────
+#
+# These two tests used to assert "enabled is False" and "no send path exists",
+# which was true and useful for exactly one day. Michael enabled it on
+# 2026-08-05 ("flip client weekly") and both went red — not because anything
+# broke, but because they pinned an OPERATIONAL STATE the operator is entitled
+# to change. That is the same defect as the cron test that went red the
+# morning he said resume, and the fix is the same: assert the INVARIANT that
+# has to hold in both states, so the test survives the decision.
 
-def test_send_is_disabled_in_shipped_config(cfg):
-    """Lonny receives nothing until a person flips this, having read a
-    rendered week. The client daily took a day to earn it."""
-    assert cfg["client_weekly"]["enabled"] is False, (
-        "the client weekly was enabled without an explicit go-live decision")
-
-
-def test_no_pipeline_step_sends_the_client_weekly():
-    """The gate is a config flag AND the absence of a send. A flag alone is
-    half a stop — that lesson is written into daily.yml about the pause flag,
-    and it applies here: nothing should be one boolean away from mailing a
-    customer."""
-    src = (ROOT / "scripts" / "run_pipeline.py").read_text(encoding="utf-8")
-    assert "gen_client_weekly.py" in src, "the rollup stopped being built"
-    for wf in ("daily.yml", "weekly.yml"):
-        text = (ROOT / ".github" / "workflows" / wf).read_text(encoding="utf-8")
-        assert "client-weekly" not in text, (
-            f"{wf} gained a send path for the gated client weekly")
+WEEKLY_YML = ROOT / ".github" / "workflows" / "weekly.yml"
 
 
-def test_the_recipients_match_the_client_daily(cfg):
-    """Two client artifacts, one approved audience. A second list is a second
-    thing to get wrong."""
-    assert cfg["client_weekly"]["to"] == cfg["client_report"]["to"]
-    assert cfg["client_weekly"]["cc"] == cfg["client_report"]["cc"]
+def test_the_client_send_requires_both_the_flag_and_a_full_run():
+    """Reaching Lonny takes TWO conditions, and neither alone is enough. A
+    test dispatch must never reach a customer no matter how the flag sits."""
+    text = WEEKLY_YML.read_text(encoding="utf-8")
+    assert 'client_weekly' in text and 'client-weekly.html' in text, (
+        "weekly.yml no longer sends the client rollup at all")
+    assert '[ "$ENABLED" = "true" ] && [ "$SEND_TO" = "full" ]' in text, (
+        "the client-weekly send is no longer gated on BOTH client_weekly."
+        "enabled AND send_to=full")
+
+
+def test_the_disabled_path_reaches_only_the_sample_address():
+    """The else branch must be a labeled sample to sample_to, never the
+    client. Labeled for two reasons: Michael mistook an unlabeled client
+    sample for a gutted staff report on 2026-07-11, and an unprefixed sample
+    shares the real subject, which would let the mailbox guard suppress the
+    real send later."""
+    text = WEEKLY_YML.read_text(encoding="utf-8")
+    after = text.split('client_weekly.enabled=true', 1)[-1]
+    assert "$SAMPLE_TO" in after and "--verification" in after
+    assert "[SAMPLE - internal preview, Lonny does NOT receive this]" in after
+
+
+def test_the_rollup_is_built_before_it_is_sent():
+    """weekly.yml had no build step for the client rollup — only run_pipeline
+    did, and run_pipeline runs in daily.yml. Enabling the send without adding
+    the build would have shipped whatever stale file the runner had, or
+    nothing."""
+    text = WEEKLY_YML.read_text(encoding="utf-8")
+    build = text.index("gen_client_weekly.py")
+    send = text.index("client-weekly-subject.txt")
+    assert build < send, "the client rollup is sent before it is built"
+
+
+def test_the_client_weekly_owns_its_own_idempotency_flag():
+    """Sharing weekly-sent would let the staff send consume the client send's
+    guard, or the reverse — the exact collision that blocked 2026-07-30."""
+    text = WEEKLY_YML.read_text(encoding="utf-8")
+    assert "--flag-name client-weekly-sent" in text
+    # and it must actually be persisted, comma-joined: a second bare word
+    # would land as a positional and be dropped, so every Monday would look
+    # like the first.
+    assert "--only weekly-sent,client-weekly-sent" in text
+
+
+def test_recipients_are_the_approved_pair_whenever_it_is_enabled(cfg):
+    """The conditional invariant. While disabled a wrong address is merely
+    wrong; the moment the flag flips it is live, which is why QC-065 checks
+    recipients in BOTH states."""
+    cw = cfg["client_weekly"]
+    assert cw["to"] == cfg["client_report"]["to"], "two client artifacts, one audience"
+    assert cw["cc"] == cfg["client_report"]["cc"]
+    if cw["enabled"]:
+        assert [a.lower() for a in cw["to"]] == [a.lower() for a in QC.QC065_APPROVED_TO]
+        assert [a.lower() for a in cw["cc"]] == [a.lower() for a in QC.QC065_APPROVED_CC]
+
+
+def test_qc065_covers_the_weekly_not_just_the_daily(cfg):
+    """One definition of "safe client artifact", applied to both. A second
+    inline copy for the weekly is the mistake this repo spent 2026-08-05
+    undoing — five spellings of one rate predicate, two vocabularies for one
+    status."""
+    bad = {**cfg, "client_weekly": {**cfg["client_weekly"],
+                                    "enabled": True,
+                                    "to": ["someone.else@example.com"]}}
+    problems = QC.qc065_check_client_block(
+        bad, "client_weekly", ROOT / "does-not-exist.html")
+    assert problems, "QC-065 accepted an unapproved recipient on the client weekly"
+    assert any("client_weekly" in p for p in problems)
+
+
+def test_qc065_rejects_a_staff_address_on_a_client_artifact(cfg):
+    """The worst shape: the internal distribution receiving the client's own
+    report, or the client receiving the staff list's."""
+    staff = cfg["distribution"]["full_list"][0]
+    bad = {**cfg, "client_weekly": {**cfg["client_weekly"], "to": [staff]}}
+    problems = QC.qc065_check_client_block(
+        bad, "client_weekly", ROOT / "does-not-exist.html")
+    assert any("full_list" in p for p in problems)
