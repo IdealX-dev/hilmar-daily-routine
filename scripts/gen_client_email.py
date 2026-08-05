@@ -140,6 +140,28 @@ def _rate(r):
     return f"${v:,.0f}" if isinstance(v, (int, float)) else (str(v) if v else "—")
 
 
+def _etd_with_staleness(etd, report_date):
+    """Render an offered ETD, marking it when the sailing has already gone.
+
+    2026-08-05: the Aug 4 client report listed a quote under "Awaiting your
+    decision — reply to book" whose ETD offered was 31-Jul-26, four days
+    before the day being reported and five before Lonny read it. Inviting a
+    customer to book a sailing that has departed is worse than a formatting
+    slip; the quote is still a real open item, but the action is "requote",
+    not "book".
+
+    Marked rather than dropped: silently removing a row from a client report
+    hides an open item. Unparseable dates pass through untouched — a date we
+    cannot read is not evidence that it is stale.
+    """
+    if not etd:
+        return "—"
+    d = _iso_date(etd)
+    if d and d < report_date:
+        return f"{etd} — sailed, ask us to requote"
+    return str(etd)
+
+
 def _lane(r):
     return r.get("lane") or f"{r.get('origin', '?')} → {r.get('destination', '?')}"
 
@@ -227,13 +249,37 @@ def _client_sections(data, report_date):
     # Every bucket is filtered through _lane_resolved so a "Lane unresolved" /
     # placeholder-destination row can never render in any section. If this
     # empties a section, the existing empty-section collapse handles it.
-    return {
+    out = {
         "requests": [r for r in new_req if _lane_resolved(r)],
         "quotes": [r for r in quotes if _lane_resolved(r)],
         "bookings": [r for r in bookings if _lane_resolved(r)],
         "awaiting": [r for r in awaiting if _lane_resolved(r)],
         "in_progress": [r for r in in_progress if _lane_resolved(r)],
     }
+    # Quotes we are SHOWING but cannot date.
+    #
+    # 2026-08-05, Michael: "requests received show yesterdays requests.. are we
+    # sure they weren't won yesterday and still waiting for lonny". Chasing it
+    # surfaced something worse than the date wording. `quotes` is bucketed on
+    # response_timestamp (via _today_events); `awaiting` is CURRENT STATE and
+    # is not windowed. A quote with a rate but no timestamp therefore counts
+    # ZERO in "Quotes delivered" while its rate is printed under "Awaiting your
+    # decision" — and the narrative went on to tell the customer "we received 3
+    # rate requests and returned 0 quotes; 3 quotes await your decision", in
+    # one sentence.
+    #
+    # That is not a formatting slip. It is OL telling its own customer it did
+    # not respond, on a day it demonstrably did — the rates are right there on
+    # the page. qc_selfheal._heal_undated_quote now dates every row it can
+    # reach, but a row whose source message has aged out of the body cache
+    # stays undated forever, so the renderer must not depend on that heal
+    # having succeeded. It reports what it can prove instead.
+    out["undated_quotes"] = [
+        r for r in out["awaiting"]
+        if (r.get("ol_rate") or r.get("carrier_quoted"))
+        and not r.get("response_timestamp")
+    ]
+    return out
 
 
 def _active_shipments(data, report_date):
@@ -316,7 +362,7 @@ def _table(headers, rows):
         body = (
             f'<tr><td colspan="{len(headers)}" '
             f'{_TD_STYLE.replace("text-align:left", "text-align:center")}>'
-            f'<em style="color:#64748b">None that day.</em></td></tr>'
+            f'<em style="color:#64748b">None.</em></td></tr>'
         )
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
@@ -351,6 +397,21 @@ def _section_or_line(title, note, quiet_text, headers, row_values):
     return _quiet_section(title, quiet_text)
 
 
+def _quotes_sublabel(s):
+    """TEU under the Quotes-delivered tile, plus the undated ones if any.
+
+    A "0" tile sitting above a table of three priced quotes is the same
+    contradiction the narrative had. The tile counts what it can date; the
+    sublabel says out loud that more are on the page but undated, so the
+    number reads as a limit of the data rather than as OL's service record.
+    """
+    n_undated = len(s.get("undated_quotes") or [])
+    base = f"{_teu_sum(s['quotes'])} TEU"
+    if n_undated:
+        return f"{base} · {n_undated} more undated"
+    return base
+
+
 def _kpi_strip(s):
     """Hero KPI strip — 4 tiles via gen_email._kpi_card (same td.hx-kpi /
     .hx-kpi-card markup, so the mobile display:block stacking is shared).
@@ -359,7 +420,7 @@ def _kpi_strip(s):
 <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:2px 0 8px">
   <tr>
     {_kpi_card(len(s["requests"]), "Requests received", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
-    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=f"{_teu_sum(s['quotes'])} TEU")}
+    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=_quotes_sublabel(s))}
     {_kpi_card(len(s["bookings"]), "Bookings confirmed", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
     {_kpi_card(len(s["awaiting"]), "Awaiting your decision", "#f59e0b", "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
   </tr>
@@ -412,9 +473,19 @@ def _narrative(s):
                  f"(average {avg_h:.1f} business hours, Pacific)")
     else:
         speed = ""
-    line = (f"We received {_plural(n_req, 'rate request')} and returned "
-            f"{_plural(n_quo, 'quote')}{speed}; "
-            f"{_plural(n_book, 'booking')} confirmed.")
+    # NEVER assert a delivered-quote count the table below contradicts.
+    # When quotes are on the page that we cannot date, "returned 0 quotes" is
+    # a false statement to the customer about our own responsiveness — see
+    # _client_sections' undated_quotes note. State the requests and bookings,
+    # which are dated and certain, and let the quote table speak for itself.
+    n_undated = len(s.get("undated_quotes") or [])
+    if n_undated and not n_quo:
+        line = (f"We received {_plural(n_req, 'rate request')}; "
+                f"{_plural(n_book, 'booking')} confirmed.")
+    else:
+        line = (f"We received {_plural(n_req, 'rate request')} and returned "
+                f"{_plural(n_quo, 'quote')}{speed}; "
+                f"{_plural(n_book, 'booking')} confirmed.")
     n_wait = len(s["awaiting"])
     if n_wait:
         verb = "awaits" if n_wait == 1 else "await"
@@ -440,7 +511,7 @@ def _cutoff_callout(items):
     )
 
 
-def _header_html(report_label, updated_label):
+def _header_html(report_label, prepared_label):
     # CID logo — Outlook blocks data: URIs in email bodies (QC-042);
     # outlook_send attaches the PNG with contentId=hilmar-logo + isInline.
     logo_html = B.logo_html_cid(height=56, alt="Hilmar Ingredients")
@@ -455,7 +526,7 @@ def _header_html(report_label, updated_label):
   <div style="padding:16px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:21px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">Daily Shipment Update — Hilmar Ingredients</h1>
-    <p style="margin:4px 0 0;font-size:13px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Prepared by OL-USA · Activity for {_esc(report_label)} (prior business day) · Updated {_esc(updated_label)}</p>
+    <p style="margin:4px 0 0;font-size:13px;opacity:0.9;font-family:{EMAIL_FONT_STACK}">Prepared by OL-USA · Covers activity on {_esc(report_label)} · Sent {_esc(prepared_label)}</p>
   </div>
   <div class="hx-pad" style="padding:20px 28px;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
 """
@@ -487,9 +558,22 @@ def _now_et(now=None):
 
 
 def build_subject(data, cfg, now=None):
+    """Subject names the day the report COVERS, explicitly.
+
+    2026-08-05, Michael: "wording is all wrong on dates since you are using
+    yesterdays data." The old subject was "…for Hilmar Ingredients (Aug 4,
+    2026)" and landed in Lonny's inbox on Aug 5, where a bare parenthesised
+    date reads as the date the mail was sent — i.e. a day late. "activity
+    for" makes it a statement about the contents instead of about the
+    envelope.
+
+    Still one distinct subject per report day, which is what the cross-host
+    mailbox guard and the client-sent flag both key on.
+    """
     report = _report_date(_now_et(now))
     label = _fmt_date(datetime.combine(report, datetime.min.time()), "%b %-d, %Y")
-    return f"OL-USA — Daily Shipment Update for Hilmar Ingredients ({label})"
+    return (f"OL-USA — Daily Shipment Update for Hilmar Ingredients "
+            f"(activity for {label})")
 
 
 def build_body(data, cfg, now=None):
@@ -497,12 +581,22 @@ def build_body(data, cfg, now=None):
     report_date = _report_date(now_et)
     report_label = _fmt_date(
         datetime.combine(report_date, datetime.min.time()), "%A, %B %-d, %Y")
-    updated_label = _fmt_date(now_et, "%-I:%M %p") + " ET"
+    # BOTH dates, both fully qualified. The old header paired "Activity for
+    # Tuesday, August 4, 2026" with a bare "Updated 10:33 AM ET" — a time with
+    # no date, glued to a different date, which reads as 10:33 AM on Aug 4
+    # when it is actually Aug 5. Michael 2026-08-05: "wording is all wrong on
+    # dates since you are using yesterdays data." Naming the send day removes
+    # the ambiguity instead of asking the reader to resolve it.
+    prepared_label = (_fmt_date(now_et, "%A, %B %-d, %Y") + " at "
+                      + _fmt_date(now_et, "%-I:%M %p") + " ET")
+    # Short form for the section descriptions: "Tuesday, Aug 4".
+    day_label = _fmt_date(
+        datetime.combine(report_date, datetime.min.time()), "%A, %b %-d")
     s = _client_sections(data, report_date)
     active = _active_shipments(data, report_date)
     cutoffs = _upcoming_cutoffs(active, report_date)
 
-    html = _header_html(report_label, updated_label)
+    html = _header_html(report_label, prepared_label)
 
     # 1. Hero KPI strip + one-line service narrative.
     html += _kpi_strip(s)
@@ -542,8 +636,8 @@ def build_body(data, cfg, now=None):
     # 4. Requests received — acknowledgment of the report day's RFQs.
     html += _section_or_line(
         "Requests received",
-        "Rate requests we received from your team that day — all acknowledged and being worked.",
-        "No new rate requests that day.",
+        f"Rate requests we received from your team on {day_label} — all acknowledged and being worked.",
+        f"No new rate requests on {day_label}.",
         ["Lane", "Equipment", "TEU", "Product", "Temp", "Requested ETA", "Received (PT)"],
         [[
             _lane(r),
@@ -559,8 +653,8 @@ def build_body(data, cfg, now=None):
     # 5. Quotes provided — the report day's rate responses.
     html += _section_or_line(
         "Quotes provided",
-        "Rates our booking team sent you that day.",
-        "No new quotes that day.",
+        f"Rates our booking team sent you on {day_label}.",
+        f"No new quotes on {day_label}.",
         ["Lane", "Equipment", "TEU", "Carrier", "Rate ($/container)",
          "Quoted at (ET)", "ETD offered", "ETA offered"],
         [[
@@ -578,8 +672,8 @@ def build_body(data, cfg, now=None):
     # 6. Bookings confirmed — →WIN transitions on the report day.
     html += _section_or_line(
         "Bookings confirmed",
-        "Shipments confirmed that day. Booking references are listed once carrier confirmation arrives.",
-        "No new bookings confirmed that day.",
+        f"Shipments confirmed on {day_label}. Booking references are listed once carrier confirmation arrives.",
+        f"No new bookings confirmed on {day_label}.",
         ["Lane", "Equipment / TEU", "Carrier", "Booking ref", "ETD", "ETA"],
         [[
             _lane(r),
@@ -595,7 +689,9 @@ def build_body(data, cfg, now=None):
     # yet). This is the client's ACTION LIST — always a table when it has rows.
     html += _section_or_line(
         "Awaiting your decision",
-        "Quotes on the table — reply to book, or let us know if the dates or rates need adjusting.",
+        "Quotes on the table — reply to book, or let us know if the dates or "
+        "rates need adjusting. Any sailing already departed is marked; those "
+        "need a requote rather than a booking.",
         "Nothing awaiting your decision — all caught up.",
         ["Lane", "Carrier", "Rate ($/container)", "Quoted at (ET)", "ETD offered"],
         [[
@@ -603,7 +699,7 @@ def build_body(data, cfg, now=None):
             r.get("carrier_quoted") or "—",
             _rate(r),
             _short_et(r.get("response_timestamp")),
-            r.get("etd_offered") or "—",
+            _etd_with_staleness(r.get("etd_offered"), report_date),
         ] for r in s["awaiting"]],
     )
 

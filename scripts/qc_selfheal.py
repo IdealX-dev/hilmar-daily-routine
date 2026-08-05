@@ -388,6 +388,85 @@ def _heal_containers(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> Non
 # Added 2026-05-04 after Port Klang surfaced as $rate=None in scorecard.
 # ─────────────────────────────────────────────────────────────────────
 
+# qc_selfheal writes the STRING "Not Quoted" into ol_rate as an NQ sentinel
+# (see the NQ-contamination heal in phase 6). Any check written as
+# `ol_rate is not None` therefore reads that sentinel as a quote. That is how
+# QC-077 came to count rows with no quote to date — on a check whose whole
+# job is to be believed. Anything that asks "is there a rate here" goes
+# through _is_real_rate.
+_NON_RATE_SENTINELS = ("", "not quoted", "n/a", "none", "null", "—", "-")
+
+
+def _is_real_rate(v) -> bool:
+    """True only when ol_rate holds an actual quoted amount."""
+    if v is None:
+        return False
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return True
+    return str(v).strip().lower() not in _NON_RATE_SENTINELS
+
+
+def _stamp_response_time_from_bodies(r: dict, bodies_idx: dict, imid: str | None = None) -> bool:
+    """Date a quote from the SEND TIME of the message its rate came out of.
+
+    RECOVERY, NOT FABRICATION. The value is the sentDateTime of an OL message
+    already linked to this row through source_imids — the same message the
+    rate itself was parsed from. Returns False when no send time exists, and
+    the quote stays undated: a synthesised timestamp would invent turnaround
+    timing and corrupt time-to-quote, which CLAUDE.md forbids outright.
+
+    Mirrors patch_carriers._stamp_response_time. It exists twice because the
+    two modules recover rates by different routes and neither imports the
+    other; tests/test_audit_batch8.py asserts BOTH stay wired.
+    """
+    if r.get("response_timestamp"):
+        return False
+    for i in ([imid] if imid else (r.get("source_imids") or [])):
+        rec = bodies_idx.get(i) or {}
+        # Same fallback chain as patch_carriers._load_bodies_by_imid. The
+        # field name has moved across refresh_stage schema versions, and an
+        # inbound copy of a message can carry `received` without `sent` —
+        # reading only "sent" would leave those rows undated for a reason
+        # that has nothing to do with the data being missing.
+        sent = rec.get("sent") or rec.get("sentDateTime") or rec.get("received")
+        if sent:
+            r["response_timestamp"] = sent
+            return True
+    return False
+
+
+def _heal_undated_quote(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> None:
+    """Date a quote that ALREADY has a rate or carrier but no response time.
+
+    2026-08-05, Michael on the audit's QC-077 banner — "41 further quotes are
+    recorded with a rate or carrier but no response time" — "this is
+    unacceptable." He is right, and the count had grown from 29 on 07-30.
+
+    QC-077 was built as a DETECTOR and deliberately did not heal, on the
+    reasoning that synthesising a timestamp would be fabrication. That
+    reasoning holds for INVENTING a time and does not hold for READING one:
+    these rows carry source_imids pointing at the very OL messages their
+    rates were parsed out of, and those messages have a sentDateTime sitting
+    unused in the bodies index. Detecting a gap you have the data to close is
+    not caution, it is a warning nobody can action.
+
+    #140 fixed one of the two rate-recovery routes (patch_carriers). This is
+    the other one, plus the backfill for every row already stranded by both.
+    """
+    if r.get("response_timestamp"):
+        return
+    if not (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted")):
+        return
+    # Standalone bookings are excluded for the same reason QC-077 excludes
+    # them: ingest.py:887 leaves the field None DELIBERATELY to signal "no
+    # rate response was ever seen", and filling it would erase that signal.
+    if str(r.get("request_id") or "").startswith("stand_"):
+        return
+    if _stamp_response_time_from_bodies(r, bodies_idx):
+        log.fix(f"{rid_label}: undated quote dated {r['response_timestamp']} "
+                f"from the OL message it was parsed from")
+
+
 def _heal_missing_rate(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> None:
     """If a quoted LOSS has no ol_rate, try to recover from cached OL body."""
     if r.get("ol_rate") is not None:
@@ -406,12 +485,24 @@ def _heal_missing_rate(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> N
             continue
         rate = parsed.get("ol_rate")
         if rate is not None:
+            # DATE IT WHERE YOU SET IT. Recovering a rate and leaving it
+            # undated produces a quote OL-USA RESPONSES can never show — real,
+            # priced, invisible on every day forever. This heal ran for months
+            # without the stamp, which is half of why the undated count hit 41.
+            # Kept adjacent to the write on purpose: the guard in
+            # test_audit_batch8 requires the two within a few lines, because a
+            # stamp that drifts to the bottom of a branch is a stamp somebody
+            # deletes without noticing what it was for.
             r["ol_rate"] = rate
+            _dated = _stamp_response_time_from_bodies(r, bodies_idx, imid)
+            log.fix(f"{rid_label}: ol_rate ${rate} backfilled from cached OL body")
+            if _dated:
+                log.fix(f"{rid_label}: response_timestamp "
+                        f"{r['response_timestamp']} taken from that same OL message")
             # Also fill any missing structured fields
             for k in ("vessel_voyage", "etd_offered", "eta_offered", "transshipment"):
                 if not r.get(k) and parsed.get(k):
                     r[k] = parsed[k]
-            log.fix(f"{rid_label}: ol_rate ${rate} backfilled from cached OL body")
             return
 
 
@@ -853,6 +944,10 @@ def phase_3_entries(log: Log, data: dict):
         # Hygiene healers — run on every record regardless of status/lock.
         _heal_containers(log, rid_label, r, bodies_idx)
         _heal_missing_rate(log, rid_label, r, bodies_idx)
+        # Runs AFTER _heal_missing_rate so a rate recovered on this very pass
+        # is dated too, and independently so rows that arrived already-rated
+        # but undated (the backlog QC-077 counts) get dated as well.
+        _heal_undated_quote(log, rid_label, r, bodies_idx)
 
         if not r.get("request_id"):
             r["request_id"] = core.request_id(
@@ -4152,9 +4247,16 @@ def phase_6_rules(log: Log, data: dict):
         # rather than polluting the field with the booking time. Five of the
         # 29 rows found on 2026-07-30 were exactly that — flagging them would
         # be crying wolf over correct behaviour.
+        # _is_real_rate, NOT `is not None`. This check writes the STRING
+        # "Not Quoted" into ol_rate itself as an NQ sentinel a few hundred
+        # lines up, and `is not None` counted every one of those as a quote
+        # that could not be dated. A row explicitly marked Not Quoted has no
+        # quote to date — by definition, not by accident — so it inflated the
+        # banner Michael reads and made the number untrustworthy. Same class
+        # of error as the stand_* rows this check already excludes.
         _q_nots = [
             r for r in data.get("requests", [])
-            if (r.get("ol_rate") is not None or r.get("carrier_quoted"))
+            if (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
             and not r.get("response_timestamp")
             and not str(r.get("request_id") or "").startswith("stand_")
         ]
@@ -4162,6 +4264,16 @@ def phase_6_rules(log: Log, data: dict):
             _lanes = ", ".join(
                 str(r.get("lane") or f"{r.get('origin')} → {r.get('destination')}")
                 for r in _q_nots[:6])
+            # WHY each survivor survived. A bare count is a number Michael can
+            # only escalate; the split says which lever moves it — re-pull the
+            # cache, or fix the ingest link. Everything reachable was already
+            # dated by _heal_undated_quote before this check runs.
+            _bodies_qc = _load_bodies_index()
+            _no_imids = sum(1 for r in _q_nots if not (r.get("source_imids") or []))
+            _no_body = sum(
+                1 for r in _q_nots
+                if (r.get("source_imids") or [])
+                and not any(_bodies_qc.get(i) for i in (r.get("source_imids") or [])))
             log.error(
                 f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
                 f"NO response_timestamp — every one is a real quote that "
@@ -4173,8 +4285,12 @@ def phase_6_rules(log: Log, data: dict):
                 # fired messages by substring, so quoting "QC-0xx" in prose
                 # makes that check look like it fired from here. The
                 # cross-reference lives in the comment above instead.
-                f"broken. Fix at ingest: only ingest.py:1200 sets the field — "
-                f"the sibling-lane fallback and the carrier backfill do not. "
+                f"broken. These are the rows the auto-dating heal could NOT "
+                f"reach — {_no_imids} have no source message linked at all, "
+                f"{_no_body} link to a message no longer in the body cache "
+                f"(90-day retention). Re-pull with "
+                f"`refresh_stage.py --days-back N` to widen the cache, or fix "
+                f"at ingest so the link is recorded when the rate is. "
                 f"Lanes: {_lanes}"
                 + (f" … +{len(_q_nots) - 6} more" if len(_q_nots) > 6 else ""))
         else:

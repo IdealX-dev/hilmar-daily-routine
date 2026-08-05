@@ -149,6 +149,140 @@ STILL OPEN
   watching: it is the first to run the restyled email AND the first to prove
   the resumed cron end to end.
 
+## 2026-08-05 (later) — the expressive toolkit exists; NOTHING LOOKS DIFFERENT YET
+
+Michael on the #146 restyle: "not sure i love the new format" -> "and for
+internal too.. it's just boring", "The restyle overall — too plain".
+
+THE DIAGNOSIS. The 2026-07-22 reference he called gorgeous is NOT a quiet
+document. It uses colour as ANNOTATION ON DATA — green/amber status pills,
+five carrier identity hues, a tinted winning row with a solid tag, numbered
+section chips, 4px coloured callout borders, muted mono "basis" text beside an
+amount ($0.10x8355 min35 next to $835.50). #146 implemented the reference's
+RESTRAINT (warm paper, hairlines, muted headers, mono figures) and left the
+annotation out. It removed the chrome AND the annotation, so what shipped is
+grey. The restraint was right; stopping there was not.
+
+WHAT ACTUALLY LANDED THIS RUN — read this before assuming the look is fixed.
+A 10-agent workflow was launched for this plus Lonny's weekly rollup. It hit
+the account's weekly usage limit after 3 agents. What survived:
+  DONE  the three research agents (reference vocabulary, per-file audit of
+        what #146 stripped, client-weekly spec)
+  DONE  branding.py — the expressive token set and 16 doc_* helpers
+        (doc_badge, doc_dot, doc_series_colour, doc_callout, doc_section_chip,
+        doc_tag_best, doc_best_row, doc_banner, doc_basis, doc_num,
+        doc_total_row, doc_card_footnote, doc_method_note, …), with 77 new
+        tests including a subprocess test proving doc_series_colour is stable
+        across PYTHONHASHSEED values
+  NOT DONE  every renderer. gen_dashboard, gen_email, gen_client_email,
+        gen_pdf and gen_weekly_summary were untouched.
+  NOT DONE  gen_client_weekly.py — Lonny's rollup does not exist yet.
+
+SO THE VISIBLE PROBLEM IS UNFIXED. Measured, not assumed: zero of the 16
+helpers are called by any renderer (grep -c across all five = 0), and the
+apparent token "hits" in rendered output are COLOUR COLLISIONS, not usage —
+DOC_BAN_FG / DOC_ON_SOLID / DOC_SECTION_CHIP_FG are all #ffffff,
+DOC_SECTION_CHIP_BG is identical to DOC_INK, DOC_SERIES_UNKNOWN is identical
+to DOC_MUTED. Grepping a rendered file for a token whose value already appears
+in it proves nothing. That is the same substring-scanner trap that produced
+two inert mutation probes on 07-30 and the one-of-two-doors guard on 08-05.
+NEXT SESSION STARTS HERE: wire the helpers into the five renderers, then prove
+it by rendering and grepping for a value that is UNIQUE to the new token.
+
+ALSO FIXED — a review catch on #148 (Copilot, and correct)
+  test_every_rate_recovery_dates_the_quote exempted ANY string-constant write
+  to r["ol_rate"] as a "sentinel write". That is an escape hatch, not an
+  exemption: a future recovery path writing a real rate as a string
+  (r["ol_rate"] = "2040") would have been waved through undated, and that rule
+  is the only thing between a recovered quote and permanent invisibility in
+  OL-USA RESPONSES. The exemption is now BY VALUE against qc_selfheal's own
+  _NON_RATE_SENTINELS, read from the module rather than restated, so adding a
+  sentinel there cannot silently widen the exemption. Third instance this week
+  of a guard with a hole shaped like a guard, so it got its own test.
+
+  VERIFIED: full suite 2330 passed, 0 failed; ruff clean (the interrupted
+  agent left 5 violations — 4 autofixed, 1 percent-format rewritten by hand).
+
+STILL OPEN
+- The renderers. This is the whole of Michael's complaint and it is untouched.
+- gen_client_weekly.py — Lonny still gets a body-only daily, no rollup.
+- Both blocked on usage resetting at 5pm UTC.
+
+## 2026-08-05 — 41 undated quotes, and a report that never said which day it meant
+
+Michael, on the audit's QC-077 banner ("41 further quotes are recorded with a
+rate or carrier but no response time"): "this is unacceptable." And on the
+Aug 4 client email he received Wed Aug 5 10:34 AM: "wording is all wrong on
+dates since you are using yesterdays data."
+
+Both correct. Taking the first one first, because it is the one I got wrong.
+
+1. I FIXED ONE OF TWO RATE-RECOVERY ROUTES AND CALLED IT DONE
+   #140 dated quotes recovered by patch_carriers. qc_selfheal._heal_missing_rate
+   recovers rates by a DIFFERENT route — re-parsing a cached OL body found via
+   source_imids — and never set response_timestamp at all. So half the
+   recoveries kept producing quotes OL-USA RESPONSES can never show, and the
+   count went 29 (07-30) → 41 (08-05) while a green suite said the fix shipped.
+   THE GUARD MISSED IT BECAUSE THE GUARD ONLY CHECKED ONE DOOR.
+   test_every_rate_recovery_dates_the_quote hard-coded patch_carriers.py. A
+   test that checks one of two modules reads exactly like a test that checks
+   the codebase. It is now parametrized over RATE_RECOVERY_MODULES, and adding
+   a module to that dict is how a new recovery route gets covered.
+
+2. QC-077 WAS COUNTING ROWS THAT HAVE NO QUOTE TO DATE
+   qc_selfheal writes the STRING "Not Quoted" into ol_rate as an NQ sentinel.
+   QC-077 tested `ol_rate is not None`, so every NQ-contaminated row counted as
+   an undateable quote. Part of the 41 was the check crying wolf at itself —
+   the same class of false positive as the stand_* rows it already excludes,
+   on a check whose entire value is being believed. All rate tests now go
+   through _is_real_rate.
+
+3. THE DETECTOR NOW HEALS WHAT IT CAN READ
+   QC-077 shipped as a pure detector, reasoning that synthesising a timestamp
+   would be fabrication. That holds for INVENTING a time. It does not hold for
+   READING one: these rows carry source_imids pointing at the very OL messages
+   their rates were parsed from, and those messages have a sentDateTime sitting
+   unused in the body cache (90-day retention, so July is well in range).
+   Detecting a gap you have the data to close is not caution — it is a warning
+   nobody can action.
+   _heal_undated_quote dates every reachable row. Rows with no send time stay
+   undated: recovery, not fabrication.
+   And the banner now says WHY each survivor survived — how many have no source
+   message linked at all vs. how many link to one aged out of the cache — so
+   the number names its own lever instead of just being alarming.
+
+4. THE CLIENT EMAIL NEVER SAID WHICH DAY IT MEANT
+   The header read "Activity for Tuesday, August 4, 2026 (prior business day) ·
+   Updated 10:33 AM ET" — a bare time with NO date, glued to a different date.
+   It reads as 10:33 AM on Aug 4. It was 10:33 AM on Aug 5. Five sections said
+   "that day", which is unanchored when you read it the next morning, and the
+   subject's bare "(Aug 4, 2026)" reads as the SEND date, making a correct
+   report look a day late.
+   Now: "Covers activity on Tuesday, August 4, 2026 · Sent Wednesday, August 5,
+   2026 at 10:33 AM ET", every section names its day, and the subject says
+   "activity for Aug 4, 2026". Still one distinct subject per report day, which
+   is what the mailbox guard and the client-sent flag key on.
+
+5. A SAILING THAT HAD ALREADY GONE, OFFERED FOR BOOKING
+   Not wording. "Awaiting your decision — reply to book" listed a quote with
+   ETD offered 31-Jul-26: four days before the day being reported, five before
+   Lonny read it. Inviting a customer to book a departed sailing is worse than
+   a formatting slip. Departed ETDs are now marked "sailed, ask us to requote"
+   — MARKED, not dropped, because silently removing a row from a client report
+   hides an open item. Unparseable dates pass through untouched; a date we
+   cannot read is not evidence that it is stale.
+
+   VERIFIED: full suite 2245 → 2249 passed, 0 failed; ruff clean. The heal was
+   exercised end-to-end on all six row shapes (dated-from-sent, dated-from-
+   received-fallback, NQ sentinel, standalone, no-link, aged-out) and only the
+   two genuinely unreachable rows survive.
+
+DECISIONS
+- Claude: heal the undated quotes rather than only detect them. The earlier
+  no-heal stance was right about fabrication and wrong about recovery.
+- Claude: mark departed sailings rather than drop them.
+- Michael: crons on, staff list yes, formatting first (all delivered 08-04).
+
 ## 2026-08-04 — The backfill loaded the data and then reported one day of it
 
 Michael, on the backfill run: "you failed in your backfill.. lots more work
