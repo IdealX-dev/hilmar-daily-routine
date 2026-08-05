@@ -10,11 +10,18 @@ character, so cp1252 accepts literally any input. The read succeeds, the wrong
 string flows on, and when it is written back out as utf-8 the original bytes
 are gone for good.
 
-That is why `open(path)` is the dangerous spelling. It uses
-locale.getpreferredencoding(), which is utf-8 on the Linux CI runners — where
-the tests pass — and cp1252 on the Windows Cloud PC that actually runs the
-daily pipeline. The bug is invisible in every environment that could catch it
-and permanent in the one that matters.
+That is why `open(path)` is the risky spelling. It uses
+locale.getpreferredencoding(), which on Windows is cp1252 UNLESS UTF-8 mode is
+enabled — and whether it is enabled is a property of the ENTRY POINT, not of
+this code.
+
+Every entry point we ship today does enable it: daily.yml sets
+PYTHONUTF8: "1", and so do run_daily_laptop.cmd, run_chase_evening.cmd and
+setup_cloudpc.ps1. So layer 3 below is defence in depth rather than a bug
+being fixed — an earlier draft of this file claimed otherwise and was wrong.
+What it buys is that the guarantee stops depending on an env var a new entry
+point can forget to set, in a failure mode whose defining property is that
+the read does not fail.
 
 Three layers here, because catching this after the fact is not enough:
   1. the shipped fixture is clean (it was NOT — 11 strings, repaired 2026-08-05)
@@ -173,9 +180,10 @@ def _unpinned_text_io(path: Path):
 @pytest.mark.parametrize("path", _PRODUCTION, ids=lambda p: f"{p.parent.name}/{p.name}")
 def test_text_io_always_names_its_codec(path):
     """71 sites across 24 modules were relying on the platform default when
-    this was written. On the Cloud PC that default is cp1252, so every one of
-    them was a place the tracking file could come back mangled — including
-    core.load_data, which every renderer goes through.
+    this was written — including core.load_data, which every renderer goes
+    through. Every entry point we ship sets PYTHONUTF8=1, so that default was
+    utf-8 everywhere and none of them was actively mangling anything. What
+    each one was, was a dependency on an env var rather than on the code.
 
     The assertion is zero, not a shrinking allowlist: the fix is a single
     keyword argument, so there is no such thing as a site too expensive to

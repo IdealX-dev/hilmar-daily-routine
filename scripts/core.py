@@ -504,16 +504,18 @@ def load_config(path: Path | str | None = None) -> dict:
 def load_data(path: Path | str) -> dict:
     """Read the tracking file. ALWAYS utf-8 — never the platform default.
 
-    `open(path)` uses locale.getpreferredencoding(), which is utf-8 on the CI
-    runners and cp1252 on the Windows Cloud PC that actually runs the daily
-    pipeline. Reading utf-8 bytes as cp1252 does not raise; it silently
-    succeeds and turns every "→" into "â†’" and every "×" into "Ã—". The row
-    then flows through ingest, gets written back out, and the mangling is
-    permanent — the original bytes are gone.
+    `open(path)` uses locale.getpreferredencoding(), which on Windows is
+    cp1252 UNLESS UTF-8 mode is on. Reading utf-8 bytes as cp1252 does not
+    raise; it silently succeeds and turns every "→" into "â†’" and every "×"
+    into "Ã—". The row then flows through ingest, gets written back out, and
+    the mangling is permanent — the original bytes are gone.
 
-    Michael 2026-08-05, on a dashboard full of "Oakland â†' Shanghai":
-    "illegible characters". Pinning the codec is the only fix that holds,
-    because the failure mode is a read that does not fail.
+    Every entry point we ship today does set UTF-8 mode — daily.yml and the
+    Windows wrappers all export PYTHONUTF8=1 — so this is defence in depth,
+    not a bug being fixed. The point of naming the codec here is that the
+    guarantee then lives in the code rather than in an env var a NEW entry
+    point can forget, and the failure mode if one does is a read that does
+    not fail.
     """
     with open(path, encoding="utf-8") as f:
         return json.load(f)

@@ -368,7 +368,7 @@ td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
 tr:hover td{{background:{B.DOC_TH_BG}}}
 .win{{color:{B.DOC_GOOD};font-weight:600}} .loss{{color:{B.DOC_BAD}}} .nq{{color:{B.DOC_WARN}}} .pending{{color:{B.DOC_PENDING}}}
 .win-row{{border-left:3px solid {B.DOC_GOOD}}} .loss-row{{border-left:3px solid {B.DOC_BAD}}} .nq-row{{border-left:3px solid {B.DOC_WARN}}} .pending-row{{border-left:3px solid {B.DOC_PENDING}}}
-.ta-fast{{color:{B.DOC_GOOD};font-weight:700}} .ta-medium{{color:{B.DOC_SERIES[3]}}} .ta-slow{{color:{B.DOC_BAD};font-weight:700}}
+.ta-fast{{color:{B.DOC_GOOD};font-weight:700}} .ta-medium{{color:{B.DOC_INFO}}} .ta-slow{{color:{B.DOC_BAD};font-weight:700}}
 
 input[name="tabs"]{{display:none}}
 .tabs{{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}}
@@ -413,7 +413,7 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 .wow-col{{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}}
 .wow-stack{{width:100%;display:flex;flex-direction:column-reverse;gap:0;height:60px}}
 .wow-seg{{width:100%}}
-.wow-seg.wins{{background:{B.DOC_GOOD}}} .wow-seg.ql{{background:{B.DOC_BAD}}} .wow-seg.nq{{background:{B.DOC_WARN}}} .wow-seg.pending{{background:{B.DOC_SERIES[2]}}}
+.wow-seg.wins{{background:{B.DOC_GOOD}}} .wow-seg.ql{{background:{B.DOC_BAD}}} .wow-seg.nq{{background:{B.DOC_WARN}}} .wow-seg.pending{{background:{B.DOC_PENDING}}}
 .wow-label{{font-size:9px;color:{B.DOC_MUTED};font-weight:600;text-align:center}}
 .wow-key{{font-size:11px;color:{B.DOC_MUTED};margin-top:8px;display:flex;flex-wrap:wrap;gap:14px}}
 .wow-key span{{display:inline-flex;align-items:center;gap:5px}}
@@ -507,7 +507,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
   <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
-  <a class="kpi" style="background:{B.DOC_SERIES[2]};color:white;border-top-color:{B.DOC_SERIES[2]}" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
+  <a class="kpi" style="background:{B.DOC_PENDING};color:white;border-top-color:{B.DOC_PENDING}" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
@@ -578,7 +578,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         # picked, and that stayed put when the bar colours moved. A legend that
         # can disagree with its chart is worse than no legend.
         _key = [("wins", "Wins", B.DOC_GOOD), ("ql", "Q&amp;L", B.DOC_BAD),
-                ("nq", "NQ", B.DOC_WARN), ("pending", "Pending", B.DOC_SERIES[2])]
+                ("nq", "NQ", B.DOC_WARN), ("pending", "Pending", B.DOC_PENDING)]
         html += ('<div class="wow-key">'
                  + "".join(f'<span><i style="background:{hexv}"></i>{label}</span>'
                            for _k, label, hexv in _key)
@@ -955,7 +955,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             # signal), identity purple = chase Hilmar (whose turn it is, not a
             # verdict). Three different purples used to mean "pending" on this
             # page; they are one now.
-            _wcolor = B.DOC_WARN if _sub == "PENDING_OL" else B.DOC_SERIES[2]
+            _wcolor = B.DOC_WARN if _sub == "PENDING_OL" else B.DOC_PENDING
             wait_on = f'<span style="color:{_wcolor};font-weight:600">{V.pending_label(_sub)}</span>'
             # "—" for a row we cannot date, matching gen_email's PENDING
             # HILMAR table. Previously these rows were dropped entirely.

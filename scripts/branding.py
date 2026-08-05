@@ -94,6 +94,20 @@ DOC_BAD_BG = "#fdeeee"   # no reference equivalent; tinted from DOC_BAD
 DOC_PENDING = "#8e44ad"
 DOC_PENDING_BG = "#f3ecf7"
 
+# Neutral information — "quoted", "biz hours", a middling turnaround. Not a
+# verdict either, so it stays out of good/warn/bad for the same reason
+# DOC_PENDING does. Shares the reference's steel blue with DOC_SERIES[3] on
+# the same accepted-collision terms as DOC_PENDING above.
+DOC_INFO = "#2c5f8a"
+DOC_INFO_BG = "#e8eff5"
+
+# Both of the above exist so no CALL SITE ever spells DOC_SERIES[n]. An
+# integer index into a carrier-identity tuple cannot say what it means: a
+# reader cannot tell "the pending hue" from "whichever carrier sorted third",
+# and repurposing the series — which is a palette-level decision — would
+# silently repaint semantics that merely borrowed a value. Named tokens make
+# the two independent. tests/test_document_restyle.py enforces it.
+
 # The reference loads IBM Plex from a CDN. We deliberately do NOT: these
 # documents ship as email bodies and email attachments, opened from Outlook,
 # often offline and always behind OL's proxy. A local stack renders the same
