@@ -19,9 +19,11 @@ The email is where this is easiest to get quietly wrong, for two reasons:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -59,7 +61,25 @@ def dash_html(data, cfg):
 
 DOC_TOKENS = ["DOC_PAPER", "DOC_CARD", "DOC_INK", "DOC_MUTED", "DOC_LINE",
               "DOC_TH_BG", "DOC_GOOD", "DOC_WARN", "DOC_BAD",
-              "DOC_MONO_STACK", "DOC_SANS_STACK", "DOC_TNUM"]
+              "DOC_MONO_STACK", "DOC_SANS_STACK", "DOC_TNUM",
+              # ── the expressive half, added 2026-08-05 ──────────────────
+              # #146 shipped the restraint tokens above and left the
+              # annotation out, which is the "just boring" Michael reported.
+              # These are the devices that put colour ON THE DATA.
+              # NOTE: DOC_RULE_* are deliberately NOT listed here — the hex
+              # test below selects by name suffix and "DOC_RULE_HAIRLINE"
+              # ends in "LINE", so it would be asserted to be a bare hex when
+              # it is a full CSS rule. They are covered by their own test.
+              # DOC_SERIES_PINS is also absent: it is empty by design and
+              # would fail the non-empty assertion.
+              "DOC_GOOD_BG", "DOC_WARN_BG", "DOC_BAD_BG",
+              "DOC_SERIES", "DOC_SERIES_UNKNOWN",
+              "DOC_BEST_ROW_BG", "DOC_TAG_BG", "DOC_ON_SOLID",
+              "DOC_BAN_BG", "DOC_BAN_FG",
+              "DOC_SECTION_CHIP_BG", "DOC_SECTION_CHIP_FG",
+              "DOC_CO_BORDER_WARN", "DOC_CO_BORDER_GOOD", "DOC_CO_BORDER_BAD",
+              "DOC_BADGE_TONES", "DOC_TYPE", "DOC_RADIUS", "DOC_TRACK",
+              "DOC_NULL", "DOC_WARN_GLYPH"]
 
 
 @pytest.mark.parametrize("name", DOC_TOKENS)
@@ -82,6 +102,404 @@ def test_the_three_renderers_read_the_same_paper_token(dash_html, email_html):
     assert B.DOC_PAPER in email_html
     assert GP.PAPER.hexval()[2:] == B.DOC_PAPER.lstrip("#"), (
         "the PDF page ground must be the same token, not a lookalike")
+
+
+# ── the expressive half: colour as annotation, not as chrome ───────────────
+#
+# #146 implemented the reference's restraint and left out its expression, so
+# what shipped was grey. The tokens and helpers below put colour back ON THE
+# DATA — which carrier a row belongs to, which row won its table, which quote
+# carries a caveat — and never back on the container. These tests are the
+# guard rails on that distinction.
+
+EXPRESSION_COLOURS = [
+    "DOC_GOOD_BG", "DOC_WARN_BG", "DOC_BAD_BG", "DOC_SERIES_UNKNOWN",
+    "DOC_BEST_ROW_BG", "DOC_TAG_BG", "DOC_ON_SOLID", "DOC_BAN_BG",
+    "DOC_BAN_FG", "DOC_SECTION_CHIP_BG", "DOC_SECTION_CHIP_FG",
+    "DOC_CO_BORDER_WARN", "DOC_CO_BORDER_GOOD", "DOC_CO_BORDER_BAD",
+]
+
+# One representative call per helper. Built lazily so the sweep tests below
+# exercise the live functions rather than a snapshot taken at import.
+def _helper_outputs():
+    return {
+        "doc_badge(ok)": B.doc_badge("ok"),
+        "doc_badge(warn)": B.doc_badge("warn"),
+        "doc_badge(bad)": B.doc_badge("bad"),
+        "doc_badge(neutral)": B.doc_badge("neutral"),
+        "doc_badge_html": B.doc_badge_html("2 pending >24h", "warn"),
+        "doc_dot": B.doc_dot("MSC"),
+        "doc_dot_html": B.doc_dot_html("MSC"),
+        "doc_tag_best": B.doc_tag_best(),
+        "doc_best_row": B.doc_best_row(),
+        "doc_callout(warn)": B.doc_callout("warn"),
+        "doc_callout(good)": B.doc_callout("good"),
+        "doc_callout(bad)": B.doc_callout("bad"),
+        "doc_section_chip": B.doc_section_chip(1),
+        "doc_banner": B.doc_banner("INTERNAL USE ONLY"),
+        "doc_basis": B.doc_basis(),
+        "doc_num": B.doc_num(),
+        "doc_num(bold)": B.doc_num(True),
+        "doc_total_row": B.doc_total_row(),
+        "doc_card_footnote": B.doc_card_footnote(),
+        "doc_method_note": B.doc_method_note(),
+    }
+
+
+@pytest.mark.parametrize("name", EXPRESSION_COLOURS)
+def test_expression_colours_are_six_digit_lowercase_hex(name):
+    assert re.fullmatch(r"#[0-9a-f]{6}", getattr(B, name)), (
+        f"branding.{name} must be a 6-digit lowercase hex — Word's engine does "
+        f"not parse shorthand or named colours reliably")
+
+
+# ── identity hues: which party, never which status ────────────────────────
+
+def test_the_identity_series_is_a_tuple_of_distinct_lowercase_hexes():
+    assert isinstance(B.DOC_SERIES, tuple), (
+        "DOC_SERIES must be an immutable sequence — a list invites a renderer "
+        "to append to it and re-colour every other artifact in the run")
+    assert len(B.DOC_SERIES) >= 5, "the reference carries five identity hues"
+    for hue in B.DOC_SERIES:
+        assert re.fullmatch(r"#[0-9a-f]{6}", hue), f"{hue} is not 6-digit lowercase hex"
+    assert len(set(B.DOC_SERIES)) == len(B.DOC_SERIES), (
+        "two identity hues are the same colour — the cycle would silently give "
+        "two carriers the same dot before it has even wrapped")
+
+
+@pytest.mark.parametrize("status", ["DOC_GOOD", "DOC_WARN", "DOC_BAD",
+                                    "DOC_INK", "DOC_MUTED"])
+def test_no_identity_hue_is_also_a_status_hue(status):
+    """THE hazard the reference shipped with: its --nax #B9740F and its --warn
+    #b9740f are the same colour in different case, so NAXCO's identity dot
+    rendered in exactly the amber that a "read the caveat" badge uses.
+
+    The reference could afford it — NAXCO never sat beside a badge. Hilmar
+    can't: a carrier column sits next to a status column on every table we
+    render, and identity read as status is the one failure the identity set
+    exists to prevent. Index 4 is deep teal for this reason. If a later change
+    "restores" #b9740f to DOC_SERIES to match the reference, this test is what
+    explains why it must not.
+    """
+    val = getattr(B, status)
+    assert val not in B.DOC_SERIES, (
+        f"identity hue {val} is also branding.{status} — a carrier dot in that "
+        f"colour cannot be told apart from a status signal")
+
+
+def test_the_identity_green_is_not_the_status_green():
+    """The reference is deliberate about this: identity #2e7d5b is a different
+    green from status #1f7a4d so "this row is carrier X" can never be misread
+    as "this row won"."""
+    assert "#2e7d5b" in B.DOC_SERIES, "the reference's identity green is missing"
+    assert B.DOC_GOOD == "#1f7a4d"
+    assert B.DOC_GOOD not in B.DOC_SERIES
+
+
+def test_the_first_four_identity_hues_are_the_reference_values():
+    """Provenance: --mr / --ads / --es / --dt, lowercased, otherwise unchanged.
+    Only the fifth was re-picked, and only because of the DOC_WARN collision."""
+    assert B.DOC_SERIES[:4] == ("#c0392b", "#2e7d5b", "#8e44ad", "#2c5f8a")
+
+
+# ── the carrier -> hue mapper is stable, and provably so ──────────────────
+
+CARRIERS = ["MSC", "Maersk", "CMA CGM", "Hapag-Lloyd", "ONE", "Evergreen",
+            "COSCO", "ZIM", "HMM", "Yang Ming", "OOCL", "PIL"]
+
+
+def test_the_same_carrier_gets_the_same_hue_across_processes():
+    """THE regression this mapper exists to prevent, and it cannot be caught
+    in-process. Python randomises str hashing per interpreter (PYTHONHASHSEED)
+    and run_pipeline.py launches the dashboard, the PDF and the email as three
+    SEPARATE processes — so a mapper built on the built-in hash() would give
+    one carrier three different colours inside a single pipeline run, while
+    looking perfectly stable to a single-process test.
+    """
+    import subprocess
+    prog = (
+        f"import sys;sys.path.insert(0,{str(ROOT / 'scripts')!r});"
+        f"import branding as B;"
+        f"print(','.join(B.doc_series_colour(c) for c in {CARRIERS!r}))"
+    )
+    runs = []
+    for seed in ("0", "1", "12345", "random"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        out = subprocess.run([sys.executable, "-c", prog], capture_output=True,
+                             text=True, env=env, check=True)
+        runs.append(out.stdout.strip())
+    assert len(set(runs)) == 1, (
+        "carrier colours changed between interpreters with different hash "
+        f"seeds — the mapper is not deterministic across processes: {runs}")
+    # and the in-process answer must agree with the subprocess answer
+    assert runs[0] == ",".join(B.doc_series_colour(c) for c in CARRIERS)
+
+
+def test_the_mapper_does_not_use_the_builtin_hash():
+    """Parsed, not grepped: the docstrings in branding.py talk ABOUT hash() at
+    length, and a regex cannot tell prose from a call."""
+    import ast
+    tree = ast.parse((ROOT / "scripts" / "branding.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+             and n.func.id == "hash"]
+    assert not calls, (
+        "branding.py calls the built-in hash() — it is salted per process and "
+        "cannot colour a carrier consistently across the three renderers")
+
+
+def test_a_carriers_hue_does_not_depend_on_which_other_carriers_exist():
+    """No dict-ordering dependence, no positional assignment: adding a carrier
+    tomorrow must not re-colour the ones already on the page."""
+    alone = B.doc_series_colour("MSC")
+    for c in reversed(CARRIERS):
+        B.doc_series_colour(c)
+    assert B.doc_series_colour("MSC") == alone
+    forward = {c: B.doc_series_colour(c) for c in CARRIERS}
+    backward = {c: B.doc_series_colour(c) for c in reversed(CARRIERS)}
+    assert forward == backward
+
+
+def test_the_mapper_normalises_case_spacing_and_punctuation():
+    assert B.doc_series_colour("MSC") == B.doc_series_colour("  msc ")
+    assert B.doc_series_colour("CMA CGM") == B.doc_series_colour("cma-cgm")
+    assert B.doc_series_colour("Hapag-Lloyd") == B.doc_series_colour("HAPAG LLOYD")
+
+
+def test_distinct_carriers_stay_distinct():
+    """Normalisation must not merge two carriers the tracker records
+    separately — that would hide a data problem behind a colour."""
+    assert B.doc_series_colour("Maersk") != ""
+    assert B._series_key("Maersk") != B._series_key("Maersk Line")
+
+
+def test_every_hue_in_the_cycle_is_reachable():
+    """Proves the modulo actually spans the tuple rather than parking on one
+    hue — a mapper that returns red for everything is stable and useless."""
+    seen = {B.doc_series_colour(f"carrier {i}") for i in range(200)}
+    assert seen == set(B.DOC_SERIES), f"unreachable hues: {set(B.DOC_SERIES) - seen}"
+
+
+def test_a_missing_carrier_is_muted_not_a_hue():
+    """"No carrier recorded" is its own data condition and must not look like
+    a sixth carrier."""
+    for blank in (None, "", "   ", "—", "-"):
+        assert B.doc_series_colour(blank) == B.DOC_SERIES_UNKNOWN
+    assert B.DOC_SERIES_UNKNOWN not in B.DOC_SERIES
+
+
+def test_the_pin_table_is_empty_and_overrides_the_hash_when_it_is_not():
+    """Empty because no production carrier data ships in this repo, so pinning
+    names would be inventing them. The mechanism is tested even though the
+    table is empty, because the next agent will populate it."""
+    assert B.DOC_SERIES_PINS == {}, (
+        "pins were added — confirm they came from the real carrier "
+        "distribution, then update this test to assert those pins")
+    pinned = dict(B.DOC_SERIES_PINS)
+    pinned[B._series_key("Maersk")] = 2
+    with patch.object(B, "DOC_SERIES_PINS", pinned):
+        assert B.doc_series_colour("maersk") == B.DOC_SERIES[2]
+        assert B.doc_series_colour("MSC") == B.doc_series_colour("MSC")
+    assert B.DOC_SERIES_PINS == {}, "the patch leaked into module state"
+
+
+def test_the_collision_reporter_names_carriers_that_share_a_dot():
+    """Five hues over twelve carriers must collide. A legend built without
+    checking shows two carriers wearing the same dot, which destroys the one
+    thing the dot is for."""
+    collisions = B.doc_series_collisions(CARRIERS)
+    assert collisions, (
+        "twelve carriers over five hues reported no collision — the reporter "
+        "is not actually comparing hues")
+    for hue, names in collisions.items():
+        assert hue in B.DOC_SERIES
+        assert len(names) > 1
+        assert names == sorted(names), "output must be sorted to stay stable"
+        assert len({B.doc_series_colour(n) for n in names}) == 1
+    assert B.doc_series_collisions(CARRIERS) == B.doc_series_collisions(list(reversed(CARRIERS)))
+    assert B.doc_series_collisions(["MSC"]) == {}
+    assert B.doc_series_collisions([None, "", "  "]) == {}
+
+
+# ── badges: the tone qualifies, the label carries the fact ────────────────
+
+@pytest.mark.parametrize("tone", ["ok", "warn", "bad", "neutral"])
+def test_a_badge_emits_its_token_pair_and_nothing_new(tone):
+    fg, bg = B.DOC_BADGE_TONES[tone]
+    style = B.doc_badge(tone)
+    assert f"background-color:{bg}" in style
+    assert f"color:{fg}" in style
+    assert "border:" not in style, (
+        "the reference's badges have no border — tint ground and matching "
+        "text only; a border makes them read as chrome")
+
+
+def test_badge_tones_reuse_existing_tokens_rather_than_inventing_colours():
+    """Sixteen colours in the whole reference. Every badge hue must already be
+    a named token, or the palette grows one quiet hex at a time."""
+    known = {getattr(B, n) for n in DOC_TOKENS if isinstance(getattr(B, n), str)}
+    for tone, (fg, bg) in B.DOC_BADGE_TONES.items():
+        assert fg in known, f"badge tone {tone} foreground {fg} is not a DOC_ token"
+        assert bg in known, f"badge tone {tone} background {bg} is not a DOC_ token"
+
+
+def test_an_unknown_badge_tone_fails_loudly():
+    """Tones come from code, never from ingested data, so an unknown one is a
+    programming error. Rendering the wrong signal quietly is worse."""
+    with pytest.raises(ValueError, match="unknown badge tone"):
+        B.doc_badge("green")
+    with pytest.raises(ValueError, match="unknown callout tone"):
+        B.doc_callout("info")
+
+
+def test_a_badge_label_is_escaped():
+    out = B.doc_badge_html('2 & <b>pending</b>', "warn")
+    assert "<b>" not in out
+    assert "&amp;" in out and "&lt;b&gt;" in out
+
+
+def test_the_winning_row_tint_is_the_same_value_as_the_ok_badge_ground():
+    """One system, not two greens: the reference reuses --bestbg for both so
+    a tinted row and an ok badge read as the same statement."""
+    assert B.DOC_BEST_ROW_BG == B.DOC_GOOD_BG
+    assert B.doc_best_row() == f"background-color:{B.DOC_GOOD_BG}"
+
+
+def test_the_three_solid_fills_are_drawn_from_existing_tokens():
+    """The reference contains exactly three solid colour fills — the red
+    classification strip, the ink section chip, the one green LOWEST pill.
+    A fourth is the signal that the hierarchy is wrong somewhere else."""
+    assert B.DOC_BAN_BG == B.DOC_BAD
+    assert B.DOC_SECTION_CHIP_BG == B.DOC_INK
+    assert B.DOC_TAG_BG == B.DOC_GOOD
+    assert len({B.DOC_BAN_BG, B.DOC_SECTION_CHIP_BG, B.DOC_TAG_BG}) == 3
+    for fg in (B.DOC_BAN_FG, B.DOC_SECTION_CHIP_FG):
+        assert fg == B.DOC_ON_SOLID
+
+
+def test_the_callout_default_is_watch_not_good():
+    """The reference's bare .co is warn and .good OVERRIDES it — observed
+    ratio one good to five warn. Inverting that turns every judgement into
+    a congratulation."""
+    assert B.doc_callout() == B.doc_callout("warn")
+    assert f"border-left:4px solid {B.DOC_WARN}" in B.doc_callout()
+    assert f"border-left:4px solid {B.DOC_GOOD}" in B.doc_callout("good")
+
+
+def test_a_callout_colours_only_its_edge():
+    """Colour appears in the 4px left edge, never as a tint behind the text —
+    that asymmetry is the device."""
+    style = B.doc_callout("bad")
+    assert f"background-color:{B.DOC_CARD}" in style
+    assert f"color:{B.DOC_INK}" in style
+    assert f"background-color:{B.DOC_BAD}" not in style
+
+
+# ── every helper is Outlook-safe and pure ─────────────────────────────────
+
+def test_no_helper_output_can_be_mistaken_for_an_unrendered_placeholder():
+    """Guards the email's placeholder-leak test from the other side: if a
+    helper ever returned a string containing braces, embedding it in the body
+    would trip that detector — or worse, hide a real leak."""
+    for label, out in _helper_outputs().items():
+        leaks = re.findall(r"\{[A-Za-z_][A-Za-z0-9_]{2,}\}", out)
+        assert not leaks, f"{label} emits placeholder-shaped text: {leaks}"
+        assert "{" not in out and "}" not in out, f"{label} emits braces"
+
+
+def test_every_helper_is_outlook_safe():
+    """Word's engine: no custom properties, no flex, no grid. A helper that
+    reaches for any of them renders unstyled on every desk at OL."""
+    for label, out in _helper_outputs().items():
+        assert "var(--" not in out, f"{label} uses a CSS custom property"
+        assert "display:flex" not in out, f"{label} uses flex"
+        assert "display:grid" not in out, f"{label} uses grid"
+        assert "linear-gradient" not in out, f"{label} uses a gradient"
+        assert "box-shadow" not in out, f"{label} uses a shadow"
+        assert "http" not in out, f"{label} pulls remote content"
+
+
+def test_every_colour_a_helper_emits_is_six_digit_lowercase_hex():
+    for label, out in _helper_outputs().items():
+        for hexval in re.findall(r"#[0-9a-fA-F]+", out):
+            assert re.fullmatch(r"#[0-9a-f]{6}", hexval), (
+                f"{label} emits {hexval} — shorthand and uppercase hex are not "
+                f"parsed reliably by Word's engine")
+
+
+def test_the_helpers_are_pure():
+    """No clock, no randomness, no module state: two calls in a row must be
+    byte-identical, and calling them must not mutate the tokens."""
+    before = {n: getattr(B, n) for n in DOC_TOKENS}
+    first = _helper_outputs()
+    second = _helper_outputs()
+    assert first == second
+    assert {n: getattr(B, n) for n in DOC_TOKENS} == before, (
+        "a helper mutated a shared token")
+
+
+def test_style_helpers_have_no_trailing_semicolon():
+    """Matches the TH_STYLE / H2_STYLE convention already in gen_email, so a
+    caller can append its own declarations without producing ';;'."""
+    for label in ("doc_badge(ok)", "doc_dot", "doc_best_row", "doc_callout(warn)",
+                  "doc_basis", "doc_num", "doc_total_row", "doc_card_footnote",
+                  "doc_method_note"):
+        assert not _helper_outputs()[label].endswith(";"), f"{label} ends with ';'"
+
+
+# ── the measured scales ───────────────────────────────────────────────────
+
+def test_the_type_scale_has_no_step_between_the_section_head_and_the_title():
+    """The reference's hierarchy below the h1 is carried by WEIGHT AND RULE,
+    not by size — there is deliberately nothing between 15px and 22px. A new
+    18px heading means someone reached for size instead of a rule."""
+    sizes = sorted(float(v.removesuffix("px")) for v in B.DOC_TYPE.values())
+    assert 15.0 in sizes and 22.0 in sizes
+    assert not [s for s in sizes if 15.0 < s < 22.0], (
+        f"a mid-size heading crept into the type scale: {sizes}")
+
+
+def test_the_tag_and_the_badge_are_never_the_same_shape():
+    """4px vs 5px radius, so the once-per-document LOWEST pill and an ordinary
+    badge never read as the same object."""
+    assert B.DOC_RADIUS["tag"] != B.DOC_RADIUS["badge"]
+    assert B.DOC_RADIUS["dot"] == "50%"
+
+
+def test_the_tracking_scale_runs_quiet_to_loud():
+    vals = [float(B.DOC_TRACK[k].removesuffix("em")) for k in ("quiet", "key", "loud")]
+    assert vals == sorted(vals) and len(set(vals)) == 3
+
+
+def test_there_are_exactly_four_rule_weights_and_each_uses_a_token():
+    """1px hairline, 1px dashed, 1.5px ink, 2px ink — each means something
+    different, and none of them hardcodes a colour."""
+    rules = [B.DOC_RULE_HAIRLINE, B.DOC_RULE_DASHED, B.DOC_RULE_TOTAL,
+             B.DOC_RULE_SECTION]
+    assert len(set(rules)) == 4
+    assert f"1px solid {B.DOC_LINE}" == B.DOC_RULE_HAIRLINE
+    assert f"1px dashed {B.DOC_LINE}" == B.DOC_RULE_DASHED
+    assert f"1.5px solid {B.DOC_INK}" == B.DOC_RULE_TOTAL
+    assert f"2px solid {B.DOC_INK}" == B.DOC_RULE_SECTION
+    assert B.DOC_RULE_TOTAL in B.doc_total_row()
+    assert B.DOC_RULE_DASHED in B.doc_card_footnote()
+
+
+def test_the_null_placeholder_and_severity_glyph_are_entities():
+    """Both must survive Outlook, where images are blocked and CSS is
+    unreliable — a character entity always renders."""
+    assert B.DOC_NULL == "&mdash;"
+    assert B.DOC_WARN_GLYPH == "&#9888;"
+
+
+def test_the_figure_helper_marks_the_decision_column():
+    """Bold on EVERY row of the one column the reader is comparing; the row
+    tint and the LOWEST pill then mark the winner within it."""
+    assert "font-weight:700" in B.doc_num(bold=True)
+    assert "font-weight:700" not in B.doc_num()
+    for style in (B.doc_num(), B.doc_num(True), B.doc_basis()):
+        assert B.DOC_MONO_STACK in style
+        assert "text-align:right" in style
 
 
 # ── the email is Outlook-safe ──────────────────────────────────────────────

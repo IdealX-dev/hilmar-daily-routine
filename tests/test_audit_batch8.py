@@ -623,12 +623,25 @@ def test_every_rate_recovery_dates_the_quote(module, stamper):
 
     # The NQ-contamination heal writes the sentinel string "Not Quoted" into
     # ol_rate on purpose; that is a marker, not a recovered quote, so it has
-    # nothing to date. Identified by the assigned value, not by line number.
+    # nothing to date and is exempt from the stamp rule.
+    #
+    # The exemption is BY VALUE, against qc_selfheal's own sentinel list.
+    # The first version exempted ANY string constant, which is an escape hatch
+    # rather than an exemption: a future recovery path writing a real rate as a
+    # string — r["ol_rate"] = "2040" — would have been waved through undated,
+    # and this guard exists precisely to stop that. Caught in review of #148.
+    # Reading the list from qc_selfheal rather than restating it here means
+    # adding a sentinel there cannot silently widen this exemption to something
+    # the check no longer treats as a non-rate.
+    import qc_selfheal as _QC
+    _sentinels = {s.strip().lower() for s in _QC._NON_RATE_SENTINELS}
+
     def _is_sentinel_write(lineno):
         for n in ast.walk(tree):
             if (isinstance(n, ast.Assign) and n.lineno == lineno
                     and isinstance(n.value, ast.Constant)
-                    and isinstance(n.value.value, str)):
+                    and isinstance(n.value.value, str)
+                    and n.value.value.strip().lower() in _sentinels):
                 return True
         return False
 
@@ -870,3 +883,41 @@ def test_the_hard_stop_blocks_manual_dispatch_too():
         assert 'event_name }}" != "schedule"' not in before, (
             f"{name}.yml checks the dispatch branch BEFORE the hard stop — a "
             "manual dispatch would slip through and send")
+
+
+def test_the_sentinel_exemption_cannot_wave_through_a_real_rate():
+    """The exemption in test_every_rate_recovery_dates_the_quote must be BY
+    VALUE, not "any string constant".
+
+    Raised in review of #148 (Copilot, 2026-08-05) and correct: exempting any
+    string-constant write means a future recovery path assigning a real rate
+    as a string — r["ol_rate"] = "2040" — is silently excused from the
+    must-stamp rule, and that rule is the only thing standing between a
+    recovered quote and permanent invisibility in OL-USA RESPONSES.
+
+    An escape hatch in a guard reads exactly like a guard. This is the third
+    instance of that shape this week (the AST walk that was really a substring
+    scan; the wiring guard scoped to one of two modules), so it gets its own
+    test rather than a comment.
+    """
+    import ast
+
+    import qc_selfheal as QC
+
+    sentinels = {s.strip().lower() for s in QC._NON_RATE_SENTINELS}
+    assert "not quoted" in sentinels, (
+        "the NQ sentinel is missing from _NON_RATE_SENTINELS — the exemption "
+        "would stop covering the one write it exists for")
+
+    # A real rate written as a string must NOT be treated as a sentinel.
+    for real in ('"2040"', '"$2,040/20DV"', '"725"'):
+        tree = ast.parse(f'r["ol_rate"] = {real}')
+        node = tree.body[0]
+        assert node.value.value.strip().lower() not in sentinels, (
+            f'{real} is a real rate and must never be exempted from the '
+            f'must-stamp rule')
+
+    # And the sentinel itself must still be exempt, or the guard goes red on
+    # the deliberate NQ-contamination write.
+    tree = ast.parse('r["ol_rate"] = "Not Quoted"')
+    assert tree.body[0].value.value.strip().lower() in sentinels

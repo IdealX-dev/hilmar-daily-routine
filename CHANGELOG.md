@@ -149,6 +149,65 @@ STILL OPEN
   watching: it is the first to run the restyled email AND the first to prove
   the resumed cron end to end.
 
+## 2026-08-05 (later) — the expressive toolkit exists; NOTHING LOOKS DIFFERENT YET
+
+Michael on the #146 restyle: "not sure i love the new format" -> "and for
+internal too.. it's just boring", "The restyle overall — too plain".
+
+THE DIAGNOSIS. The 2026-07-22 reference he called gorgeous is NOT a quiet
+document. It uses colour as ANNOTATION ON DATA — green/amber status pills,
+five carrier identity hues, a tinted winning row with a solid tag, numbered
+section chips, 4px coloured callout borders, muted mono "basis" text beside an
+amount ($0.10x8355 min35 next to $835.50). #146 implemented the reference's
+RESTRAINT (warm paper, hairlines, muted headers, mono figures) and left the
+annotation out. It removed the chrome AND the annotation, so what shipped is
+grey. The restraint was right; stopping there was not.
+
+WHAT ACTUALLY LANDED THIS RUN — read this before assuming the look is fixed.
+A 10-agent workflow was launched for this plus Lonny's weekly rollup. It hit
+the account's weekly usage limit after 3 agents. What survived:
+  DONE  the three research agents (reference vocabulary, per-file audit of
+        what #146 stripped, client-weekly spec)
+  DONE  branding.py — the expressive token set and 16 doc_* helpers
+        (doc_badge, doc_dot, doc_series_colour, doc_callout, doc_section_chip,
+        doc_tag_best, doc_best_row, doc_banner, doc_basis, doc_num,
+        doc_total_row, doc_card_footnote, doc_method_note, …), with 77 new
+        tests including a subprocess test proving doc_series_colour is stable
+        across PYTHONHASHSEED values
+  NOT DONE  every renderer. gen_dashboard, gen_email, gen_client_email,
+        gen_pdf and gen_weekly_summary were untouched.
+  NOT DONE  gen_client_weekly.py — Lonny's rollup does not exist yet.
+
+SO THE VISIBLE PROBLEM IS UNFIXED. Measured, not assumed: zero of the 16
+helpers are called by any renderer (grep -c across all five = 0), and the
+apparent token "hits" in rendered output are COLOUR COLLISIONS, not usage —
+DOC_BAN_FG / DOC_ON_SOLID / DOC_SECTION_CHIP_FG are all #ffffff,
+DOC_SECTION_CHIP_BG is identical to DOC_INK, DOC_SERIES_UNKNOWN is identical
+to DOC_MUTED. Grepping a rendered file for a token whose value already appears
+in it proves nothing. That is the same substring-scanner trap that produced
+two inert mutation probes on 07-30 and the one-of-two-doors guard on 08-05.
+NEXT SESSION STARTS HERE: wire the helpers into the five renderers, then prove
+it by rendering and grepping for a value that is UNIQUE to the new token.
+
+ALSO FIXED — a review catch on #148 (Copilot, and correct)
+  test_every_rate_recovery_dates_the_quote exempted ANY string-constant write
+  to r["ol_rate"] as a "sentinel write". That is an escape hatch, not an
+  exemption: a future recovery path writing a real rate as a string
+  (r["ol_rate"] = "2040") would have been waved through undated, and that rule
+  is the only thing between a recovered quote and permanent invisibility in
+  OL-USA RESPONSES. The exemption is now BY VALUE against qc_selfheal's own
+  _NON_RATE_SENTINELS, read from the module rather than restated, so adding a
+  sentinel there cannot silently widen the exemption. Third instance this week
+  of a guard with a hole shaped like a guard, so it got its own test.
+
+  VERIFIED: full suite 2330 passed, 0 failed; ruff clean (the interrupted
+  agent left 5 violations — 4 autofixed, 1 percent-format rewritten by hand).
+
+STILL OPEN
+- The renderers. This is the whole of Michael's complaint and it is untouched.
+- gen_client_weekly.py — Lonny still gets a body-only daily, no rollup.
+- Both blocked on usage resetting at 5pm UTC.
+
 ## 2026-08-05 — 41 undated quotes, and a report that never said which day it meant
 
 Michael, on the audit's QC-077 banner ("41 further quotes are recorded with a
