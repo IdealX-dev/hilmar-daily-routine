@@ -599,7 +599,14 @@ def undated_quotes(data) -> list:
             continue
         if r.get("response_timestamp"):
             continue
-        if r.get("ol_rate") is not None or r.get("carrier_quoted"):
+        # core.has_quote_evidence, NOT `ol_rate is not None`. qc_selfheal's
+        # NQ-contamination heal writes the STRING "Not Quoted" into ol_rate,
+        # which is not None, so the old spelling counted rows with no quote at
+        # all — inflating this note while QC-077, fixed in #148, excluded them.
+        # Two numbers off one dataset, and the docstring of
+        # test_undated_quotes_excludes_standalones_like_the_check_does had
+        # already written down that they must agree.
+        if core.has_quote_evidence(r):
             out.append(r)
     return out
 

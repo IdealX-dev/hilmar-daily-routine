@@ -3,6 +3,64 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-05 (3) — the review on #148 was right three times
+
+Michael forwarded Copilot's review of the merged #148 and said "go".
+
+1. FIVE SPELLINGS OF ONE PREDICATE, AND #148 ADDED A SIXTH
+   qc_selfheal's NQ heal writes the STRING "Not Quoted" into ol_rate, so
+   `ol_rate is not None` reads that sentinel as a quote. #148 added
+   _is_real_rate to fix QC-077 — and left every other spelling in place:
+     - gen_email.undated_quotes: `ol_rate is not None` — the twin consumer,
+       feeding the STAFF email's undated-quotes note. Reproduced: QC-077
+       excluded the sentinel row, the email counted it. Two numbers, one
+       dataset. test_undated_quotes_excludes_standalones_like_the_check_does
+       had ALREADY written that invariant into its own docstring, and passed
+       throughout, because every test used numeric rates.
+     - the quoted-flag reconciler: its own three-sentinel list, so
+       ol_rate="N/A" or "—" read as a real rate and flipped quoted=True on a
+       row with no quote.
+   Now core.is_real_rate / core.has_quote_evidence, one home both modules can
+   import — gen_email cannot import qc_selfheal, which is how the second
+   spelling got written in the first place. qc_selfheal keeps the old private
+   names as aliases. Ratchet: a test fails any module that rolls its own
+   ol_rate sentinel tuple. The NQ-contamination heal is exempt BY NAME — it
+   asks "is this already the sentinel", which is normalising, not detecting,
+   and genuinely wants a different answer for "—".
+
+2. A BREAKDOWN THAT ADDED UP ONLY BECAUSE NOBODY CHECKED
+   QC-077's survivor split counted "_no_body" as "imid absent from the bodies
+   index". The heal needs sent/sentDateTime/received. A row whose message IS
+   cached but carries none of them landed in neither bucket, so the two
+   numbers could sum to less than the total the banner claimed to explain —
+   in a banner whose whole purpose is that the number names its own lever.
+   The cause is that the classifier RE-DERIVED the heal's success condition.
+   Both read _body_send_time now, and _undated_reason returns exactly one
+   label per row, so the split is exhaustive by construction rather than by
+   three counters happening to agree. A third case (cached but timeless) and
+   anything unclassified are reported, not dropped.
+
+3. A QUIET DAY THAT HID A LIVE QUOTE
+   _narrative early-returned "a quiet day on new activity" before anything
+   consulted `awaiting`. But `awaiting` is CURRENT STATE, not today's window —
+   _today_events collects every PENDING row regardless of date — so a slow day
+   can still carry priced quotes from earlier in the week. The narrative said
+   quiet while the KPI tile and the table directly beneath it showed Lonny a
+   live quote with a reply-to-book call to action.
+   The sentence was never FALSE, and that is exactly why it survived: it reads
+   as correct until you compare it with the rest of the page. Same
+   narrative-vs-table split #148 existed to close, one branch further down.
+
+   Suite 2458 passed, 0 failed. ruff clean.
+
+THE PATTERN, SAID PLAINLY
+   Three findings, one shape: a fix applied at the site where the symptom was
+   observed rather than to the predicate the symptom came from. #148's own
+   narrative claimed "all rate tests now go through _is_real_rate" — that
+   sentence was false when it was written. Each fix here ships with the
+   invariant asserted over the whole domain (every sentinel, every send-time
+   field, both narrative branches) instead of over the one case that was seen.
+
 ## 2026-08-05 (2) — three screenshots, three real defects
 
 Michael sent three shots of the dashboard preview: "not sure the fonts used

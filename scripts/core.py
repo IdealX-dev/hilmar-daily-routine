@@ -909,6 +909,47 @@ def is_loss(r: dict) -> bool:
     return s == "LOSS" or s == "Q&L" or s == "NQ"
 
 
+# ─────────────────────────────────────────────────────────────────────
+# "Is there a real rate on this row?" — ONE predicate.
+#
+# qc_selfheal's NQ-contamination heal writes the STRING "Not Quoted" into
+# ol_rate as a sentinel, so `ol_rate is not None` reads that sentinel as a
+# quote. PR #148 fixed that for QC-077 by adding _is_real_rate in
+# qc_selfheal.py — and left four other spellings of the same question in
+# place, which is how the staff email's undated-quotes note and the QC-077
+# banner came to report different counts off the same data. Copilot caught it.
+#
+# It lives in core because the consumers are in different modules and
+# gen_email cannot import qc_selfheal to get at it. tests/test_audit_batch8
+# holds the sentinel list to the heal that writes it.
+# ─────────────────────────────────────────────────────────────────────
+
+NON_RATE_SENTINELS = ("", "not quoted", "n/a", "none", "null", "—", "-")
+
+
+def is_real_rate(v) -> bool:
+    """True only when ol_rate holds an actual quoted amount.
+
+    Note what this is NOT for: deciding whether an ol_rate needs normalising
+    to the sentinel. That asks "is this already the sentinel", a different
+    question with a different answer for "—" and "N/A", and the NQ-
+    contamination heal keeps its own guard for it.
+    """
+    if v is None:
+        return False
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return True
+    return str(v).strip().lower() not in NON_RATE_SENTINELS
+
+
+def has_quote_evidence(r: dict) -> bool:
+    """True when a row carries a real rate OR a quoted carrier — the shared
+    'OL responded with something' test behind the undated-quotes note, the
+    QC-077 banner, and the quoted-flag reconciliation."""
+    r = r or {}
+    return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
+
+
 def is_win(r: dict) -> bool:
     """True if row is a win. WIN is spelled the same in both storage forms —
     this exists so a renderer can classify a row entirely through these

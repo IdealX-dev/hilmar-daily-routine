@@ -997,3 +997,50 @@ def test_a_booked_row_is_never_also_awaiting_lonnys_decision():
     assert not (booked & waiting), (
         "a confirmed booking is also being shown as awaiting Lonny's "
         "decision — the most expensive place to contradict ourselves")
+
+
+# ── a quiet day must not hide a live quote (Copilot, PR #149) ───────────────
+
+def test_quiet_day_narrative_still_points_at_quotes_awaiting_decision():
+    """_narrative early-returned the quiet-day sentence before anything looked
+    at `awaiting`. But `awaiting` is CURRENT STATE, not today's window —
+    _today_events collects every PENDING row regardless of date — so a day
+    with no new activity can still carry priced quotes from earlier in the
+    week. The narrative said "a quiet day" while the tile and table directly
+    beneath it showed Lonny a live quote with a reply-to-book call to action.
+
+    The sentence was never false, which is why it survived: it reads as
+    correct until you compare it with the rest of the page.
+    """
+    line = gce._narrative({"requests": [], "quotes": [], "bookings": [],
+                           "awaiting": [{"lane": "Oakland → Shanghai"}]})
+    assert "quiet day" in line
+    assert "await" in line and "decision" in line, (
+        f"quiet-day narrative hides a quote awaiting decision: {line!r}")
+
+
+def test_quiet_day_with_nothing_awaiting_stays_quiet():
+    """The other direction — the fix must not bolt an awaiting clause onto a
+    genuinely empty day."""
+    line = gce._narrative({"requests": [], "quotes": [], "bookings": [],
+                           "awaiting": []})
+    assert "quiet day" in line
+    assert "await" not in line
+
+
+def test_quiet_day_singular_and_plural_agree_with_the_count():
+    one = gce._narrative({"requests": [], "quotes": [], "bookings": [],
+                          "awaiting": [{}]})
+    two = gce._narrative({"requests": [], "quotes": [], "bookings": [],
+                          "awaiting": [{}, {}]})
+    assert "1 quote" in one and "awaits" in one
+    assert "2 quotes" in two and "await" in two
+
+
+def test_a_busy_day_still_appends_the_awaiting_clause():
+    """The non-quiet branch already did this; the refactor moved n_wait above
+    the early return, so guard that it still reaches the busy path."""
+    line = gce._narrative({"requests": [{}], "quotes": [], "bookings": [],
+                           "awaiting": [{}]})
+    assert "quiet day" not in line
+    assert "awaits your decision below" in line
