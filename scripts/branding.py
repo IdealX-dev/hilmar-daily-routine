@@ -78,6 +78,22 @@ DOC_WARN_BG = "#fdf4e3"  # (--warnbg)
 DOC_BAD = "#b03030"      # (--red)
 DOC_BAD_BG = "#fdeeee"   # no reference equivalent; tinted from DOC_BAD
 
+# PENDING is deliberately NOT one of the three above. Good/warn/bad are
+# verdicts on a row; "still pending" is a statement about whose turn it is,
+# and colouring it as a verdict is how a reader concludes an open quote has
+# already gone wrong. So it takes an IDENTITY hue — the reference's wisteria,
+# which is also DOC_SERIES[2].
+#
+# That shared value is a real, accepted collision: a carrier that hashes to
+# series index 2 gets a dot the same colour as a pending marker. It is
+# tolerable because the two never carry meaning alone — a carrier dot always
+# sits beside the carrier's NAME (see the DOC_SERIES note below) and a pending
+# marker always sits inside a pill that says PENDING. Named here rather than
+# spelled DOC_SERIES[2] at each call site so the intent survives the next edit:
+# three different purples used to mean "pending" across the dashboard alone.
+DOC_PENDING = "#8e44ad"
+DOC_PENDING_BG = "#f3ecf7"
+
 # The reference loads IBM Plex from a CDN. We deliberately do NOT: these
 # documents ship as email bodies and email attachments, opened from Outlook,
 # often offline and always behind OL's proxy. A local stack renders the same

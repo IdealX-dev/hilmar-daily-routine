@@ -110,14 +110,14 @@ def _load_cache() -> msal.SerializableTokenCache:
     cache = msal.SerializableTokenCache()
     read_path = _token_cache_read_path()
     if read_path.exists():
-        cache.deserialize(read_path.read_text())
+        cache.deserialize(read_path.read_text(encoding="utf-8"))
     return cache
 
 
 def _save_cache(cache: msal.SerializableTokenCache) -> None:
     if cache.has_state_changed:
         TOKEN_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_CACHE_PATH.write_text(cache.serialize())
+        TOKEN_CACHE_PATH.write_text(cache.serialize(), encoding="utf-8")
         with contextlib.suppress(OSError):
             os.chmod(TOKEN_CACHE_PATH, 0o600)  # Windows / OneDrive — best-effort
 
@@ -288,7 +288,7 @@ def send_mail(*, to: list[str], subject: str, html_body: str,
 def _load_distribution_from_config() -> tuple[list[str], list[str]]:
     """Pull (full_list, daily_cc) from config.json."""
     cfg_path = ROOT / "config.json"
-    cfg = json.loads(cfg_path.read_text())
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     full = cfg.get("distribution", {}).get("full_list", [])
     cc = []  # the daily email already targets full_list with Michael in it
     return full, cc
@@ -522,13 +522,13 @@ def cmd_auth_bg(args) -> int:
         result = app.acquire_token_silent(SCOPES, account=accounts[0])
         if result:
             _save_cache(cache)
-            status_path.write_text(json.dumps({"status": "ok", "method": "silent"}))
+            status_path.write_text(json.dumps({"status": "ok", "method": "silent"}), encoding="utf-8")
             print("silent ok")
             return 0
 
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
-        status_path.write_text(json.dumps({"status": "error", "message": str(flow)}))
+        status_path.write_text(json.dumps({"status": "error", "message": str(flow)}), encoding="utf-8")
         return 1
     pending = {
         "status": "pending",
@@ -537,7 +537,7 @@ def cmd_auth_bg(args) -> int:
         "message": flow["message"],
         "expires_at": int(time.time()) + flow.get("expires_in", 900),
     }
-    status_path.write_text(json.dumps(pending))
+    status_path.write_text(json.dumps(pending), encoding="utf-8")
     print(f"DEVICE_CODE={flow['user_code']} URL={flow['verification_uri']}")
     sys.stdout.flush()
     result = app.acquire_token_by_device_flow(flow)
@@ -546,12 +546,12 @@ def cmd_auth_bg(args) -> int:
         status_path.write_text(json.dumps({
             "status": "ok",
             "user": result.get("id_token_claims", {}).get("preferred_username"),
-        }))
+        }), encoding="utf-8")
         return 0
     status_path.write_text(json.dumps({
         "status": "error",
         "message": result.get("error_description", str(result)),
-    }))
+    }), encoding="utf-8")
     return 1
 
 

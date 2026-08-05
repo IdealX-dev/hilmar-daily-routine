@@ -122,14 +122,14 @@ def analyze_week(rows, win_rows=None):
     """
     win_rows = rows if win_rows is None else win_rows
     total = len(rows)
-    wins = sum(1 for r in win_rows if r["status"] == "WIN")
+    wins = sum(1 for r in win_rows if core.is_win(r))
     teu_won = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
-                  for r in win_rows if r["status"] == "WIN")
-    ql = sum(1 for r in rows if r["status"] == "LOSS" and r.get("quoted"))
+                  for r in win_rows if core.is_win(r))
+    ql = sum(1 for r in rows if core.is_quoted_and_lost(r))
     teu_ql = sum(int(r.get("teu_requested") or 0)
-                 for r in rows if r["status"] == "LOSS" and r.get("quoted"))
-    nq = sum(1 for r in rows if r["status"] == "LOSS" and not r.get("quoted"))
-    pending = sum(1 for r in rows if r["status"] == "PENDING")
+                 for r in rows if core.is_quoted_and_lost(r))
+    nq = sum(1 for r in rows if core.is_not_quoted(r))
+    pending = sum(1 for r in rows if core.is_pending(r))
     quoted = wins + ql
     win_rate = (wins / quoted * 100) if quoted else 0
     quote_rate = ((quoted + pending) / total * 100) if total else 0
@@ -162,7 +162,7 @@ def top_lanes_by_teu_won(rows, n=3):
 def top_lanes_losing(rows, n=3):
     by_lane = defaultdict(lambda: {"losses": 0, "teu_lost": 0, "rates": []})
     for r in rows:
-        if r["status"] != "LOSS" or not r.get("quoted"):
+        if not core.is_quoted_and_lost(r):
             continue
         lane = r.get("lane") or "?"
         by_lane[lane]["losses"] += 1
@@ -190,7 +190,7 @@ def carrier_of_week(rows, win_rows=None):
     # Identity, not equality: rows are plain dicts (unhashable, and two
     # distinct RFQs can compare equal), so membership is by object.
     intake_ids = {id(r) for r in rows}
-    win_ids = {id(r) for r in win_rows if r.get("status") == "WIN"}
+    win_ids = {id(r) for r in win_rows if core.is_win(r)}
     considered = {id(r): r for r in list(rows) + list(win_rows)}
 
     by_c = defaultdict(lambda: {"quotes": 0, "wins": 0, "teu_won": 0})

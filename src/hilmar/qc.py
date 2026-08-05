@@ -1001,7 +1001,7 @@ def phase_10_schema_drift(log: Log, data: dict, schema_path: Path | None = None)
     top_props: dict[str, Any] = {}
     if schema_path is not None:
         try:
-            schema = json.loads(schema_path.read_text())
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
             defs = schema.get("definitions", {})
             req_props = defs.get("request", {}).get("properties", {})
             summary_props = defs.get("summary", {}).get("properties", {})
@@ -1126,7 +1126,7 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path) -> di
         },
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(result_path, "w") as f:
+    with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     log.ok(f"Wrote {result_path}")
     return result
@@ -1182,7 +1182,7 @@ def run_qc(
         log.error("BLOCKING: structural integrity failure")
         result = {"status": "BLOCKED", "errors": log.errors}
         result_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(result_path, "w") as f:
+        with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
         return result, log
 

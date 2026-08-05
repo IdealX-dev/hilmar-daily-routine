@@ -101,9 +101,9 @@ def equipment_teu(qty, equipment):
 
 
 def main():
-    with open(DATA_PATH) as f:
+    with open(DATA_PATH, encoding="utf-8") as f:
         data = json.load(f)
-    with open(BKG_PATH) as f:
+    with open(BKG_PATH, encoding="utf-8") as f:
         bkg = json.load(f)
     requests = data.get("requests", [])
     confirmations = bkg.get("confirmations", [])
@@ -248,7 +248,7 @@ def main():
     data["last_updated"] = now_iso
     data["link_mdolx_stats"] = stats
 
-    with open(DATA_PATH, "w") as f:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str)
 
     # Summary print

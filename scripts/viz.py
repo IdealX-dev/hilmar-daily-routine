@@ -192,7 +192,7 @@ _PILL_PALETTE = {
     # status one on purpose: "waiting on Hilmar" is not a verdict on the row,
     # so it must not borrow the good/warn/bad vocabulary.
     "PENDING_OL":     (B.DOC_WARN_BG, B.DOC_WARN, B.DOC_WARN),      # chase OL
-    "PENDING_HILMAR": ("#f3ecf7", "#6b3f8c", B.DOC_SERIES[2]),      # chase Hilmar
+    "PENDING_HILMAR": (B.DOC_PENDING_BG, "#6b3f8c", B.DOC_PENDING),  # chase Hilmar
     "QUOTED":  ("#e8eff5", "#245073", B.DOC_SERIES[3]),
     "OK":      (B.DOC_GOOD_BG, B.DOC_GOOD, B.DOC_GOOD),
     "WARN":    (B.DOC_WARN_BG, B.DOC_WARN, B.DOC_WARN),

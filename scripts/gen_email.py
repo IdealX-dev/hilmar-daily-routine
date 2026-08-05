@@ -1111,9 +1111,9 @@ def _today_summary(requests, report_date=None):
         "wins":         len(day_wins),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                             for r in day_wins),
-        "quoted_lost":  sum(1 for r in day_reqs if r.get("status") == "LOSS" and r.get("quoted")),
-        "not_quoted":   sum(1 for r in day_reqs if r.get("status") == "LOSS" and not r.get("quoted")),
-        "pending":      sum(1 for r in day_reqs if r.get("status") == "PENDING"),
+        "quoted_lost":  sum(1 for r in day_reqs if core.is_quoted_and_lost(r)),
+        "not_quoted":   sum(1 for r in day_reqs if core.is_not_quoted(r)),
+        "pending":      sum(1 for r in day_reqs if core.is_pending(r)),
         "won_later":    len(won_later),
         "total":        len(day_reqs),
         "as_of_label":  f"{rd_iso} (ET)",
@@ -2133,7 +2133,7 @@ def main() -> int:
     ap.add_argument("--config", default=str(ROOT / "config.json"))
     args = ap.parse_args()
     cfg = core.load_config(args.config)
-    data = json.loads(Path(cfg["paths"]["data"]).read_text())
+    data = json.loads(Path(cfg["paths"]["data"]).read_text(encoding="utf-8"))
     body = build_body(data, cfg)
     subject = build_subject(data, cfg)
     body_path = Path(cfg["paths"]["email_body"])

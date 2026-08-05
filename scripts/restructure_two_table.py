@@ -78,9 +78,9 @@ def equipment_teu(qty, equipment):
 
 
 def main():
-    with open(DATA_PATH) as f:
+    with open(DATA_PATH, encoding="utf-8") as f:
         data = json.load(f)
-    with open(BKG_PATH) as f:
+    with open(BKG_PATH, encoding="utf-8") as f:
         bkg = json.load(f)
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -229,7 +229,7 @@ def main():
         },
     }
 
-    with open(DATA_PATH, "w") as f:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(new_data, f, indent=2, default=str)
 
     print()

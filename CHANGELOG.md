@@ -3,6 +3,95 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-05 (2) — three screenshots, three real defects
+
+Michael sent three shots of the dashboard preview: "not sure the fonts used
+as illegible characters", "bad data", "unmapped shouldn't exist". All three
+were genuine. None was a font.
+
+1. "ILLEGIBLE CHARACTERS" — MOJIBAKE, AND THE READ THAT CANNOT FAIL
+   `Oakland â†' Shanghai` is `Oakland → Shanghai` after the three bytes of
+   "→" were decoded as cp1252. That decode never raises — every byte is a
+   legal cp1252 character — so the wrong string flows on and, once written
+   back as utf-8, the original bytes are gone.
+     - tests/fixtures/golden_day.json carried 11 mangled strings: every lane
+       arrow, every `3Ã—40'RF` equipment cell, and a subject em dash.
+       Repaired by a verified round-trip (encode cp1252 → decode utf-8, and
+       only accepted where re-mangling reproduces the original byte for
+       byte). It is the fixture the dashboard, PDF, client-email and schema
+       tests all render from, so those tests had been asserting mangled
+       output was correct for as long as it sat there.
+     - 71 text reads/writes across 24 modules used the platform default
+       codec, INCLUDING core.load_data — the funnel every renderer goes
+       through. utf-8 on the Linux CI runners, cp1252 on the Windows Cloud
+       PC that runs the pipeline: invisible everywhere it could be caught,
+       permanent where it matters. All 71 now name utf-8.
+     - tests/test_no_mojibake.py guards all three layers, and asserts ZERO
+       unpinned sites rather than a shrinking allowlist — the fix is one
+       keyword argument, so no site is too expensive to convert.
+
+2. "BAD DATA" — TWO VOCABULARIES FOR ONE FACT
+   A loss is stored either LEGACY (status="LOSS" + `quoted`) or STRICT
+   (status="Q&L"/"NQ"). core.py has carried display_status / is_loss /
+   is_quoted_and_lost / is_not_quoted since 2026-06-02 to absorb exactly
+   that, and its own comment says the point is that nothing else should
+   inline the logic. The renderers were never converted. They compared
+   `status == "LOSS"` — half the vocabulary — so STRICT rows fell out of
+   every bucket with no error and no gap in the layout:
+     - the Week-over-Week column holding the Q&L and NQ rows drew NOTHING
+       under a label reading "2req". Zero segments render as blank space.
+     - the Not Quoted header read "0 listed • 0 total • 10 TEU" — counts
+       from the dropped rows, TEU from the summary block, which was right
+       all along. Individually defensible, jointly impossible: the signature
+       of two derivations of one fact.
+   Converted 17 sites across gen_dashboard, gen_weekly_summary, gen_pdf and
+   gen_email; added core.is_win / core.is_pending so a bucketing loop can be
+   written entirely in accessors with no literal left to pick a side. The
+   WoW bucketer now counts what it cannot classify, so a column can never
+   again disagree with the caption printed under it.
+   tests/test_status_form_agnostic.py renders one fixture in BOTH forms and
+   asserts the numbers are identical — that binds any renderer written next
+   month, not just the ones fixed today. An AST scan is the backstop; it
+   found a 17th site (`!= "LOSS"`) the hand pass missed.
+
+3. "UNMAPPED SHOULDN'T EXIST" — THE MAP WAS NEVER THE PROBLEM
+   All five rows sat under Unmapped, flagging Shanghai, Busan, Qingdao and
+   Yokohama. Every one was ALREADY in _TRADE_REGION_MAP. The data spells
+   them "Shanghai, CN"; the lookup tried the whole string then the part
+   before "(", so a comma-qualified name missed both. Worse, the standing
+   rule that Unmapped means "extend the map" aimed every earlier
+   investigation at the one thing that was correct.
+   trade_region_for now peels comma segments off the tail, longest first,
+   and only ever matches a key genuinely present — it cannot infer a region
+   from a country code, so Unmapped still means extend the map. The test
+   asserts the property over the WHOLE map, not the four ports we happened
+   to see fail.
+
+4. THE PALETTE THE SCREENSHOT WAS ACTUALLY SHOWING
+   The WoW bars were #10b981/#ef4444/#f59e0b/#a855f7 — the old SaaS palette
+   — under a legend of four emoji circles that only APPROXIMATED them, in
+   whatever hues the reader's font vendor picked, and that would stay put
+   when the bars moved. A legend that can disagree with its chart is worse
+   than none; it is swatches now, drawn from the same tokens as the bars.
+   18 hardcoded hexes left gen_dashboard.py (KPI tiles, row accents,
+   badges, callouts, pending-severity rows, trend arrows, filter banner).
+   "Pending" alone had been three different purples on one page; it is
+   branding.DOC_PENDING now — deliberately an IDENTITY hue and not
+   good/warn/bad, because "whose turn is it" is not a verdict on the row.
+
+   Measured on the golden fixture, not asserted: 42,472 → 43,215 bytes;
+   18 colours dropped, 2 added; mojibake 21 → 0; WoW segments 2 → 4;
+   "0 total • 10 TEU" → "1 total • 10 TEU"; the Unmapped region row gone.
+
+   Suite 2445 passed, 0 failed. ruff clean.
+
+WHAT IS NOT VERIFIED
+   Which storage form today's live tracking file uses. It is not in this
+   container, so whether the WoW chart is currently wrong ON PRODUCTION DATA
+   is [Unverified] — scripts/ingest.py writes LEGACY, which the old code
+   handled, so it is likely the live dashboard was not showing this. The fix
+   is correct under both forms either way.
+
 ## 2026-08-04 (2) — "i like it all" finally means all three
 
 Michael, after asking for the staff send and the crons: "but first the

@@ -517,7 +517,7 @@ def _load_bodies_index() -> dict:
     if not path.exists():
         return out
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -5241,7 +5241,7 @@ def phase_7_save(log: Log, data: dict, data_path: Path, result_path: Path):
         },
     }
     result_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(result_path, "w") as f:
+    with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     log.ok(f"Wrote {result_path}")
     return result
@@ -5323,7 +5323,7 @@ def main() -> int:
     if not phase_2_structure(log, data):
         log.error("BLOCKING: structural integrity failure")
         result = {"status": "BLOCKED", "errors": log.errors}
-        with open(result_path, "w") as f:
+        with open(result_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2)
         return 1
     phase_3_entries(log, data)

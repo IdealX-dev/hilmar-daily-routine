@@ -42,7 +42,7 @@ def test_pending_hilmar_marker_is_violet_and_labeled():
     html = V.pending_pill("PENDING_HILMAR")
     assert "HILMAR" in html          # Michael: "pending Hilmar", not "Lonny"
     assert "LONNY" not in html
-    assert B.DOC_SERIES[2] in html, "the chase-Hilmar marker lost its violet"
+    assert B.DOC_PENDING in html, "the chase-Hilmar marker lost its violet"
     for status_hue in (B.DOC_GOOD, B.DOC_WARN, B.DOC_BAD):
         assert status_hue not in html, (
             "the chase-Hilmar marker is using a STATUS colour — it would read "

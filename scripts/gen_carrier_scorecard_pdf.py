@@ -338,7 +338,7 @@ def main():
         print(f"❌ Data not found: {data_path}", file=sys.stderr)
         sys.exit(1)
 
-    data = json.loads(data_path.read_text())
+    data = json.loads(data_path.read_text(encoding="utf-8"))
     carriers = data.get("carrier_summary", {}) or {}
 
     if args.carrier:

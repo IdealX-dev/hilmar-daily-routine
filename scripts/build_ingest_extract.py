@@ -190,8 +190,8 @@ def is_not_a_rate_request(subject: str | None) -> bool:
 # ── Main ────────────────────────────────────────────────────────────────
 
 def main():
-    pairs_doc = json.loads(PAIRS.read_text())
-    extract_v2 = json.loads(EXTRACT_V2.read_text())
+    pairs_doc = json.loads(PAIRS.read_text(encoding="utf-8"))
+    extract_v2 = json.loads(EXTRACT_V2.read_text(encoding="utf-8"))
 
     # Index extract_v2 by response id (the email id)
     extract_by_id: dict[str, dict] = {r.get("id"): r for r in extract_v2 if r.get("id")}
@@ -387,7 +387,7 @@ def main():
         ],
     }
 
-    OUT.write_text(json.dumps(out, indent=2, default=str))
+    OUT.write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
 
     print(f"wrote {OUT}")
     print(f"skipped NUMIDIA: {skipped_numidia}")

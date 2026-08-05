@@ -234,17 +234,53 @@ def pending_substate(req: dict) -> str | None:
 
 def trade_region_for(destination: str | None) -> str:
     """Map a destination name to a trade region. Returns 'Unmapped' (NOT 'OTHER')
-    for anything not in the map — Unmapped is the signal to extend the map."""
+    for anything not in the map — Unmapped is the signal to extend the map.
+
+    Country-qualified forms resolve to the same region as the bare port.
+    Michael 2026-08-05, on a dashboard showing every row Unmapped: "unmapped
+    shouldn't exist". Every one of those destinations — "Shanghai, CN",
+    "Busan, KR", "Qingdao, CN", "Yokohama, JP" — was ALREADY in the map under
+    its bare name. The map was never the problem; the lookup was. It tried the
+    whole string and then the part before "(", so a comma-qualified name missed
+    on both and fell through to Unmapped, and the standing instruction that
+    Unmapped means "extend the map" sent every previous investigation off to
+    add rows that were already there.
+
+    So we peel comma segments off the tail, longest first, and take the first
+    form the map actually knows. This only ever matches a key that is genuinely
+    present — nothing is inferred from the country code itself — so it cannot
+    invent a region for a port we have not classified. "Sturgis, MI" finds
+    "sturgis"; "Rotterdam, NL" finds "rotterdam"; an unknown port stays
+    Unmapped, which is still the signal to extend the map.
+    """
     if not destination:
         return "Unmapped"
     key = destination.strip().lower()
-    if key in _TRADE_REGION_MAP:
-        return _TRADE_REGION_MAP[key]
-    # Try first token (handles "HCMC (Cat Lai)", "HCMC (Cat Lai Port)", etc.)
-    head = key.split("(")[0].strip()
-    if head in _TRADE_REGION_MAP:
-        return _TRADE_REGION_MAP[head]
+    for candidate in _region_lookup_forms(key):
+        if candidate in _TRADE_REGION_MAP:
+            return _TRADE_REGION_MAP[candidate]
     return "Unmapped"
+
+
+def _region_lookup_forms(key: str):
+    """Yield the forms of a destination to try against _TRADE_REGION_MAP, most
+    specific first: the whole string and its progressively shorter comma
+    prefixes, then the same for the part before any "(".
+
+    So "Shanghai, CN" finds "shanghai" and "HCMC (Cat Lai)" finds "hcmc".
+
+    Whole-string-first is what keeps the paren strip honest: "Manzanillo
+    (Panama)" is an exact key and must resolve before anything reduces it to a
+    bare "manzanillo", which is a different port on a different coast.
+    """
+    seen = set()
+    for base in (key, key.split("(")[0].strip()):
+        parts = base.split(",")
+        for i in range(len(parts), 0, -1):
+            form = ",".join(parts[:i]).strip()
+            if form and form not in seen:
+                seen.add(form)
+                yield form
 
 
 # Destinations that name no real port — a row still PENDING lane assignment,
@@ -460,13 +496,26 @@ def load_config(path: Path | str | None = None) -> dict:
     See _heal_session_paths for the heal logic.
     """
     path = Path(path) if path else CONFIG_PATH
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     return _heal_session_paths(cfg, path)
 
 
 def load_data(path: Path | str) -> dict:
-    with open(path) as f:
+    """Read the tracking file. ALWAYS utf-8 — never the platform default.
+
+    `open(path)` uses locale.getpreferredencoding(), which is utf-8 on the CI
+    runners and cp1252 on the Windows Cloud PC that actually runs the daily
+    pipeline. Reading utf-8 bytes as cp1252 does not raise; it silently
+    succeeds and turns every "→" into "â†’" and every "×" into "Ã—". The row
+    then flows through ingest, gets written back out, and the mangling is
+    permanent — the original bytes are gone.
+
+    Michael 2026-08-05, on a dashboard full of "Oakland â†' Shanghai":
+    "illegible characters". Pinning the codec is the only fix that holds,
+    because the failure mode is a read that does not fail.
+    """
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -489,7 +538,7 @@ def save_data(data: dict, path: Path | str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
             f.flush()
             os.fsync(f.fileno())
@@ -856,6 +905,22 @@ def is_loss(r: dict) -> bool:
     """
     s = (r or {}).get("status")
     return s == "LOSS" or s == "Q&L" or s == "NQ"
+
+
+def is_win(r: dict) -> bool:
+    """True if row is a win. WIN is spelled the same in both storage forms —
+    this exists so a renderer can classify a row entirely through these
+    helpers, with no `status ==` literal left to pick the wrong vocabulary.
+    A bucketing loop that reads is_win/is_pending/is_quoted_and_lost/
+    is_not_quoted is obviously total; one that reads WIN/PENDING/LOSS silently
+    drops every STRICT row on the floor.
+    """
+    return (r or {}).get("status") == "WIN"
+
+
+def is_pending(r: dict) -> bool:
+    """True if row is still pending. Same spelling in both forms — see is_win."""
+    return (r or {}).get("status") == "PENDING"
 
 
 def fmt_pt(dt: datetime | None, with_date: bool = True) -> str:

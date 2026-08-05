@@ -83,22 +83,21 @@ def _status_badge(r):
     and pending is not a judgement at all (neutral). Colour that encodes a
     verdict is annotation; colour that just distinguishes labels is chrome.
     """
-    if r["status"] == "WIN":
+    if core.is_win(r):
         return B.doc_badge_html("✅ Won", "ok")
-    if r["status"] == "PENDING":
+    if core.is_pending(r):
         return B.doc_badge_html("⏳ Pending", "neutral")
-    if r.get("quoted"):
+    if core.is_quoted_and_lost(r):
         return B.doc_badge_html("❌ Q&L", "bad")
     return B.doc_badge_html("⚠️ NQ", "warn")
 
 
 def _row_class(r):
-    s = r["status"]
-    if s == "WIN":
+    if core.is_win(r):
         return "win-row"
-    if s == "PENDING":
+    if core.is_pending(r):
         return "pending-row"
-    if r.get("quoted"):
+    if core.is_quoted_and_lost(r):
         return "loss-row"
     return "nq-row"
 
@@ -117,7 +116,9 @@ def _hours_since(iso_ts):
 # ─────────────────────────────────────────────────────────────────────
 
 def wow_bars(requests):
-    buckets = defaultdict(lambda: {"requests": 0, "wins": 0, "ql": 0, "nq": 0, "pending": 0, "teu_won": 0, "teu_lost": 0})
+    buckets = defaultdict(lambda: {"requests": 0, "wins": 0, "ql": 0, "nq": 0,
+                                   "pending": 0, "unclassified": 0,
+                                   "teu_won": 0, "teu_lost": 0})
     for r in requests:
         d = r.get("request_date") or r.get("date")
         if not d:
@@ -130,17 +131,22 @@ def wow_bars(requests):
         key = f"{iso.year}-W{iso.week:02d}"
         b = buckets[key]
         b["requests"] += 1
-        if r["status"] == "WIN":
+        if core.is_win(r):
             b["wins"] += 1
             b["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
-        elif r["status"] == "PENDING":
+        elif core.is_pending(r):
             b["pending"] += 1
-        elif r["status"] == "LOSS":
-            if r.get("quoted"):
-                b["ql"] += 1
-            else:
-                b["nq"] += 1
+        elif core.is_quoted_and_lost(r):
+            b["ql"] += 1
             b["teu_lost"] += r.get("teu_requested", 0) or 0
+        elif core.is_not_quoted(r):
+            b["nq"] += 1
+            b["teu_lost"] += r.get("teu_requested", 0) or 0
+        else:
+            # A status this bucketer does not recognise. Count it so the
+            # segments still sum to the column, rather than drawing a bar that
+            # silently disagrees with its own "Nreq" label underneath.
+            b["unclassified"] += 1
     return sorted(buckets.items())
 
 
@@ -154,10 +160,10 @@ def render(cfg: dict, data: dict) -> str:
 
     # KPIs — READ from summary, never recompute
     total = summary["total_entries"]
-    wins = [r for r in requests if r["status"] == "WIN"]
-    ql = [r for r in requests if r["status"] == "LOSS" and r.get("quoted")]
-    nq = [r for r in requests if r["status"] == "LOSS" and not r.get("quoted")]
-    pending = [r for r in requests if r["status"] == "PENDING"]
+    wins = [r for r in requests if core.is_win(r)]
+    ql = [r for r in requests if core.is_quoted_and_lost(r)]
+    nq = [r for r in requests if core.is_not_quoted(r)]
+    pending = [r for r in requests if core.is_pending(r)]
     win_rate = summary["win_rate"]
     quote_rate = summary["quote_rate"]
     avg_biz = summary.get("turnaround_avg_biz_hours", 0)
@@ -232,13 +238,13 @@ def render(cfg: dict, data: dict) -> str:
     tdy_teu_won = _day["teu_won"]
     tdy_ql      = _day["quoted_lost"]
     tdy_teu_ql  = sum(int(r.get("teu_requested") or 0)
-                      for r in today_reqs if r.get("status") == "LOSS" and r.get("quoted"))
+                      for r in today_reqs if core.is_quoted_and_lost(r))
     tdy_nq      = _day["not_quoted"]
     tdy_teu_nq  = sum(int(r.get("teu_requested") or 0)
-                      for r in today_reqs if r.get("status") == "LOSS" and not r.get("quoted"))
+                      for r in today_reqs if core.is_not_quoted(r))
     tdy_pend    = _day["pending"]
     tdy_teu_pend = sum(int(r.get("teu_requested") or 0)
-                       for r in today_reqs if r.get("status") == "PENDING")
+                       for r in today_reqs if core.is_pending(r))
     tdy_won_later = _day.get("won_later", 0)
 
     # lane + carrier summaries
@@ -344,12 +350,12 @@ a.kpi:focus{{outline:2px solid #3b82f6;outline-offset:2px}}
 .kpi-hint{{font-size:9.5px;color:#94a3b8;margin-top:2px;font-weight:500}}
 /* Awaiting-MDOLX badge — for WIN rows where send-signal promoted PENDING
    to WIN but OL hasn't issued the booking confirmation yet. */
-.awaiting-mdolx{{display:inline-block;background:#fef3c7;color:#92400e;border:1px solid #f59e0b;border-radius:10px;padding:2px 8px;font-size:10px;font-weight:600;letter-spacing:0.3px}}
+.awaiting-mdolx{{display:inline-block;background:{B.DOC_WARN_BG};color:{B.DOC_WARN};border:1px solid {B.DOC_WARN};border-radius:10px;padding:2px 8px;font-size:10px;font-weight:600;letter-spacing:0.3px}}
 .kpi.blue{{border-top-color:#3b82f6}} .kpi.blue .value{{color:#2563eb}}
-.kpi.green{{border-top-color:#10b981}} .kpi.green .value{{color:#059669}}
-.kpi.red{{border-top-color:#ef4444}} .kpi.red .value{{color:#dc2626}}
-.kpi.amber{{border-top-color:#f59e0b}} .kpi.amber .value{{color:#d97706}}
-.kpi.purple{{border-top-color:#a855f7}} .kpi.purple .value{{color:#7c3aed}}
+.kpi.green{{border-top-color:{B.DOC_GOOD}}} .kpi.green .value{{color:{B.DOC_GOOD}}}
+.kpi.red{{border-top-color:{B.DOC_BAD}}} .kpi.red .value{{color:{B.DOC_BAD}}}
+.kpi.amber{{border-top-color:{B.DOC_WARN}}} .kpi.amber .value{{color:{B.DOC_WARN}}}
+.kpi.purple{{border-top-color:{B.DOC_PENDING}}} .kpi.purple .value{{color:{B.DOC_PENDING}}}
 .kpi.teal{{border-top-color:#14b8a6}} .kpi.teal .value{{color:#0d9488}}
 .kpi.slate{{border-top-color:#64748b}} .kpi.slate .value{{color:#475569}}
 
@@ -360,9 +366,9 @@ table{{width:100%;border-collapse:collapse;font-size:13.5px}}
 th{{background:{B.DOC_TH_BG};padding:9px 11px;text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);font-size:11.5px;text-transform:uppercase;letter-spacing:0.03em}}
 td{{padding:9px 8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}}
 tr:hover td{{background:{B.DOC_TH_BG}}}
-.win{{color:#059669;font-weight:600}} .loss{{color:#dc2626}} .nq{{color:#d97706}} .pending{{color:#7c3aed}}
-.win-row{{border-left:3px solid #10b981}} .loss-row{{border-left:3px solid #ef4444}} .nq-row{{border-left:3px solid #f59e0b}} .pending-row{{border-left:3px solid #a855f7}}
-.ta-fast{{color:#059669;font-weight:700}} .ta-medium{{color:#2563eb}} .ta-slow{{color:#dc2626;font-weight:700}}
+.win{{color:{B.DOC_GOOD};font-weight:600}} .loss{{color:{B.DOC_BAD}}} .nq{{color:{B.DOC_WARN}}} .pending{{color:{B.DOC_PENDING}}}
+.win-row{{border-left:3px solid {B.DOC_GOOD}}} .loss-row{{border-left:3px solid {B.DOC_BAD}}} .nq-row{{border-left:3px solid {B.DOC_WARN}}} .pending-row{{border-left:3px solid {B.DOC_PENDING}}}
+.ta-fast{{color:{B.DOC_GOOD};font-weight:700}} .ta-medium{{color:{B.DOC_SERIES[3]}}} .ta-slow{{color:{B.DOC_BAD};font-weight:700}}
 
 input[name="tabs"]{{display:none}}
 .tabs{{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}}
@@ -385,25 +391,33 @@ input[name="tabs"]{{display:none}}
 #tb-qc:checked~#tab-qc{{display:block}}
 
 .badge{{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;white-space:nowrap}}
-.badge-green{{background:#d1fae5;color:#059669}} .badge-red{{background:#fee2e2;color:#dc2626}}
-.badge-amber{{background:#fef3c7;color:#d97706}} .badge-blue{{background:#dbeafe;color:#2563eb}}
-.badge-purple{{background:#ede9fe;color:#7c3aed}} .badge-slate{{background:#f1f5f9;color:#475569}}
+.badge-green{{background:{B.DOC_GOOD_BG};color:{B.DOC_GOOD}}} .badge-red{{background:{B.DOC_BAD_BG};color:{B.DOC_BAD}}}
+.badge-amber{{background:{B.DOC_WARN_BG};color:{B.DOC_WARN}}} .badge-blue{{background:#dbeafe;color:#2563eb}}
+.badge-purple{{background:{B.DOC_PENDING_BG};color:{B.DOC_PENDING}}} .badge-slate{{background:#f1f5f9;color:#475569}}
 
 .callout{{background:#eff6ff;border-left:4px solid #3b82f6;padding:12px 16px;border-radius:0 8px 8px 0;margin-bottom:14px}}
 .callout p{{font-size:12px;color:#1e3a5f;line-height:1.5}}
-.callout.green{{background:#ecfdf5;border-color:#10b981}}
-.callout.amber{{background:#fffbeb;border-color:#f59e0b}}
-.callout.red{{background:#fef2f2;border-color:#ef4444}}
-.callout.purple{{background:#faf5ff;border-color:#a855f7}}
+.callout.green{{background:{B.DOC_GOOD_BG};border-color:{B.DOC_GOOD}}}
+.callout.amber{{background:{B.DOC_WARN_BG};border-color:{B.DOC_WARN}}}
+.callout.red{{background:{B.DOC_BAD_BG};border-color:{B.DOC_BAD}}}
+.callout.purple{{background:{B.DOC_PENDING_BG};border-color:{B.DOC_PENDING}}}
 
 code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-family:'JetBrains Mono','SF Mono','Consolas',monospace}}
 
-.wow-bar{{display:flex;align-items:flex-end;gap:6px;height:80px;margin-top:10px;padding:8px;background:#f8fafc;border-radius:6px}}
+/* Week-over-Week. The segments carry the SAME four hues as the status
+   badges and the email pills — a green bar and a green pill have to mean the
+   same thing or the palette is decoration. Pending takes an identity hue
+   rather than a status one for the reason the pending pill does: "waiting on
+   a decision" is not a verdict on the week. */
+.wow-bar{{display:flex;align-items:flex-end;gap:6px;height:80px;margin-top:10px;padding:8px;background:{B.DOC_TH_BG};border:1px solid {B.DOC_LINE};border-radius:6px}}
 .wow-col{{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}}
 .wow-stack{{width:100%;display:flex;flex-direction:column-reverse;gap:0;height:60px}}
 .wow-seg{{width:100%}}
-.wow-seg.wins{{background:#10b981}} .wow-seg.ql{{background:#ef4444}} .wow-seg.nq{{background:#f59e0b}} .wow-seg.pending{{background:#a855f7}}
-.wow-label{{font-size:9px;color:#64748b;font-weight:600;text-align:center}}
+.wow-seg.wins{{background:{B.DOC_GOOD}}} .wow-seg.ql{{background:{B.DOC_BAD}}} .wow-seg.nq{{background:{B.DOC_WARN}}} .wow-seg.pending{{background:{B.DOC_SERIES[2]}}}
+.wow-label{{font-size:9px;color:{B.DOC_MUTED};font-weight:600;text-align:center}}
+.wow-key{{font-size:11px;color:{B.DOC_MUTED};margin-top:8px;display:flex;flex-wrap:wrap;gap:14px}}
+.wow-key span{{display:inline-flex;align-items:center;gap:5px}}
+.wow-key i{{width:10px;height:10px;border-radius:2px;display:inline-block}}
 
 .dod-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}}
 .dod-card{{background:#f8fafc;border-radius:8px;padding:12px;border-left:3px solid #3b82f6}}
@@ -413,13 +427,13 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
 .dod-card li:last-child{{border:none}}
 .dod-empty{{color:#94a3b8;font-style:italic;font-size:11px}}
 
-.pend-row.critical{{background:#fef2f2;border-left:4px solid #dc2626}}
-.pend-row.high{{background:#fffbeb;border-left:4px solid #f59e0b}}
-.pend-row.medium{{background:#faf5ff;border-left:4px solid #a855f7}}
+.pend-row.critical{{background:{B.DOC_BAD_BG};border-left:4px solid {B.DOC_BAD}}}
+.pend-row.high{{background:{B.DOC_WARN_BG};border-left:4px solid {B.DOC_WARN}}}
+.pend-row.medium{{background:{B.DOC_PENDING_BG};border-left:4px solid {B.DOC_PENDING}}}
 .pend-row.low{{background:#eff6ff;border-left:4px solid #3b82f6}}
 
 .spark{{display:inline-block;vertical-align:middle;height:18px;margin:0 4px}}
-.trend-up{{color:#dc2626;font-weight:700}} .trend-down{{color:#059669;font-weight:700}} .trend-flat{{color:#64748b}}
+.trend-up{{color:{B.DOC_BAD};font-weight:700}} .trend-down{{color:{B.DOC_GOOD};font-weight:700}} .trend-flat{{color:{B.DOC_MUTED}}}
 
 @media print{{
   body{{padding:8px;font-size:11px}}
@@ -460,15 +474,15 @@ code{{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px;font-f
    view. JS intercepts the click, switches the radio-tab, scrolls to the
    target section, and applies a row-filter where it makes sense. Active
    filter is shown in a sticky banner with a Clear button. */
-.kpi-filter-banner{{position:sticky;top:0;z-index:50;background:#fef3c7;border:2px solid #f59e0b;color:#92400e;padding:10px 16px;margin:0 0 14px;border-radius:8px;display:none;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(245,158,11,0.2)}}
+.kpi-filter-banner{{position:sticky;top:0;z-index:50;background:{B.DOC_WARN_BG};border:2px solid {B.DOC_WARN};color:{B.DOC_WARN};padding:10px 16px;margin:0 0 14px;border-radius:8px;display:none;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(185,116,15,0.18)}}
 .kpi-filter-banner.active{{display:flex;align-items:center;justify-content:space-between;gap:12px}}
 .kpi-filter-banner .label{{flex:1}}
-.kpi-filter-banner .clear-btn{{background:white;color:#92400e;border:1px solid #f59e0b;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}}
+.kpi-filter-banner .clear-btn{{background:{B.DOC_CARD};color:{B.DOC_WARN};border:1px solid {B.DOC_WARN};border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}}
 .kpi-filter-banner .clear-btn:hover{{background:#fef3c7}}
-.kpi-filter-target{{outline:3px solid #f59e0b;outline-offset:4px;border-radius:6px;animation:kpiFlash 1.5s ease-out;scroll-margin-top:60px}}
+.kpi-filter-target{{outline:3px solid {B.DOC_WARN};outline-offset:4px;border-radius:6px;animation:kpiFlash 1.5s ease-out;scroll-margin-top:60px}}
 @keyframes kpiFlash{{
   0%{{outline-color:#fbbf24;background:#fef3c7}}
-  100%{{outline-color:#f59e0b;background:transparent}}
+  100%{{outline-color:{B.DOC_WARN};background:transparent}}
 }}
 tbody tr.kpi-row-dim{{opacity:0.25}}
 </style>
@@ -493,7 +507,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
   <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
-  <a class="kpi" style="background:#8b5cf6;color:white;border-top-color:#7c3aed" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
+  <a class="kpi" style="background:{B.DOC_SERIES[2]};color:white;border-top-color:{B.DOC_SERIES[2]}" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
@@ -559,11 +573,20 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                     html += f'<div class="wow-seg {kind}" style="height:{(b[kind]/total_w)*scale:.1f}px"></div>'
             html += f'</div><div class="wow-label">{wk.split("-W")[1]}</div><div class="wow-label">{b["requests"]}req</div></div>\n'
         html += '</div>\n'
-        html += '<p style="font-size:11px;color:#64748b;margin-top:6px">🟢 Wins | 🔴 Q&amp;L | 🟡 NQ | 🟣 Pending</p></div>\n'
+        # Swatches, not emoji. The old legend was 🟢🔴🟡🟣 — four circles that
+        # only APPROXIMATE the bars, in whatever hues the reader's font vendor
+        # picked, and that stayed put when the bar colours moved. A legend that
+        # can disagree with its chart is worse than no legend.
+        _key = [("wins", "Wins", B.DOC_GOOD), ("ql", "Q&amp;L", B.DOC_BAD),
+                ("nq", "NQ", B.DOC_WARN), ("pending", "Pending", B.DOC_SERIES[2])]
+        html += ('<div class="wow-key">'
+                 + "".join(f'<span><i style="background:{hexv}"></i>{label}</span>'
+                           for _k, label, hexv in _key)
+                 + '</div></div>\n')
 
     # Wins — sec-wins id so KPI click can scroll here
     _awaiting = sum(1 for w in wins if not w.get("mdolx_ref"))
-    _awaiting_label = (f' <span style="font-size:13px;color:#92400e;font-weight:500">'
+    _awaiting_label = (f' <span style="font-size:13px;color:{B.DOC_WARN};font-weight:500">'
                        f'· {_awaiting} awaiting MDOLX (send-signal wins without booking confirmation yet)</span>'
                        if _awaiting else '')
     html += f'<div id="sec-wins" class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
@@ -740,7 +763,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             wr = f'{round(wr_pct, 1)}%' if decided else '—'
             wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
             teu_won = stats.get("teu_won", 0)
-            teu_bar = V.bar_cell(teu_won, max_teu_won, color="#059669", label=str(teu_won), width_px=80)
+            teu_bar = V.bar_cell(teu_won, max_teu_won, color=B.DOC_GOOD, label=str(teu_won), width_px=80)
             html += (
                 f'<tr class="win-row"><td>{_esc(lane)}</td>'
                 f'<td>{stats["wins"]}</td><td>{stats["quoted_lost"]}</td><td>{stats["not_quoted"]}</td>'
@@ -780,7 +803,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             wr = f'{round(wr_pct, 1)}%' if decided else '—'
             wr_bg = V.heatmap_color(wr_pct, vmin=0, vmax=100, mode="good_high")
             teu_lost = stats.get("teu_quoted_lost", 0) + stats.get("teu_not_quoted", 0)
-            teu_bar = V.bar_cell(teu_lost, max_teu_lost, color="#dc2626", label=str(teu_lost), width_px=80)
+            teu_bar = V.bar_cell(teu_lost, max_teu_lost, color=B.DOC_BAD, label=str(teu_lost), width_px=80)
             html += (
                 f'<tr class="loss-row"><td>{_esc(lane)}</td>'
                 f'<td>{stats["quoted_lost"]}</td><td>{stats["not_quoted"]}</td><td>{stats.get("pending",0)}</td>'
@@ -810,9 +833,9 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             ctx = '<span class="badge badge-amber">After-hours req</span>'
         elif r.get("response_timestamp"):
             ctx = '<span class="badge badge-blue">Biz hours</span>'
-        elif r["status"] == "LOSS" and not r.get("quoted"):
+        elif core.is_not_quoted(r):
             ctx = '<span class="badge badge-amber">No response</span>'
-        elif r["status"] == "PENDING":
+        elif core.is_pending(r):
             ctx = '<span class="badge badge-purple">Awaiting send</span>'
         lonny_t = r.get("lonny_time_pt") or (core.fmt_pt(core.parse_iso(r.get("request_timestamp")), with_date=False) if r.get("request_timestamp") else "—")
         ol_t = r.get("olusa_time_et") or (core.fmt_et(core.parse_iso(r.get("response_timestamp")), with_date=False) if r.get("response_timestamp") else "—")
@@ -828,7 +851,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         biz = r.get("turnaround_biz_hours")
         biz_s = f"{biz:.1f}h" if biz else "—"
         tc = _ta_class(biz)
-        carrier = r.get("carrier_won") if r["status"] == "WIN" else r.get("carrier_quoted")
+        carrier = r.get("carrier_won") if core.is_win(r) else r.get("carrier_quoted")
         fit = r.get("etd_fit_days")
         if fit is None:
             fit_cell = "—"
@@ -842,7 +865,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             fit_cell = f'<span class="badge badge-green">{fit}d early</span>'
         else:
             fit_cell = '<span class="badge badge-green">exact</span>'
-        rate = r.get("ol_rate") or ("No offer made" if (r["status"] == "LOSS" and not r.get("quoted")) else "—")
+        rate = r.get("ol_rate") or ("No offer made" if core.is_not_quoted(r) else "—")
         html += f'<tr class="{_row_class(r)}"><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_status_badge(r)}</td><td class="{tc}">{biz_s}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("cutoff_requested"))}</td><td>{_safe(r.get("etd_offered"))}</td><td>{_safe(r.get("eta_offered"))}</td><td>{fit_cell}</td><td>{_safe(carrier)}</td><td>{_safe(rate)}</td></tr>\n'
     html += '</table></div></div>\n'
 
@@ -886,7 +909,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     # Per-carrier drill-down
     for c, cm in sorted(carriers.items(), key=lambda x: x[1].get("quotes", 0), reverse=True):
         carrier_reqs = [r for r in requests if r.get("carrier_quoted") == c or r.get("carrier_won") == c]
-        lost_reqs = [r for r in carrier_reqs if r["status"] == "LOSS" and r.get("quoted")]
+        lost_reqs = [r for r in carrier_reqs if core.is_quoted_and_lost(r)]
         html += f'<div class="section"><h2>{_esc(c)} — {cm["quotes"]} quoted • {cm["wins"]}W / {cm["losses"]}L • {cm.get("win_rate",0)}% win rate</h2>\n'
         ta_val = cm.get("avg_turnaround_biz_hours")
         ef_val = cm.get("avg_etd_fit_days")
@@ -915,7 +938,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                 html += f'<tr class="loss-row"><td>{_esc(lane)}</td><td>{la["count"]}</td><td>{la["teu"]}</td><td>{_esc(", ".join(sorted(e for e in la["equip"] if e)))}</td><td>{_esc(", ".join(la["rates"][:3]))}</td></tr>\n'
             html += '</table>\n'
         else:
-            html += '<p style="color:#059669;font-weight:600">No lanes lost — every quote won ✅</p>\n'
+            html += f'<p style="color:{B.DOC_GOOD};font-weight:600">No lanes lost — every quote won ✅</p>\n'
         html += '</div>\n'
     html += '</div>\n'
 
@@ -928,7 +951,11 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         sev_label = {"critical": "Critical", "high": "High", "medium": "Medium", "low": "Low"}
         for r in pending_watch:
             _sub = r.get("_substate")
-            _wcolor = "#b45309" if _sub == "PENDING_OL" else "#7c3aed"
+            # Same two hues the email pills use: amber = chase OL (a status
+            # signal), identity purple = chase Hilmar (whose turn it is, not a
+            # verdict). Three different purples used to mean "pending" on this
+            # page; they are one now.
+            _wcolor = B.DOC_WARN if _sub == "PENDING_OL" else B.DOC_SERIES[2]
             wait_on = f'<span style="color:{_wcolor};font-weight:600">{V.pending_label(_sub)}</span>'
             # "—" for a row we cannot date, matching gen_email's PENDING
             # HILMAR table. Previously these rows were dropped entirely.

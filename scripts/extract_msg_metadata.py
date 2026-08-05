@@ -44,7 +44,7 @@ def html_to_text(html: str) -> str:
 
 def extract(path: str | Path) -> dict:
     p = Path(path)
-    raw = p.read_text()
+    raw = p.read_text(encoding="utf-8")
     try:
         obj = json.loads(raw)
     except Exception as e:
@@ -84,7 +84,7 @@ def main():
     meta = extract(path)
     if "--save" in sys.argv:
         out = sys.argv[sys.argv.index("--save") + 1]
-        Path(out).write_text(json.dumps(meta, indent=2, default=str))
+        Path(out).write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
         print(f"[saved] {out}")
     else:
         print(json.dumps(meta, indent=2, default=str))

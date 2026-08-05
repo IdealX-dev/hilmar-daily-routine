@@ -200,9 +200,9 @@ def merge_record(
 
 
 def main():
-    with open(EXTRACT_PATH) as f:
+    with open(EXTRACT_PATH, encoding="utf-8") as f:
         extract = json.load(f)
-    with open(DATA_PATH) as f:
+    with open(DATA_PATH, encoding="utf-8") as f:
         data = json.load(f)
 
     records = extract.get("records", [])
@@ -231,7 +231,7 @@ def main():
         f"Warnings: {'; '.join(extract.get('warnings', []))[:300]}"
     )
 
-    with open(DATA_PATH, "w") as f:
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, default=str)
 
     print(f"Merged: created={created} updated={updated} noop={noop} total={len(records)}")

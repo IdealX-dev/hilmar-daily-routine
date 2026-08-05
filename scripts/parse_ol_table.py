@@ -105,7 +105,7 @@ def main():
     if len(sys.argv) < 2:
         print("usage: parse_ol_table.py <resource.json>", file=sys.stderr); sys.exit(1)
     p = Path(sys.argv[1])
-    raw = p.read_text()
+    raw = p.read_text(encoding="utf-8")
     try:
         obj = json.loads(raw)
     except Exception as e:
