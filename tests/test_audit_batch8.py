@@ -569,7 +569,19 @@ def test_the_body_loader_harvests_the_send_time(tmp_path, monkeypatch):
         "undateable and invisible in OL-USA RESPONSES")
 
 
-def test_every_rate_recovery_dates_the_quote():
+# EVERY module that can recover a rate onto an existing row. Scoping this to
+# patch_carriers alone was the miss: qc_selfheal._heal_missing_rate recovers
+# rates by a different route and never dated them, so #140 fixed one of two
+# paths while the undated count kept climbing (29 on 07-30 → 41 on 08-05).
+# Adding a module here is how a new recovery route gets covered.
+RATE_RECOVERY_MODULES = {
+    "patch_carriers.py": "_stamp_response_time",
+    "qc_selfheal.py": "_stamp_response_time_from_bodies",
+}
+
+
+@pytest.mark.parametrize("module,stamper", sorted(RATE_RECOVERY_MODULES.items()))
+def test_every_rate_recovery_dates_the_quote(module, stamper):
     """THE WIRING, not the helper.
 
     Deleting the _stamp_response_time call from patch_carriers' rate paths
@@ -578,13 +590,19 @@ def test_every_rate_recovery_dates_the_quote():
     production. That is the identical gap that let a deleted
     _warn_if_undeliverable call site pass earlier the same day.
 
-    Rule: every write of r["ol_rate"] in patch_carriers must be followed
-    immediately by an attempt to date it. A recovered rate with no timestamp
-    is invisible in OL-USA RESPONSES forever.
+    Rule: every write of r["ol_rate"] must be followed immediately by an
+    attempt to date it. A recovered rate with no timestamp is invisible in
+    OL-USA RESPONSES forever.
+
+    2026-08-05: parametrized over every recovery module. The first version
+    hard-coded patch_carriers, so it was green the entire time
+    qc_selfheal._heal_missing_rate was recovering rates and leaving them
+    undated — a guard that checks one of two doors reads exactly like a guard
+    that checks the building.
     """
     import ast
 
-    src = (SCRIPTS / "patch_carriers.py").read_text(encoding="utf-8")
+    src = (SCRIPTS / module).read_text(encoding="utf-8")
     tree = ast.parse(src)
 
     rate_writes, stamp_calls = [], []
@@ -596,19 +614,112 @@ def test_every_rate_recovery_dates_the_quote():
                         and t.slice.value == "ol_rate"):
                     rate_writes.append(n.lineno)
         elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-              and n.func.id == "_stamp_response_time"):
+              and n.func.id == stamper):
             stamp_calls.append(n.lineno)
 
     assert rate_writes, (
-        "no r['ol_rate'] assignment found in patch_carriers — this guard has "
+        f"no r['ol_rate'] assignment found in {module} — this guard has "
         "gone inert and would pass on anything")
 
+    # The NQ-contamination heal writes the sentinel string "Not Quoted" into
+    # ol_rate on purpose; that is a marker, not a recovered quote, so it has
+    # nothing to date. Identified by the assigned value, not by line number.
+    def _is_sentinel_write(lineno):
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Assign) and n.lineno == lineno
+                    and isinstance(n.value, ast.Constant)
+                    and isinstance(n.value.value, str)):
+                return True
+        return False
+
     undated = [ln for ln in rate_writes
-               if not any(0 < c - ln <= 4 for c in stamp_calls)]
+               if not any(0 < c - ln <= 6 for c in stamp_calls)
+               and not _is_sentinel_write(ln)]
     assert not undated, (
-        f"r['ol_rate'] is written at line(s) {undated} without a following "
-        "_stamp_response_time call. That rate can never appear in OL-USA "
+        f"r['ol_rate'] is written in {module} at line(s) {undated} without a "
+        f"following {stamper} call. That rate can never appear in OL-USA "
         "RESPONSES — see QC-077.")
+
+
+def test_the_nq_sentinel_is_not_counted_as_an_undateable_quote():
+    """QC-077's number has to be trustworthy — Michael reads it in the audit.
+
+    qc_selfheal writes the STRING "Not Quoted" into ol_rate as an NQ marker,
+    and the check tested `ol_rate is not None`, so every NQ-contaminated row
+    counted as a quote that could not be dated. Same class of false positive
+    as the stand_* rows the check already excludes, and it inflated the count
+    Michael called unacceptable on 2026-08-05.
+    """
+    import qc_selfheal as QC
+    for sentinel in (None, "", "Not Quoted", "N/A", "n/a", "  none  ", "—"):
+        assert not QC._is_real_rate(sentinel), f"{sentinel!r} is not a rate"
+    for real in (1234, 4874.0, "$2,040/20DV", "725"):
+        assert QC._is_real_rate(real), f"{real!r} IS a rate"
+
+
+def test_an_undated_quote_is_dated_from_its_own_source_message():
+    """The fix for the 41. These rows carry source_imids pointing at the OL
+    messages their rates were parsed from, and those messages have a
+    sentDateTime that was sitting unused."""
+    import qc_selfheal as QC
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z", "text_body": "x"}}
+    row = {"request_id": "r1", "ol_rate": 4874, "source_imids": ["m1@ol"]}
+    QC._heal_undated_quote(QC.Log(), "r1", row, bodies)
+    assert row["response_timestamp"] == "2026-07-29T19:02:00Z"
+
+
+def test_an_undateable_quote_is_still_left_undated():
+    """Recovery, not fabrication. No send time means the quote stays undated
+    rather than getting a synthesised turnaround (CLAUDE.md)."""
+    import qc_selfheal as QC
+    row = {"request_id": "r1", "ol_rate": 4874, "source_imids": ["missing@ol"]}
+    QC._heal_undated_quote(QC.Log(), "r1", row, {})
+    assert "response_timestamp" not in row or not row["response_timestamp"]
+
+
+def test_a_standalone_booking_is_never_back_dated():
+    """ingest.py leaves response_timestamp None on stand_* rows DELIBERATELY
+    to signal 'no rate response was ever seen'. Filling it erases the
+    signal — the same reason QC-077 excludes them."""
+    import qc_selfheal as QC
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z"}}
+    row = {"request_id": "stand_260928", "ol_rate": 4874, "source_imids": ["m1@ol"]}
+    QC._heal_undated_quote(QC.Log(), "stand_260928", row, bodies)
+    assert not row.get("response_timestamp")
+
+
+def test_the_send_time_falls_back_across_schema_versions():
+    """refresh_stage has moved the field name across versions, and an inbound
+    copy of a message can carry `received` without `sent`. Reading only "sent"
+    would leave rows undated for a reason unrelated to the data being absent —
+    patch_carriers already falls back this way and the two must agree."""
+    import qc_selfheal as QC
+    for field in ("sent", "sentDateTime", "received"):
+        row = {"request_id": "r1", "ol_rate": 4874, "source_imids": ["m@ol"]}
+        QC._heal_undated_quote(QC.Log(), "r1", row, {"m@ol": {field: "2026-07-29T19:02:00Z"}})
+        assert row.get("response_timestamp") == "2026-07-29T19:02:00Z", (
+            f"send time in field {field!r} was not read")
+
+
+def test_the_first_imid_with_a_send_time_wins():
+    """A row can link several messages; the first that carries a time dates
+    it. An earlier link with no timestamp must not abort the search."""
+    import qc_selfheal as QC
+    row = {"request_id": "r1", "ol_rate": 4874,
+           "source_imids": ["nothing@ol", "m2@ol"]}
+    QC._heal_undated_quote(QC.Log(), "r1", row,
+                           {"nothing@ol": {"text_body": "x"},
+                            "m2@ol": {"sent": "2026-07-30T12:00:00Z"}})
+    assert row["response_timestamp"] == "2026-07-30T12:00:00Z"
+
+
+def test_the_nq_sentinel_row_is_not_dated_either():
+    """A row marked Not Quoted has no quote, so there is nothing to date."""
+    import qc_selfheal as QC
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z"}}
+    row = {"request_id": "r1", "ol_rate": "Not Quoted", "source_imids": ["m1@ol"]}
+    QC._heal_undated_quote(QC.Log(), "r1", row, bodies)
+    assert not row.get("response_timestamp")
 
 
 # ── the pause switch (Michael 2026-07-30: "pause all hilmar reports") ──────

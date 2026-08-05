@@ -65,19 +65,19 @@ def test_client_subject_dates_the_et_business_day_not_the_utc_date():
     """Friday-evening fire: the UTC calendar day (Saturday Jul 11) must
     never leak into the subject — the report day is the ET Friday."""
     subj = gce.build_subject({}, {}, now=FRI_EVENING_UTC_SHIFTED)
-    assert "(Jul 10, 2026)" in subj
+    assert "(activity for Jul 10, 2026)" in subj
     assert "Jul 11" not in subj
 
 
 def test_client_subject_wee_hours_reports_prior_business_day():
     """00:40 ET Friday is Thursday's very-late fire → subject says Thu."""
     subj = gce.build_subject({}, {}, now=FRI_WEE_HOURS)
-    assert "(Jul 9, 2026)" in subj
+    assert "(activity for Jul 9, 2026)" in subj
 
 
 def test_client_subject_weekend_fire_rolls_to_friday():
     subj = gce.build_subject({}, {}, now=SAT_EVENING)
-    assert "(Jul 10, 2026)" in subj
+    assert "(activity for Jul 10, 2026)" in subj
 
 
 @pytest.mark.parametrize("now", [FRI_EVENING_UTC_SHIFTED, FRI_WEE_HOURS, SAT_EVENING])

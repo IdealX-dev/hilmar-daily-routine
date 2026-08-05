@@ -19,6 +19,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -340,16 +342,22 @@ def test_quiet_day_collapses_empty_sections_to_friendly_lines():
     # Exactly ONE table remains — the hero KPI strip. No empty data tables.
     assert html.count("<table") == 1
     assert 'class="hx-data"' not in html
+    # The empty-section lines now NAME the day rather than saying "that day".
+    # Michael 2026-08-05: read the next morning, "that day" is unanchored —
+    # the reader has to scroll to the header and infer which day is meant.
+    _day = gce._fmt_date(
+        datetime.combine(_rd(), datetime.min.time()), "%A, %b %-d")
     for line in (
         "No shipments currently in transit or awaiting departure.",
-        "No new rate requests that day.",
-        "No new quotes that day.",
-        "No new bookings confirmed that day.",
+        f"No new rate requests on {_day}.",
+        f"No new quotes on {_day}.",
+        f"No new bookings confirmed on {_day}.",
         "Nothing awaiting your decision — all caught up.",
         "Nothing in the pricing queue — every request has been quoted.",
     ):
         assert line in html, f"missing friendly line: {line!r}"
-    assert "None that day." not in html
+    assert "that day" not in html, (
+        "unanchored 'that day' wording is back — name the report day")
     # Hero tiles still render (zeros) + narrative + footer → composed email.
     assert html.count('class="hx-kpi"') == 4
     assert _tile_value(html, "Requests received") == "0"
@@ -384,11 +392,24 @@ def test_golden_fixture_render_is_leak_free(tmp_path):
     assert q.qc065_internal_leaks(body) == []
 
 
-def test_subject_format_unchanged():
+def test_subject_names_the_day_it_covers_not_the_day_it_lands():
+    """Michael 2026-08-05: "wording is all wrong on dates since you are using
+    yesterdays data."
+
+    The old subject was "…for Hilmar Ingredients (Aug 4, 2026)" and arrived in
+    Lonny's inbox on Aug 5, where a bare parenthesised date reads as the date
+    the mail was SENT — so a correct report looked a day late. "activity for"
+    makes the date a statement about the contents.
+
+    Renamed from test_subject_format_unchanged: that name asserted the format
+    must never move, which is not a property worth defending — what matters is
+    that the date is the REPORT day and that it is unambiguous.
+    """
     label = gce._fmt_date(
         datetime.combine(_rd(), datetime.min.time()), "%b %-d, %Y")
     assert gce.build_subject({}, {}) == (
-        f"OL-USA — Daily Shipment Update for Hilmar Ingredients ({label})")
+        f"OL-USA — Daily Shipment Update for Hilmar Ingredients "
+        f"(activity for {label})")
 
 
 # ── 5. QC-065 — client-report invariants ──────────────────────────────────
@@ -718,3 +739,166 @@ def test_lane_resolved_rejects_degenerate_origin_origin_everywhere():
     s = gce._client_sections({"requests": [row]},
                              core.report_business_day(datetime.now(core.ET)))
     assert all(row not in bucket for bucket in s.values())
+
+
+# ── 6. Date wording — the report is read the morning AFTER it covers ──────
+#
+# Michael 2026-08-05, on the Aug 4 client email received Wed Aug 5 10:34 AM:
+# "wording is all wrong on dates since you are using yesterdays data."
+#
+# The renderer was right about WHICH day it covered and wrong about SAYING
+# so. Every assertion below pins the exact instant from that screenshot.
+
+#: Wed 2026-08-05, 10:33 AM ET (14:33Z) — reporting Tue Aug 4.
+_SENT_WED_AUG5 = datetime(2026, 8, 5, 14, 33, tzinfo=ZoneInfo("UTC"))
+
+
+def _previous_window(monkeypatch):
+    """Pin the PRODUCTION report window.
+
+    The daily fire sets HILMAR_REPORT_WINDOW=previous; core.py's default is
+    "current". core reads it into a module-level REPORT_WINDOW constant AT
+    IMPORT, so monkeypatch.setenv is a no-op here and the render would report
+    Aug 5 — the scenario under test would silently never occur. Patch the
+    constant, which is what the env var actually sets.
+    """
+    monkeypatch.setattr(core, "REPORT_WINDOW", "previous")
+
+
+def _aug5_body(monkeypatch):
+    _previous_window(monkeypatch)
+    return gce.build_body(_mixed_data(), {}, now=_SENT_WED_AUG5)
+
+
+def test_header_names_both_the_covered_day_and_the_send_day(monkeypatch):
+    """THE bug. The old header read:
+
+        Activity for Tuesday, August 4, 2026 (prior business day)
+          · Updated 10:33 AM ET
+
+    A bare time with NO date, glued to a different date — it reads as 10:33
+    AM on Aug 4, and it is 10:33 AM on Aug 5. Naming both days removes the
+    ambiguity instead of asking Lonny to resolve it.
+    """
+    html = _aug5_body(monkeypatch)
+    assert "Covers activity on Tuesday, August 4, 2026" in html
+    assert "Sent Wednesday, August 5, 2026 at 10:33 AM ET" in html
+    assert "Updated 10:33 AM ET" not in html, (
+        "a bare time with no date is back in the header")
+    assert "(prior business day)" not in html, (
+        "'prior business day' is a relative phrase that needs the reader to "
+        "know what it is relative TO — name the day instead")
+
+
+def test_no_section_says_the_unanchored_that_day(monkeypatch):
+    """"Rate requests we received from your team that day" — which day? The
+    reader has to scroll back to the header and work it out."""
+    html = _aug5_body(monkeypatch)
+    assert "that day" not in html
+    assert "on Tuesday, Aug 4" in html
+
+
+def _aug4_data():
+    """Rows dated the day the Aug 5 fire REPORTS on, so the daily sections
+    render populated and their descriptions are exercised. _mixed_data() dates
+    rows to RD (today's report day under the default window), which on the
+    pinned Aug 4 scenario leaves every section empty — the populated
+    descriptions would never appear and the assertion would be vacuous."""
+    d = "2026-08-04"
+    return {"requests": [
+        _row("r-req", request_date=d, request_timestamp=f"{d}T15:00:00Z"),
+        _row("r-quote", status="PENDING", quoted=True, ol_rate=4874.0,
+             carrier_quoted="CMA CGM", request_date=d,
+             request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z", lane="Oakland → Algeciras"),
+        _row("r-book", status="WIN", quoted=True, ol_rate=725.0,
+             carrier_quoted="CMA CGM", carrier_won="CMA CGM",
+             mdolx_ref="MDOLX-A1", request_date=d,
+             request_timestamp=f"{d}T15:00:00Z",
+             response_timestamp=f"{d}T18:00:00Z", lane="Oakland → Xingang",
+             status_history=[{"from": "PENDING", "to": "WIN",
+                              "at": f"{d}T20:00:00Z", "reason": "booked"}]),
+    ]}
+
+
+@pytest.mark.parametrize("phrase", [
+    "Rate requests we received from your team on Tuesday, Aug 4",
+    "Rates our booking team sent you on Tuesday, Aug 4",
+    "Shipments confirmed on Tuesday, Aug 4",
+])
+def test_every_populated_section_names_the_day_it_describes(monkeypatch, phrase):
+    _previous_window(monkeypatch)
+    html = gce.build_body(_aug4_data(), {}, now=_SENT_WED_AUG5)
+    assert phrase in html, f"section description does not name its day: {phrase!r}"
+
+
+@pytest.mark.parametrize("phrase", [
+    "No new rate requests on Tuesday, Aug 4.",
+    "No new quotes on Tuesday, Aug 4.",
+    "No new bookings confirmed on Tuesday, Aug 4.",
+])
+def test_every_empty_section_names_the_day_it_describes(monkeypatch, phrase):
+    assert phrase in _aug5_body(monkeypatch)
+
+
+def test_subject_says_activity_for_not_a_bare_date(monkeypatch):
+    _previous_window(monkeypatch)
+    subj = gce.build_subject(_mixed_data(), {}, now=_SENT_WED_AUG5)
+    assert subj == ("OL-USA — Daily Shipment Update for Hilmar Ingredients "
+                    "(activity for Aug 4, 2026)")
+
+
+def test_the_subject_stays_distinct_per_report_day(monkeypatch):
+    """The cross-host mailbox guard and the client-sent flag both key on the
+    subject, so two report days must never produce the same string."""
+    _previous_window(monkeypatch)
+    a = gce.build_subject({}, {}, now=_SENT_WED_AUG5)
+    b = gce.build_subject({}, {}, now=datetime(2026, 8, 6, 14, 33, tzinfo=ZoneInfo("UTC")))
+    assert a != b
+
+
+# ── 6b. A sailing that has already gone is not a booking opportunity ──────
+
+def test_a_departed_etd_is_marked_rather_than_offered_for_booking():
+    """The Aug 4 report listed a quote under "Awaiting your decision — reply
+    to book" whose ETD offered was 31-Jul-26: four days before the day being
+    reported, five before Lonny read it. Inviting a customer to book a
+    sailing that has departed is worse than a formatting slip."""
+    rd = _rd()
+    stale = (rd - timedelta(days=4)).isoformat()
+    assert "sailed, ask us to requote" in gce._etd_with_staleness(stale, rd)
+
+
+def test_a_future_etd_is_left_alone():
+    rd = _rd()
+    future = (rd + timedelta(days=6)).isoformat()
+    assert gce._etd_with_staleness(future, rd) == future
+
+
+def test_todays_etd_is_not_called_sailed():
+    rd = _rd()
+    assert "sailed" not in gce._etd_with_staleness(rd.isoformat(), rd)
+
+
+@pytest.mark.parametrize("junk", [None, "", "TBA", "see below"])
+def test_an_unparseable_etd_passes_through_untouched(junk):
+    """A date we cannot read is not evidence that it is stale — marking it
+    "sailed" would be inventing a fact about the sailing."""
+    out = gce._etd_with_staleness(junk, _rd())
+    assert "sailed" not in out
+    assert out == (junk if junk else "—")
+
+
+def test_a_departed_sailing_is_marked_not_dropped():
+    """Silently removing a row from a client report hides an open item.
+    The quote is still real — only the action changes, from book to requote."""
+    rd = _rd()
+    stale = (rd - timedelta(days=9)).isoformat()
+    data = {"requests": [
+        _row("r-stale", status="PENDING", quoted=True, ol_rate=598.0,
+             carrier_quoted="CMA CGM", response_timestamp=f"{RD}T17:00:00Z",
+             lane="Oakland → Xingang", etd_offered=stale),
+    ]}
+    html = gce.build_body(data, {})
+    assert "Oakland → Xingang" in html, "the open quote was dropped, not marked"
+    assert "sailed, ask us to requote" in html
