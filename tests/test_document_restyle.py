@@ -873,3 +873,76 @@ def test_the_named_semantic_tokens_are_actually_used():
     dash = (ROOT / "scripts" / "gen_dashboard.py").read_text(encoding="utf-8")
     assert "B.DOC_PENDING" in dash, "the dashboard stopped using the named pending hue"
     assert "B.DOC_INFO" in dash, "the dashboard stopped using the named info hue"
+
+
+# ── a token must INTERPOLATE, not ship its own braces ───────────────────────
+
+_RENDERED_PLACEHOLDER = re.compile(r"\{[A-Za-z_][A-Za-z_0-9.]*\}")
+
+
+def _rendered_artifacts():
+    """Every HTML artifact a human receives, rendered from the golden fixture."""
+    import gen_client_email as GCE
+    import gen_dashboard as GD
+    import gen_email as GE
+    cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    data = json.loads((ROOT / "tests" / "fixtures" / "golden_day.json")
+                      .read_text(encoding="utf-8"))
+    return {
+        "staff email": GE.build_body(data, cfg),
+        "client email": GCE.build_body(data, cfg),
+        "dashboard": GD.render(cfg, data),
+    }
+
+
+@pytest.mark.parametrize("name", ["staff email", "client email", "dashboard"])
+def test_no_unresolved_placeholder_reaches_the_reader(name):
+    """The failure mode of centralising a palette, and it is silent.
+
+    A token written into a PLAIN '' instead of an f'' ships the literal text
+    "{B.DOC_WARN}" into an Outlook body — the CSS property is garbage, the
+    colour is gone, and every assertion about counts, sections and wording
+    still passes. It happened on 2026-08-04 with three styles, and again on
+    2026-08-05 with TWENTY-SIX: the retone substituted inside string literals
+    NESTED in f-string expressions (`_kpi_card(..., "#3b82f6", ...)`), where
+    the braces are data being passed as an argument, not an expression to
+    evaluate. The suite was 2458 green across both.
+
+    Nothing short of rendering and looking catches this, which is why this
+    test renders and looks.
+    """
+    html = _rendered_artifacts()[name]
+    leaks = sorted(set(_RENDERED_PLACEHOLDER.findall(html)))
+    # CSS/JS legitimately contain {...}; only NAME-shaped braces are suspect,
+    # and a real one always looks like a Python identifier or attribute path.
+    leaks = [x for x in leaks if x.startswith(("{B.", "{DOC_", "{TH_", "{EMAIL_",
+                                               "{HEADER_", "{STRIPE_"))]
+    assert not leaks, f"{name} shipped unresolved placeholders: {leaks}"
+
+
+@pytest.mark.parametrize("name", ["staff email", "client email"])
+def test_the_emails_actually_carry_the_document_palette(name):
+    """The other half. A "fix" that resolved every placeholder to nothing
+    would pass the test above and leave the emails exactly as grey as they
+    were — which is the state Michael called "boring" and "too plain", and
+    which I twice reported as done when the measured answer was zero.
+
+    Asserted on values UNIQUE to the new tokens. #ffffff, DOC_INK and
+    DOC_MUTED all collide with colours these files already contained, so
+    grepping for them proves nothing.
+    """
+    html = _rendered_artifacts()[name]
+    for token in (B.DOC_GOOD, B.DOC_WARN, B.DOC_PENDING, B.DOC_INFO):
+        assert token in html, f"{name} carries none of the document {token}"
+
+
+@pytest.mark.parametrize("name", ["staff email", "client email"])
+def test_the_old_saas_palette_is_gone_from_the_emails(name):
+    """Two palettes in one document is worse than either alone — the reader
+    sees two greens that mean the same thing and reasonably assumes they
+    don't."""
+    html = _rendered_artifacts()[name]
+    stale = [h for h in ("#16a34a", "#22c55e", "#dc2626", "#ef4444", "#f59e0b",
+                         "#d97706", "#7c3aed", "#8b5cf6", "#3b82f6", "#64748b")
+             if h in html]
+    assert not stale, f"{name} still ships the old SaaS palette: {stale}"

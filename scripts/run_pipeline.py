@@ -115,6 +115,13 @@ STEPS = [
     # client_report.enabled (false = sample to Michael only; QC-065 pins the
     # approved recipients + scans the body for internal-analytics leaks).
     ("Client-facing email HTML", [PY, str(SCRIPTS / "gen_client_email.py")]),
+    # 2026-08-05: the client WEEKLY rollup (Michael, on whether Lonny gets
+    # tallied reports — he did not). BUILD ONLY. There is deliberately no send
+    # step for it anywhere in this pipeline or in weekly.yml: client_weekly
+    # ships enabled=false, and turning it on is a decision a person makes after
+    # reading a rendered week, not something a pipeline step can drift into.
+    # Building every fire is what makes that review possible.
+    ("Client weekly rollup HTML", [PY, str(SCRIPTS / "gen_client_weekly.py")]),
     # 2026-07-10 (Michael "constantly updated instruction manual for users"):
     # the consumer manual, rebuilt every fire from live config so it can
     # never describe a stale system. Attached to the daily staff email.
@@ -185,6 +192,7 @@ BEST_EFFORT_STEPS = {
     "Carrier scorecard PDFs",          # supplemental per-carrier PDFs; not in email
     "Daily insights (baselines + LLM)",  # supplemental narrative; shim self-degrades + exits 0, email ships without it
     "Client-facing email HTML",        # brand-new gated client artifact — must never block the staff email
+    "Client weekly rollup HTML",       # gated, nobody receives it yet — it must never be why the staff email doesn't go
     "User manual HTML",                # consumer manual attachment; email ships without it on failure
     "Weekly executive summary",        # Friday-only supplemental; must never block the daily
     "Share to client_intelligence",    # SHARED-folder export; no client impact

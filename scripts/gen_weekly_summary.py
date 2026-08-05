@@ -281,7 +281,7 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
         if abs(d) < 0.01:
             return ""
         arrow = "▲" if d > 0 else "▼"
-        color = "#16a34a" if d > 0 else "#dc2626"
+        color = B.DOC_GOOD if d > 0 else B.DOC_BAD
         fmtspec = "+d" if fmt == "d" else "+.1f"
         return f'<span style="color:{color};font-size:12px;margin-left:6px">{arrow} {d:{fmtspec}}</span>'
 
@@ -290,7 +290,7 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
     _custom = period_label != "Previous week"
     _glance_title = "Period at a glance" if _custom else "Week at a glance"
     _compare_note = (
-        f'<p style="margin:0 0 8px;font-size:11px;color:#94a3b8">'
+        f'<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">'
         f'▲▼ vs the preceding {compare_label}</p>'
     ) if compare_label else ""
     _footer_note = (f"scripts/gen_weekly_summary.py · explicit period {wk_label}"
@@ -303,33 +303,33 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
         f'<td style="padding:6px;text-align:center;font-weight:600">{r["teu_won"]} TEU</td>'
         f'<td style="padding:6px;font-size:12px">{", ".join(r["carriers"])}</td></tr>'
         for r in top_win
-    ) or '<tr><td colspan="4" style="padding:8px;color:#94a3b8;font-style:italic">No wins this week</td></tr>'
+    ) or f'<tr><td colspan="4" style="padding:8px;color:{B.DOC_MUTED};font-style:italic">No wins this week</td></tr>'
 
     loss_rows = "".join(
         f'<tr><td style="padding:6px 8px">{r["lane"]}</td>'
         f'<td style="padding:6px;text-align:center">{r["losses"]}</td>'
-        f'<td style="padding:6px;text-align:center;color:#dc2626;font-weight:600">{r["teu_lost"]} TEU</td>'
+        f'<td style="padding:6px;text-align:center;color:{B.DOC_BAD};font-weight:600">{r["teu_lost"]} TEU</td>'
         f'<td style="padding:6px;text-align:center">${r["median_rate"]:,.0f}</td></tr>'
         if r.get("median_rate") else
         f'<tr><td style="padding:6px 8px">{r["lane"]}</td>'
         f'<td style="padding:6px;text-align:center">{r["losses"]}</td>'
-        f'<td style="padding:6px;text-align:center;color:#dc2626;font-weight:600">{r["teu_lost"]} TEU</td>'
+        f'<td style="padding:6px;text-align:center;color:{B.DOC_BAD};font-weight:600">{r["teu_lost"]} TEU</td>'
         f'<td style="padding:6px;text-align:center">—</td></tr>'
         for r in top_loss
-    ) or '<tr><td colspan="4" style="padding:8px;color:#94a3b8;font-style:italic">No quoted losses this week</td></tr>'
+    ) or f'<tr><td colspan="4" style="padding:8px;color:{B.DOC_MUTED};font-style:italic">No quoted losses this week</td></tr>'
 
     # Build sparklines spanning the 4-week trend
-    spark_total = V.sparkline_svg([t["total"] for t in trend], width=70, height=18, color="#3b82f6")
-    spark_wins = V.sparkline_svg([t["wins"] for t in trend], width=70, height=18, color="#16a34a")
-    spark_teu = V.sparkline_svg([t["teu_won"] for t in trend], width=70, height=18, color="#16a34a")
-    spark_wr = V.sparkline_svg([t["win_rate"] for t in trend], width=70, height=18, color="#8b5cf6")
-    spark_qr = V.sparkline_svg([t["quote_rate"] for t in trend], width=70, height=18, color="#0ea5e9")
+    spark_total = V.sparkline_svg([t["total"] for t in trend], width=70, height=18, color=B.DOC_INFO)
+    spark_wins = V.sparkline_svg([t["wins"] for t in trend], width=70, height=18, color=B.DOC_GOOD)
+    spark_teu = V.sparkline_svg([t["teu_won"] for t in trend], width=70, height=18, color=B.DOC_GOOD)
+    spark_wr = V.sparkline_svg([t["win_rate"] for t in trend], width=70, height=18, color=B.DOC_PENDING)
+    spark_qr = V.sparkline_svg([t["quote_rate"] for t in trend], width=70, height=18, color=B.DOC_INFO)
 
     trend_rows = ""
     for i, t in enumerate(trend):
         wr_bg = V.heatmap_color(t["win_rate"], vmin=0, vmax=100, mode="good_high")
         is_current = (i == len(trend) - 1)
-        bg = "#eff6ff" if is_current else ("#ffffff" if i % 2 == 0 else "#f8fafc")
+        bg = B.DOC_INFO_BG if is_current else (B.DOC_CARD if i % 2 == 0 else B.DOC_TH_BG)
         emphasis = "font-weight:600" if is_current else ""
         trend_rows += (
             f'<tr style="background:{bg};{emphasis}">'
@@ -343,7 +343,7 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
         )
     # Add a sparkline summary row
     trend_rows += (
-        f'<tr style="background:#1e293b;color:white">'
+        f'<tr style="background:{B.DOC_INK};color:white">'
         f'<td style="padding:6px 8px;font-size:11px;font-weight:600">4-week trend →</td>'
         f'<td style="padding:6px;text-align:center">{spark_total}</td>'
         f'<td style="padding:6px;text-align:center">{spark_wins}</td>'
@@ -366,8 +366,8 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
             f'<b>{cow["carrier"]}</b> — {cow["quotes"]} quotes, no wins this week'
         )
         cow_html = f"""
-<div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0">
-  <h2 style="margin:0 0 6px;color:#92400e;font-size:16px">{_cow_title}</h2>
+<div style="background:{B.DOC_WARN_BG};border:2px solid {B.DOC_WARN};border-radius:8px;padding:16px;margin:16px 0">
+  <h2 style="margin:0 0 6px;color:{B.DOC_WARN};font-size:16px">{_cow_title}</h2>
   <p style="margin:0;font-size:14px">{_cow_line}</p>
 </div>"""
 
@@ -376,26 +376,26 @@ def render_html(week, this_week, prev_week, top_win, top_loss, cow, trend,
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Hilmar Weekly Summary — {wk_label}</title>
 <style>
-body{{font-family:'Inter','Segoe UI',Arial,sans-serif;padding:24px;background:#f1f5f9;color:#0f172a;font-size:13px}}
+body{{font-family:'Inter','Segoe UI',Arial,sans-serif;padding:24px;background:{B.DOC_TH_BG};color:{B.DOC_INK};font-size:13px}}
 .container{{max-width:900px;margin:0 auto;background:white;padding:24px;border-radius:8px}}
 h1{{margin:0 0 6px;font-size:22px}}
-h2{{margin:18px 0 8px;font-size:15px;color:#1e40af}}
-.kpi{{display:inline-block;background:#eff6ff;border-radius:6px;padding:10px 16px;margin:4px 4px 4px 0;min-width:110px}}
+h2{{margin:18px 0 8px;font-size:15px;color:{B.DOC_INFO}}}
+.kpi{{display:inline-block;background:{B.DOC_INFO_BG};border-radius:6px;padding:10px 16px;margin:4px 4px 4px 0;min-width:110px}}
 .kpi .val{{font-size:20px;font-weight:700;display:block}}
-.kpi .lbl{{font-size:11px;color:#64748b;margin-top:2px;display:block}}
+.kpi .lbl{{font-size:11px;color:{B.DOC_MUTED};margin-top:2px;display:block}}
 table{{width:100%;border-collapse:collapse;margin:8px 0 16px}}
-th{{background:#1e3a5f;color:white;padding:6px 8px;text-align:left;font-size:12px}}
-td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
+th{{background:{B.DOC_INK};color:white;padding:6px 8px;text-align:left;font-size:12px}}
+td{{font-size:12px;border-bottom:1px solid {B.DOC_TH_BG}}}
 </style></head><body><div class="container">
 {f'<div style="margin-bottom:12px">{B.logo_html(height=42)}</div>' if B.has_logo() else ''}
 <h1>{'' if B.has_logo() else '🗓 '}Hilmar Weekly Summary</h1>
-<p style="margin:0 0 16px;color:#64748b">{period_label}: <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
+<p style="margin:0 0 16px;color:{B.DOC_MUTED}">{period_label}: <b>{wk_label}</b> · Generated {datetime.now(core.ET).strftime('%B %d, %Y at %I:%M %p ET')}</p>
 
 <h2>{_glance_title}</h2>
 {_compare_note}
 <div style="margin-bottom:8px">
   <div class="kpi"><span class="val">{this_week["total"]}</span><span class="lbl">Requests {_delta(this_week["total"], prev_week["total"])}</span></div>
-  <div class="kpi"><span class="val">{this_week["wins"]} <span style="color:#16a34a">({this_week["teu_won"]} TEU)</span></span><span class="lbl">Wins {_delta(this_week["wins"], prev_week["wins"])}</span></div>
+  <div class="kpi"><span class="val">{this_week["wins"]} <span style="color:{B.DOC_GOOD}">({this_week["teu_won"]} TEU)</span></span><span class="lbl">Wins {_delta(this_week["wins"], prev_week["wins"])}</span></div>
   <div class="kpi"><span class="val">{this_week["ql"]}</span><span class="lbl">Quoted & Lost {_delta(this_week["ql"], prev_week["ql"])}</span></div>
   <div class="kpi"><span class="val">{this_week["nq"]}</span><span class="lbl">Not Quoted {_delta(this_week["nq"], prev_week["nq"])}</span></div>
   <div class="kpi"><span class="val">{this_week["win_rate"]}%</span><span class="lbl">Win Rate {_delta(this_week["win_rate"], prev_week["win_rate"], "f")}</span></div>
@@ -422,7 +422,7 @@ td{{font-size:12px;border-bottom:1px solid #f1f5f9}}
 {trend_rows}
 </table>
 
-<p style="margin-top:20px;font-size:11px;color:#94a3b8">Auto-generated weekly summary · {_footer_note}</p>
+<p style="margin-top:20px;font-size:11px;color:{B.DOC_MUTED}">Auto-generated weekly summary · {_footer_note}</p>
 </div></body></html>"""
 
 

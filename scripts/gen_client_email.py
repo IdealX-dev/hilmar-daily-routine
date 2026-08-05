@@ -66,13 +66,13 @@ from gen_email import (  # noqa: E402
 # Navy palette used repo-wide. Table headers are a SOLID color only (QC-045:
 # Outlook strips linear-gradient; the banner pairs the gradient with a solid
 # background-color fallback, listed first so Outlook keeps the solid).
-TH_BG = "#1e3a5f"
+TH_BG = B.DOC_INK
 HEADER_BG_SOLID = B.HILMAR_NAVY
 HEADER_GRADIENT = f"linear-gradient(135deg,{B.HILMAR_NAVY} 0%,{B.HILMAR_BLUE} 100%)"
 
 #: Alternating-row stripe — inline bgcolor attribute (the form desktop
 #: Outlook's Word engine honors most reliably).
-STRIPE_BG = "#f8fafc"
+STRIPE_BG = B.DOC_TH_BG
 
 #: "Active shipments" = WIN rows whose request/response date falls within
 #: this many days of the report day.
@@ -82,15 +82,15 @@ CUTOFF_HORIZON_DAYS = 7
 
 _TH_STYLE = (
     f'style="padding:7px 10px;background-color:{TH_BG};background:{TH_BG};'
-    'color:#ffffff;font-size:11px;font-weight:600;text-align:left;'
+    f'color:{B.DOC_CARD};font-size:11px;font-weight:600;text-align:left;'
     'white-space:nowrap;'
     f'border-bottom:1px solid {TH_BG}"'
 )
 _TD_STYLE = (
-    'style="padding:7px 10px;font-size:12px;color:#1f2937;'
-    'border-bottom:1px solid #e5e7eb"'
+    f'style="padding:7px 10px;font-size:12px;color:{B.DOC_INK};'
+    f'border-bottom:1px solid {B.DOC_LINE}"'
 )
-_TD_FIRST_STYLE = _TD_STYLE.replace('color:#1f2937', 'color:#1f2937;font-weight:600')
+_TD_FIRST_STYLE = _TD_STYLE.replace(f'color:{B.DOC_INK}', f'color:{B.DOC_INK};font-weight:600')
 
 # Mobile overrides — same .hx-* conventions as gen_email._header_html so the
 # client email renders on phones: .hx-wrap full-bleed, .hx-pad one horizontal
@@ -362,12 +362,12 @@ def _table(headers, rows):
         body = (
             f'<tr><td colspan="{len(headers)}" '
             f'{_TD_STYLE.replace("text-align:left", "text-align:center")}>'
-            f'<em style="color:#64748b">None.</em></td></tr>'
+            f'<em style="color:{B.DOC_MUTED}">None.</em></td></tr>'
         )
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" class="hx-data" '
         'style="width:100%;border-collapse:collapse;font-size:12px;'
-        'margin:6px 0 18px 0;border:1px solid #d1d5db">'
+        f'margin:6px 0 18px 0;border:1px solid {B.DOC_LINE}">'
         f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
     )
 
@@ -376,7 +376,7 @@ def _section(title, count, note, table_html):
     return (
         f'<h2 style="margin:18px 0 2px;color:{TH_BG};font-size:15px;'
         f'font-weight:700;letter-spacing:-0.01em">{_esc(title)} ({count})</h2>'
-        f'<p style="margin:0 0 6px;font-size:11px;color:#64748b">{_esc(note)}</p>'
+        f'<p style="margin:0 0 6px;font-size:11px;color:{B.DOC_MUTED}">{_esc(note)}</p>'
         f"{table_html}"
     )
 
@@ -385,8 +385,8 @@ def _quiet_section(title, text):
     """A zero-row section collapses to ONE composed line instead of an empty
     table — bolded section name, muted friendly copy, subtle left rule."""
     return (
-        f'<p style="margin:12px 0 0;padding:8px 12px;font-size:12px;color:#475569;'
-        f'background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 4px 4px 0">'
+        f'<p style="margin:12px 0 0;padding:8px 12px;font-size:12px;color:{B.DOC_MUTED};'
+        f'background:{B.DOC_TH_BG};border-left:3px solid {B.DOC_MUTED};border-radius:0 4px 4px 0">'
         f'<strong style="color:{TH_BG}">{_esc(title)}:</strong> {_esc(text)}</p>'
     )
 
@@ -419,10 +419,10 @@ def _kpi_strip(s):
     return f"""
 <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:2px 0 8px">
   <tr>
-    {_kpi_card(len(s["requests"]), "Requests received", "#3b82f6", "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
-    {_kpi_card(len(s["quotes"]), "Quotes delivered", "#6366f1", "25%", sublabel=_quotes_sublabel(s))}
-    {_kpi_card(len(s["bookings"]), "Bookings confirmed", "#22c55e", "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
-    {_kpi_card(len(s["awaiting"]), "Awaiting your decision", "#f59e0b", "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
+    {_kpi_card(len(s["requests"]), "Requests received", B.DOC_INFO, "25%", sublabel=f"{_teu_sum(s['requests'])} TEU")}
+    {_kpi_card(len(s["quotes"]), "Quotes delivered", B.DOC_PENDING, "25%", sublabel=_quotes_sublabel(s))}
+    {_kpi_card(len(s["bookings"]), "Bookings confirmed", B.DOC_GOOD, "25%", sublabel=f"{_teu_sum(s['bookings'], won=True)} TEU")}
+    {_kpi_card(len(s["awaiting"]), "Awaiting your decision", B.DOC_WARN, "25%", sublabel=f"{_teu_sum(s['awaiting'])} TEU")}
   </tr>
 </table>
 """
@@ -514,15 +514,15 @@ def _narrative(s):
 def _cutoff_callout(items):
     """Amber highlight box — the time-sensitive dates a client must not miss."""
     lines = "".join(
-        f'<p style="margin:3px 0 0;font-size:12px;font-weight:600;color:#78350f">'
+        f'<p style="margin:3px 0 0;font-size:12px;font-weight:600;color:{B.DOC_WARN}">'
         f'{_esc(t)}</p>'
         for t in items
     )
     return (
-        '<div style="background:#fffbeb;border:1px solid #fcd34d;'
-        'border-left:4px solid #f59e0b;border-radius:6px;'
+        f'<div style="background:{B.DOC_WARN_BG};border:1px solid {B.DOC_WARN_BG};'
+        f'border-left:4px solid {B.DOC_WARN};border-radius:6px;'
         'padding:10px 14px;margin:12px 0 6px">'
-        '<p style="margin:0;font-size:12px;font-weight:700;color:#92400e;'
+        f'<p style="margin:0;font-size:12px;font-weight:700;color:{B.DOC_WARN};'
         'letter-spacing:0.01em">Upcoming cutoffs — next 7 days</p>'
         f"{lines}"
         '</div>'
@@ -540,7 +540,7 @@ def _header_html(report_label, prepared_label):
     )
     return f"""
 {MOBILE_STYLE}
-<div class="hx-wrap" style="max-width:900px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
+<div class="hx-wrap" style="max-width:900px;margin:0 auto;background:{B.DOC_CARD};border-radius:8px;overflow:hidden;font-family:{EMAIL_FONT_STACK};{EMAIL_TNUM}">
   <div style="padding:16px 28px;background-color:{HEADER_BG_SOLID};background:{HEADER_GRADIENT};color:white;font-family:{EMAIL_FONT_STACK}">
     {logo_block}
     <h1 style="margin:0;font-size:21px;font-weight:700;letter-spacing:-0.3px;font-family:{EMAIL_FONT_STACK}">Daily Shipment Update — Hilmar Ingredients</h1>
@@ -550,11 +550,11 @@ def _header_html(report_label, prepared_label):
 """
 
 
-FOOTER_HTML = """
-<div style="border-top:2px solid #e5e7eb;padding-top:14px;margin-top:24px">
-  <p style="margin:0 0 4px;font-size:12px;color:#374151">Questions about a specific shipment? Reply with the booking reference and our team will follow up.</p>
-  <p style="margin:0 0 4px;font-size:12px;color:#374151">For anything else, reply to this email or contact <a href="mailto:MBD_OceanExportBookingShared@ol-usa.com" style="color:#1e3a5f">MBD_OceanExportBookingShared@ol-usa.com</a>.</p>
-  <p style="margin:0;font-size:11px;color:#6b7280">This daily update is generated automatically by OL-USA for Hilmar Ingredients.</p>
+FOOTER_HTML = f"""
+<div style="border-top:2px solid {B.DOC_LINE};padding-top:14px;margin-top:24px">
+  <p style="margin:0 0 4px;font-size:12px;color:{B.DOC_INK}">Questions about a specific shipment? Reply with the booking reference and our team will follow up.</p>
+  <p style="margin:0 0 4px;font-size:12px;color:{B.DOC_INK}">For anything else, reply to this email or contact <a href="mailto:MBD_OceanExportBookingShared@ol-usa.com" style="color:{B.DOC_INK}">MBD_OceanExportBookingShared@ol-usa.com</a>.</p>
+  <p style="margin:0;font-size:11px;color:{B.DOC_MUTED}">This daily update is generated automatically by OL-USA for Hilmar Ingredients.</p>
 </div>
 """
 
@@ -619,7 +619,7 @@ def build_body(data, cfg, now=None):
     # 1. Hero KPI strip + one-line service narrative.
     html += _kpi_strip(s)
     html += (
-        f'<p style="margin:6px 2px 14px;font-size:13px;color:#374151;'
+        f'<p style="margin:6px 2px 14px;font-size:13px;color:{B.DOC_INK};'
         f'line-height:1.5">{_esc(_narrative(s))}</p>'
     )
 
