@@ -3,6 +3,57 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-06 — a Python dict repr in the header nine people read
+
+Michael, on the production email: "bad data bad format... also missing a ton of
+data". The header read, verbatim:
+
+  Reporting Wednesday August 5, 2026 — the prior business day ·
+  {'start': '2026-04-02', 'end': '2026-08-05'} | Updated: August 6, 2026 ...
+
+ONE FACT, TWO STORAGES — AGAIN, AND THE FIXTURE HELD THE OTHER ONE.
+  scripts/ingest.py:1823    writes date_range as a DICT {"start","end"}
+  scripts/merge_ingest.py   writes it as a STRING
+  tests/fixtures/golden_day writes it as a STRING
+schema.json permits both (oneOf [string, object]), so no writer is wrong. The
+READERS were. Three of them did `data.get("date_range") or <fallback>` and
+interpolated the result — and a DICT IS TRUTHY, so the fallback branch was
+unreachable in production while every golden test rendered the string form and
+passed. This is structurally identical to the status-vocabulary bug fixed
+yesterday: the fixture exercises one shape, production carries the other, and
+the renderer only handles one. Second instance in two days.
+
+AFFECTED, and gen_pdf is the one that stings:
+  gen_email.py               staff header — what Michael saw
+  gen_pdf.py                 CLIENT PDF cover — Lonny would have seen it
+  gen_carrier_scorecard_pdf  carrier negotiation pack
+All three now read core.format_date_range, which accepts either shape and
+renders "Apr 2, 2026 – Aug 5, 2026". Unparseable dates pass through rather
+than being dropped: a date we cannot read is still information.
+
+A SHADOWED IMPORT, FOUND BY THE FIX. gen_carrier_scorecard_pdf had a redundant
+function-local `import core` two hundred lines below the module-level one,
+which made `core` local to all of build_scorecard — so the new call earlier in
+the same function raised UnboundLocalError. The local import is gone. It had
+been latent since the day it was written; nothing had needed `core` earlier in
+that function before.
+
+GUARD: every artifact a human receives is rendered FROM THE PRODUCTION SHAPE
+and scanned for Python reprs ({'k': ', dict_keys(, <obj at 0x). Rendering the
+fixture is precisely what missed this, so the test overrides date_range to the
+dict form rather than trusting the fixture. Detector proven against the exact
+header that shipped, and proven not to fire on CSS braces.
+
+Suite 2500 passed, 0 failed. ruff clean.
+
+STILL OPEN — under investigation, not fixed by this commit:
+  - the undated-quote count is GROWING: 29 (07-30) → 41 (08-05) → 43 (08-06),
+    after the 08-05 heal that was supposed to shrink it
+  - OL-USA RESPONSES (0), STATUS CHANGES (0), PENDING OL (0) on a full
+    business day — "missing a ton of data"
+  - Michael wants the older format back: "pending hilmar pending ol then what
+    changed"
+
 ## 2026-08-05 (5) — client weekly LIVE (Michael: "flip client weekly")
 
 FLIPPING THE FLAG ALONE WOULD HAVE DONE NOTHING, which is worth recording

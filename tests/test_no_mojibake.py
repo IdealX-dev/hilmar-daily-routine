@@ -209,3 +209,66 @@ def test_the_io_scanner_catches_a_planted_violation(tmp_path):
     )
     hits = list(_unpinned_text_io(p))
     assert [ln for ln, _ in hits] == [4, 4], hits   # the "rb" open is exempt
+
+
+# ── no renderer may print a Python repr into a human artifact ───────────────
+
+_REPR_LEAK = re.compile(r"\{'[a-z_]+':\s*'|\{\"[a-z_]+\":\s*\"|\bdict_keys\(|<[a-z_]+ object at 0x")
+
+
+def test_the_repr_detector_detects():
+    assert _REPR_LEAK.search("window · {'start': '2026-04-02', 'end': '2026-08-05'} |")
+    assert not _REPR_LEAK.search("window · Apr 2, 2026 – Aug 5, 2026 |")
+    # real CSS/JS braces must not trip it
+    assert not _REPR_LEAK.search("@media screen { .hx-wrap { width:100% } }")
+
+
+@pytest.mark.parametrize("name", ["staff email", "client email", "dashboard"])
+def test_no_python_repr_reaches_the_reader(name, request):
+    """Michael 2026-08-06: the production header read
+
+        Reporting Wednesday August 5, 2026 — the prior business day ·
+        {'start': '2026-04-02', 'end': '2026-08-05'} | Updated: ...
+
+    ingest writes `date_range` as a DICT; the fixture holds it as a STRING.
+    Every reader did `data.get("date_range") or <fallback>` and interpolated
+    the result — and a dict is truthy, so the fallback was unreachable in
+    production while the golden tests rendered the string and passed. Three
+    renderers were affected, including gen_pdf, which goes to the client.
+
+    Rendered from the PRODUCTION shape, not the fixture's, because rendering
+    the fixture is exactly what missed this for months.
+    """
+    import json as _json
+
+    import gen_client_email as GCE
+    import gen_dashboard as GD
+    import gen_email as GE
+    cfg = _json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    data = _json.loads((FIXTURES / "golden_day.json").read_text(encoding="utf-8"))
+    data = {**data, "date_range": {"start": "2026-04-02", "end": "2026-08-05"}}
+    html = {
+        "staff email": lambda: GE.build_body(data, cfg),
+        "client email": lambda: GCE.build_body(data, cfg),
+        "dashboard": lambda: GD.render(cfg, data),
+    }[name]()
+    hits = sorted(set(_REPR_LEAK.findall(html)))
+    assert not hits, f"{name} printed a Python repr: {hits}"
+
+
+def test_both_stored_shapes_render_the_same_window():
+    """One fact, two storages — the shape that produced this bug. A reader
+    must not be able to tell which writer produced the file."""
+    import core
+    assert core.format_date_range({"start": "2026-04-02", "end": "2026-08-05"}) \
+        == "Apr 2, 2026 – Aug 5, 2026"
+    assert core.format_date_range("Apr 2, 2026 – Aug 5, 2026") \
+        == "Apr 2, 2026 – Aug 5, 2026"
+
+
+def test_the_pdf_renderers_use_the_shared_formatter():
+    """gen_pdf reaches the CLIENT. A repr there is worse than in the staff
+    email, and it had the identical defect."""
+    for name in ("gen_pdf.py", "gen_carrier_scorecard_pdf.py", "gen_email.py"):
+        src = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+        assert "core.format_date_range" in src, f"{name} still formats the window itself"

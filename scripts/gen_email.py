@@ -2094,8 +2094,14 @@ def build_body(data, cfg):
     # Lonny's PT office has closed for the day).
     report_date = _report_date(now_et)
     report_label = _report_label(report_date)             # 'Wednesday May 6, 2026'
-    report_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%b %-d, %Y")
-    date_range = data.get("date_range") or f"{cfg.get('data_range', {}).get('start', 'start')} – {report_short}"
+    # core.format_date_range, NOT `or <fallback>`. ingest writes this key as a
+    # DICT and a dict is truthy, so the fallback was unreachable in production
+    # and the header printed the repr. See the docstring there.
+    date_range = core.format_date_range(
+        data.get("date_range"),
+        fallback_start=cfg.get("data_range", {}).get("start"),
+        fallback_end=report_date.isoformat(),
+    )
     updated_label = _fmt_date(now_et, "%B %-d, %Y at %-I:%M %p ET")
 
     new_req, ol_resp, status_ch, pending = _today_events(data, report_date)

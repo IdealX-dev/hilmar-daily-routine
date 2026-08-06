@@ -950,6 +950,60 @@ def has_quote_evidence(r: dict) -> bool:
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
 
 
+def format_date_range(value, fallback_start=None, fallback_end=None) -> str:
+    """Render the data window as prose, from EITHER shape it is stored in.
+
+    Michael 2026-08-06, on the production email header, which read:
+
+        Reporting Wednesday August 5, 2026 — the prior business day ·
+        {'start': '2026-04-02', 'end': '2026-08-05'} | Updated: ...
+
+    A Python dict repr, in a header nine people read every morning. The cause
+    is two writers with two shapes for one fact:
+
+        scripts/ingest.py      → {"start": ..., "end": ...}   (production)
+        scripts/merge_ingest.py→ "2026-04-02 to 2026-08-05"   (a string)
+        tests/fixtures/        → a string
+
+    schema.json permits both (`oneOf [string, object]`), so neither writer is
+    wrong. The READERS were: gen_email, gen_pdf and gen_carrier_scorecard_pdf
+    each did `data.get("date_range") or <fallback>` and interpolated the
+    result, which stringifies a dict as its repr. A dict is truthy, so the
+    fallback branch was unreachable in production and every one of those
+    renderers had been printing a repr — including gen_pdf, which goes to the
+    client.
+
+    Every golden test passed throughout, because the fixture holds the STRING
+    form. That is the identical shape as the status-vocabulary bug fixed on
+    2026-08-05: one fact, two storages, the fixture exercising one and
+    production carrying the other.
+    """
+    if isinstance(value, dict):
+        start, end = value.get("start"), value.get("end")
+    elif value:
+        return str(value)
+    else:
+        start, end = fallback_start, fallback_end
+    if not (start or end):
+        return "—"
+    if start and end:
+        return f"{_short_day(start)} – {_short_day(end)}" if start != end else _short_day(start)
+    return _short_day(start or end)
+
+
+def _short_day(d) -> str:
+    """'2026-08-05' → 'Aug 5, 2026'. Anything unparseable passes through as-is
+    rather than being dropped: a date we cannot read is still information, and
+    hiding it would trade a formatting flaw for a missing one."""
+    s = str(d or "").strip()
+    try:
+        dt = datetime.strptime(s[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return s or "—"
+    # No %-d / %#d — CLAUDE.md rule #8, Windows portability.
+    return dt.strftime("%b %d, %Y").replace(" 0", " ", 1)
+
+
 def is_win(r: dict) -> bool:
     """True if row is a win. WIN is spelled the same in both storage forms —
     this exists so a renderer can classify a row entirely through these
