@@ -44,7 +44,7 @@ PENDING_WINDOW_HOURS = 24
 
 #: PENDING_HILMAR quote-decision window (Michael 2026-07-14, supersedes the
 #: 2026-06-04 "Tuesday 18:00 ET" carve-out FOR QUOTED ROWS): a quote awaiting
-#: Lonny's decision is Quoted & Lost after 48 CLOCK hours — 72 if OL quoted on
+#: Lonny's decision is Quoted & Lost after 24 CLOCK hours — 72 if OL quoted on
 #: a FRIDAY (ET), to carry the weekend so a Friday quote lands Monday, not
 #: Sunday. Measured from the OL quote (response_timestamp). SEND-signal aging
 #: (is_business_stale) is deliberately unchanged.
@@ -52,7 +52,7 @@ PENDING_HILMAR_LOSS_HOURS = 24
 PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
 #: PENDING-OL window — how long OL-USA has to answer Lonny's RFQ before the
 #: row is called a genuine non-response (NQ). Symmetric with the Hilmar side
-#: (PENDING_HILMAR_LOSS_HOURS): 48 CLOCK hours from Lonny's REQUEST, 72 when
+#: (PENDING_HILMAR_LOSS_HOURS): 24 CLOCK hours from Lonny's REQUEST, 72 when
 #: the RFQ landed on a Friday (ET) so the weekend doesn't burn the window.
 #: Added 2026-07-24 — before this, an unquoted request was classified
 #: LOSS/NO_RESPONSE the instant it was ingested, with NO grace at all, which
@@ -981,10 +981,14 @@ send_signal_stale = is_business_stale
 def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) -> bool:
     """True when a QUOTED PENDING-Hilmar row has aged out to Quoted & Lost.
 
-    Michael 2026-07-14: "pending hilmar is 48 hours most, then it's lost if we
-    don't win.. except fridays, it's 72 hours." Pure CLOCK hours from the OL
-    quote (response_timestamp): >= 48h → Q&L, or >= 72h when OL quoted on a
-    Friday (ET) so the weekend lands Lonny on Monday. Distinct from the SEND-
+    Pure CLOCK hours from the OL quote (response_timestamp):
+    >= PENDING_HILMAR_LOSS_HOURS → Q&L, or >= PENDING_HILMAR_LOSS_HOURS_FRIDAY
+    when OL quoted on a Friday (ET) so the weekend lands Lonny on Monday.
+
+    Michael said 48h on 2026-07-14 and then 24h on 2026-07-26 (0c73c4b,
+    "supersedes"). This docstring quoted the FIRST instruction for eleven days
+    after the second one shipped. Naming the constants instead of spelling a
+    number is what stops that recurring. Distinct from the SEND-
     signal aging (is_business_stale), which is unchanged.
 
     Kept byte-for-byte identical to scripts/core.pending_hilmar_stale —
@@ -1004,8 +1008,11 @@ def pending_ol_stale(request_dt, now=None) -> bool:
     as a genuine non-response (NQ) rather than an open request (PENDING_OL).
 
     Anchored on Lonny's REQUEST time (there is no response yet, by
-    definition). Pure CLOCK hours, mirroring pending_hilmar_stale: >= 48h, or
-    >= 72h when Lonny asked on a Friday (ET) so the weekend lands OL on Monday.
+    definition). Pure CLOCK hours, mirroring pending_hilmar_stale:
+    >= PENDING_OL_LOSS_HOURS, or >= PENDING_OL_LOSS_HOURS_FRIDAY when Lonny
+    asked on a Friday (ET) so the weekend lands OL on Monday. Named rather
+    than spelled: this docstring said "48h" while the constant was 24 from
+    2026-07-26 to 2026-08-06.
 
     request_dt None → STALE (True). We cannot measure a window without a
     date, so we preserve the pre-2026-07-24 behavior (immediate NQ) rather

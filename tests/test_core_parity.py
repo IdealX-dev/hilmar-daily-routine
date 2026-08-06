@@ -14,6 +14,7 @@ fails CI / the daily QC-052 routine instead of silently shipping.
 """
 from __future__ import annotations
 
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -289,3 +290,143 @@ def test_port_key_and_terminal_parity(dest):
         f"canonical_port_key drift for {dest!r}"
     assert scripts_core.port_terminal(dest) == hilmar_core.port_terminal(dest), \
         f"port_terminal drift for {dest!r}"
+
+
+# ── the prose in this file must agree with the numbers in it ────────────────
+
+_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_REF_RE = re.compile(r"#\d+|\b[0-9a-f]{7,40}\b")
+# 1-3 digits NOT followed by another digit, so "48h" is caught and "2026" is not.
+_NUM_RE = re.compile(r"\b(\d{1,3})(?!\d)")
+_TIMER_LINE_RE = re.compile(
+    r"PENDING_(?:HILMAR|OL)_LOSS_HOURS|CLOCK hours|biz-?\s*hours? cutoff", re.I)
+
+
+def _prose_lines(text: str) -> dict[int, str]:
+    """The COMMENT and DOCSTRING lines of a module, by line number.
+
+    Comments come from tokenize, docstrings from the AST. Code is excluded on
+    purpose: `weekday() == 4` is a weekday index, not an hour, and a scanner
+    that cannot tell prose from code is the exact mistake this repo has now
+    made four times in two days.
+    """
+    import ast as _ast
+    import io as _io
+    import tokenize as _tok
+    out = {}
+    for t in _tok.generate_tokens(_io.StringIO(text).readline):
+        if t.type == _tok.COMMENT:
+            out[t.start[0]] = t.string
+    tree = _ast.parse(text)
+    for node in _ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if isinstance(first, _ast.Expr) and isinstance(first.value, _ast.Constant) \
+                and isinstance(first.value.value, str):
+            lines = text.splitlines()
+            for ln in range(first.lineno, first.end_lineno + 1):
+                out.setdefault(ln, lines[ln - 1])
+    return out
+
+
+def _timer_prose_offenders(text: str, allowed: set[str]) -> list[str]:
+    """Hour literals in timer PROSE that no timer constant holds.
+
+    Dates and commit/issue refs are stripped first — a comment may cite
+    "2026-07-26" or "0c73c4b" without that reading as a threshold.
+    """
+    out = []
+    for i, line in sorted(_prose_lines(text).items()):
+        if not _TIMER_LINE_RE.search(line):
+            continue
+        cleaned = _REF_RE.sub(" ", _DATE_RE.sub(" ", line))
+        for n in _NUM_RE.findall(cleaned):
+            if n not in allowed:
+                out.append(f"line {i}: {line.strip()[:100]}")
+                break
+    return out
+
+
+def test_timer_docs_match_constants():
+    """A comment that states a threshold the code does not use is a trap.
+
+    Michael set PENDING_HILMAR_LOSS_HOURS 48->24 on 2026-07-26 (0c73c4b,
+    "supersedes 2026-07-14") and did the same for PENDING_OL_LOSS_HOURS. The
+    surrounding comments and both stale-check docstrings kept saying 48. For
+    eleven days, four separate places in core.py asserted a window the code had
+    not used since the operator changed his mind.
+
+    Found 2026-08-06 while chasing "PENDING OL (0) — missing a ton of data".
+    The prose made the CONSTANT look like the bug, and the obvious next move
+    was to "fix" 24 back to 48 — silently reverting an operator decision, in a
+    timer that decides whether live business gets called lost. Getting that
+    number wrong would have been far worse than the report being empty.
+    """
+    allowed = {
+        str(scripts_core.PENDING_HILMAR_LOSS_HOURS),
+        str(scripts_core.PENDING_HILMAR_LOSS_HOURS_FRIDAY),
+        str(scripts_core.PENDING_OL_LOSS_HOURS),
+        str(scripts_core.PENDING_OL_LOSS_HOURS_FRIDAY),
+        str(scripts_core.PENDING_WINDOW_HOURS),
+        str(scripts_core.PENDING_OL_SLA_BIZ_HOURS),
+    }
+    bad = []
+    for mod, path in (("scripts", SCRIPTS / "core.py"),
+                      ("src/hilmar", SRC / "hilmar" / "core.py")):
+        bad += [f"{mod}/core.py {h}"
+                for h in _timer_prose_offenders(path.read_text(encoding="utf-8"), allowed)]
+    assert not bad, (
+        "timer prose names an hour value no timer constant holds — update the "
+        "comment, or name the constant instead of a number:\n  " + "\n  ".join(bad))
+
+
+def test_the_timer_doc_guard_catches_a_planted_drift():
+    """A guard nobody has watched fail is a guard nobody knows works.
+
+    Planted as real module source, because the scanner parses it — the EXACT
+    comment and docstring that sat in core.py for eleven days.
+    """
+    allowed = {"24", "72", "3"}
+    stale = (
+        '#: PENDING_HILMAR_LOSS_HOURS: Quoted & Lost after 48 CLOCK hours\n'
+        'def f():\n'
+        '    """Pure CLOCK hours, mirroring the other side: >= 48h, or 72h."""\n'
+        '    return 1\n'
+    )
+    hits = _timer_prose_offenders(stale, allowed)
+    assert len(hits) == 2, hits
+
+    fixed = (
+        '#: PENDING_HILMAR_LOSS_HOURS: Quoted & Lost after 24 CLOCK hours\n'
+        'def f():\n'
+        '    """Pure CLOCK hours, mirroring the other side: >= 24h, or 72h."""\n'
+        '    return 1\n'
+    )
+    assert _timer_prose_offenders(fixed, allowed) == []
+
+
+def test_the_timer_doc_guard_ignores_code_and_citations():
+    """Two false-positive classes it must not fire on: a weekday index in
+    CODE (`weekday() == 4`), and a date or commit sha cited in prose."""
+    allowed = {"24", "72", "3"}
+    src = (
+        '#: 24 CLOCK hours, set in 0c73c4b (2026-07-26); see PENDING_OL_LOSS_HOURS\n'
+        'PENDING_OL_LOSS_HOURS = 24\n'
+        'def g(resp_et):\n'
+        '    deadline = 72 if resp_et.weekday() == 4 else PENDING_OL_LOSS_HOURS\n'
+        '    return deadline\n'
+    )
+    assert _timer_prose_offenders(src, allowed) == []
+
+
+def test_both_trees_hold_the_same_timer_values():
+    """The values themselves, not just the prose. These decide whether live
+    business is called lost, and the two trees must never disagree."""
+    for name in ("PENDING_HILMAR_LOSS_HOURS", "PENDING_HILMAR_LOSS_HOURS_FRIDAY",
+                 "PENDING_OL_LOSS_HOURS", "PENDING_OL_LOSS_HOURS_FRIDAY",
+                 "PENDING_WINDOW_HOURS"):
+        a = getattr(scripts_core, name, None)
+        b = getattr(hilmar_core, name, None)
+        assert a is not None and a == b, f"{name}: scripts={a!r} src/hilmar={b!r}"

@@ -3,6 +3,53 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-06 (2) — the 08-05 heal never dated a single row
+
+Michael: "bad data bad format.. also missing a ton of data". The undated-quote
+count went 29 (07-30) → 41 (08-05) → 43 (08-06) — THROUGH the heal shipped on
+08-05 specifically to shrink it, which I reported as fixed.
+
+IT COULD NEVER HAVE WORKED.
+  fetch_bodies.upsert_body writes    "sent_ts" / "received_ts"
+  qc_selfheal._body_send_time read   "sent" / "sentDateTime" / "received"
+  patch_carriers read the same wrong three
+
+stage_emails.txt genuinely uses sent/received; stage_emails_bodies.txt — the
+file BOTH healers actually open — uses sent_ts/received_ts. Two file schemas
+for one concept, and both healers reached for the other file's spelling. Every
+lookup returned None, silently, because a missing key is not an error.
+
+That makes the QC-077 set MONOTONIC: rate recovery keeps ADDING rows that carry
+a rate with no response_timestamp, and nothing could ever remove one. 29 → 41 →
+43 is exactly that shape. It also IS the "missing a ton of data" — an undated
+quote is invisible to OL-USA RESPONSES on every day forever, because that
+section buckets on response_timestamp. Defects 2 and 3 were one defect.
+
+refresh_stage.py:254 already read BOTH spellings. The split was known to
+someone and never shared, which is the whole lesson: one reader now
+(core.body_send_time), both healers through it, send preferred over received.
+
+THE TEST BINDS READER TO WRITER, not to a second copy of the list. It builds a
+record through fetch_bodies and asserts core.body_send_time finds its
+timestamp, plus a scan asserting every timestamp key fetch_bodies writes is a
+key the reader knows. A test that lists the spellings itself proves only that
+someone wrote the same list twice — which is precisely how this shipped.
+
+I told Michael this was fixed on 08-05. It was not, and the number he was
+already calling unacceptable grew for two more days while I said otherwise.
+
+ALSO FIXED — stale timer prose. PENDING_HILMAR_LOSS_HOURS and
+PENDING_OL_LOSS_HOURS were set 48→24 by Michael himself in 0c73c4b
+(2026-07-26, "supersedes 2026-07-14"). Four places in core.py still said 48.
+Chasing "PENDING OL (0)" I nearly "fixed" the CONSTANT back to 48 — silently
+reverting an operator decision inside the timer that decides whether live
+business gets called lost. The commit message is what stopped me. Comments
+corrected in both trees; test_timer_docs_match_constants now fails on any hour
+literal in timer prose that no timer constant holds, scanning comments and
+docstrings only (via tokenize + AST) because `weekday() == 4` is not an hour.
+
+Suite 2518 passed, 0 failed. ruff clean.
+
 ## 2026-08-06 — a Python dict repr in the header nine people read
 
 Michael, on the production email: "bad data bad format... also missing a ton of
