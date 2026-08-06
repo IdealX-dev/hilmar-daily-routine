@@ -3,6 +3,52 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-06 (3) — "bad format": nothing moved, the landmarks went out
+
+Michael: "go back to the older format that shows pending hilmar pending ol
+then what changed etc."
+
+THE FORMAT DID NOT CHANGE. Section ORDER, heading TEXT, heading LEVEL and
+empty-state rendering in the staff email are byte-for-byte unchanged across
+this repo's entire history. Nothing was reordered, nothing demoted, nothing
+that used to be a table now collapses to a one-liner. Verified across every
+commit touching gen_email.py, not assumed — and NOT restyled on a guess,
+which was the tempting move.
+
+WHAT CHANGED WAS PROMINENCE, and it was mine. The 08-04/08-05 restyle
+replaced the solid navy table-header bars and the saturated KPI tiles with
+near-white, and set the section rule to a 1px hairline in DOC_LINE — the
+colour of the card ground it sits on. Killing the shouting bars was right;
+replacing them with nothing was not. A reader scanning for "where is my
+pending list" needs an anchor, and a hairline in the background colour is an
+absent one rather than a quiet one.
+
+Then Defect 2 emptied three of the five sections in that same block and put an
+amber self-apology banner between them. Flat + empty + apologising reads as
+"the format broke."
+
+FIXED, without reverting the palette he approved:
+  - section rule 1px DOC_LINE → 2px DOC_INK, the same rule the table heads
+    already use, so a section head and a table head are one landmark at two
+    scales
+  - TWO headings drew their 2px rule in DOC_WARN_BG — the pale TINT — under
+    DOC_WARN text. A rule in the background tint of its own colour is a rule
+    you cannot see. I found one by eye and the new scanner found the second,
+    which is the entire argument for scanners over eyes.
+  - guards pin WEIGHT, not hexes: the section rule must be 2px ink and must
+    not use DOC_LINE, and no 2px rule may be drawn in a *_BG token. The
+    palette can keep moving; the landmark cannot vanish again.
+
+ALSO: gen_email_new.py carried the identical dead-fallback date_range bug.
+Dormant (not in run_pipeline) but it writes the SAME reports/email-body.html,
+so anyone who runs it ships the repr. Routed through core.format_date_range.
+
+SEQUENCING, deliberately: the restyle would not have put one missing row
+back. The rows were missing, not hidden by CSS — the same template renders
+every row when the data is there. Data first, then landmarks.
+
+Suite 2520 passed, 0 failed. ruff clean.
+
 ### 2026-08-06 (2) — the 08-05 heal never dated a single row
 
 Michael: "bad data bad format.. also missing a ton of data". The undated-quote
