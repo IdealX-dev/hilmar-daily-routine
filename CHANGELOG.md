@@ -3,6 +3,48 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (7) — the control reported all-clear on three missing messages
+
+Run 4, the first with the $filter control:
+
+    373 message(s) in the mailbox that day ($search found 1)
+    of those, 3 touch lupfold@hilmaringredients.com
+    >>> $search found every Lonny message $filter did — the query is fine.
+
+Those three lines contradict each other. $search returned ONE message for
+Aug 6 — our own daily report — and $filter found THREE touching Lonny. The
+verdict is impossible and it is mine.
+
+THE MECHANISM. The comparison keyed on internetMessageId. Every row on both
+sides had it as None, so search_keys was {None}, and `None not in {None}` is
+False — three missing messages matched nothing to nothing and the control
+reported all-clear on the exact question it exists to answer. "A missing key
+is not an error" for the third time this session; here the missing key was an
+alibi.
+
+FIXED: _key_of returns imid, else Graph id, else None — and None is DISCARDED
+from the comparison set, so an unidentifiable message counts as MISSED rather
+than as universally matched. Verified by restoring the old one-line version
+and watching the test go red.
+
+AND THE DEEPER FIX — evidence before verdict, unconditionally. Run 4 printed
+a conclusion and never printed the rows it came from, so the log looked clean
+while being wrong. Every Lonny-touching message the control finds is now
+listed with sender, time, subject, its classify() bucket and whether $search
+saw it, BEFORE any verdict. A wrong verdict over visible rows is recoverable;
+a wrong verdict over nothing is not. Guarded by a test that asserts the
+listing precedes the verdict and is not nested under the "something was
+missed" branch.
+
+WHAT THE NUMBERS ALREADY SAY, pending the re-run: 373 messages in the mailbox
+on Aug 6, 3 of them involving Lonny, and $search returned 1 for that day. So
+Lonny's Aug 6 mail is very likely real and very likely missing from intake —
+which is where the evidence pointed before my broken comparison talked me out
+of it. Stated as the strong reading it is, not as a result: the re-run prints
+the three messages and settles it.
+
+Suite 2584 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (6) — the cap theory is dead; a $filter control settles it
 
 Run 3, with the corrected imid lookup and the two new views:

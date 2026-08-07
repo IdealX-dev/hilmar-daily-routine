@@ -350,6 +350,48 @@ def test_the_filter_control_paginates():
         "params were re-sent alongside the nextLink, which Graph rejects")
 
 
+def test_an_unidentifiable_message_never_matches_another_one():
+    """Run 4 printed ">>> $search found every Lonny message $filter did" while
+    $search had returned ONE message that day and $filter had found THREE
+    touching Lonny.
+
+    The comparison keyed on internetMessageId. Every row on both sides had it
+    as None, the search set was {None}, and `None not in {None}` is False — so
+    three missing messages matched nothing to nothing and the tracer reported
+    all-clear on the exact question it was built to answer. A missing key is
+    not an error; here it was an alibi.
+    """
+    import diag_day
+
+    assert diag_day._key_of({"internetMessageId": "<a>"}) == "<a>"
+    assert diag_day._key_of({"id": "AAMk"}) == "AAMk"
+    assert diag_day._key_of({"internetMessageId": "<a>", "id": "AAMk"}) == "<a>"
+    # The whole point: no identity means no match, not a universal match.
+    assert diag_day._key_of({}) is None
+    assert diag_day._key_of({"internetMessageId": None, "id": None}) is None
+
+    keys = {diag_day._key_of(it) for it in [{}]}
+    keys.discard(None)
+    assert diag_day._key_of({}) not in keys, (
+        "an unidentifiable message matches another unidentifiable one — the "
+        "control will report all-clear on messages it cannot see")
+
+
+def test_it_prints_the_messages_the_verdict_is_derived_from():
+    """Run 4's verdict was wrong and the rows behind it were never printed, so
+    the log looked clean. Evidence before verdict, unconditionally — a wrong
+    verdict over visible rows is recoverable, a wrong verdict over nothing is
+    not."""
+    body = SRC.split("$filter control", 1)[-1]
+    evidence = body.index("every Lonny-touching message in the mailbox")
+    verdict = body.index("the intake query is the gap")
+    assert evidence < verdict, (
+        "the verdict is printed before the rows it is derived from")
+    # and the evidence loop must not be nested under the `missed` branch
+    assert "if relevant:" in body[:evidence], (
+        "the per-message listing is gated on there being a MISSED message")
+
+
 def test_it_parses_and_the_module_imports_clean():
     """Cheap, and it catches the NameError-after-a-rename class of defect that
     has shipped in this repo before — a diagnostic that crashes on import is

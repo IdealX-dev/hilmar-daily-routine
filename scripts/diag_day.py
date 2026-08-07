@@ -70,6 +70,17 @@ def _short(s: str | None, n: int) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _key_of(item: dict) -> str | None:
+    """The identity of a Graph message for cross-query comparison.
+
+    imid first (stable across folder copies), Graph id as the fallback, and
+    None when it has neither — so callers can treat "unidentifiable" as
+    UNMATCHED rather than letting None silently equal None. That equality is
+    what made run 4 report all-clear on three missing messages.
+    """
+    return item.get("internetMessageId") or item.get("id") or None
+
+
 def _target_day(core) -> str:
     """The day under investigation, ET."""
     explicit = os.environ.get("DIAG_DAY", "").strip()
@@ -247,7 +258,15 @@ def main() -> int:
 
     # ── the control: the same day via $filter, which is not relevance-ranked ─
     _rule(f"$filter control — the whole mailbox for {day}")
-    search_imids = {it.get("internetMessageId") for it in on_day}
+    # Key on imid OR id, and NEVER on a bare None. Run 4 printed ">>> $search
+    # found every Lonny message $filter did" while $search had returned 1
+    # message that day and $filter had found 3 touching Lonny. The set was
+    # {None}, every $filter row also had internetMessageId None, and `None not
+    # in {None}` is False — so three missing messages matched nothing to
+    # nothing and the tracer reported all-clear. A missing key is not an error;
+    # here it was an alibi.
+    search_keys = {_key_of(it) for it in on_day}
+    search_keys.discard(None)
     try:
         everything = _filter_day(RS, token, day)
     except Exception as e:
@@ -267,18 +286,30 @@ def main() -> int:
 
     relevant = [it for it in everything if _touches_lonny(it)]
     print(f"of those, {len(relevant)} touch {RS.LONNY_EMAIL}")
-    missed = [it for it in relevant
-              if it.get("internetMessageId") not in search_imids]
-    if missed:
-        print(f"\n>>> {len(missed)} Lonny message(s) $filter FOUND and $search MISSED "
-              f"— the intake query is the gap:\n")
-        for it in missed:
+
+    no_key = sum(1 for it in relevant if _key_of(it) is None)
+    if no_key:
+        print(f"WARN {no_key} of them carry neither an internetMessageId nor an "
+              f"id — they cannot be matched and are counted as MISSED")
+
+    # Print the EVIDENCE before the verdict, always. Run 4 printed a verdict
+    # derived from a broken comparison and the messages it was derived from
+    # were never shown, so the log looked clean and was not.
+    if relevant:
+        print(f"\nevery Lonny-touching message in the mailbox on {day}:\n")
+        for it in relevant:
             sender = ((it.get("from") or {}).get("emailAddress") or {}).get("address") or "<none>"
-            print(f"  {RS.classify(it) or 'DROPPED':<20} {sender}")
-            print(f"  {'':<20} {it.get('receivedDateTime')}  "
-                  f"{_short(it.get('subject'), 90)}")
+            seen = "in $search" if _key_of(it) in search_keys else "MISSED by $search"
+            print(f"  {RS.classify(it) or 'DROPPED':<20} {seen:<18} {sender}")
+            print(f"  {'':<20} {'':<18} {it.get('receivedDateTime')}  "
+                  f"{_short(it.get('subject'), 80)}")
+
+    missed = [it for it in relevant if _key_of(it) not in search_keys]
+    if missed:
+        print(f"\n>>> {len(missed)} of {len(relevant)} Lonny message(s) came back "
+              f"from $filter and NOT from $search — the intake query is the gap.")
     elif relevant:
-        print(">>> $search found every Lonny message $filter did — the query is fine.")
+        print("\n>>> $search found every Lonny message $filter did — the query is fine.")
     else:
         print(f">>> No message in the entire mailbox on {day} involves "
               f"{RS.LONNY_EMAIL}. Nothing was dropped; nothing arrived.")
