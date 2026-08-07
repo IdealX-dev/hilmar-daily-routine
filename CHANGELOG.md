@@ -3,6 +3,55 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (6) — the cap theory is dead; a $filter control settles it
+
+Run 3, with the corrected imid lookup and the two new views:
+
+    overlap lonny-flow ∩ hilmar-bookings: 15  (lonny-only 118, bookings-only 197)
+
+THE CAP THEORY IS DEAD, and this time on evidence rather than on a second
+guess. Both queries return 275 raw results, which is what made me suspect a
+cap twice — but they share only 15 messages. They are genuinely different
+result sets; the 275s are a coincidence of pagination, not one relevance set
+returned twice. (The raw 275 dedupes to 133 and 212 unique imids — Graph
+returns the same message once per folder copy.)
+
+THE HISTOGRAM, which is the first real look at intake completeness:
+
+    2026-08-07  3     2026-07-31  9     2026-07-22 21
+    2026-08-06  1 <-  2026-07-30 14     2026-07-21  8
+    2026-08-05  6     2026-07-29  3     2026-07-20 17
+    2026-08-04  6     2026-07-24  4     2026-07-17 15
+    2026-08-03  6     2026-07-23  6     2026-07-16 24
+
+Aug 6 has ONE message where its neighbours have six. The window is populated,
+so this is not a dead query — Aug 6 specifically is near-empty. Also missing
+entirely: Mon Jul 27 and Tue Jul 28, two business days with zero messages in
+the set. Weekends are absent as expected (Sat Jul 18 has 1, so weekend mail
+does come through when it exists).
+
+The single Aug 6 message is our own daily report from
+michael.deitchman@ol-usa.com, correctly dropped. Nothing from Lonny.
+
+THE CONTROL, added rather than concluded: _filter_day queries the same ET day
+with $filter on receivedDateTime and no $search at all. $search is
+relevance-ranked and its completeness is the open question; $filter is an
+ordered range scan. Run both over one day and the difference IS the intake
+gap, measured. Three outcomes, each printed as a verdict:
+  - $filter finds Lonny mail $search missed  → the query is the gap
+  - $filter finds the same set               → the query is fine
+  - no message that day involves Lonny at all → nothing arrived to drop
+
+The window is ET midnight to ET midnight converted to UTC, not a UTC day — a
+UTC day shifts both edges four hours and moves evening mail across the
+boundary, the exact bug core.et_date_of exists to prevent. Tested on the
+emitted $filter string for both an EDT and an EST date, so a hardcoded
+4-hour offset fails in January instead of in silence. Pagination tested too:
+one page is 50, and a control that stopped there would manufacture a
+false "nothing missing".
+
+Suite 2582 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (5) — the tracer ran, and the first thing it caught was itself
 
 Run 2 of diag-day succeeded and printed, in its first three lines:

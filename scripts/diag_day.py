@@ -80,6 +80,45 @@ def _target_day(core) -> str:
         datetime.now(ZoneInfo("America/New_York"))).isoformat()
 
 
+def _filter_day(RS, token: str, day: str) -> list[dict]:
+    """Every message in the mailbox for one ET day, via $filter — NOT $search.
+
+    This is the control. $search is relevance-ranked and its completeness is
+    exactly what is in question; $filter on receivedDateTime is an ordered
+    range scan and returns everything in the window. Run both over the same
+    day and the difference is the intake gap, measured instead of argued.
+
+    The window is ET midnight to ET midnight converted to UTC, because the
+    report's day boundary is ET — using a UTC day would shift the edges by
+    four hours and put evening mail on the wrong side.
+    """
+    from datetime import date as _date
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    d = _date.fromisoformat(day)
+    lo = datetime(d.year, d.month, d.day, tzinfo=et).astimezone(timezone.utc)
+    hi = lo + timedelta(days=1)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    params = {
+        "$filter": (f"receivedDateTime ge {lo.strftime(fmt)} and "
+                    f"receivedDateTime lt {hi.strftime(fmt)}"),
+        "$select": RS.GRAPH_SELECT,
+        "$orderby": "receivedDateTime desc",
+        "$top": "50",
+    }
+    print(f"$filter window (UTC): {lo.strftime(fmt)} … {hi.strftime(fmt)}")
+
+    out: list[dict] = []
+    url = f"{RS._mailbox_base}/messages"
+    while url and len(out) < 500:
+        data = RS.graph_get(token, url, params=params)
+        out.extend(data.get("value") or [])
+        url = data.get("@odata.nextLink")
+        params = None  # nextLink already carries the query
+    return out
+
+
 def main() -> int:
     import core
 
@@ -205,6 +244,44 @@ def main() -> int:
             ts = it.get("receivedDateTime") or it.get("sentDateTime") or "?"
             print(f"  {bucket:<20} {staged:<7} {has_body:<5} {sender}")
             print(f"  {'':<20} {'':<7} {'':<5} {ts}  {_short(it.get('subject'), 90)}")
+
+    # ── the control: the same day via $filter, which is not relevance-ranked ─
+    _rule(f"$filter control — the whole mailbox for {day}")
+    search_imids = {it.get("internetMessageId") for it in on_day}
+    try:
+        everything = _filter_day(RS, token, day)
+    except Exception as e:
+        print(f"$filter FAILED: {type(e).__name__}: {e}")
+        everything = []
+    print(f"{len(everything)} message(s) in the mailbox that day "
+          f"($search found {len(on_day)})")
+
+    lonny_l = RS.LONNY_EMAIL.lower()
+
+    def _touches_lonny(it: dict) -> bool:
+        who = [((it.get("from") or {}).get("emailAddress") or {}).get("address") or ""]
+        for field in ("toRecipients", "ccRecipients"):
+            who += [((r.get("emailAddress") or {}).get("address") or "")
+                    for r in (it.get(field) or [])]
+        return any(a.lower() == lonny_l for a in who)
+
+    relevant = [it for it in everything if _touches_lonny(it)]
+    print(f"of those, {len(relevant)} touch {RS.LONNY_EMAIL}")
+    missed = [it for it in relevant
+              if it.get("internetMessageId") not in search_imids]
+    if missed:
+        print(f"\n>>> {len(missed)} Lonny message(s) $filter FOUND and $search MISSED "
+              f"— the intake query is the gap:\n")
+        for it in missed:
+            sender = ((it.get("from") or {}).get("emailAddress") or {}).get("address") or "<none>"
+            print(f"  {RS.classify(it) or 'DROPPED':<20} {sender}")
+            print(f"  {'':<20} {it.get('receivedDateTime')}  "
+                  f"{_short(it.get('subject'), 90)}")
+    elif relevant:
+        print(">>> $search found every Lonny message $filter did — the query is fine.")
+    else:
+        print(f">>> No message in the entire mailbox on {day} involves "
+              f"{RS.LONNY_EMAIL}. Nothing was dropped; nothing arrived.")
 
     # ── link 4+5: what the tracking data holds for that day ─────────────────
     _rule(f"tracking-data-v2.json — rows dated {day}")

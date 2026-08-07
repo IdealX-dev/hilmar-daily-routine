@@ -267,6 +267,89 @@ def test_the_stage_writer_and_the_tracers_reader_agree_on_the_imid_field():
         "imid field — diag_day's staged column will read NO for everything")
 
 
+def test_the_filter_control_uses_an_ET_day_window_not_a_UTC_one():
+    """The control query exists to be a second opinion on $search, so its day
+    boundary has to be the SAME boundary the report uses — ET.
+
+    A UTC day would shift both edges four hours (five in winter) and quietly
+    move evening mail to the neighbouring day, which is the exact class of bug
+    core.et_date_of was written to end. Asserted on the emitted $filter string,
+    not on the source.
+    """
+    import diag_day
+
+    captured = {}
+
+    class FakeRS:
+        GRAPH_SELECT = "id,subject"
+        _mailbox_base = "https://graph.microsoft.com/v1.0/me"
+
+        @staticmethod
+        def graph_get(token, url, params=None):
+            captured["url"] = url
+            captured["params"] = params
+            return {"value": []}
+
+    diag_day._filter_day(FakeRS, "tok", "2026-08-06")
+    f = captured["params"]["$filter"]
+    # 2026-08-06 is EDT (UTC-4): the ET day starts at 04:00Z and ends at 04:00Z.
+    assert "ge 2026-08-06T04:00:00Z" in f, f
+    assert "lt 2026-08-07T04:00:00Z" in f, f
+    assert "$search" not in captured["params"], (
+        "the control query uses $search — it is no longer a control")
+    assert captured["params"]["$orderby"] == "receivedDateTime desc"
+
+
+def test_the_filter_control_handles_winter_too():
+    """EST is UTC-5. Hardcoding a 4-hour offset would silently break in
+    November and nobody would notice until a day looked empty."""
+    import diag_day
+
+    captured = {}
+
+    class FakeRS:
+        GRAPH_SELECT = "id"
+        _mailbox_base = "https://graph.microsoft.com/v1.0/me"
+
+        @staticmethod
+        def graph_get(token, url, params=None):
+            captured["params"] = params
+            return {"value": []}
+
+    diag_day._filter_day(FakeRS, "tok", "2026-01-15")
+    f = captured["params"]["$filter"]
+    assert "ge 2026-01-15T05:00:00Z" in f, f
+    assert "lt 2026-01-16T05:00:00Z" in f, f
+
+
+def test_the_filter_control_paginates():
+    """One page is 50 messages. A busy day that stopped at the first page
+    would under-report the control and manufacture a fake 'nothing missing'."""
+    import diag_day
+
+    pages = [
+        {"value": [{"id": f"a{i}"} for i in range(50)],
+         "@odata.nextLink": "https://graph.example/next"},
+        {"value": [{"id": "b0"}]},
+    ]
+    calls = []
+
+    class FakeRS:
+        GRAPH_SELECT = "id"
+        _mailbox_base = "https://graph.microsoft.com/v1.0/me"
+
+        @staticmethod
+        def graph_get(token, url, params=None):
+            calls.append((url, params))
+            return pages[len(calls) - 1]
+
+    got = diag_day._filter_day(FakeRS, "tok", "2026-08-06")
+    assert len(got) == 51, "the control stopped at the first page"
+    assert calls[1][0] == "https://graph.example/next"
+    assert calls[1][1] is None, (
+        "params were re-sent alongside the nextLink, which Graph rejects")
+
+
 def test_it_parses_and_the_module_imports_clean():
     """Cheap, and it catches the NameError-after-a-rename class of defect that
     has shipped in this repo before — a diagnostic that crashes on import is
