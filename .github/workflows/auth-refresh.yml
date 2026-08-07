@@ -10,16 +10,19 @@ name: Re-consent the Graph token
 # wider set (outlook_send.AUTH_SCOPES).
 #
 # The Cloud PC is decommissioned and this does NOT need it. Device-code auth
-# needs a BROWSER, not a particular machine:
+# needs a BROWSER, not a particular machine — any device you read email on.
 #
-#   1. Dispatch this workflow.
-#   2. Watch the "Authenticate" step. It prints  DEVICE_CODE=XXXXXXXXX
-#   3. Open https://microsoft.com/devicelogin on ANY device — phone is fine —
-#      enter the code, sign in as michael.deitchman@ol-usa.com, approve.
-#   4. The step completes and pushes the refreshed cache to the state store.
+# The code is EMAILED to you when the run starts, so there is nothing to find:
 #
-# The code expires in ~15 minutes, so start step 2 promptly. It is single-use
-# and worthless to anyone who cannot also complete the Microsoft sign-in.
+#   1. Dispatch (or let Claude dispatch it).
+#   2. Open the email "Hilmar tracker — sign-in code XXXXXXXXX".
+#   3. Tap the button, enter the code, sign in as michael.deitchman@ol-usa.com.
+#   4. The run finishes on its own: pushes the cache, then prints the mailboxes
+#      refresh_stage will read, so the scope is proven rather than assumed.
+#
+# The code expires in ~15 minutes. It is single-use and worthless to anyone who
+# cannot also complete the Microsoft sign-in as you — which is exactly why this
+# step cannot be automated away, no matter whose browser drives it.
 #
 # WRITES: secrets/token-cache.bin in the blob store, and ONLY that — the push
 # is filtered with `only`, so this job cannot round-trip a stale copy of
@@ -34,6 +37,10 @@ on:
         description: "Type REAUTH to confirm — this replaces the stored token"
         required: true
         default: ""
+      notify:
+        description: "Where to email the sign-in code"
+        required: true
+        default: "michael.deitchman@ol-usa.com"
 
 permissions:
   contents: read
@@ -68,13 +75,14 @@ jobs:
         run: python3 -c "import sys; sys.path.insert(0,'scripts'); import state_store; print(state_store.pull())"
 
       - name: Authenticate
-        # Blocks polling Microsoft until you enter the code. Watch this step.
-        run: |
-          echo "═══════════════════════════════════════════════════════════"
-          echo " Go to https://microsoft.com/devicelogin and enter the code"
-          echo " printed below, as michael.deitchman@ol-usa.com."
-          echo "═══════════════════════════════════════════════════════════"
-          python3 scripts/outlook_send.py auth-bg
+        # EMAILS the code first, then blocks polling Microsoft until it is
+        # approved. Michael, 2026-08-07, on being told to fetch a code out of
+        # an Actions log: "what am i doing from my phone and where.. you do
+        # it." The sign-in cannot be delegated — that is the entire security
+        # property of device-code flow, and Microsoft returns no pre-filled
+        # link for this client (verified against the live endpoint). The
+        # hunting can be: the code lands in his inbox before the wait starts.
+        run: python3 scripts/auth_notify.py --to "${{ inputs.notify }}"
 
       - name: Push the refreshed cache — and only the cache
         if: success()

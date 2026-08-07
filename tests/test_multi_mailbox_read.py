@@ -181,6 +181,94 @@ def test_one_unreadable_mailbox_does_not_cost_us_the_other():
     assert "::warning::" in block, "a failed mailbox query is not surfaced"
 
 
+def test_the_code_is_emailed_before_the_blocking_wait():
+    """Michael: "what am i doing from my phone and where.. you do it."
+
+    The sign-in cannot be delegated — device-code flow exists so only the
+    credential holder can complete it, and Microsoft returns no
+    verification_uri_complete for this client (verified against the live
+    endpoint). What CAN go is the hunting.
+
+    ORDER IS THE FEATURE: initiate → email → block. Emailing after the
+    blocking call would deliver the code once it was already approved or
+    expired, i.e. never usefully. This asserts the sequence in the source
+    because the alternative is a 15-minute live test.
+    """
+    src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    initiate = src.index("initiate_device_flow")
+    email = src.index("OS.send_mail(")
+    block = src.index("acquire_token_by_device_flow")
+    assert initiate < email < block, (
+        "the code is not emailed between starting the flow and waiting on it")
+
+
+def test_a_failed_send_does_not_abort_the_reauth():
+    """The code is valid and printed regardless. Losing the convenience of
+    the email must not cost the consent — the operator can still read it."""
+    src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    tail = src.split("OS.send_mail(", 1)[-1][:600]
+    assert "except Exception" in tail and "::warning::" in tail
+    assert "return" not in tail.split("::warning::", 1)[0][-200:], (
+        "a failed send returns early and abandons the device flow")
+
+
+def test_it_refuses_when_it_cannot_deliver_the_code(monkeypatch):
+    """If the cached credential is too dead to SEND with, starting a device
+    flow strands the operator: a code exists, nothing delivers it, and the job
+    blocks for 15 minutes. Fail before the flow starts, not after."""
+    src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    guard = src.index("cannot acquire a token to SEND with")
+    flow = src.index("initiate_device_flow")
+    assert guard < flow, (
+        "the send-token check happens after the device flow starts")
+
+
+def test_consent_without_the_shared_scope_is_an_error_not_a_success():
+    """The one failure that would look like success: the operator signs in,
+    the run goes green, and the shared mailbox is still unreadable."""
+    src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    assert 'if "Mail.Read.Shared" not in granted:' in src
+    tail = src.split('if "Mail.Read.Shared" not in granted:', 1)[-1][:400]
+    assert "::error::" in tail and "return 1" in tail
+
+
+def test_the_notification_email_survives_outlook():
+    """No var(), no flex/grid, no <style> — Outlook and Word drop all three,
+    and a code the operator cannot read is the whole job wasted. Same
+    constraint the daily report is built under.
+
+    AST, not a source slice: _body's own docstring EXPLAINS the rule with the
+    words "var()/flex/grid" in it, and a substring check matched the
+    explanation and failed on correct code. Sixth time this session that an
+    identifier in prose was indistinguishable from one in code.
+    """
+    import ast
+
+    src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.FunctionDef) and n.name == "_body")
+    # every string the function actually EMITS, docstring excluded
+    emitted = "".join(
+        n.value for n in ast.walk(fn)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        and n is not (fn.body[0].value if isinstance(fn.body[0], ast.Expr) else None)
+    )
+    assert emitted, "could not read _body's output"
+    assert "var(" not in emitted, "the email uses CSS variables — Outlook drops them"
+    assert "display:flex" not in emitted and "display:grid" not in emitted
+    assert "<style" not in emitted
+    # background shorthand AND background-color: Outlook needs the pair.
+    # Collapse whitespace first — a style attribute legitimately wraps across
+    # source lines, and asserting on the unwrapped form would fail on correct
+    # HTML for the sake of where the newline happens to fall.
+    import re as _re
+    flat = _re.sub(r"\s+", "", emitted)
+    for ground in ("#1e3a5f", "#eef3f8"):
+        assert f"background-color:{ground};background:{ground}" in flat, (
+            f"the {ground} ground is not doubled — Outlook renders it "
+            f"transparent and the code becomes unreadable")
+
+
 def test_the_auth_workflow_is_confirm_gated_and_pushes_only_the_cache():
     """It replaces a live credential. It must not fire on a stray click, and
     it must not round-trip the whole state set over fresher data — the exact

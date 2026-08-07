@@ -3,6 +3,56 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (10) — the code comes to him; the sign-in still cannot
+
+Michael, on being told to fetch a device code out of an Actions log: "what am
+i doing from my phone and where.. you do it.. use a chrome extension."
+
+WHAT I CANNOT DO, and no browser automation changes it: the sign-in. Device-
+code flow exists so that only the holder of the credentials can complete it.
+Driving it in a headless Chrome would mean handling his OL password, and MFA
+would stop it regardless. Checked two escape hatches before saying so rather
+than after:
+  - the Microsoft 365 connector authenticates as michael.deitchman@IDEALX.US,
+    a different tenant from @ol-usa.com — so it cannot read that mailbox or
+    set a forwarding rule on it either.
+  - Microsoft returns no `verification_uri_complete` for this client. Verified
+    against the live endpoint: the flow dict is
+    ['_correlation_id','device_code','expires_at','expires_in','interval',
+    'message','user_code','verification_uri'] — no pre-filled variant. The
+    code has to be typed somewhere.
+
+WHAT I CAN DO is delete the scavenger hunt. New scripts/auth_notify.py:
+
+    initiate flow  →  EMAIL THE CODE  →  block until approved  →  save cache
+
+The email goes out BEFORE the blocking call, so the 15-minute clock starts
+with the code already in his inbox. Order is the feature and is tested by
+AST position, not by hope: emailing after the wait would deliver the code once
+it was already expired.
+
+Four failure modes handled because each one looked like success:
+  - cannot acquire a token to SEND with → refuse BEFORE starting the flow,
+    rather than stranding him with a code nothing will deliver
+  - send fails → warn, keep going; the code is printed and still valid
+  - consent completes WITHOUT Mail.Read.Shared → ::error:: and exit 1. Green
+    run, unreadable mailbox, is the worst outcome available here
+  - Outlook rendering → no var(), no flex/grid, no <style>, and every ground
+    doubled background-color + background
+
+AND THE GUARD BIT ME AGAIN. My first version of the Outlook test sliced the
+source for "var(" and matched _body's own DOCSTRING, which explains the rule
+using the words var()/flex/grid. Correct code, red test. Sixth time this
+session that an identifier in prose was indistinguishable from one in code,
+and the fix is the same as the other five: AST. It now reads the strings the
+function EMITS, docstring excluded.
+
+auth-refresh.yml takes a `notify` address and runs auth_notify instead of
+auth-bg. Michael's part is now: open the email, tap, sign in. About 30
+seconds, on whatever device the mail is already on.
+
+Suite 2603 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (9) — ROOT CAUSE: we were reading the wrong mailbox
 
 diag_day run 6, against production, one line:
