@@ -94,6 +94,28 @@ EXCLUDED_SENDERS = {
     # but those won't appear here because we auth as @ol-usa.com — different mailbox.
 }
 
+# OL people who QUOTE Hilmar but never book. Michael 2026-08-07: "reno only
+# quotes hilmar so she doesn't book."
+#
+# Every message from one of these in the Lonny flow is a rate response. Two
+# reasons it is unconditional rather than subject-matched:
+#
+#   1. They have no booking role, so there is no mbd_inbound case to fall
+#      through to — a non-quote from them is not a booking confirmation.
+#   2. Their subjects do not follow the shared mailbox's "Re: <origin> to
+#      <dest>" shape. The message that surfaced this was
+#      "Re: Rates to a few destinations for a study", which
+#      RATE_RESPONSE_SUBJECT_RX does not match and never will, because
+#      "Rates" is not a known origin. Subject-matching them would drop the
+#      quote a second time and look like it was handled.
+#
+# Before this, classify() returned None for any sender that is not Lonny or
+# the shared mailbox, so three of Reno's messages were discarded on arrival
+# and QC-057 separately flagged one of them as a silently dropped RFQ.
+OL_QUOTE_ONLY_SENDERS = {
+    "reno.gurusinghe@ol-usa.com",
+}
+
 REPLY_PREFIX = re.compile(r"^\s*(re|fw|fwd)\s*:", re.I)
 # Shared with ingest — built from body_parser.KNOWN_ORIGINS so a new Hilmar
 # site (Dalhart was the 2026-06-11 miss) extends ONE list, not N regexes.
@@ -437,6 +459,11 @@ def classify(item: dict) -> str | None:
         if RATE_RESPONSE_SUBJECT.match(subject):
             return "mbd_rate_response"
         return "mbd_inbound"
+
+    # Quote-only OL senders — everything they send is a rate response. See
+    # OL_QUOTE_ONLY_SENDERS for why this is not subject-matched.
+    if sender_l in {s.lower() for s in OL_QUOTE_ONLY_SENDERS}:
+        return "mbd_rate_response"
 
     return None  # any other sender → drop
 
