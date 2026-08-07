@@ -392,6 +392,23 @@ def test_it_prints_the_messages_the_verdict_is_derived_from():
         "the per-message listing is gated on there being a MISSED message")
 
 
+def test_it_names_the_mailbox_it_is_reading():
+    """Run 5 proved no Lonny mail existed on Aug 6 — in whichever mailbox it
+    happened to be reading, which it never printed.
+
+    refresh_stage.READ_MAILBOX defaults to the shared booking mailbox, "the
+    thread endpoint: Lonny's RFQs are addressed to it". But get_token only
+    points _mailbox_base there when GRAPH_APP_* is set, and on this tenant
+    those are empty — the delegated path leaves it at /me. Proving a mailbox
+    empty is worthless if you cannot say which mailbox.
+    """
+    assert "RS._mailbox_base" in SRC
+    assert 'f"{RS.GRAPH}/me"' in SRC, (
+        "diag_day no longer resolves who /me actually is")
+    assert "RS.READ_MAILBOX" in SRC, (
+        "the resolved mailbox is printed but never compared to the intended one")
+
+
 def test_it_parses_and_the_module_imports_clean():
     """Cheap, and it catches the NameError-after-a-rename class of defect that
     has shipped in this repo before — a diagnostic that crashes on import is

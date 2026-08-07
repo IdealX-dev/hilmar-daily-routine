@@ -173,6 +173,27 @@ def main() -> int:
     _rule(f"Graph — everything dated {day}")
 
     token = RS.get_token()
+
+    # WHICH MAILBOX IS THIS? Not rhetorical. READ_MAILBOX defaults to the
+    # shared booking mailbox — "the thread endpoint: Lonny's RFQs are
+    # addressed to it" — but get_token only points _mailbox_base at it when
+    # GRAPH_APP_* is configured, and on this tenant those are empty. The
+    # delegated path leaves it at /me, whoever seeded the token cache. A
+    # tracer that does not print this can spend a day proving a mailbox is
+    # empty without noticing it is the wrong mailbox.
+    print(f"reading: {RS._mailbox_base}")
+    if RS._mailbox_base.endswith("/me"):
+        try:
+            who = RS.graph_get(token, f"{RS.GRAPH}/me",
+                               params={"$select": "mail,userPrincipalName"})
+            actual = who.get("mail") or who.get("userPrincipalName") or "?"
+            print(f"  /me resolves to: {actual}")
+            if actual.lower() != RS.READ_MAILBOX.lower():
+                print(f"  >>> NOT the intended read target "
+                      f"({RS.READ_MAILBOX}). Mail sent only to that mailbox "
+                      f"is invisible to this pipeline unless {actual} is on it.")
+        except Exception as e:
+            print(f"  /me lookup failed: {type(e).__name__}: {e}")
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback)
     queries = [
         ("lonny-flow", f"from:{RS.LONNY_EMAIL} OR to:{RS.LONNY_EMAIL}"),

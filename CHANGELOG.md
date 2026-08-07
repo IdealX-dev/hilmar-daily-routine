@@ -3,6 +3,54 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (8) — no Lonny mail on Aug 6, and a question about WHICH mailbox
+
+Run 5, with the evidence printed before the verdict, and the verdict now
+trustworthy because the rows behind it are visible:
+
+    DROPPED  in $search  Michael.Deitchman@ol-usa.com
+                         2026-08-06T14:36:41Z  OL-USA — Daily Shipment Update…
+    DROPPED  in $search  Michael.Deitchman@ol-usa.com
+                         2026-08-06T14:36:41Z  OL-USA — Daily Shipment Update…
+    DROPPED  in $search  michael.deitchman@ol-usa.com
+                         2026-08-06T14:36:39Z  OL-USA — Daily Shipment Update…
+    >>> $search found every Lonny message $filter did — the query is fine.
+
+All three "Lonny-touching" messages are ONE message in three folder copies:
+our own daily report TO him. $search returned it. So $search is not the gap
+on Aug 6, and this verdict is believable where run 4's was not, because the
+three rows are on screen.
+
+ESTABLISHED, with proof rather than inference: of 373 messages in the mailbox
+on Aug 6 ET, exactly three involve lupfold@hilmaringredients.com and all three
+are our own outbound. NOTHING from Lonny arrived. The intake query is fine;
+the mail is not in the mailbox being read.
+
+WHICH RAISES THE QUESTION THE TRACER NEVER ASKED: which mailbox IS it reading?
+
+  refresh_stage.READ_MAILBOX defaults to MBD_OceanExportBookingShared@ol-usa.com
+  — documented in its own comment as "the thread endpoint: Lonny's RFQs are
+  addressed to it and OL replies from it."
+
+  But get_token() only points _mailbox_base at READ_MAILBOX when GRAPH_APP_*
+  is configured. On this tenant those three secrets are EMPTY (visible in
+  every run log), so the delegated path leaves _mailbox_base at /me — whoever
+  seeded the token cache. The evidence is consistent with that being Michael's
+  own mailbox: the only Lonny-adjacent mail on Aug 6 is his own Sent Items
+  copies.
+
+  If that holds, Lonny's RFQs to the shared mailbox are invisible to this
+  pipeline unless Michael is personally on them — permanently, not
+  intermittently. It would also explain Mon Jul 27 and Tue Jul 28 returning
+  zero, and the general thinness of recent days against mid-July.
+
+NOT ASSERTED — INSTRUMENTED. The tracer now prints _mailbox_base, resolves
+/me to a real address, and says loudly when that address is not READ_MAILBOX.
+Proving a mailbox empty is worthless if you cannot say which mailbox, and I
+spent five runs not saying it. The next run answers it in one line.
+
+Suite 2585 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (7) — the control reported all-clear on three missing messages
 
 Run 4, the first with the $filter control:
