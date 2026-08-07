@@ -134,10 +134,46 @@ RATE_RESPONSE_SUBJECT = BP.RATE_RESPONSE_SUBJECT_RX
 #: via HILMAR_READ_MAILBOX if the thread lives elsewhere.
 READ_MAILBOX = os.environ.get("HILMAR_READ_MAILBOX", OS.SEND_MAILBOX)
 
-#: Graph mailbox root for every read in this module. Delegated (device-code,
-#: Cloud PC) uses /me; get_token() flips this to /users/{READ_MAILBOX} when
-#: app-only credentials are configured.
+#: Graph mailbox root for every read in this module. Delegated (device-code)
+#: uses /me; get_token() flips this to /users/{READ_MAILBOX} when app-only
+#: credentials are configured.
 _mailbox_base = f"{GRAPH}/me"
+
+# ── reading MORE THAN ONE mailbox ────────────────────────────────────────
+#
+# 2026-08-07. diag_day, run 6, against production:
+#
+#     reading: https://graph.microsoft.com/v1.0/me
+#       /me resolves to: Michael.Deitchman@ol-usa.com
+#       >>> NOT the intended read target (MBD_OceanExportBookingShared@ol-usa.com)
+#
+# READ_MAILBOX above has ALWAYS documented the shared booking mailbox as the
+# thread endpoint — "Lonny's RFQs are addressed to it and OL replies from it".
+# But _mailbox_base only becomes that when GRAPH_APP_* is configured, and OL IT
+# declined to register the app-only Entra app, so those secrets are empty and
+# the delegated path reads /me instead. It never errored: it read a real
+# mailbox with real mail in it, just not the one the RFQs go to. That is why
+# Aug 6 reported zero, why Jul 27-28 returned nothing, and why
+# mbd_rate_response sat at 0 for seven days against 299 historically.
+#
+# Michael, asked to choose: "1 and 3" — read the shared mailbox AND keep his
+# own as a second source, merged. Both, because mail that reaches only him
+# (an OL colleague replying direct, a forward) is real data we already have.
+#
+#: Every mailbox to read, in priority order. First writer wins on a dedup
+#: collision, so the shared mailbox leads: it is the authoritative copy of a
+#: thread that exists in both.
+SHARED_MAILBOX = os.environ.get("HILMAR_SHARED_MAILBOX", OS.SEND_MAILBOX)
+
+#: Delegated reads of ANOTHER user's mailbox need Mail.Read.Shared. The token
+#: cache seeded before 2026-08-07 consented to Mail.Send/Mail.Read/
+#: Files.ReadWrite only — see outlook_send.SCOPES — so until the operator
+#: re-authenticates, the shared mailbox 403s and this module falls back to /me
+#: alone. DELIBERATELY not added to outlook_send.SCOPES: that list is what
+#: get_token_silent refreshes with, and requesting an unconsented scope there
+#: would fail the silent refresh and take the entire daily fire down to fix a
+#: gap that currently only costs us data.
+SHARED_READ_SCOPES = [*OS.SCOPES, "Mail.Read.Shared"]
 
 
 def _app_only_token() -> str | None:
@@ -170,6 +206,61 @@ def get_token() -> str:
         print(f"refresh_stage: app-only Graph auth (GRAPH_APP_*) — reading {READ_MAILBOX}")
         return token
     return get_token_silent()
+
+
+def shared_token_silent() -> str | None:
+    """A delegated token carrying Mail.Read.Shared, or None if not consented.
+
+    None rather than an exception, on purpose: the fire must keep running on
+    /me alone until the operator re-authenticates. A missing scope is a
+    degraded read, not a broken pipeline — and the caller says so loudly.
+    """
+    try:
+        cache = OS._load_cache()
+        app = msal.PublicClientApplication(
+            OS.CLIENT_ID,
+            authority=f"https://login.microsoftonline.com/{OS.TENANT}",
+            token_cache=cache,
+        )
+        accounts = app.get_accounts()
+        if not accounts:
+            return None
+        result = app.acquire_token_silent(SHARED_READ_SCOPES, account=accounts[0])
+    except Exception:
+        return None
+    if not result or "access_token" not in result:
+        return None
+    return result["access_token"]
+
+
+def read_targets(token: str) -> list[tuple[str, str, str]]:
+    """Every mailbox to read, as (label, base_url, token_for_that_base).
+
+    App-only addresses READ_MAILBOX directly and has no /me, so it is a single
+    target. Delegated reads /me always, and adds the shared mailbox when — and
+    only when — a token with Mail.Read.Shared is available.
+
+    The shared mailbox is FIRST in the delegated list so that a thread present
+    in both dedupes to the shared copy, which is the authoritative one.
+    """
+    if not _mailbox_base.endswith("/me"):
+        # app-only: _mailbox_base is already /users/{READ_MAILBOX}
+        return [(READ_MAILBOX, _mailbox_base, token)]
+
+    targets: list[tuple[str, str, str]] = []
+    shared_tok = shared_token_silent()
+    if shared_tok:
+        targets.append((SHARED_MAILBOX, f"{GRAPH}/users/{SHARED_MAILBOX}", shared_tok))
+    else:
+        # Loud, and in the run summary rather than 400 lines up in stdout.
+        # This is the difference between "Lonny sent nothing" and "we cannot
+        # see the mailbox Lonny sends to", which read identically for a week.
+        print(f"::warning::refresh_stage cannot read {SHARED_MAILBOX} — the "
+              f"cached delegated token lacks Mail.Read.Shared. Re-run the auth "
+              f"workflow to consent. Reading only {_mailbox_base} until then, "
+              f"which MISSES every RFQ addressed solely to the shared mailbox.")
+    targets.append(("me", _mailbox_base, token))
+    return targets
 
 
 def get_token_silent() -> str:
@@ -341,8 +432,12 @@ def _warn_search_cap(kql: str, got: int, cap: int) -> None:
         sentry_sdk.capture_message(msg, level="warning")
 
 
-def search_messages(token: str, kql: str, max_results: int = 500) -> list[dict]:
-    """Run a $search query against /me/messages, paginate through nextLink.
+def search_messages(token: str, kql: str, max_results: int = 500,
+                    base: str | None = None) -> list[dict]:
+    """Run a $search query against a mailbox's /messages, paginate nextLink.
+
+    `base` defaults to the module's mailbox so every existing caller is
+    unchanged; main() passes one base per mailbox in read_targets().
 
     Cap raised 250->500 (2026-06-24): the cap only ever bounds work when a
     query matches more than `max_results` in the window (the loop stops at the
@@ -350,7 +445,7 @@ def search_messages(token: str, kql: str, max_results: int = 500) -> list[dict]:
     silent truncation. If the cap IS hit with more available, _warn_search_cap
     makes it visible — see that function for why $orderby can't fix this.
     """
-    url: str | None = f"{_mailbox_base}/messages"
+    url: str | None = f"{base or _mailbox_base}/messages"
     # Graph requires the $search value to be a quoted string.
     params: dict | None = {
         "$top": "50",
@@ -375,9 +470,14 @@ def search_messages(token: str, kql: str, max_results: int = 500) -> list[dict]:
     return out
 
 
-def get_message_body(token: str, message_id: str) -> dict:
-    """Fetch a single message including body."""
-    url = f"{_mailbox_base}/messages/{message_id}"
+def get_message_body(token: str, message_id: str, base: str | None = None) -> dict:
+    """Fetch a single message including body.
+
+    `base` MUST be the mailbox the message was found in — a Graph message id
+    is mailbox-scoped, so asking the wrong mailbox for it is a 404, not a
+    fallback to the right one.
+    """
+    url = f"{base or _mailbox_base}/messages/{message_id}"
     params = {
         "$select": (
             "id,conversationId,subject,from,toRecipients,ccRecipients,"
@@ -387,7 +487,8 @@ def get_message_body(token: str, message_id: str) -> dict:
     return graph_get(token, url, params=params)
 
 
-def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path) -> list[str]:
+def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path,
+                          base: str | None = None) -> list[str]:
     """Download PDF attachments for a message. Returns list of saved filenames.
 
     Added 2026-05-13 per Michael "90 percent for all is the bare minimum".
@@ -405,7 +506,7 @@ def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path
     if target_pdf.exists():
         return [target_pdf.name]  # already cached
     # List attachments
-    list_url = f"{_mailbox_base}/messages/{message_id}/attachments?$select=id,name,contentType,size"
+    list_url = f"{base or _mailbox_base}/messages/{message_id}/attachments?$select=id,name,contentType,size"
     try:
         listing = graph_get(token, list_url)
     except Exception:
@@ -650,16 +751,38 @@ def main() -> int:
               f"({'DRY' if args.dry else 'live'})")
 
     # mostly drafts) we fall back to Graph id to avoid silently dropping it.
+    # Every mailbox, every query. A Graph message id is mailbox-scoped, so
+    # each item remembers which mailbox produced it (`_src`) and the body and
+    # attachment fetches below address that same mailbox — asking the wrong
+    # one for an id is a 404, not a silent fallback to the right one.
+    targets = read_targets(token)
+    by_label = {label: (base, tok) for label, base, tok in targets}
+    print(f"refresh_stage: reading {len(targets)} mailbox(es): "
+          f"{', '.join(label for label, _, _ in targets)}")
+
     all_items: dict[str, dict] = {}  # imid (or id) -> Graph item
-    for label, kql in queries:
-        print(f"refresh_stage: query {label!r}: {kql}")
-        items = search_messages(token, kql, max_results=args.max_results_per_query)
-        print(f"refresh_stage:   got {len(items)} results from {label}")
-        for it in items:
-            key = it.get("internetMessageId") or it["id"]
-            if key not in all_items:
-                all_items[key] = it
+    for mbox, base, mtoken in targets:
+        for label, kql in queries:
+            print(f"refresh_stage: [{mbox}] query {label!r}: {kql}")
+            try:
+                items = search_messages(mtoken, kql, base=base,
+                                        max_results=args.max_results_per_query)
+            except Exception as e:
+                # One unreadable mailbox must not cost us the other one.
+                print(f"::warning::refresh_stage: [{mbox}] query {label!r} "
+                      f"FAILED: {type(e).__name__}: {e}")
+                continue
+            print(f"refresh_stage:   got {len(items)} results from {label}")
+            for it in items:
+                key = it.get("internetMessageId") or it["id"]
+                if key not in all_items:
+                    it["_src"] = mbox
+                    all_items[key] = it
     print(f"refresh_stage: total unique results across queries: {len(all_items)}")
+    if len(targets) > 1:
+        per_src: Counter = Counter(it.get("_src") or "?" for it in all_items.values())
+        for mbox, n in per_src.most_common():
+            print(f"refresh_stage:   {n:>5} first seen in {mbox}")
 
     # Apply client-side date filter, classify, dedupe vs existing stage.
     new_stage: list[tuple[dict, str]] = []  # (item, bucket)
@@ -795,8 +918,9 @@ def main() -> int:
         imid = it.get("internetMessageId")
         if imid and imid in existing_body_imids:
             continue
+        _base, _tok = by_label.get(it.get("_src"), (None, token))
         try:
-            full = get_message_body(token, it["id"])
+            full = get_message_body(_tok, it["id"], base=_base)
         except Exception as e:
             body_failures += 1
             print(f"  body fetch FAIL {(it.get('subject') or '')[:60]!r}: {e}")
@@ -822,7 +946,8 @@ def main() -> int:
         # don't carry useful PDFs.
         if bucket == "mbd_inbound" and it.get("hasAttachments"):
             try:
-                saved = fetch_pdf_attachments(token, full["id"], msg_imid, pdf_dir)
+                saved = fetch_pdf_attachments(_tok, full["id"], msg_imid, pdf_dir,
+                                              base=_base)
                 if saved:
                     pdf_count += 1
                     if args.verbose:

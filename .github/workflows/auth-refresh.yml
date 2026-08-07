@@ -1,0 +1,99 @@
+name: Re-consent the Graph token
+
+# MANUAL ONLY, and it needs a human with a browser for ~1 minute.
+#
+# 2026-08-07. diag_day run 6 proved the pipeline reads /me — Michael's own
+# mailbox — and not MBD_OceanExportBookingShared, where Lonny addresses his
+# RFQs. Reading another mailbox with a DELEGATED token requires the
+# Mail.Read.Shared scope, and the cached token consented to Mail.Send +
+# Mail.Read + Files.ReadWrite only. This job re-runs the consent with the
+# wider set (outlook_send.AUTH_SCOPES).
+#
+# The Cloud PC is decommissioned and this does NOT need it. Device-code auth
+# needs a BROWSER, not a particular machine:
+#
+#   1. Dispatch this workflow.
+#   2. Watch the "Authenticate" step. It prints  DEVICE_CODE=XXXXXXXXX
+#   3. Open https://microsoft.com/devicelogin on ANY device — phone is fine —
+#      enter the code, sign in as michael.deitchman@ol-usa.com, approve.
+#   4. The step completes and pushes the refreshed cache to the state store.
+#
+# The code expires in ~15 minutes, so start step 2 promptly. It is single-use
+# and worthless to anyone who cannot also complete the Microsoft sign-in.
+#
+# WRITES: secrets/token-cache.bin in the blob store, and ONLY that — the push
+# is filtered with `only`, so this job cannot round-trip a stale copy of
+# tracking-data over a fresh one the way the weekly job once did. It pushes
+# only after a successful consent; a failed or abandoned auth leaves the
+# existing cache untouched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type REAUTH to confirm — this replaces the stored token"
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  reauth:
+    name: Device-code consent
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: inputs.confirm == 'REAUTH'
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # msal for the device flow, azure-storage-blob for the state store —
+        # see tests/test_diag_day.py for why every state_store workflow names
+        # the storage SDK explicitly.
+        run: python -m pip install --quiet msal requests tzdata azure-storage-blob
+
+      - name: Pull the existing token cache
+        # So MSAL re-consents the SAME account rather than creating a second
+        # one, and so a failed auth can be abandoned with nothing lost.
+        run: python3 -c "import sys; sys.path.insert(0,'scripts'); import state_store; print(state_store.pull())"
+
+      - name: Authenticate
+        # Blocks polling Microsoft until you enter the code. Watch this step.
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo " Go to https://microsoft.com/devicelogin and enter the code"
+          echo " printed below, as michael.deitchman@ol-usa.com."
+          echo "═══════════════════════════════════════════════════════════"
+          python3 scripts/outlook_send.py auth-bg
+
+      - name: Push the refreshed cache — and only the cache
+        if: success()
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0,'scripts')
+          import state_store
+          print('pushed:', state_store.push(only=['token-cache']))
+          "
+
+      - name: Confirm the new consent covers the shared mailbox
+        if: success()
+        # Proves the scope actually landed instead of assuming it did. Prints
+        # the mailboxes refresh_stage would now read.
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0,'scripts')
+          import refresh_stage as RS
+          tok = RS.get_token()
+          for label, base, _ in RS.read_targets(tok):
+              print(f'  will read: {label}  ->  {base}')
+          "

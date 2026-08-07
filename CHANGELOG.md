@@ -3,6 +3,72 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (9) — ROOT CAUSE: we were reading the wrong mailbox
+
+diag_day run 6, against production, one line:
+
+    reading: https://graph.microsoft.com/v1.0/me
+      /me resolves to: Michael.Deitchman@ol-usa.com
+      >>> NOT the intended read target (MBD_OceanExportBookingShared@ol-usa.com)
+
+READ_MAILBOX has documented the shared booking mailbox as the thread endpoint
+since it was written — "Lonny's RFQs are addressed to it and OL replies from
+it". But _mailbox_base only becomes that when GRAPH_APP_* is configured, and
+OL IT declined to register the app-only Entra app, so those three secrets are
+empty and the delegated path reads /me instead.
+
+It never errored. It read a real mailbox with real mail in it, just not the
+one the RFQs go to. That is the week: Aug 6 at zero, Jul 27-28 returning
+nothing, mbd_rate_response at 0 for seven days against 299 historically, and
+Michael counting 12 requests where the tracker saw a handful. We only see a
+thread when he is personally on it.
+
+MICHAEL, asked to choose: "1 and 3" — read the shared mailbox AND keep his own
+as a second source, merged. Both, because mail that reaches only him (an OL
+colleague replying direct, a forward) is real data we already have.
+
+BUILT:
+  - refresh_stage reads N mailboxes. read_targets() returns
+    [(label, base, token)], shared FIRST so a thread present in both dedupes
+    to the authoritative copy.
+  - search_messages / get_message_body / fetch_pdf_attachments take a `base`.
+    A Graph message id is MAILBOX-SCOPED: fetching a shared-mailbox message
+    from /me is a 404, not a fallback to the right one. Each item carries
+    `_src` and its body and PDF are fetched from that same mailbox.
+  - one unreadable mailbox does not cost us the other — the query is wrapped,
+    warns, and continues.
+  - `_src` cannot reach the stage file (build_stage_record writes an explicit
+    dict), asserted rather than assumed.
+
+THE SCOPE, and the trap avoided. Delegated reads of another mailbox need
+Mail.Read.Shared, which the cached token never consented to. Adding it to
+outlook_send.SCOPES would have been the obvious move and would have BROKEN
+THE FIRE: SCOPES is what every silent refresh asks for, and requesting an
+unconsented scope there fails the refresh and stops the email. So SCOPES stays
+narrow, a new AUTH_SCOPES goes wide, and refresh_stage.shared_token_silent
+asks for the wide set and returns None — not an exception — when the cache
+cannot supply it. Until the re-consent, the fire runs on /me exactly as it
+does today, with a ::warning:: that names what it is missing rather than the
+silence we had for a week.
+
+THE CLOUD PC IS NOT NEEDED, and I said otherwise an hour ago. Michael:
+"i don't want the cloud pc remember, we purposely turned it off!" Correct, and
+device-code auth never needed that machine — it needs a BROWSER. New
+auth-refresh.yml prints DEVICE_CODE=… in the Actions log; you enter it at
+microsoft.com/devicelogin from a phone. Confirm-gated on typing REAUTH,
+pushes ONLY the token cache (state_store.push(only=…), so it cannot revert a
+day's ingest the way the weekly job once did), pushes only on success, and
+ends by printing the mailboxes refresh_stage would then read — proof the scope
+landed rather than an assumption that it did.
+
+NOT DISPATCHED. Re-consenting a live credential is the operator's action.
+
+Tests: 12 new in test_multi_mailbox_read.py. The three that matter were
+verified by planting the regression: widening SCOPES itself, dropping the /me
+fallback, and losing the shared-first ordering.
+
+Suite 2597 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (8) — no Lonny mail on Aug 6, and a question about WHICH mailbox
 
 Run 5, with the evidence printed before the verdict, and the verdict now
