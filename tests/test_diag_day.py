@@ -159,6 +159,54 @@ def test_the_workflow_passes_the_credentials_the_script_needs():
         assert secret in wf, f"diag-day.yml does not pass {secret}"
 
 
+def test_it_pulls_into_the_repo_root_not_a_temp_dir():
+    """The first version pulled into a temp dir and died on Graph auth.
+
+    This tenant has no app-only Entra app (OL IT declined), so GRAPH_APP_* is
+    empty on the runner and auth falls back to the delegated MSAL cache at
+    secrets/token-cache.bin. outlook_send resolves that from module constants,
+    so a temp dir is invisible to it — and monkeypatching those constants
+    would give the tracer a private copy of the pipeline's auth, the one thing
+    it must not have. A temp dir here is a silent regression to a run that
+    cannot authenticate.
+    """
+    assert "state_store.pull(root=root)" in SRC
+    assert "mkdtemp" not in SRC, (
+        "diag_day pulls into a temp dir again — Graph auth will fail")
+
+
+def test_every_workflow_that_pulls_state_installs_the_storage_sdk():
+    """azure-storage-blob is deliberately absent from requirements.txt, so a
+    workflow that runs a state_store-importing script must name it.
+
+    2026-08-07: diag-day.yml's first run installed requirements.txt and died
+    on `No module named 'azure'` before printing one useful line. The rule is
+    general, so this is checked across all workflows rather than for the one
+    that happened to break.
+    """
+    import re
+
+    scripts = ROOT / "scripts"
+    pulls_state = {
+        p.name for p in scripts.glob("*.py")
+        if re.search(r"^\s*(import state_store|from state_store)",
+                     p.read_text(encoding="utf-8"), re.M)
+    }
+    assert "diag_day.py" in pulls_state, "diag_day no longer pulls state"
+
+    checked = 0
+    for wf in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        text = wf.read_text(encoding="utf-8")
+        run = set(re.findall(r"scripts/([A-Za-z0-9_]+\.py)", text))
+        if not (run & pulls_state):
+            continue
+        checked += 1
+        assert "azure-storage-blob" in text, (
+            f"{wf.name} runs {sorted(run & pulls_state)} but never installs "
+            f"azure-storage-blob — the run dies before printing anything")
+    assert checked, "no workflow runs a state_store script — check the regex"
+
+
 def test_it_parses_and_the_module_imports_clean():
     """Cheap, and it catches the NameError-after-a-rename class of defect that
     has shipped in this repo before — a diagnostic that crashes on import is
