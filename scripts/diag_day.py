@@ -80,29 +80,6 @@ def _target_day(core) -> str:
         datetime.now(ZoneInfo("America/New_York"))).isoformat()
 
 
-def _load_jsonl(path: Path) -> list[dict]:
-    """stage_emails.txt / stage_emails_bodies.txt — JSON Lines, tolerant.
-
-    A malformed line is COUNTED and skipped rather than fatal: this is a
-    diagnostic, and refusing to run because line 900 is truncated would hide
-    the 899 lines that answer the question.
-    """
-    if not path.exists():
-        return []
-    out, bad = [], 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            bad += 1
-    if bad:
-        print(f"  WARN {path.name}: {bad} unparseable line(s) skipped")
-    return out
-
-
 def main() -> int:
     import core
 
@@ -126,17 +103,24 @@ def main() -> int:
         return 2
     print(f"pulled {len(pulled)} file(s): {', '.join(pulled)}")
 
-    stage = _load_jsonl(root / "scripts" / "stage_emails.txt")
-    bodies = _load_jsonl(root / "scripts" / "stage_emails_bodies.txt")
-    staged_imids = {r.get("internetMessageId") for r in stage if r.get("internetMessageId")}
-    staged_ids = {r.get("id") for r in stage if r.get("id")}
-    body_imids = {r.get("internetMessageId") for r in bodies if r.get("internetMessageId")}
-    print(f"stage_emails: {len(stage)} records ({len(staged_imids)} with an imid)")
-    print(f"bodies:       {len(bodies)} records ({len(body_imids)} with an imid)")
+    # Imported AFTER the pull so its module-level STAGE_PATH/_resolve() see the
+    # files that were just pulled.
+    import qc_selfheal as QC
+    import refresh_stage as RS
+
+    # The pipeline's OWN loaders. The first version of this file read
+    # "internetMessageId" off the stage records and reported `0 with an imid`
+    # across 1273 of them — build_stage_record writes `imid`. A private copy of
+    # a field name is the same defect as a private copy of classify(), and it
+    # made the staged/body columns read NO for every message on earth.
+    staged_ids, staged_imids = RS.load_existing_stage_keys()
+    body_imids = RS.load_existing_body_imids()
+    bodies_idx = QC._load_bodies_index()
+    print(f"stage_emails: {len(staged_ids)} ids, {len(staged_imids)} imids")
+    print(f"bodies:       {len(body_imids)} imids")
 
     # ── link 1+2: what Graph returns, and what classify() does with it ──────
     _rule(f"Graph — everything dated {day}")
-    import refresh_stage as RS
 
     token = RS.get_token()
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback)
@@ -145,12 +129,27 @@ def main() -> int:
         ("hilmar-bookings", f"from:{RS.MBD_BOOKING_EMAIL} AND subject:HILMAR"),
     ]
     items: dict[str, dict] = {}
+    per_query: dict[str, set[str]] = {}
     for label, kql in queries:
         got = RS.search_messages(token, kql, max_results=500)
         print(f"query {label!r}: {len(got)} results")
+        per_query[label] = {it.get("internetMessageId") or it["id"] for it in got}
         for it in got:
             items.setdefault(it.get("internetMessageId") or it["id"], it)
     print(f"unique across queries: {len(items)}")
+
+    # Two unrelated queries returning the SAME count is the signature of a cap
+    # or of $search ignoring the predicate, and the overlap tells them apart:
+    # a real from:/to: filter and a real subject: filter should share only the
+    # booking mail Lonny is copied on, not most of their results.
+    if len(per_query) == 2:
+        (la, sa), (lb, sb) = per_query.items()
+        both = sa & sb
+        print(f"overlap {la} ∩ {lb}: {len(both)}  "
+              f"({la}-only {len(sa - sb)}, {lb}-only {len(sb - sa)})")
+        if sa == sb:
+            print(">>> the two queries returned IDENTICAL result sets — $search "
+                  "is not honouring the predicates")
 
     # Oldest/newest prove whether the window even reaches the target day —
     # the check I skipped when I wrongly blamed $search for capping.
@@ -163,6 +162,24 @@ def main() -> int:
                     if (RS.parse_iso(it.get("receivedDateTime"))
                         or RS.parse_iso(it.get("sentDateTime")) or cutoff) >= cutoff)
     print(f"inside the {lookback}d cutoff: {in_window}")
+
+    # A per-day histogram, because "1 message on Aug 6" means nothing without
+    # the neighbouring days. If every recent weekday is 1-2 and the volume all
+    # sits in May, the result set is capped and sorted by relevance rather than
+    # by date; if Aug 6 alone is empty, the day really was quiet.
+    from collections import Counter
+
+    by_day: Counter = Counter()
+    for it in items.values():
+        d = core.et_date_of(it.get("receivedDateTime") or it.get("sentDateTime"))
+        if d:
+            by_day[d] += 1
+    print("\nmessages per ET day, most recent 21:")
+    for d in sorted(by_day, reverse=True)[:21]:
+        mark = "  <- target" if d == day else ""
+        print(f"  {d}  {by_day[d]:>3}  {'█' * min(by_day[d], 40)}{mark}")
+    if day not in by_day:
+        print(f"  {day}    0  <- target (no messages at all)")
 
     on_day = []
     for it in items.values():
@@ -221,9 +238,6 @@ def main() -> int:
     if undated:
         from collections import Counter
 
-        import qc_selfheal as QC
-        bodies_idx = {b.get("internetMessageId"): b for b in bodies
-                      if b.get("internetMessageId")}
         why = Counter(QC._undated_reason(r, bodies_idx) for r in undated)
         for reason, n in why.most_common():
             print(f"  {reason:<14} {n}")

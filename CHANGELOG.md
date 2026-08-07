@@ -3,6 +3,55 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (5) — the tracer ran, and the first thing it caught was itself
+
+Run 2 of diag-day succeeded and printed, in its first three lines:
+
+    stage_emails: 1273 records (0 with an imid)
+    bodies:       1259 records (0 with an imid)
+
+Zero of 1273. My tracer indexed the stage records on "internetMessageId" —
+the GRAPH field name — while build_stage_record writes `imid`. So the STAGED
+and BODY columns read NO for every message in existence, which is
+indistinguishable from "nothing was ever staged" and would have pointed the
+next investigation at the wrong link entirely.
+
+This is the session's dominant bug shape for the fifth time: one fact, two
+spellings, and the reader holding the other one. It is also exactly what the
+file's own docstring warns against — a private copy of the pipeline's
+knowledge — one level below where I was looking. I guarded classify() and the
+mailbox addresses and the ET clock, and then hand-rolled a field name three
+lines above them.
+
+FIXED by deleting the private copies: RS.load_existing_stage_keys,
+RS.load_existing_body_imids and QC._load_bodies_index now do the reading. The
+local _load_jsonl helper is gone.
+
+GUARDED with a BINDING test, not a source grep: build a record with the real
+build_stage_record, read it back with the real load_existing_stage_keys
+through a redirected STAGE_PATH, assert the imid survives the round trip.
+Verified by renaming the field in build_stage_record and watching it go red —
+`assert "imid" in source` would have passed through that rename happily.
+
+TWO NEW VIEWS, because the run raised questions it could not answer:
+  - a per-day histogram of the Graph result set. "1 message on Aug 6" means
+    nothing without the neighbouring days; if every recent weekday is thin and
+    the volume sits in May, the set is relevance-ranked rather than complete.
+  - the overlap between the two queries. Both returned exactly 275 for a union
+    of 330, so they share 220 — implausibly high for "mail from/to Lonny"
+    versus "from the booking mailbox with HILMAR in the subject". Identical
+    counts from unrelated predicates is the signature of a cap or of $search
+    not honouring the query, and the overlap distinguishes them. Printing it
+    rather than concluding from it, having already concluded wrongly once.
+
+WHAT THE RUN DID ESTABLISH: Graph returned exactly ONE message dated Aug 6 —
+our own daily report, from michael.deitchman@ol-usa.com, correctly dropped.
+Nothing from Lonny. And tracking-data has 0 rows dated Aug 6 with 0 undated
+rows anywhere, so the dating heal is not hiding anything. The loss is at or
+before intake, not downstream.
+
+Suite 2579 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (4) — "he did": a tracer for the five links of the intake chain
 
 Michael, asked directly whether Lonny genuinely sent nothing on Wednesday
