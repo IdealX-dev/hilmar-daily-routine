@@ -3,6 +3,56 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+## 2026-08-07 — 12 emails thrown away, logged as one word
+
+Michael: "data is missing and completely incomplete... there were a minimum of
+12 requests this week so far." The Aug 7 fire's log, in full:
+
+  refresh_stage: total unique results across queries: 330
+  refresh_stage: NEW staged records: 0
+  refresh_stage: skipped 281 pre-cutoff, 0 excluded, 12 unclassified, 37 already-staged
+  Nothing new to stage.
+
+Graph returned the mail. The classifier discarded twelve messages and the only
+trace was the word "unclassified". Nothing has been staged since Aug 5, which
+is why the header's window ends Aug 5 while the report claims to cover Aug 6,
+and why every "today" section is zero.
+
+WHAT THE FIRE ALREADY KNEW AND DID NOT SAY LOUDLY ENOUGH:
+  QC-008  latest staged record is 41.9h old on a business day
+  QC-009  classifier may be dropping a sender: ['mbd_rate_response']
+          7d counts: lonny_outbound 12, lonny_reply 5, mbd_inbound 4,
+          mbd_rate_response 0
+mbd_rate_response is ZERO over seven days against 299 historically. OL's rate
+replies stopped being classifiable a week ago — that is the empty OL-USA
+RESPONSES section and the zero pendings, both of which follow mechanically.
+Both checks are WARN, so the pipeline exited 0, the integrity gate said "fresh
+report shipped", and an empty report went to nine people.
+
+MECHANISM. classify() returns None for any sender that is not Lonny or the
+shared booking mailbox, and the 'lonny-flow' query is `from:lonny OR to:lonny`
+— so an OL reply sent from an individual's mailbox comes back from Graph and
+is dropped on arrival. That rule is defensible. Dropping SILENTLY is not.
+
+FIXED — the log now names them. Dropped senders are counted and printed with
+up to eight whole examples (sender | received | subject), WITHOUT --verbose,
+because the daily fire does not pass --verbose and diagnosing this otherwise
+needs a hand re-run with a different flag. That is precisely why it ran a week.
+Staging zero new records while dropping any also emits a ::error:: annotation
+naming the senders, so it lands in the run summary instead of 400 lines up in
+stdout. Deliberately an annotation, not an exit code: refresh_stage is
+best-effort in the daily fire and failing the step would suppress the staff
+email that still carries the cumulative KPIs.
+
+NOT YET FIXED, AND IT NEEDS THE OPERATOR: whether those senders SHOULD be
+staged is a product decision, not mine. The next fire's log will name them.
+
+The QC governance ratchet did its job on the way through — the new test made
+QC-009 "tested", so it came out of KNOWN_UNTESTED and the ceiling dropped 18
+to 17.
+
+Suite 2554 passed, 0 failed. ruff clean.
+
 ### 2026-08-06 (3) — "bad format": nothing moved, the landmarks went out
 
 Michael: "go back to the older format that shows pending hilmar pending ol
