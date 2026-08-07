@@ -54,6 +54,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -640,6 +641,8 @@ def main() -> int:
     skipped_unclassified = 0
     skipped_excluded = 0
     skipped_existing = 0
+    dropped_senders: Counter = Counter()
+    dropped_examples: list[tuple[str, str, str]] = []
     for it in all_items.values():
         ts = parse_iso(it.get("receivedDateTime")) or parse_iso(it.get("sentDateTime"))
         if ts and ts < cutoff:
@@ -654,6 +657,16 @@ def main() -> int:
                     print(f"  EXCL {sender} | {(it.get('subject') or '')[:80]}")
             else:
                 skipped_unclassified += 1
+                dropped_senders[sender.lower() or "<no sender>"] += 1
+                # Keep a few whole examples so the LOG can answer "which
+                # message?" without a re-run. Before 2026-08-07 the sender was
+                # printed only under --verbose, which the daily fire does not
+                # pass — so a week of dropped mail produced the single word
+                # "unclassified" and nothing else to go on.
+                if len(dropped_examples) < 8:
+                    dropped_examples.append(
+                        (sender or "<no sender>", (it.get("subject") or "")[:110],
+                         it.get("receivedDateTime") or it.get("sentDateTime") or "?"))
                 if args.verbose:
                     print(f"  DROP {sender} | {(it.get('subject') or '')[:80]}")
             continue
@@ -677,6 +690,29 @@ def main() -> int:
           f"{skipped_excluded} excluded, "
           f"{skipped_unclassified} unclassified, "
           f"{skipped_existing} already-staged")
+
+    # NAME the drops. `classify` returns None for any sender that is not Lonny
+    # or the shared booking mailbox, and the 'lonny-flow' Graph query returns
+    # mail TO Lonny as well as FROM him — so an OL reply from an individual's
+    # mailbox is silently discarded. On 2026-08-06 that was 12 messages, and
+    # the only trace in the log was the word "unclassified".
+    if dropped_senders:
+        print()
+        print("refresh_stage: DROPPED as unclassified — by sender:")
+        for s, n in dropped_senders.most_common(12):
+            print(f"    {n:>4}  {s}")
+        print("refresh_stage: examples (sender | received | subject):")
+        for s, subj, when in dropped_examples:
+            print(f"    {s} | {when} | {subj!r}")
+        # Loud when a whole fire staged nothing while throwing mail away. The
+        # daily pipeline is best-effort here and exits 0 either way, so this
+        # annotation is what surfaces in the run summary rather than sitting
+        # 400 lines up in stdout.
+        if not new_stage:
+            print(f"::error::refresh_stage staged 0 new records while dropping "
+                  f"{skipped_unclassified} as unclassified — the classifier is "
+                  f"rejecting live mail. Senders: "
+                  f"{', '.join(s for s, _ in dropped_senders.most_common(6))}")
 
     if args.dry:
         # Sample-by-bucket so the operator can sanity-check classification

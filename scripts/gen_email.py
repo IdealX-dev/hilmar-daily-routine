@@ -457,13 +457,24 @@ DOC_PAPER, DOC_CARD = B.DOC_PAPER, B.DOC_CARD
 DOC_INK, DOC_MUTED, DOC_LINE = B.DOC_INK, B.DOC_MUTED, B.DOC_LINE
 DOC_TH_BG = B.DOC_TH_BG
 
-# The quiet table header: muted uppercase on a near-card ground with one ink
-# rule beneath. Replaces the solid navy / green / dark-red bars with white
-# text. Written once and reused so the three tables that used three different
-# loud bars now read as one document.
-TH_STYLE = (f"padding:8px;background-color:{DOC_TH_BG};color:{DOC_MUTED};"
-            f"font-size:11px;font-weight:600;text-transform:uppercase;"
-            f"letter-spacing:0.04em;border-bottom:2px solid {DOC_INK}")
+# Solid navy bar, white text — REVERTED 2026-08-07 to what shipped before the
+# 08-04 restyle (#1e3a5f, kept verbatim rather than remapped to a token).
+#
+# The restyle made this a muted uppercase label on a near-white ground with a
+# hairline under it. That was a real improvement in the abstract — the three
+# different saturated bars did shout over the data — but it removed the thing
+# a reader actually navigates by. Michael asked for the old format back twice:
+# 2026-08-06 ("go back to the older format that shows pending hilmar pending
+# ol then what changed") and again on 08-07 ("still using the new formatting
+# which i told you to go back to"). The first time I restored the SECTION rule
+# and left the table headers flat, which is why it took a second ask.
+#
+# The document palette stays everywhere else — status pills, KPI accents,
+# section rules. This is the one element where the loud version was doing a
+# job the quiet version does not.
+TH_STYLE = ("padding:6px 8px;background-color:#1e3a5f;background:#1e3a5f;"
+            "color:#ffffff;font-size:11px;font-weight:600;text-align:left;"
+            "border-bottom:1px solid #1e3a5f")
 # Section rule: ink text over an INK rule — the same 2px ink rule TH_STYLE
 # uses, so a section head and a table head are the same landmark at two
 # scales.
@@ -1270,6 +1281,103 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   show as a separate "No-Response Rate" KPI. Pending (not decided yet) is
   also excluded. This period: <strong>{wins} wins ÷ {decided_competitive} decided = {wr:.1f}%</strong>.
 </div>
+"""
+
+
+def _current_week_day_rows(data, report_date):
+    """Mon–Fri of the CURRENT week, one row per day, oldest first.
+
+    Michael 2026-08-07: "you aren't doing the current week in review as well
+    for each day... there should be a weekly tally as well for current week."
+    The multi-week rollup below this shows W32 as a single line — useful for
+    trend, useless for "what happened Tuesday". Days that have not arrived yet
+    are omitted rather than shown as zeros, because a zero for Friday on a
+    Wednesday is not information, it is noise that looks like a bad week.
+
+    Bucketing goes through the core accessors, so a STRICT-form row counts the
+    same as a LEGACY one — the rollup directly below still uses raw `status ==`
+    comparisons for its loss split and would drop them.
+    """
+    monday = report_date - timedelta(days=report_date.weekday())
+    by_day = {}
+    for r in data.get("requests", []):
+        d = _iso_date(r.get("request_date") or r.get("request_timestamp"))
+        if not d or not (monday <= d <= report_date):
+            continue
+        b = by_day.setdefault(d, {"requests": 0, "won": 0, "ql": 0, "nq": 0,
+                                  "pending": 0, "teu_req": 0, "teu_won": 0})
+        b["requests"] += 1
+        b["teu_req"] += int(r.get("teu_requested") or 0)
+        if core.is_win(r):
+            b["won"] += 1
+            b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
+        elif core.is_pending(r):
+            b["pending"] += 1
+        elif core.is_quoted_and_lost(r):
+            b["ql"] += 1
+        elif core.is_not_quoted(r):
+            b["nq"] += 1
+    return [(d, by_day[d]) for d in sorted(by_day)]
+
+
+def _current_week_block_html(rows, report_date):
+    """Day-by-day table for the current week, with a TOTAL row.
+
+    The total is what makes this a "tally": it answers "how are we doing this
+    week" without the reader adding five numbers in their head, and it is the
+    number to compare against the same week last year.
+    """
+    monday = report_date - timedelta(days=report_date.weekday())
+    label = (_fmt_date(datetime.combine(monday, datetime.min.time()), "%b %-d")
+             + " – "
+             + _fmt_date(datetime.combine(report_date, datetime.min.time()), "%b %-d, %Y"))
+    if not rows:
+        return f"""
+<h2 style="{H2_STYLE}">🗓️ This Week, Day by Day — {_esc(label)}</h2>
+<p style="margin:0 0 14px;font-size:12px;color:{B.DOC_MUTED}">No requests recorded yet this week.</p>
+"""
+    body = ""
+    tot = {"requests": 0, "won": 0, "ql": 0, "nq": 0, "pending": 0,
+           "teu_req": 0, "teu_won": 0}
+    for n, (d, b) in enumerate(rows):
+        for k in tot:
+            tot[k] += b[k]
+        bg = B.DOC_CARD if n % 2 else B.DOC_TH_BG
+        day = _fmt_date(datetime.combine(d, datetime.min.time()), "%a %b %-d")
+        body += f"""
+<tr style="background:{bg}">
+  <td style="padding:6px 8px;font-weight:600;white-space:nowrap">{_esc(day)}</td>
+  <td style="padding:6px 8px;text-align:center">{b['requests']}<div style="font-size:10px;color:{B.DOC_MUTED}">{b['teu_req']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{b['won']}<div style="font-size:10px;color:{B.DOC_MUTED}">{b['teu_won']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{b['ql']}</td>
+  <td style="padding:6px 8px;text-align:center">{b['nq']}</td>
+  <td style="padding:6px 8px;text-align:center">{b['pending']}</td>
+</tr>
+"""
+    body += f"""
+<tr style="background:{B.DOC_LINE};font-weight:bold;border-top:2px solid {DOC_INK}">
+  <td style="padding:6px 8px">WEEK TO DATE</td>
+  <td style="padding:6px 8px;text-align:center">{tot['requests']}<div style="font-size:10px;font-weight:normal">{tot['teu_req']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{tot['won']}<div style="font-size:10px;font-weight:normal">{tot['teu_won']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{tot['ql']}</td>
+  <td style="padding:6px 8px;text-align:center">{tot['nq']}</td>
+  <td style="padding:6px 8px;text-align:center">{tot['pending']}</td>
+</tr>
+"""
+    return f"""
+<h2 style="{H2_STYLE}">🗓️ This Week, Day by Day — {_esc(label)}</h2>
+<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Every weekday of the current week so far, bucketed by the day Lonny sent the request. Days not yet reached are omitted. WEEK TO DATE is the running tally.</p>
+<table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
+  <tr>
+    <th style="{TH_STYLE}">Day</th>
+    <th style="{TH_STYLE};text-align:center">Requests (# · TEU)</th>
+    <th style="{TH_STYLE};text-align:center">Won (# · TEU)</th>
+    <th style="{TH_STYLE};text-align:center">Q&amp;L (#)</th>
+    <th style="{TH_STYLE};text-align:center">NQ (#)</th>
+    <th style="{TH_STYLE};text-align:center">Pending (#)</th>
+  </tr>
+  {body}
+</table>
 """
 
 
@@ -2134,6 +2242,8 @@ def build_body(data, cfg):
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.
     html_body += _loss_reason_mix_html(data)
+    html_body += _current_week_block_html(
+        _current_week_day_rows(data, report_date), report_date)
     html_body += _week_block_html(week_rows)
     html_body += _carrier_block_html(carrier_rows)
     html_body += _trade_region_html(data, data.get("summary", {}) or {})

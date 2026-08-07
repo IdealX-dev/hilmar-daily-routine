@@ -68,7 +68,7 @@ KNOWN_UNTESTED: frozenset[str] = frozenset({
     # a fixture harness before they're testable in-container. Worked down as
     # harnesses land. QC-010/018/019/020/030/034 paid off 2026-06-09 in
     # tests/test_qc_selfheal_checks.py.
-    "QC-009", "QC-012", "QC-013", "QC-016", "QC-022", "QC-023", "QC-024",
+    "QC-012", "QC-013", "QC-016", "QC-022", "QC-023", "QC-024",
     "QC-025", "QC-026", "QC-033", "QC-035", "QC-036", "QC-043",
     "QC-046", "QC-047", "QC-048", "QC-050", "QC-051",
 })
@@ -76,7 +76,7 @@ KNOWN_UNTESTED: frozenset[str] = frozenset({
 # now covered by tests/test_auditfix_email_render_squish.py's no-&amp;amp;
 # assertion on real rendered email output). The ratchet test asserts len never
 # grows; lower this again each time you remove entries.
-_KNOWN_UNTESTED_CEILING = 18
+_KNOWN_UNTESTED_CEILING = 17
 
 
 #: Log methods that constitute "the engine emitted this check".

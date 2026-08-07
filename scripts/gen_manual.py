@@ -44,6 +44,12 @@ EMAIL_SECTIONS = [
     ("Loss-Reason Mix", "_loss_reason_mix_html",
      "Why we lost: the breakdown of loss reasons over the recent windows. "
      "Hidden automatically on days with no losses."),
+    ("This Week, Day by Day", "_current_week_block_html",
+     "The current week broken out one row per weekday, with a WEEK TO DATE "
+     "tally at the foot. Answers 'what happened Tuesday' — the Week-over-Week "
+     "table below shows the same week as a single line, which is a trend, not "
+     "a day. Days the week has not reached yet are omitted rather than shown "
+     "as zeros."),
     ("Week over Week", "_week_block_html",
      "Volume and wins per week (count and TEU) so you can see the trend "
      "without opening the dashboard."),

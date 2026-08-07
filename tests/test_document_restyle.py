@@ -546,24 +546,50 @@ def test_the_email_sits_on_the_paper_ground(email_html):
     assert f"background-color:{B.DOC_PAPER}" in email_html
 
 
-# ── the loud chrome is gone ────────────────────────────────────────────────
+# ── chrome the operator retired, and chrome he kept ────────────────────────
+#
+# This block used to assert that #1e3a5f — the navy table-header bar — was
+# GONE, on the reasoning that quiet chrome lets the data be the loud part. The
+# reasoning still holds in the abstract. It was not mine to enforce: Michael
+# asked for the navy bar back on 2026-08-06 and again on 2026-08-07 ("still
+# using the new formatting which i told you to go back to"), and this test
+# would have gone red on his own instruction.
+#
+# Same defect as the cron test that pinned "reports are paused" and the
+# client-weekly tests that pinned "enabled is False": a test encoding a
+# DECISION the operator is entitled to reverse. What survives is the part that
+# is genuinely an invariant — no THIRD dialect of table header, and the losing-
+# lanes bar stays retired because nothing asked for it back.
 
-@pytest.mark.parametrize("old", [
-    "#1e3a5f",   # the solid navy table-header bar
-    "#7f1d1d",   # the dark-red losing-lanes bar
-])
-def test_the_old_header_bars_are_gone_from_the_email(email_html, old):
-    """Three tables used three different saturated bars with white text. The
-    reference replaces all of it with quiet muted uppercase over one ink rule,
-    so the DATA is the loud part."""
-    assert old not in email_html, f"{old} chrome survived the restyle"
+def test_the_dark_red_losing_lanes_bar_stays_retired(email_html):
+    """One of the three original bars. Nobody asked for this one back, and a
+    saturated dark red on a losing-lanes table reads as an alarm about the
+    lane rather than a label on a column."""
+    assert "#7f1d1d" not in email_html
 
 
-def test_table_headers_are_quiet_and_ruled(email_html):
-    assert f"color:{B.DOC_MUTED}" in email_html
-    assert f"border-bottom:2px solid {B.DOC_INK}" in email_html, (
-        "a table header needs the single ink rule that separates head from "
-        "body once the solid bar is gone")
+def test_every_table_header_ground_is_navy_or_its_own_status_hue(email_html):
+    """The invariant underneath the taste question.
+
+    The default header is the navy bar. A SECTION-specific table may instead
+    carry its own status hue — the Pending-Hilmar table heads in DOC_PENDING,
+    the warn tables in DOC_WARN — which predates the restyle and is the thing
+    that makes those sections findable. What must not appear is a FOURTH
+    colour nobody chose: three tables once used three unrelated saturated
+    bars, and that is the drift worth guarding, not the count.
+    """
+    import re as _re
+    heads = _re.findall(r'<th style="([^"]*background[^"]*)"', email_html)
+    grounds = {_re.search(r"background(?:-color)?:(#[0-9a-fA-F]{6})", h).group(1).lower()
+               for h in heads if _re.search(r"background(?:-color)?:#", h)}
+    allowed = {"#1e3a5f", B.DOC_PENDING.lower(), B.DOC_WARN.lower(),
+               B.DOC_GOOD.lower(), B.DOC_BAD.lower(), B.DOC_CARD.lower(),
+               B.DOC_TH_BG.lower()}
+    stray = grounds - allowed
+    assert not stray, (
+        f"table header ground(s) {stray} are neither the navy bar nor a "
+        f"document status hue")
+    assert "#1e3a5f" in grounds, "the default navy table header is gone again"
 
 
 def test_kpi_figures_are_monospaced_in_the_email(email_html):
@@ -988,3 +1014,96 @@ def test_a_status_heading_rule_is_the_hue_not_its_tint():
     assert not bad, (
         f"a 2px section rule is drawn in a background tint ({bad}) — use the "
         f"solid hue so the landmark is visible")
+
+
+# ── the table header Michael asked for twice ────────────────────────────────
+
+def test_table_headers_are_the_solid_navy_bar():
+    """Michael 2026-08-06 "go back to the older format", and again 2026-08-07
+    "still using the new formatting which i told you to go back to".
+
+    The 08-04 restyle turned every table header from a solid navy bar with
+    white text into muted uppercase on a near-white ground. Quieter, and
+    genuinely better in the abstract — the old bars did shout over the data.
+    But it removed what a reader navigates by, and on the first ask I restored
+    the SECTION rule and left the headers flat, which is why there was a
+    second ask.
+
+    Pinned to the literal #1e3a5f that shipped before the restyle, not to a
+    token: the point is the exact look he approved, and remapping it to
+    DOC_INK or HILMAR_NAVY would silently change the colour again.
+    """
+    src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
+    m = re.search(r"TH_STYLE = \((.*?)\)\n", src, re.S)
+    assert m, "TH_STYLE moved — update this guard"
+    style = m.group(1)
+    assert "#1e3a5f" in style, "the table header is no longer the navy bar"
+    assert "#ffffff" in style, "the table header lost its white text"
+    assert "DOC_TH_BG" not in style and "DOC_MUTED" not in style, (
+        "the table header is back on the flat restyle tokens")
+
+
+def test_the_navy_header_actually_reaches_the_rendered_email():
+    """Source-level pins have been passing while the render disagreed all
+    week. Check the bytes."""
+    html = _rendered_artifacts()["staff email"]
+    assert html.count("#1e3a5f") > 20, (
+        "the navy table header is defined but not reaching the rendered body")
+
+
+# ── the current-week daily tally ────────────────────────────────────────────
+
+def test_current_week_has_a_day_by_day_section():
+    """Michael 2026-08-07: "you aren't doing the current week in review as
+    well for each day... there should be a weekly tally as well for current
+    week." The multi-week rollup shows the current week as ONE line, which
+    answers "how is the trend" and not "what happened Tuesday"."""
+    html = _rendered_artifacts()["staff email"]
+    assert "This Week, Day by Day" in html
+
+
+def test_the_daily_tally_buckets_and_totals():
+    """One row per weekday with a running WEEK TO DATE line — the tally part.
+    Bucketing goes through the core accessors so a STRICT-form row counts the
+    same as a LEGACY one; the rollup below it still uses raw comparisons."""
+    from datetime import date, timedelta
+
+    import gen_email as GE
+    today = date(2026, 8, 6)
+    mon = today - timedelta(days=today.weekday())
+    rows = [
+        {"request_id": "a", "request_date": mon.isoformat(), "status": "WIN",
+         "quoted": True, "teu_requested": 2, "teu_won": 2},
+        {"request_id": "b", "request_date": mon.isoformat(), "status": "PENDING",
+         "quoted": True, "teu_requested": 2},
+        {"request_id": "c", "request_date": (mon + timedelta(days=1)).isoformat(),
+         "status": "Q&L", "quoted": True, "teu_requested": 3},
+        {"request_id": "d", "request_date": (mon + timedelta(days=1)).isoformat(),
+         "status": "NQ", "quoted": False, "teu_requested": 1},
+        # outside the week — must not appear
+        {"request_id": "e", "request_date": (mon - timedelta(days=3)).isoformat(),
+         "status": "WIN", "quoted": True, "teu_requested": 9},
+    ]
+    got = GE._current_week_day_rows({"requests": rows}, today)
+    assert [str(d) for d, _ in got] == [mon.isoformat(),
+                                        (mon + timedelta(days=1)).isoformat()]
+    assert got[0][1]["won"] == 1 and got[0][1]["pending"] == 1
+    assert got[1][1]["ql"] == 1 and got[1][1]["nq"] == 1, (
+        "STRICT-form Q&L/NQ rows did not land in their buckets")
+    html = GE._current_week_block_html(got, today)
+    assert "WEEK TO DATE" in html
+    assert "4" in html   # 4 requests in-week, the 5th is out of week
+
+
+def test_the_daily_tally_omits_days_that_have_not_happened():
+    """A zero for Friday on a Wednesday is not information — it reads as a bad
+    week rather than an unfinished one."""
+    from datetime import date, timedelta
+
+    import gen_email as GE
+    wed = date(2026, 8, 5)
+    mon = wed - timedelta(days=wed.weekday())
+    rows = [{"request_id": "a", "request_date": mon.isoformat(),
+             "status": "WIN", "quoted": True, "teu_requested": 1}]
+    got = GE._current_week_day_rows({"requests": rows}, wed)
+    assert len(got) == 1, "empty or future days leaked into the tally"

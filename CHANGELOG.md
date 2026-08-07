@@ -3,6 +3,99 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (2) — the navy bar back, and a day-by-day week
+
+Michael, twice: 2026-08-06 "go back to the older format" and 2026-08-07 "still
+using the new formatting which i told you to go back to". Plus: "you aren't
+doing the current week in review as well for each day... there should be a
+weekly tally as well for current week."
+
+THE TABLE HEADER. Reverted to the solid navy bar with white text (#1e3a5f)
+that shipped before the 08-04 restyle, kept as the literal rather than
+remapped to a token — the point is the exact look he approved, and pointing it
+at DOC_INK or HILMAR_NAVY would silently change the colour again.
+
+On the FIRST ask I restored the section rule and left the table headers flat.
+That is why there was a second ask. The restyle's reasoning was sound in the
+abstract — three saturated bars did shout over the data — but it was not my
+call to keep making after the operator had reversed it.
+
+A TEST OF MINE ASSERTED THE OPPOSITE. test_the_old_header_bars_are_gone_from_
+the_email pinned "#1e3a5f must not appear", so it would have gone red on his
+own instruction. Same defect as the cron test that pinned "reports are paused"
+and the client-weekly tests that pinned "enabled is False": a test encoding a
+DECISION the operator is entitled to reverse. Replaced with the part that IS
+an invariant — every table-header ground must be the navy bar or a document
+status hue, never a fourth colour nobody chose. The dark-red losing-lanes bar
+stays retired; nobody asked for that one back.
+
+THIS WEEK, DAY BY DAY. New section above Week-over-Week: one row per weekday
+of the current week, with a WEEK TO DATE total. The rollup below it shows the
+current week as ONE line, which answers "how is the trend" and not "what
+happened Tuesday". Days the week has not reached are omitted — a zero for
+Friday on a Wednesday reads as a bad week rather than an unfinished one.
+Buckets through core.is_win/is_pending/is_quoted_and_lost/is_not_quoted, so a
+STRICT-form row counts the same as a LEGACY one; the rollup directly below
+still uses raw status comparisons for its loss split and would drop them.
+
+gen_manual's section catalog required the new block to be documented before
+the suite would go green — the guard worked.
+
+STILL BLOCKED ON THE OPERATOR: pending is understated because the intake is
+missing mail. See the entry above; the $search rewrite is not started.
+
+Suite 2558 passed, 0 failed. ruff clean.
+
+## 2026-08-07 — 12 emails thrown away, logged as one word
+
+Michael: "data is missing and completely incomplete... there were a minimum of
+12 requests this week so far." The Aug 7 fire's log, in full:
+
+  refresh_stage: total unique results across queries: 330
+  refresh_stage: NEW staged records: 0
+  refresh_stage: skipped 281 pre-cutoff, 0 excluded, 12 unclassified, 37 already-staged
+  Nothing new to stage.
+
+Graph returned the mail. The classifier discarded twelve messages and the only
+trace was the word "unclassified". Nothing has been staged since Aug 5, which
+is why the header's window ends Aug 5 while the report claims to cover Aug 6,
+and why every "today" section is zero.
+
+WHAT THE FIRE ALREADY KNEW AND DID NOT SAY LOUDLY ENOUGH:
+  QC-008  latest staged record is 41.9h old on a business day
+  QC-009  classifier may be dropping a sender: ['mbd_rate_response']
+          7d counts: lonny_outbound 12, lonny_reply 5, mbd_inbound 4,
+          mbd_rate_response 0
+mbd_rate_response is ZERO over seven days against 299 historically. OL's rate
+replies stopped being classifiable a week ago — that is the empty OL-USA
+RESPONSES section and the zero pendings, both of which follow mechanically.
+Both checks are WARN, so the pipeline exited 0, the integrity gate said "fresh
+report shipped", and an empty report went to nine people.
+
+MECHANISM. classify() returns None for any sender that is not Lonny or the
+shared booking mailbox, and the 'lonny-flow' query is `from:lonny OR to:lonny`
+— so an OL reply sent from an individual's mailbox comes back from Graph and
+is dropped on arrival. That rule is defensible. Dropping SILENTLY is not.
+
+FIXED — the log now names them. Dropped senders are counted and printed with
+up to eight whole examples (sender | received | subject), WITHOUT --verbose,
+because the daily fire does not pass --verbose and diagnosing this otherwise
+needs a hand re-run with a different flag. That is precisely why it ran a week.
+Staging zero new records while dropping any also emits a ::error:: annotation
+naming the senders, so it lands in the run summary instead of 400 lines up in
+stdout. Deliberately an annotation, not an exit code: refresh_stage is
+best-effort in the daily fire and failing the step would suppress the staff
+email that still carries the cumulative KPIs.
+
+NOT YET FIXED, AND IT NEEDS THE OPERATOR: whether those senders SHOULD be
+staged is a product decision, not mine. The next fire's log will name them.
+
+The QC governance ratchet did its job on the way through — the new test made
+QC-009 "tested", so it came out of KNOWN_UNTESTED and the ceiling dropped 18
+to 17.
+
+Suite 2554 passed, 0 failed. ruff clean.
+
 ### 2026-08-06 (3) — "bad format": nothing moved, the landmarks went out
 
 Michael: "go back to the older format that shows pending hilmar pending ol
