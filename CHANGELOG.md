@@ -40,10 +40,37 @@ indistinguishable from an identifier in code to a regex — the fourth time
 that has bitten this repo. All five guards verified by planting the
 violation and watching them fail, then restoring.
 
+THE FIRST RUN DIED, TWICE OVER, AND BOTH WERE MINE:
+
+  1. It installed requirements.txt, which deliberately does NOT carry
+     azure-storage-blob (see its header) — every workflow that touches the
+     state store names it explicitly, and I did not. `No module named
+     'azure'` before a single useful line. Now installs the same set
+     daily.yml's fire job does.
+  2. It pulled into a temp dir. GRAPH_APP_TENANT_ID / CLIENT_ID /
+     CLIENT_SECRET are all EMPTY in this repo — this tenant has no app-only
+     Entra app, OL IT declined to register one — so Graph auth falls back to
+     the delegated MSAL cache at secrets/token-cache.bin, which outlook_send
+     resolves from module constants. A temp dir is invisible to it. Pulls
+     into the repo root now, like the fire does. Monkeypatching those
+     constants was the alternative and would have given the tracer a private
+     copy of the pipeline's auth — the one thing it must not have.
+
+So the read-only claim is narrowed to what is true: it never writes the BLOB,
+never sends, never fetches a body, never edits stage or tracking data. It DOES
+overwrite the working tree — the pulled state, plus MSAL rewriting the token
+cache on refresh. Documented at the top of the file, because on the Cloud PC
+that overwrite is real.
+
+THE SECOND FIX IS A GENERAL GUARD, not a patch to one file: any workflow
+running a script that imports state_store must install azure-storage-blob.
+Checked across all workflows, so the next one to be added cannot repeat this.
+Both new guards verified by planting the regression.
+
 NOT YET AN ANSWER. This ships the instrument, not the diagnosis. The Aug 6
 trace runs next.
 
-Suite 2575 passed, 0 failed. ruff clean.
+Suite 2577 passed, 0 failed. ruff clean.
 
 ### 2026-08-07 (3) — Reno's quotes get staged; the intake rewrite is withdrawn
 

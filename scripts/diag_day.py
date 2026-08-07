@@ -16,9 +16,25 @@ reading field names fetch_bodies does not write. This walks all five links
 for one day and prints what each one did, so the answer is read rather than
 deduced.
 
-READS ONLY. Pulls state into a temp dir, queries Graph with the SAME two KQL
-queries refresh_stage uses, and prints. It never writes the blob, never
-mutates stage or tracking data, never emails, and never fetches a body.
+READ-ONLY WHERE IT COUNTS, and precisely: it never writes the BLOB (no push,
+no backup, no restore), never sends mail, never fetches a body, and never
+edits stage or tracking data. It DOES write the runner's working tree, twice
+and unavoidably — `state_store.pull` lands the state files there, and MSAL
+rewrites secrets/token-cache.bin on a silent refresh.
+
+That is why it pulls into the repo root rather than a temp dir, which the
+first version did and which failed: this tenant has no app-only Entra app
+registered (OL IT declined — see state_store.STATE_FILES), so GRAPH_APP_* is
+empty and Graph auth falls back to the delegated MSAL cache at
+secrets/token-cache.bin. outlook_send resolves that path from module
+constants, so a temp dir is invisible to it. Monkeypatching those constants
+from a diagnostic would be a private copy of the pipeline's auth, which is
+the one thing this file must not have.
+
+CONSEQUENCE, stated plainly: run this on a checkout you do not mind having
+overwritten with the store's copy of state. On a runner that is a fresh
+clone. On the Cloud PC it is the same overwrite `state_store.py pull` does
+before every fire, but do not run it over uncommitted local edits.
 
 PII: prints sender addresses, subjects and timestamps for the target day —
 the same fields refresh_stage's drop log already prints unconditionally
@@ -37,7 +53,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -99,16 +114,20 @@ def main() -> int:
     _rule("state store")
     import state_store
 
-    tmp = Path(tempfile.mkdtemp())
+    # Into the REPO ROOT, not a temp dir — the delegated MSAL cache has to
+    # land at secrets/token-cache.bin for Graph auth to work at all. See the
+    # module docstring; the temp-dir version of this failed on exactly that.
+    root = ROOT
+    print(f"pulling state into {root} (overwrites local copies)")
     try:
-        pulled = state_store.pull(root=tmp)
+        pulled = state_store.pull(root=root)
     except Exception as e:
         print(f"pull FAILED: {type(e).__name__}: {e}")
         return 2
     print(f"pulled {len(pulled)} file(s): {', '.join(pulled)}")
 
-    stage = _load_jsonl(tmp / "scripts" / "stage_emails.txt")
-    bodies = _load_jsonl(tmp / "scripts" / "stage_emails_bodies.txt")
+    stage = _load_jsonl(root / "scripts" / "stage_emails.txt")
+    bodies = _load_jsonl(root / "scripts" / "stage_emails_bodies.txt")
     staged_imids = {r.get("internetMessageId") for r in stage if r.get("internetMessageId")}
     staged_ids = {r.get("id") for r in stage if r.get("id")}
     body_imids = {r.get("internetMessageId") for r in bodies if r.get("internetMessageId")}
@@ -172,7 +191,7 @@ def main() -> int:
 
     # ── link 4+5: what the tracking data holds for that day ─────────────────
     _rule(f"tracking-data-v2.json — rows dated {day}")
-    data_path = tmp / "tracking-data-v2.json"
+    data_path = root / "tracking-data-v2.json"
     if not data_path.exists():
         print("tracking-data-v2.json not in the store")
         return 2
