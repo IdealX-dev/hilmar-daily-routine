@@ -1,4 +1,19 @@
-"""auth_notify.py — re-consent the Graph token, and put the code where Michael is.
+"""auth_notify.py — re-seed the Graph token, and put the code where Michael is.
+
+WHAT THIS IS FOR, since it was built for the wrong reason and kept for the
+right one. It re-seeds the delegated token cache with the EXISTING scopes
+(outlook_send.SCOPES — no admin consent, nothing new). That matters because
+docs/MOVE-OFF-CLOUDPC.md says the cache was seeded once from the Cloud PC,
+and the Cloud PC is now decommissioned: if the ~90-day refresh token ever
+lapses, this is the only way back without it. That gap was real, undocumented,
+and would have been discovered at the worst possible moment.
+
+It does NOT widen access. Reading MBD_OceanExportBookingShared needs
+Mail.Read.Shared, which needs ol-usa admin consent, which OL IT declined —
+see refresh_stage.SHARED_MAILBOX for the constraint and the route that works
+without them. I built this file believing otherwise on 2026-08-07; Michael:
+"these requires ol's it department to approve.. you have had these details
+before.. why recreate the wheel here."
 
 2026-08-07. Michael, on being told to fetch a device code out of a GitHub
 Actions log: "what am i doing from my phone and where.. you do it."
@@ -54,7 +69,7 @@ def _body(code: str, uri: str, minutes: int) -> str:
   <p style="margin:0 0 4px;font-size:13px;color:#5b6b7c">Hilmar tracker</p>
   <h2 style="margin:0 0 16px;font-size:19px;color:#1e3a5f;
              border-bottom:2px solid #1e3a5f;padding-bottom:6px">
-    Reconnect the shared mailbox</h2>
+    Reconnect the tracker</h2>
 
   <p style="margin:0 0 18px;font-size:14px;line-height:1.5;color:#243b53">
     Tap the button, enter the code, sign in as
@@ -73,10 +88,10 @@ def _body(code: str, uri: str, minutes: int) -> str:
        font-weight:600;padding:13px 30px;border-radius:6px">Open sign-in</a></p>
 
   <p style="margin:0;font-size:12px;line-height:1.6;color:#5b6b7c">
-    This grants <strong>Mail.Read.Shared</strong>, which lets the tracker read
-    MBD_OceanExportBookingShared — the mailbox Lonny actually sends his RFQs
-    to. Until then it only sees your personal mailbox, which is why the reports
-    have been coming out empty.<br><br>
+    This re-seeds the tracker's saved sign-in — the same permissions it
+    already has (send mail, read your mail), nothing new and nothing needing
+    IT. It is what lets the daily report keep going out now that the Cloud
+    PC is gone.<br><br>
     Didn't expect this? Ignore it. The code is useless without your sign-in and
     expires on its own.</p>
 </div>"""
@@ -113,7 +128,7 @@ def main() -> int:
                   "the code — run the auth workflow and read it from the log.")
             return 2
 
-    flow = app.initiate_device_flow(scopes=OS.AUTH_SCOPES)
+    flow = app.initiate_device_flow(scopes=OS.SCOPES)
     if "user_code" not in flow:
         print(f"::error::auth_notify: device flow failed to start: {flow}")
         return 2
@@ -155,11 +170,12 @@ def main() -> int:
     granted = result.get("scope") or ""
     print(f"auth_notify: authenticated as {who}")
     print(f"auth_notify: scopes granted: {granted}")
-    if "Mail.Read.Shared" not in granted:
-        # The one failure that would look like success: consent completed, but
-        # without the scope this whole exercise is for.
-        print("::error::auth_notify: consent completed WITHOUT Mail.Read.Shared "
-              "— the shared mailbox is still unreadable.")
+    missing = [s for s in OS.SCOPES if s.lower() not in granted.lower()]
+    if missing:
+        # Consent completed but short — a green run with a token that cannot
+        # send is the one outcome worse than a failed one.
+        print(f"::error::auth_notify: consent completed WITHOUT {missing} — "
+              f"the pipeline cannot send with this token.")
         return 1
     return 0
 

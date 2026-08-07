@@ -3,6 +3,65 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (11) — Mail.Read.Shared needs OL IT. It was already written down.
+
+Michael: "these requires ol's it department to approve.. you have had these
+details before.. why recreate the wheel here."
+
+He is right, and it was in the repo in three places I did not read:
+
+  docs/MOVE-OFF-CLOUDPC.md (2026-06-10)
+    "No Hilmar app registration exists anywhere, Michael is not an admin in
+     the ol-usa.com tenant, and OL IT declined to create the app."
+    "The live design is the no-IT path."
+  scripts/outlook_send.py, line 23
+    "Scopes: Mail.Send Mail.Read Files.ReadWrite (delegated; no admin consent)."
+  scripts/verify_fire_prereqs.py
+    "The no-IT auth path (OL declined to register an app-only Entra app...)"
+
+The scope set is that short ON PURPOSE. I added Mail.Read.Shared to it,
+built a consent workflow, and dispatched a re-consent nobody in this project
+can approve. CLAUDE.md's second rule is "Read before you write. Inventory
+what exists before changing it." I inventoried the code and not the docs.
+
+REVERTED: AUTH_SCOPES is gone, both device flows and auth_notify are back on
+outlook_send.SCOPES, and the pending run is cancelled.
+
+THE CONSTRAINT NOW LIVES WHERE THE TEMPTATION IS — next to
+refresh_stage.SHARED_MAILBOX and outlook_send.SCOPES, not only in a doc
+nobody opens. A guard fails on any of Mail.Read.Shared, Mail.ReadWrite.Shared,
+Mail.Send.Shared, MailboxSettings.ReadWrite, Mail.Read.All, Mail.ReadWrite.All
+appearing in ANY scope list in outlook_send — AST, so a second list cannot
+smuggle one past it. Verified by planting exactly that.
+
+THE ROUTE THAT WORKS WITHOUT IT — move the mail, do not widen the token. An
+inbox rule on MBD_OceanExportBookingShared that REDIRECTS mail from/to
+lupfold@hilmaringredients.com to michael.deitchman@ol-usa.com. Michael can set
+it himself; no admin, no scope, no code change.
+
+REDIRECT, NOT FORWARD, and this is not a preference. A redirect preserves the
+original From header and internetMessageId, so classify() still returns
+lonny_outbound and the two-key dedup still recognises the message. A forward
+rewrites the sender to the shared mailbox, which classify() reads as
+mbd_inbound — every RFQ would be filed as a booking confirmation. That
+distinction is now in the code comment, because it is the difference between
+this fix working and it silently corrupting the data.
+
+THE WARNING TEXT WAS ALSO WRONG. read_targets said "re-run the auth workflow
+to consent", which is impossible. It now names the admin-consent constraint
+and the redirect route. A recurring warning with unactionable advice is just
+noise that trains people to ignore warnings.
+
+KEPT, because the detour found a real gap: auth_notify.py + the re-seed
+workflow, now on the EXISTING scopes. MOVE-OFF-CLOUDPC.md says the token cache
+was seeded once from the Cloud PC, and the Cloud PC is decommissioned — if the
+~90d refresh token ever lapses there was no way back. Now there is, and it
+needs no IT. It also verifies the granted scopes cover OS.SCOPES and errors if
+they do not, because a green run with a token that cannot send would surface
+as nine people not getting a report.
+
+Suite 2603 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (10) — the code comes to him; the sign-in still cannot
 
 Michael, on being told to fetch a device code out of an Actions log: "what am
