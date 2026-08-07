@@ -64,18 +64,20 @@ CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"  # Microsoft public client
 TENANT = "common"
 SCOPES = ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
 
-#: What a FRESH consent asks for. Mail.Read.Shared is the delegated permission
-#: needed to read a mailbox that is not the signed-in user's — without it,
-#: refresh_stage can only read /me, which diag_day proved on 2026-08-07 is
-#: Michael's own mailbox and NOT MBD_OceanExportBookingShared, where Lonny
-#: addresses his RFQs.
+#: NOTE FOR THE NEXT PERSON WHO WANTS TO READ ANOTHER MAILBOX.
+#: You cannot, and the answer is not a wider scope. Reading a mailbox that is
+#: not the signed-in user's needs the delegated Mail.Read.Shared permission,
+#: which in the ol-usa.com tenant requires ADMIN CONSENT. Michael is not an
+#: admin there and OL IT declined to register an app for this workload
+#: (docs/MOVE-OFF-CLOUDPC.md, 2026-06-10, verified against both directories).
+#: This scope list is deliberately the no-admin-consent set and adding to it
+#: produces a consent screen nobody in this project can approve.
 #:
-#: Deliberately a SECOND list rather than an addition to SCOPES. SCOPES is what
-#: every silent refresh asks for, and asking for an unconsented scope there
-#: would fail the refresh and take the daily fire down. Silent stays narrow;
-#: consent goes wide; refresh_stage.shared_token_silent asks for the wide set
-#: and degrades to /me when the cache cannot supply it.
-AUTH_SCOPES = [*SCOPES, "Mail.Read.Shared"]
+#: 2026-08-07: I added Mail.Read.Shared here anyway, to read
+#: MBD_OceanExportBookingShared. Michael: "these requires ol's it department
+#: to approve.. you have had these details before.. why recreate the wheel."
+#: Reverted. The supported route is to REDIRECT the mail into this mailbox —
+#: see refresh_stage.SHARED_MAILBOX.
 GRAPH = "https://graph.microsoft.com/v1.0"
 INLINE_ATTACH_LIMIT = 3 * 1024 * 1024  # 3 MB safety under Graph's 4 MB hard cap
 
@@ -159,7 +161,7 @@ def get_token() -> str:
             "refusing to start device-code flow on a headless runner. Re-seed "
             "the token cache from the Cloud PC (state_store.py push)."
         )
-    flow = app.initiate_device_flow(scopes=AUTH_SCOPES)
+    flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
         raise RuntimeError(f"Device flow failed: {flow}")
     print("\n" + "═" * 70, file=sys.stderr)
@@ -532,14 +534,14 @@ def cmd_auth_bg(args) -> int:
     status_path.parent.mkdir(parents=True, exist_ok=True)
 
     if accounts:
-        result = app.acquire_token_silent(AUTH_SCOPES, account=accounts[0])
+        result = app.acquire_token_silent(SCOPES, account=accounts[0])
         if result:
             _save_cache(cache)
             status_path.write_text(json.dumps({"status": "ok", "method": "silent"}), encoding="utf-8")
             print("silent ok")
             return 0
 
-    flow = app.initiate_device_flow(scopes=AUTH_SCOPES)
+    flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
         status_path.write_text(json.dumps({"status": "error", "message": str(flow)}), encoding="utf-8")
         return 1

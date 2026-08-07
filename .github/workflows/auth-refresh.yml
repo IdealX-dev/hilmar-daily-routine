@@ -1,24 +1,27 @@
-name: Re-consent the Graph token
+name: Re-seed the Graph token
 
-# MANUAL ONLY, and it needs a human with a browser for ~1 minute.
+# MANUAL ONLY, and it needs a human with a browser for ~30 seconds.
 #
-# 2026-08-07. diag_day run 6 proved the pipeline reads /me — Michael's own
-# mailbox — and not MBD_OceanExportBookingShared, where Lonny addresses his
-# RFQs. Reading another mailbox with a DELEGATED token requires the
-# Mail.Read.Shared scope, and the cached token consented to Mail.Send +
-# Mail.Read + Files.ReadWrite only. This job re-runs the consent with the
-# wider set (outlook_send.AUTH_SCOPES).
+# WHAT THIS IS FOR: re-seeding the delegated token cache with the EXISTING
+# scopes (outlook_send.SCOPES — no admin consent, nothing new). The cache was
+# seeded once from the Cloud PC (docs/MOVE-OFF-CLOUDPC.md) and the Cloud PC is
+# decommissioned, so if the ~90-day refresh token ever lapses this is the only
+# way back. Run it then, or to rotate the credential.
 #
-# The Cloud PC is decommissioned and this does NOT need it. Device-code auth
-# needs a BROWSER, not a particular machine — any device you read email on.
+# WHAT IT IS NOT FOR: reading MBD_OceanExportBookingShared. That needs
+# Mail.Read.Shared, which needs ol-usa admin consent, which OL IT declined —
+# see refresh_stage.SHARED_MAILBOX for the constraint and the redirect-rule
+# route that works without them. This job was built on 2026-08-07 believing
+# otherwise; Michael: "these requires ol's it department to approve.. you have
+# had these details before.. why recreate the wheel here."
 #
 # The code is EMAILED to you when the run starts, so there is nothing to find:
 #
-#   1. Dispatch (or let Claude dispatch it).
+#   1. Dispatch.
 #   2. Open the email "Hilmar tracker — sign-in code XXXXXXXXX".
 #   3. Tap the button, enter the code, sign in as michael.deitchman@ol-usa.com.
-#   4. The run finishes on its own: pushes the cache, then prints the mailboxes
-#      refresh_stage will read, so the scope is proven rather than assumed.
+#   4. The run pushes the refreshed cache and prints which mailboxes the
+#      pipeline can read, so the result is proven rather than assumed.
 #
 # The code expires in ~15 minutes. It is single-use and worthless to anyone who
 # cannot also complete the Microsoft sign-in as you — which is exactly why this
@@ -93,10 +96,10 @@ jobs:
           print('pushed:', state_store.push(only=['token-cache']))
           "
 
-      - name: Confirm the new consent covers the shared mailbox
+      - name: Report which mailboxes the pipeline can read
         if: success()
-        # Proves the scope actually landed instead of assuming it did. Prints
-        # the mailboxes refresh_stage would now read.
+        # States the outcome instead of assuming it. Expect ONE mailbox (/me)
+        # unless the app-only path or a redirect rule is in place.
         run: |
           python3 -c "
           import sys; sys.path.insert(0,'scripts')

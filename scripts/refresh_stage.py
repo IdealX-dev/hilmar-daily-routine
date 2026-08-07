@@ -165,14 +165,32 @@ _mailbox_base = f"{GRAPH}/me"
 #: thread that exists in both.
 SHARED_MAILBOX = os.environ.get("HILMAR_SHARED_MAILBOX", OS.SEND_MAILBOX)
 
-#: Delegated reads of ANOTHER user's mailbox need Mail.Read.Shared. The token
-#: cache seeded before 2026-08-07 consented to Mail.Send/Mail.Read/
-#: Files.ReadWrite only — see outlook_send.SCOPES — so until the operator
-#: re-authenticates, the shared mailbox 403s and this module falls back to /me
-#: alone. DELIBERATELY not added to outlook_send.SCOPES: that list is what
-#: get_token_silent refreshes with, and requesting an unconsented scope there
-#: would fail the silent refresh and take the entire daily fire down to fix a
-#: gap that currently only costs us data.
+#: READ THIS BEFORE TRYING TO MAKE THE SHARED MAILBOX WORK. It is not a bug
+#: and it is not a missing line of code.
+#:
+#: Delegated reads of another user's mailbox need Mail.Read.Shared. In the
+#: ol-usa.com tenant that needs ADMIN CONSENT. Michael is not an admin there,
+#: and OL IT declined to register an app for this workload — verified against
+#: both directories on 2026-06-10 and written down in
+#: docs/MOVE-OFF-CLOUDPC.md. The entire auth design is the no-IT path for
+#: exactly this reason (outlook_send.SCOPES: "delegated; no admin consent").
+#:
+#: 2026-08-07 I added the scope anyway and dispatched a re-consent. Michael:
+#: "these requires ol's it department to approve.. you have had these details
+#: before.. why recreate the wheel here." He is right; it was in the repo.
+#:
+#: THE ROUTE THAT WORKS WITHOUT IT is to move the mail, not widen the token:
+#: an inbox rule on MBD_OceanExportBookingShared that REDIRECTS mail
+#: from/to lupfold@hilmaringredients.com to michael.deitchman@ol-usa.com.
+#: REDIRECT, not FORWARD — a redirect preserves the original From header and
+#: internetMessageId, so classify() still buckets it as lonny_outbound and the
+#: two-key dedup still recognises it. A forward rewrites the sender to the
+#: shared mailbox, which classify() would read as mbd_inbound and file as a
+#: booking. Michael can set that rule himself; it needs no admin and no scope.
+#:
+#: Everything below stays because it costs nothing and is CORRECT the moment
+#: access exists by any route — including the app-only path, where
+#: _mailbox_base already points at READ_MAILBOX.
 SHARED_READ_SCOPES = [*OS.SCOPES, "Mail.Read.Shared"]
 
 
@@ -252,13 +270,19 @@ def read_targets(token: str) -> list[tuple[str, str, str]]:
     if shared_tok:
         targets.append((SHARED_MAILBOX, f"{GRAPH}/users/{SHARED_MAILBOX}", shared_tok))
     else:
-        # Loud, and in the run summary rather than 400 lines up in stdout.
-        # This is the difference between "Lonny sent nothing" and "we cannot
-        # see the mailbox Lonny sends to", which read identically for a week.
-        print(f"::warning::refresh_stage cannot read {SHARED_MAILBOX} — the "
-              f"cached delegated token lacks Mail.Read.Shared. Re-run the auth "
-              f"workflow to consent. Reading only {_mailbox_base} until then, "
-              f"which MISSES every RFQ addressed solely to the shared mailbox.")
+        # Loud, because "Lonny sent nothing" and "we cannot see the mailbox
+        # Lonny sends to" read identically for a week and cost us that week.
+        #
+        # The advice has to be ACTIONABLE or it is just recurring noise: this
+        # said "re-run the auth workflow to consent" until 2026-08-07, which
+        # is impossible — that consent needs OL IT. See SHARED_MAILBOX above.
+        print(f"::warning::refresh_stage is reading only {_mailbox_base} and "
+              f"NOT {SHARED_MAILBOX}, so RFQs addressed solely to the shared "
+              f"mailbox are invisible. This is NOT fixable with a re-auth — "
+              f"Mail.Read.Shared needs ol-usa admin consent, which OL IT "
+              f"declined. Fix it by REDIRECTING (not forwarding) Lonny's mail "
+              f"from the shared mailbox into this one; see refresh_stage."
+              f"SHARED_MAILBOX for why redirect and not forward.")
     targets.append(("me", _mailbox_base, token))
     return targets
 

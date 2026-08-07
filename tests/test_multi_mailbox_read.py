@@ -20,7 +20,8 @@ What is pinned here is the part that must not regress quietly:
     mailbox-scoped; the wrong mailbox is a 404, not a fallback)
   - a missing Mail.Read.Shared DEGRADES to /me and says so — it must never
     take the fire down
-  - SCOPES (silent refresh) stays narrow while AUTH_SCOPES (consent) goes wide
+  - no scope needing ol-usa ADMIN CONSENT is ever requested, because OL IT
+    declined and the whole auth design routes around them
 """
 from __future__ import annotations
 
@@ -45,33 +46,69 @@ def test_silent_refresh_scopes_stay_narrow():
     assert OS.SCOPES == ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
 
 
-def test_consent_scopes_go_wide():
-    """A fresh consent must ask for the shared-read permission, or the
-    re-auth accomplishes nothing."""
+def test_no_scope_needing_admin_consent_is_ever_requested():
+    """THE constraint, and the reason this file needed writing twice.
+
+    docs/MOVE-OFF-CLOUDPC.md, 2026-06-10, verified against both directories:
+    no app registration exists, Michael is not an admin in ol-usa.com, and OL
+    IT declined to create one. outlook_send's own header says the scope set is
+    "delegated; no admin consent" — it was chosen to route around them.
+
+    On 2026-08-07 I added Mail.Read.Shared to reach the shared booking mailbox
+    and dispatched a re-consent nobody could approve. Michael: "these requires
+    ol's it department to approve.. you have had these details before.. why
+    recreate the wheel here."
+
+    Anything needing admin consent is a dead end until OL IT changes its
+    answer. This goes red the moment someone asks for one again.
+    """
+    import ast
+
     import outlook_send as OS
-    assert "Mail.Read.Shared" in OS.AUTH_SCOPES
-    assert set(OS.SCOPES).issubset(set(OS.AUTH_SCOPES)), (
-        "AUTH_SCOPES dropped a scope the send path needs")
-
-
-def test_the_device_flow_requests_the_wide_set():
-    """Both device-flow call sites, not just one — the interactive path and
-    the headless auth-bg path both seed the same cache."""
     src = (ROOT / "scripts" / "outlook_send.py").read_text(encoding="utf-8")
-    assert "initiate_device_flow(scopes=SCOPES)" not in src, (
-        "a device-code flow still consents to the narrow set")
-    assert src.count("initiate_device_flow(scopes=AUTH_SCOPES)") == 2
+
+    NEEDS_ADMIN = ("Mail.Read.Shared", "Mail.ReadWrite.Shared",
+                   "Mail.Send.Shared", "MailboxSettings.ReadWrite",
+                   "Mail.Read.All", "Mail.ReadWrite.All")
+    for scope in NEEDS_ADMIN:
+        assert scope not in OS.SCOPES, (
+            f"{scope} needs ol-usa admin consent, which OL IT declined — the "
+            f"device flow will show a consent screen nobody can approve")
+
+    # AST, so a second list cannot smuggle one past the check above and the
+    # prose in this module's own docstring cannot trip it
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
+            vals = [e.value for e in node.value.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            for scope in NEEDS_ADMIN:
+                assert scope not in vals, (
+                    f"{scope} is in a scope list in outlook_send")
 
 
-def test_auth_bg_silent_check_uses_the_wide_set():
-    """If auth-bg checks silently against the NARROW set, an already-consented
-    cache returns 'silent ok' and the re-consent never happens — the workflow
-    would report success and change nothing."""
+def test_every_device_flow_requests_only_the_consentable_set():
+    """Both call sites: the interactive path and the headless one seed the
+    same cache, and either asking for more strands the operator on a consent
+    screen they cannot clear."""
     src = (ROOT / "scripts" / "outlook_send.py").read_text(encoding="utf-8")
-    block = src.split("def cmd_auth_bg", 1)[-1][:1500]
-    assert "acquire_token_silent(AUTH_SCOPES" in block, (
-        "auth-bg's silent check uses the narrow scope set, so it will short-"
-        "circuit on the old cache and never widen the consent")
+    assert src.count("initiate_device_flow(scopes=SCOPES)") == 2
+    assert "AUTH_SCOPES" not in src, (
+        "a second, wider scope list is back in outlook_send")
+    notify = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
+    assert "initiate_device_flow(scopes=OS.SCOPES)" in notify
+
+
+def test_the_constraint_is_written_where_the_next_person_will_look():
+    """It WAS documented — in docs/MOVE-OFF-CLOUDPC.md, which I did not read
+    before rebuilding around it. A constraint recorded only in a doc nobody
+    opens gets rediscovered the expensive way. It now sits next to the code
+    that tempts you, and states the route that DOES work."""
+    assert "admin consent" in SRC.lower(), (
+        "refresh_stage does not say why the shared mailbox is unreadable")
+    assert "REDIRECT" in SRC, (
+        "refresh_stage states the constraint without the route that works")
+    src = (ROOT / "scripts" / "outlook_send.py").read_text(encoding="utf-8")
+    assert "admin consent" in src.lower()
 
 
 def test_shared_mailbox_is_read_first(monkeypatch):
@@ -91,9 +128,11 @@ def test_shared_mailbox_is_read_first(monkeypatch):
 
 
 def test_missing_shared_scope_degrades_to_me_and_warns(monkeypatch, capsys):
-    """Until the operator re-auths, the fire must keep running on /me alone.
-    Silently is what we already had for a week, so it warns — and the warning
-    names the consequence, not just the condition."""
+    """The fire must keep running on /me alone, because it will be running
+    that way indefinitely — the shared read needs admin consent OL IT
+    declined. Silence is what cost us the week, so it warns; and the warning
+    must name the consequence AND a route the reader can actually take, not
+    "re-run the auth workflow", which is impossible here."""
     import refresh_stage as RS
     monkeypatch.setattr(RS, "_mailbox_base", f"{RS.GRAPH}/me")
     monkeypatch.setattr(RS, "shared_token_silent", lambda: None)
@@ -104,9 +143,12 @@ def test_missing_shared_scope_degrades_to_me_and_warns(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "::warning::" in out, "the degraded read is silent"
     assert RS.SHARED_MAILBOX in out
-    assert "Mail.Read.Shared" in out
-    assert "MISSES" in out, (
+    assert "invisible" in out, (
         "the warning states the condition but not what it costs")
+    assert "REDIRECT" in out, (
+        "the warning gives no route the reader can actually take")
+    assert "re-auth" not in out.lower().replace("not fixable with a re-auth", ""), (
+        "the warning still advises a re-auth, which cannot grant this scope")
 
 
 def test_app_only_still_reads_its_single_target(monkeypatch):
@@ -223,12 +265,13 @@ def test_it_refuses_when_it_cannot_deliver_the_code(monkeypatch):
         "the send-token check happens after the device flow starts")
 
 
-def test_consent_without_the_shared_scope_is_an_error_not_a_success():
+def test_a_short_consent_is_an_error_not_a_success():
     """The one failure that would look like success: the operator signs in,
-    the run goes green, and the shared mailbox is still unreadable."""
+    the run goes green, and the saved token cannot send — which would be
+    discovered at 8 AM by nine people not getting a report."""
     src = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
-    assert 'if "Mail.Read.Shared" not in granted:' in src
-    tail = src.split('if "Mail.Read.Shared" not in granted:', 1)[-1][:400]
+    assert "missing = [s for s in OS.SCOPES if s.lower() not in granted.lower()]" in src
+    tail = src.split("if missing:", 1)[-1][:400]
     assert "::error::" in tail and "return 1" in tail
 
 
