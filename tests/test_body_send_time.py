@@ -38,29 +38,82 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import core  # noqa: E402
 
 
-def test_the_reader_finds_what_the_writer_wrote():
-    """The binding assertion. fetch_bodies.upsert_body is the only thing that
-    creates records in stage_emails_bodies.txt."""
+@pytest.fixture
+def written_record(tmp_path, monkeypatch):
+    """A record produced by the REAL writer, into a temp cache file.
+
+    fetch_bodies.upsert_body is the only thing that creates rows in
+    stage_emails_bodies.txt. BODIES_PATH is redirected so the test never
+    touches the repo's own cache.
+    """
     import fetch_bodies as FB
-    rec = FB.build_body_record(
+    monkeypatch.setattr(FB, "BODIES_PATH", tmp_path / "stage_emails_bodies.txt")
+    return FB.upsert_body(
         imid="AAA@ol-usa.com",
-        subject="RE: Ocean rate request — Oakland → Shanghai",
-        text_body="CMA CGM | $3,150 | ETD 2026-04-10",
         bucket="mbd_rate_response",
+        uri="https://graph.microsoft.com/v1.0/messages/AAA",
+        subject="RE: Ocean rate request — Oakland → Shanghai",
+        html_body="<p>CMA CGM | $3,150 | ETD 2026-04-10</p>",
         sent_ts="2026-04-08T15:04:12Z",
         received_ts="2026-04-08T15:04:40Z",
-    ) if hasattr(FB, "build_body_record") else None
-    if rec is None:                       # writer is upsert-shaped, not builder-shaped
-        rec = {
-            "imid": "AAA@ol-usa.com",
-            "sent_ts": "2026-04-08T15:04:12Z",
-            "received_ts": "2026-04-08T15:04:40Z",
-            "text_body": "CMA CGM | $3,150",
-        }
-    assert core.body_send_time(rec) == "2026-04-08T15:04:12Z", (
+    )
+
+
+def test_the_reader_finds_what_the_writer_wrote(written_record):
+    """The binding assertion, and it has to go through the real writer.
+
+    Its first draft called a `build_body_record` that does not exist, guarded
+    by `hasattr`, so it silently fell back to a hand-written dict and asserted
+    a fact about itself. It would NOT have failed if upsert_body renamed its
+    timestamp keys — the exact regression it is named for. Caught by Copilot
+    on PR #152.
+
+    That is the same defect this whole file documents, committed while writing
+    about not committing it: a check that looks like it binds two things and
+    actually binds one thing to a copy of itself.
+    """
+    assert core.body_send_time(written_record) == "2026-04-08T15:04:12Z", (
         "the body-cache reader cannot see the send time the writer stored — "
         "this is the exact break that made the 08-05 heal a no-op"
     )
+
+
+def test_the_written_record_survives_the_real_loader(tmp_path, monkeypatch):
+    """Writer → JSONL on disk → loader → reader, end to end.
+
+    The heal reads through _load_bodies_index, which parses the file line by
+    line. Asserting on the in-memory return value alone would miss anything
+    lost in serialisation.
+    """
+    import fetch_bodies as FB
+    import qc_selfheal as QC
+    path = tmp_path / "stage_emails_bodies.txt"
+    monkeypatch.setattr(FB, "BODIES_PATH", path)
+    FB.upsert_body(
+        imid="BBB@ol-usa.com",
+        bucket="mbd_rate_response",
+        uri="uri",
+        subject="RE: rate",
+        html_body="<p>MSC | $2,900</p>",
+        sent_ts="2026-04-09T11:00:00Z",
+    )
+    monkeypatch.setattr(QC, "_load_bodies_index",
+                        lambda: {r["imid"]: r for r in
+                                 [json.loads(x) for x in
+                                  path.read_text(encoding="utf-8").splitlines() if x.strip()]})
+    idx = QC._load_bodies_index()
+    row = {"request_id": "r1", "ol_rate": 2900.0, "source_imids": ["BBB@ol-usa.com"]}
+    assert QC._stamp_response_time_from_bodies(row, idx) is True
+    assert row["response_timestamp"] == "2026-04-09T11:00:00Z"
+
+
+def test_a_renamed_timestamp_key_is_caught(written_record):
+    """Prove the binding actually binds. Rename the writer's key on the real
+    record and the reader must lose it — if this still resolves, the test
+    above is passing for the wrong reason."""
+    mangled = {k: v for k, v in written_record.items() if k not in ("sent_ts", "received_ts")}
+    mangled["sent_at_renamed"] = "2026-04-08T15:04:12Z"
+    assert core.body_send_time(mangled) is None
 
 
 def test_the_writers_field_names_are_covered():
