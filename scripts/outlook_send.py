@@ -63,6 +63,19 @@ def _token_cache_read_path() -> Path:
 CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"  # Microsoft public client
 TENANT = "common"
 SCOPES = ["Mail.Send", "Mail.Read", "Files.ReadWrite"]
+
+#: What a FRESH consent asks for. Mail.Read.Shared is the delegated permission
+#: needed to read a mailbox that is not the signed-in user's — without it,
+#: refresh_stage can only read /me, which diag_day proved on 2026-08-07 is
+#: Michael's own mailbox and NOT MBD_OceanExportBookingShared, where Lonny
+#: addresses his RFQs.
+#:
+#: Deliberately a SECOND list rather than an addition to SCOPES. SCOPES is what
+#: every silent refresh asks for, and asking for an unconsented scope there
+#: would fail the refresh and take the daily fire down. Silent stays narrow;
+#: consent goes wide; refresh_stage.shared_token_silent asks for the wide set
+#: and degrades to /me when the cache cannot supply it.
+AUTH_SCOPES = [*SCOPES, "Mail.Read.Shared"]
 GRAPH = "https://graph.microsoft.com/v1.0"
 INLINE_ATTACH_LIMIT = 3 * 1024 * 1024  # 3 MB safety under Graph's 4 MB hard cap
 
@@ -146,7 +159,7 @@ def get_token() -> str:
             "refusing to start device-code flow on a headless runner. Re-seed "
             "the token cache from the Cloud PC (state_store.py push)."
         )
-    flow = app.initiate_device_flow(scopes=SCOPES)
+    flow = app.initiate_device_flow(scopes=AUTH_SCOPES)
     if "user_code" not in flow:
         raise RuntimeError(f"Device flow failed: {flow}")
     print("\n" + "═" * 70, file=sys.stderr)
@@ -519,14 +532,14 @@ def cmd_auth_bg(args) -> int:
     status_path.parent.mkdir(parents=True, exist_ok=True)
 
     if accounts:
-        result = app.acquire_token_silent(SCOPES, account=accounts[0])
+        result = app.acquire_token_silent(AUTH_SCOPES, account=accounts[0])
         if result:
             _save_cache(cache)
             status_path.write_text(json.dumps({"status": "ok", "method": "silent"}), encoding="utf-8")
             print("silent ok")
             return 0
 
-    flow = app.initiate_device_flow(scopes=SCOPES)
+    flow = app.initiate_device_flow(scopes=AUTH_SCOPES)
     if "user_code" not in flow:
         status_path.write_text(json.dumps({"status": "error", "message": str(flow)}), encoding="utf-8")
         return 1
