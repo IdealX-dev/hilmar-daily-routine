@@ -121,3 +121,70 @@ def test_an_ol_reply_from_a_personal_mailbox_is_dropped():
             "from": {"emailAddress": {"address": sender}},
             "subject": "RE: Oakland to Yokohama — rates",
         }) is None, f"{sender} now classifies — update this test and QC-009"
+
+
+# ── quote-only OL senders (Michael 2026-08-07) ──────────────────────────────
+
+def test_reno_quotes_are_staged_as_rate_responses():
+    """Michael: "reno only quotes hilmar so she doesn't book."
+
+    Three of her messages were discarded on arrival because classify() only
+    recognised Lonny and the shared booking mailbox. One of them —
+    "Re: Rates to a few destinations for a study" — was ALSO flagged by
+    QC-057 as a silently dropped RFQ, from the other end of the same pipeline.
+    """
+    import refresh_stage as RS
+    assert RS.classify({
+        "from": {"emailAddress": {"address": "Reno.Gurusinghe@ol-usa.com"}},
+        "subject": "Re: Rates to a few destinations for a study",
+    }) == "mbd_rate_response"
+
+
+def test_quote_only_senders_are_not_subject_matched():
+    """The rate-response subject pattern requires "Re: <known origin> to ...".
+    Reno's real subject is "Re: Rates to a few destinations for a study" —
+    "Rates" is not an origin, so it can never match. Gating her on the subject
+    would drop the quote a second time while looking like it was handled."""
+    import body_parser as BP
+    import refresh_stage as RS
+    subject = "Re: Rates to a few destinations for a study"
+    assert not BP.RATE_RESPONSE_SUBJECT_RX.match(subject), (
+        "the subject pattern now matches — re-examine whether the "
+        "unconditional rule for quote-only senders is still needed")
+    assert RS.classify({
+        "from": {"emailAddress": {"address": "reno.gurusinghe@ol-usa.com"}},
+        "subject": subject,
+    }) == "mbd_rate_response"
+
+
+def test_a_quote_only_sender_never_produces_a_booking_bucket():
+    """"she doesn't book" — so no message from her may land in mbd_inbound,
+    which is the bucket booking confirmations come from."""
+    import refresh_stage as RS
+    for subject in ("MDOLX260980 BOOKING CONFIRMATION", "PLEASE UPDATE BKG #", ""):
+        assert RS.classify({
+            "from": {"emailAddress": {"address": "reno.gurusinghe@ol-usa.com"}},
+            "subject": subject,
+        }) != "mbd_inbound"
+
+
+def test_our_own_outbound_is_still_dropped():
+    """Nine of the twelve drops were the tracker's OWN client emails coming
+    back through `to:lupfold`. Widening the classifier must not start ingesting
+    our own reports as if they were OL quotes."""
+    import refresh_stage as RS
+    assert RS.classify({
+        "from": {"emailAddress": {"address": "michael.deitchman@ol-usa.com"}},
+        "subject": "OL-USA — Daily Shipment Update for Hilmar Ingredients (activity for Aug 6, 2026)",
+    }) is None
+
+
+def test_the_quote_only_list_stays_explicit():
+    """A named allowlist, not "any @ol-usa.com". Widening to the domain would
+    swallow our own outbound (michael.deitchman@ol-usa.com is on it) and every
+    internal thread that happens to include Lonny."""
+    import refresh_stage as RS
+    assert RS.OL_QUOTE_ONLY_SENDERS, "the quote-only list is empty"
+    assert all("@" in s for s in RS.OL_QUOTE_ONLY_SENDERS), (
+        "the quote-only list holds something that is not an address — a bare "
+        "domain here would ingest our own reports")

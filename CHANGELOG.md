@@ -3,6 +3,50 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (3) — Reno's quotes get staged; the intake rewrite is withdrawn
+
+Michael, answering the product question the previous entry left open: "reno
+only quotes hilmar so she doesn't book." And: "why rewrite intake ?"
+
+FIXED — quote-only OL senders. New OL_QUOTE_ONLY_SENDERS in refresh_stage,
+holding reno.gurusinghe@ol-usa.com. Every message from a name on that list
+classifies as mbd_rate_response, unconditionally, before the drop. Two reasons
+it is not subject-matched:
+
+  1. No booking role means no mbd_inbound case to fall through to. A non-quote
+     from her is not a booking confirmation.
+  2. Her subjects do not have the shared mailbox's "Re: <origin> to <dest>"
+     shape. The message that surfaced this was "Re: Rates to a few
+     destinations for a study" — RATE_RESPONSE_SUBJECT_RX does not match it
+     and never will, because "Rates" is not a known origin. Verified, not
+     assumed. Subject-gating her would drop the quote a second time while
+     looking like it was handled.
+
+An ALLOWLIST OF ADDRESSES, deliberately, not "any @ol-usa.com". The domain
+would swallow our own outbound — michael.deitchman@ol-usa.com is on it, and
+nine of the twelve drops were the tracker's own client emails coming back
+through `to:lupfold`. A test pins that the list stays addresses.
+
+I WAS WRONG ABOUT THE INTAKE, and the previous entry says so in ink: "pending
+is understated because the intake is missing mail... the $search rewrite is
+not started." Withdrawn. I built that from two Graph queries both returning
+275 results and concluded $search was returning a relevance-capped set that
+excluded recent mail. My own diagnostic refutes it — one of the dropped
+messages is stamped 2026-08-07T13:37:44Z, i.e. today. Graph is returning
+current mail; the loss was entirely at classify(). I had the timestamps in
+front of me and reasoned from the two result counts instead of reading them.
+No intake rewrite. Nothing to do there.
+
+AND THE 12 RECONCILE. Michael: "there were a minimum of 12 requests this week
+so far." QC-009's own 7d counts say lonny_outbound 12. The data was staged all
+along; W32 showed 10-11 because the ISO week boundary splits those twelve
+across W31 and W32. Not a gap — a window.
+
+STILL UNANSWERED, and only the operator can: whether Aug 6 was genuinely a
+zero-activity day for Lonny, or still masks mail we are not seeing.
+
+Suite 2563 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (2) — the navy bar back, and a day-by-day week
 
 Michael, twice: 2026-08-06 "go back to the older format" and 2026-08-07 "still
