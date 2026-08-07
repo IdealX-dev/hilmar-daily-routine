@@ -3,6 +3,48 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (4) — "he did": a tracer for the five links of the intake chain
+
+Michael, asked directly whether Lonny genuinely sent nothing on Wednesday
+Aug 6, which is what the report claimed: "he did." So the Aug 6 zero is a
+second, separate gap, and Reno does not explain it — she quotes, she is not
+Lonny.
+
+WHY A TOOL AND NOT A GUESS. The chain from an email to a report row has five
+links: Graph returns it, classify() buckets it, it lands in stage_emails,
+fetch_bodies gives it a send time, it becomes a dated tracking row. Every
+investigation this week inspected ONE link and inferred the rest, and
+inferring was wrong twice in five days — the $search cap that was not
+(withdrawn in the entry below) and the heal I called fixed while it read
+field names fetch_bodies does not write. Guessing a sixth time is not
+cheaper than measuring once.
+
+NEW scripts/diag_day.py + .github/workflows/diag-day.yml (manual dispatch,
+read-only). For one ET day it prints, per message: the classify() bucket,
+whether the imid is in stage, whether it has a body — then the tracking rows
+dated that day, then every undated row with QC-077's own reason label. The
+first line that says NO is the broken link. It also prints the oldest and
+newest receivedDateTime in the result set, which is precisely the check I
+skipped when I blamed $search.
+
+BORROWED, NOT REIMPLEMENTED: the mailbox addresses, the two KQL queries,
+classify(), core.et_date_of and qc_selfheal._undated_reason all come from the
+pipeline. A tracer with its own copy of any of them would clear a day the
+pipeline still drops, which is worse than having no tracer. Tests pin that.
+
+READ-ONLY, PINNED BY AST: no state_store.push/backup/restore, no import of
+outlook_send / fetch_bodies / ingest / merge_ingest, no write_text, no open()
+for writing. AST rather than grep because "state_store.push" appears in the
+prose of both the script and its test file, and an identifier in prose is
+indistinguishable from an identifier in code to a regex — the fourth time
+that has bitten this repo. All five guards verified by planting the
+violation and watching them fail, then restoring.
+
+NOT YET AN ANSWER. This ships the instrument, not the diagnosis. The Aug 6
+trace runs next.
+
+Suite 2575 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (3) — Reno's quotes get staged; the intake rewrite is withdrawn
 
 Michael, answering the product question the previous entry left open: "reno

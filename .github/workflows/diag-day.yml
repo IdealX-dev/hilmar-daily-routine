@@ -1,0 +1,57 @@
+name: Diagnose one day's mail
+
+# MANUAL ONLY. Runs scripts/diag_day.py, which needs BOTH the Graph app
+# credentials and the blob connection string — the runner is the only place
+# either exists.
+#
+# Answers the 2026-08-07 question: the Aug 6 report went out with every
+# section empty, and Michael confirmed Lonny did send that day. This walks the
+# five links (Graph → classify → stage → body → dated row) for one date and
+# prints what each one did, so the answer is read rather than inferred.
+#
+# READ-ONLY. It pulls state into a temp dir and prints. No blob write, no
+# stage or tracking mutation, no email, no body fetch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "ET day to trace (YYYY-MM-DD). Blank = last business day."
+        required: false
+        default: ""
+      lookback:
+        description: "Days of Graph history to pull. Must reach past `day`."
+        required: false
+        default: "21"
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    name: Trace a day end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --quiet -r requirements.txt
+
+      - name: Trace
+        env:
+          DIAG_DAY: ${{ inputs.day }}
+          DIAG_DAY_LOOKBACK: ${{ inputs.lookback }}
+        run: python3 scripts/diag_day.py
