@@ -207,6 +207,66 @@ def test_every_workflow_that_pulls_state_installs_the_storage_sdk():
     assert checked, "no workflow runs a state_store script — check the regex"
 
 
+def test_it_reads_stage_and_bodies_through_the_pipelines_loaders():
+    """The first live run printed `stage_emails: 1273 records (0 with an imid)`.
+
+    diag_day had built its own index keyed on "internetMessageId" — the GRAPH
+    field name. build_stage_record writes `imid`. So the staged and body
+    columns read NO for every message in existence, which is indistinguishable
+    from "nothing was ever staged" and would have sent the next investigation
+    at the wrong link. Same defect as a private copy of classify(), one level
+    down: a private copy of a field NAME.
+    """
+    assert "RS.load_existing_stage_keys()" in SRC
+    assert "RS.load_existing_body_imids()" in SRC
+    assert "QC._load_bodies_index()" in SRC
+    # No hand-rolled index over stage/body records. Graph items legitimately
+    # carry internetMessageId, so the ban is on the comprehension, not the name.
+    assert 'for r in stage' not in SRC and 'for b in bodies' not in SRC, (
+        "diag_day indexes stage/body records itself again")
+
+
+def test_the_stage_writer_and_the_tracers_reader_agree_on_the_imid_field():
+    """A BINDING test: build a record with the real writer, read it with the
+    real reader, through a redirected STAGE_PATH.
+
+    Not `assert "imid" in source` — that passes just as happily when the two
+    sides disagree. This fails if build_stage_record ever renames the field,
+    which is precisely the drift that produced `0 with an imid`.
+    """
+    import json
+
+    import refresh_stage as RS
+
+    item = {
+        "id": "AAMkAGRAWID=",
+        "internetMessageId": "<binding-test@ol-usa.com>",
+        "receivedDateTime": "2026-08-06T18:00:00Z",
+        "sentDateTime": "2026-08-06T17:59:00Z",
+        "subject": "Ocean rate request — Hilmar to Yokohama",
+        "bodyPreview": "please quote",
+        "conversationId": "conv-1",
+    }
+    rec = RS.build_stage_record(item, "lonny_outbound")
+
+    import tempfile
+    from pathlib import Path as P
+    tmp = P(tempfile.mkdtemp()) / "stage_emails.txt"
+    tmp.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+
+    old = RS.STAGE_PATH
+    try:
+        RS.STAGE_PATH = tmp
+        ids, imids = RS.load_existing_stage_keys()
+    finally:
+        RS.STAGE_PATH = old
+
+    assert item["id"] in ids
+    assert item["internetMessageId"] in imids, (
+        "build_stage_record and load_existing_stage_keys disagree about the "
+        "imid field — diag_day's staged column will read NO for everything")
+
+
 def test_it_parses_and_the_module_imports_clean():
     """Cheap, and it catches the NameError-after-a-rename class of defect that
     has shipped in this repo before — a diagnostic that crashes on import is
