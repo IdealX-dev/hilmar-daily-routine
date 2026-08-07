@@ -431,21 +431,14 @@ def _stamp_response_time_from_bodies(r: dict, bodies_idx: dict, imid: str | None
     return False
 
 
-# The fields a cached body can carry a send time in. Read through
-# _body_send_time by BOTH the heal above and the survivor classifier below —
-# the QC-077 breakdown originally re-derived "can this row be dated" as "is
-# the imid in the index at all", and an indexed record with none of these
-# fields then fell into no bucket, so the banner's two numbers could sum to
-# less than the total they claimed to explain.
-_BODY_SEND_FIELDS = ("sent", "sentDateTime", "received")
-
-
-def _body_send_time(rec) -> str | None:
-    for f in _BODY_SEND_FIELDS:
-        v = (rec or {}).get(f)
-        if v:
-            return v
-    return None
+# Delegated to core 2026-08-06. These three spellings belong to
+# stage_emails.txt; the BODY cache this heal actually reads is
+# stage_emails_bodies.txt, which fetch_bodies writes with sent_ts/received_ts.
+# So every lookup returned None and this heal dated nothing between 08-05 and
+# 08-06 while the count it was meant to shrink went 41 → 43. See
+# core.body_send_time. Kept as aliases — both names are used below.
+_BODY_SEND_FIELDS = core.BODY_SEND_TIME_FIELDS
+_body_send_time = core.body_send_time
 
 
 def _undated_reason(r: dict, bodies_idx: dict) -> str:

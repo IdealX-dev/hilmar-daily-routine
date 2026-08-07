@@ -168,7 +168,7 @@ def build_scorecard(carrier, data, cfg):
     story.append(Paragraph(f"{carrier} — Steamship Line Scorecard", styles["H1"]))
     story.append(Paragraph(
         f"For line-level negotiations with {carrier}.  "
-        f"Data window: {data.get('date_range', '—')}  •  "
+        f"Data window: {core.format_date_range(data.get('date_range'))}  •  "
         f"Hilmar / {cfg['client']['name']} × {cfg['provider']['name']}",
         styles["Muted"]))
     story.append(Spacer(1, 10))
@@ -266,7 +266,11 @@ def build_scorecard(carrier, data, cfg):
 
     # Rate posture (trends filtered to this carrier)
     try:
-        import core
+        # `core` is imported at module scope (line 32). A redundant local
+        # `import core` used to sit here, which made the name FUNCTION-LOCAL
+        # for all of build_scorecard — so any earlier use in the same function
+        # raised UnboundLocalError, which is exactly what happened the moment
+        # the header started calling core.format_date_range.
         trends = [t for t in core.rate_trends(reqs) if t.get("carrier") == carrier]
     except Exception:
         trends = []

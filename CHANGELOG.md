@@ -3,6 +3,150 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-06 (3) — "bad format": nothing moved, the landmarks went out
+
+Michael: "go back to the older format that shows pending hilmar pending ol
+then what changed etc."
+
+THE FORMAT DID NOT CHANGE. Section ORDER, heading TEXT, heading LEVEL and
+empty-state rendering in the staff email are byte-for-byte unchanged across
+this repo's entire history. Nothing was reordered, nothing demoted, nothing
+that used to be a table now collapses to a one-liner. Verified across every
+commit touching gen_email.py, not assumed — and NOT restyled on a guess,
+which was the tempting move.
+
+WHAT CHANGED WAS PROMINENCE, and it was mine. The 08-04/08-05 restyle
+replaced the solid navy table-header bars and the saturated KPI tiles with
+near-white, and set the section rule to a 1px hairline in DOC_LINE — the
+colour of the card ground it sits on. Killing the shouting bars was right;
+replacing them with nothing was not. A reader scanning for "where is my
+pending list" needs an anchor, and a hairline in the background colour is an
+absent one rather than a quiet one.
+
+Then Defect 2 emptied three of the five sections in that same block and put an
+amber self-apology banner between them. Flat + empty + apologising reads as
+"the format broke."
+
+FIXED, without reverting the palette he approved:
+  - section rule 1px DOC_LINE → 2px DOC_INK, the same rule the table heads
+    already use, so a section head and a table head are one landmark at two
+    scales
+  - TWO headings drew their 2px rule in DOC_WARN_BG — the pale TINT — under
+    DOC_WARN text. A rule in the background tint of its own colour is a rule
+    you cannot see. I found one by eye and the new scanner found the second,
+    which is the entire argument for scanners over eyes.
+  - guards pin WEIGHT, not hexes: the section rule must be 2px ink and must
+    not use DOC_LINE, and no 2px rule may be drawn in a *_BG token. The
+    palette can keep moving; the landmark cannot vanish again.
+
+ALSO: gen_email_new.py carried the identical dead-fallback date_range bug.
+Dormant (not in run_pipeline) but it writes the SAME reports/email-body.html,
+so anyone who runs it ships the repr. Routed through core.format_date_range.
+
+SEQUENCING, deliberately: the restyle would not have put one missing row
+back. The rows were missing, not hidden by CSS — the same template renders
+every row when the data is there. Data first, then landmarks.
+
+Suite 2520 passed, 0 failed. ruff clean.
+
+### 2026-08-06 (2) — the 08-05 heal never dated a single row
+
+Michael: "bad data bad format.. also missing a ton of data". The undated-quote
+count went 29 (07-30) → 41 (08-05) → 43 (08-06) — THROUGH the heal shipped on
+08-05 specifically to shrink it, which I reported as fixed.
+
+IT COULD NEVER HAVE WORKED.
+  fetch_bodies.upsert_body writes    "sent_ts" / "received_ts"
+  qc_selfheal._body_send_time read   "sent" / "sentDateTime" / "received"
+  patch_carriers read the same wrong three
+
+stage_emails.txt genuinely uses sent/received; stage_emails_bodies.txt — the
+file BOTH healers actually open — uses sent_ts/received_ts. Two file schemas
+for one concept, and both healers reached for the other file's spelling. Every
+lookup returned None, silently, because a missing key is not an error.
+
+That makes the QC-077 set MONOTONIC: rate recovery keeps ADDING rows that carry
+a rate with no response_timestamp, and nothing could ever remove one. 29 → 41 →
+43 is exactly that shape. It also IS the "missing a ton of data" — an undated
+quote is invisible to OL-USA RESPONSES on every day forever, because that
+section buckets on response_timestamp. Defects 2 and 3 were one defect.
+
+refresh_stage.py:254 already read BOTH spellings. The split was known to
+someone and never shared, which is the whole lesson: one reader now
+(core.body_send_time), both healers through it, send preferred over received.
+
+THE TEST BINDS READER TO WRITER, not to a second copy of the list. It builds a
+record through fetch_bodies and asserts core.body_send_time finds its
+timestamp, plus a scan asserting every timestamp key fetch_bodies writes is a
+key the reader knows. A test that lists the spellings itself proves only that
+someone wrote the same list twice — which is precisely how this shipped.
+
+I told Michael this was fixed on 08-05. It was not, and the number he was
+already calling unacceptable grew for two more days while I said otherwise.
+
+ALSO FIXED — stale timer prose. PENDING_HILMAR_LOSS_HOURS and
+PENDING_OL_LOSS_HOURS were set 48→24 by Michael himself in 0c73c4b
+(2026-07-26, "supersedes 2026-07-14"). Four places in core.py still said 48.
+Chasing "PENDING OL (0)" I nearly "fixed" the CONSTANT back to 48 — silently
+reverting an operator decision inside the timer that decides whether live
+business gets called lost. The commit message is what stopped me. Comments
+corrected in both trees; test_timer_docs_match_constants now fails on any hour
+literal in timer prose that no timer constant holds, scanning comments and
+docstrings only (via tokenize + AST) because `weekday() == 4` is not an hour.
+
+Suite 2518 passed, 0 failed. ruff clean.
+
+## 2026-08-06 — a Python dict repr in the header nine people read
+
+Michael, on the production email: "bad data bad format... also missing a ton of
+data". The header read, verbatim:
+
+  Reporting Wednesday August 5, 2026 — the prior business day ·
+  {'start': '2026-04-02', 'end': '2026-08-05'} | Updated: August 6, 2026 ...
+
+ONE FACT, TWO STORAGES — AGAIN, AND THE FIXTURE HELD THE OTHER ONE.
+  scripts/ingest.py:1823    writes date_range as a DICT {"start","end"}
+  scripts/merge_ingest.py   writes it as a STRING
+  tests/fixtures/golden_day writes it as a STRING
+schema.json permits both (oneOf [string, object]), so no writer is wrong. The
+READERS were. Three of them did `data.get("date_range") or <fallback>` and
+interpolated the result — and a DICT IS TRUTHY, so the fallback branch was
+unreachable in production while every golden test rendered the string form and
+passed. This is structurally identical to the status-vocabulary bug fixed
+yesterday: the fixture exercises one shape, production carries the other, and
+the renderer only handles one. Second instance in two days.
+
+AFFECTED, and gen_pdf is the one that stings:
+  gen_email.py               staff header — what Michael saw
+  gen_pdf.py                 CLIENT PDF cover — Lonny would have seen it
+  gen_carrier_scorecard_pdf  carrier negotiation pack
+All three now read core.format_date_range, which accepts either shape and
+renders "Apr 2, 2026 – Aug 5, 2026". Unparseable dates pass through rather
+than being dropped: a date we cannot read is still information.
+
+A SHADOWED IMPORT, FOUND BY THE FIX. gen_carrier_scorecard_pdf had a redundant
+function-local `import core` two hundred lines below the module-level one,
+which made `core` local to all of build_scorecard — so the new call earlier in
+the same function raised UnboundLocalError. The local import is gone. It had
+been latent since the day it was written; nothing had needed `core` earlier in
+that function before.
+
+GUARD: every artifact a human receives is rendered FROM THE PRODUCTION SHAPE
+and scanned for Python reprs ({'k': ', dict_keys(, <obj at 0x). Rendering the
+fixture is precisely what missed this, so the test overrides date_range to the
+dict form rather than trusting the fixture. Detector proven against the exact
+header that shipped, and proven not to fire on CSS braces.
+
+Suite 2500 passed, 0 failed. ruff clean.
+
+STILL OPEN — under investigation, not fixed by this commit:
+  - the undated-quote count is GROWING: 29 (07-30) → 41 (08-05) → 43 (08-06),
+    after the 08-05 heal that was supposed to shrink it
+  - OL-USA RESPONSES (0), STATUS CHANGES (0), PENDING OL (0) on a full
+    business day — "missing a ton of data"
+  - Michael wants the older format back: "pending hilmar pending ol then what
+    changed"
+
 ## 2026-08-05 (5) — client weekly LIVE (Michael: "flip client weekly")
 
 FLIPPING THE FLAG ALONE WOULD HAVE DONE NOTHING, which is worth recording

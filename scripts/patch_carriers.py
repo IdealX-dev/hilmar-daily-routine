@@ -115,7 +115,14 @@ def _load_bodies_by_imid() -> dict[str, str]:
         # Keep the message's own send time. When a rate is recovered from this
         # body, that timestamp IS the moment OL quoted — recovering it is not
         # inventing a value, it is reading one that was already on disk.
-        _sent = d.get("sent") or d.get("sentDateTime") or d.get("received") or ""
+        # C.body_send_time (core), NOT a hand-rolled list. The three spellings
+        # this used belong to stage_emails.txt; THIS file is
+        # stage_emails_bodies.txt, which fetch_bodies writes with
+        # sent_ts/received_ts. _SENT_BY_IMID was therefore always empty and
+        # _stamp_response_time — the whole #140 fix — never ran. The line
+        # directly above already tried four spellings of the BODY field for
+        # exactly this reason; the send time got one guess and no fallback.
+        _sent = C.body_send_time(d)
         if _sent:
             _SENT_BY_IMID[imid] = _sent
     return out

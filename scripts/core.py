@@ -42,20 +42,27 @@ BIZ_DAY_HOURS = 9.0
 #: enforce parity.
 PENDING_WINDOW_HOURS = 24
 
-#: PENDING_HILMAR quote-decision window (Michael 2026-07-14, supersedes the
-#: 2026-06-04 "Tuesday 18:00 ET" carve-out FOR QUOTED ROWS): a quote awaiting
-#: Lonny's decision is Quoted & Lost after 48 CLOCK hours — 72 if OL quoted on
-#: a FRIDAY (ET), to carry the weekend so a Friday quote lands Monday, not
-#: Sunday. Measured from the OL quote (response_timestamp). This changed the
-#: prior behavior on two counts: 24→48h normal, and Friday no longer runs to
-#: Tuesday 6 PM (that left 73–78h Friday quotes stuck PENDING). The SEND-signal
-#: aging (is_business_stale) is deliberately unchanged.
+#: PENDING_HILMAR quote-decision window: a quote awaiting Lonny's decision is
+#: Quoted & Lost after 24 CLOCK hours — 72 if OL quoted on a FRIDAY (ET), to
+#: carry the weekend so a Friday quote lands Monday, not Sunday. Measured from
+#: the OL quote (response_timestamp).
+#:
+#: 24, set by Michael in 0c73c4b (2026-07-26): "PENDING_HILMAR_LOSS_HOURS
+#: 48->24 (supersedes 2026-07-14)". The comment here said 48 until 2026-08-06
+#: — it described the superseded rule and was never updated when the value
+#: changed, so four separate places in this file asserted a threshold the code
+#: had not used for eleven days. That is not cosmetic: reading this block
+#: while chasing "PENDING OL (0)" makes the constant look like the bug and
+#: invites someone to "fix" an operator decision back to a value he had
+#: already rejected. test_timer_docs_match_constants now fails on any such
+#: drift. The SEND-signal aging (is_business_stale) is deliberately unchanged.
 PENDING_HILMAR_LOSS_HOURS = 24
 PENDING_HILMAR_LOSS_HOURS_FRIDAY = 72
 #: PENDING-OL window — how long OL-USA has to answer Lonny's RFQ before the
 #: row is called a genuine non-response (NQ). Symmetric with the Hilmar side
-#: (PENDING_HILMAR_LOSS_HOURS): 48 CLOCK hours from Lonny's REQUEST, 72 when
+#: (PENDING_HILMAR_LOSS_HOURS): 24 CLOCK hours from Lonny's REQUEST, 72 when
 #: the RFQ landed on a Friday (ET) so the weekend doesn't burn the window.
+#: Also set to 24 in 0c73c4b; this comment said 48 for the same eleven days.
 #: Added 2026-07-24 — before this, an unquoted request was classified
 #: LOSS/NO_RESPONSE the instant it was ingested, with NO grace at all, which
 #: made PENDING_OL structurally unreachable and buried live open business as
@@ -950,6 +957,102 @@ def has_quote_evidence(r: dict) -> bool:
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
 
 
+# ─────────────────────────────────────────────────────────────────────
+# The send time of a cached email body — ONE reader, both schemas.
+#
+# 2026-08-06. The undated-quote count went 29 (07-30) → 41 (08-05) → 43
+# (08-06) THROUGH the heal shipped on 08-05 to shrink it. The heal never dated
+# a single row, and could not have:
+#
+#   fetch_bodies.upsert_body writes    "sent_ts" / "received_ts"
+#   qc_selfheal._body_send_time read   "sent" / "sentDateTime" / "received"
+#   patch_carriers._load_bodies_by_imid read the same wrong three
+#
+# stage_emails.txt really does use sent/received; stage_emails_bodies.txt uses
+# sent_ts/received_ts. Two file schemas, one concept, and both healers reached
+# for the other file's spelling — so every lookup returned None, silently, and
+# the QC-077 set became monotonic: rate recovery keeps ADDING undated rows and
+# nothing could ever remove one. refresh_stage.py:254 already read both
+# spellings, which is the tell that the split was known and unshared.
+#
+# SEND before RECEIVED: when OL quoted is the send time. Received is the
+# fallback because a record missing sentDateTime still pins the quote to
+# within a delivery hop, and an approximately-dated quote beats one that is
+# invisible to every dated section forever.
+BODY_SEND_TIME_FIELDS = (
+    "sent_ts", "sentDateTime", "sent",
+    "received_ts", "receivedDateTime", "received",
+)
+
+
+def body_send_time(rec) -> str | None:
+    """The moment the cached OL message was sent, whichever schema wrote it.
+
+    tests/test_body_send_time.py builds a record through the REAL writer and
+    asserts this finds it, so the reader is pinned to the writer rather than
+    to a list someone has to remember to update.
+    """
+    for f in BODY_SEND_TIME_FIELDS:
+        v = (rec or {}).get(f)
+        if v:
+            return v
+    return None
+
+
+def format_date_range(value, fallback_start=None, fallback_end=None) -> str:
+    """Render the data window as prose, from EITHER shape it is stored in.
+
+    Michael 2026-08-06, on the production email header, which read:
+
+        Reporting Wednesday August 5, 2026 — the prior business day ·
+        {'start': '2026-04-02', 'end': '2026-08-05'} | Updated: ...
+
+    A Python dict repr, in a header nine people read every morning. The cause
+    is two writers with two shapes for one fact:
+
+        scripts/ingest.py      → {"start": ..., "end": ...}   (production)
+        scripts/merge_ingest.py→ "2026-04-02 to 2026-08-05"   (a string)
+        tests/fixtures/        → a string
+
+    schema.json permits both (`oneOf [string, object]`), so neither writer is
+    wrong. The READERS were: gen_email, gen_pdf and gen_carrier_scorecard_pdf
+    each did `data.get("date_range") or <fallback>` and interpolated the
+    result, which stringifies a dict as its repr. A dict is truthy, so the
+    fallback branch was unreachable in production and every one of those
+    renderers had been printing a repr — including gen_pdf, which goes to the
+    client.
+
+    Every golden test passed throughout, because the fixture holds the STRING
+    form. That is the identical shape as the status-vocabulary bug fixed on
+    2026-08-05: one fact, two storages, the fixture exercising one and
+    production carrying the other.
+    """
+    if isinstance(value, dict):
+        start, end = value.get("start"), value.get("end")
+    elif value:
+        return str(value)
+    else:
+        start, end = fallback_start, fallback_end
+    if not (start or end):
+        return "—"
+    if start and end:
+        return f"{_short_day(start)} – {_short_day(end)}" if start != end else _short_day(start)
+    return _short_day(start or end)
+
+
+def _short_day(d) -> str:
+    """'2026-08-05' → 'Aug 5, 2026'. Anything unparseable passes through as-is
+    rather than being dropped: a date we cannot read is still information, and
+    hiding it would trade a formatting flaw for a missing one."""
+    s = str(d or "").strip()
+    try:
+        dt = datetime.strptime(s[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return s or "—"
+    # No %-d / %#d — CLAUDE.md rule #8, Windows portability.
+    return dt.strftime("%b %d, %Y").replace(" 0", " ", 1)
+
+
 def is_win(r: dict) -> bool:
     """True if row is a win. WIN is spelled the same in both storage forms —
     this exists so a renderer can classify a row entirely through these
@@ -1318,10 +1421,14 @@ send_signal_stale = is_business_stale
 def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) -> bool:
     """True when a QUOTED PENDING-Hilmar row has aged out to Quoted & Lost.
 
-    Michael 2026-07-14: "pending hilmar is 48 hours most, then it's lost if we
-    don't win.. except fridays, it's 72 hours." Pure CLOCK hours from the OL
-    quote (response_timestamp): >= 48h → Q&L, or >= 72h when OL quoted on a
-    Friday (ET) so the weekend lands Lonny on Monday. Distinct from the SEND-
+    Pure CLOCK hours from the OL quote (response_timestamp):
+    >= PENDING_HILMAR_LOSS_HOURS → Q&L, or >= PENDING_HILMAR_LOSS_HOURS_FRIDAY
+    when OL quoted on a Friday (ET) so the weekend lands Lonny on Monday.
+
+    Michael said 48h on 2026-07-14 and then 24h on 2026-07-26 (0c73c4b,
+    "supersedes"). This docstring quoted the FIRST instruction for eleven days
+    after the second one shipped. Naming the constants instead of spelling a
+    number is what stops that recurring. Distinct from the SEND-
     signal aging (is_business_stale), which is unchanged.
 
     Kept byte-for-byte identical to src/hilmar/core.pending_hilmar_stale —
@@ -1341,8 +1448,11 @@ def pending_ol_stale(request_dt, now=None) -> bool:
     as a genuine non-response (NQ) rather than an open request (PENDING_OL).
 
     Anchored on Lonny's REQUEST time (there is no response yet, by
-    definition). Pure CLOCK hours, mirroring pending_hilmar_stale: >= 48h, or
-    >= 72h when Lonny asked on a Friday (ET) so the weekend lands OL on Monday.
+    definition). Pure CLOCK hours, mirroring pending_hilmar_stale:
+    >= PENDING_OL_LOSS_HOURS, or >= PENDING_OL_LOSS_HOURS_FRIDAY when Lonny
+    asked on a Friday (ET) so the weekend lands OL on Monday. Named rather
+    than spelled: this docstring said "48h" while the constant was 24 from
+    2026-07-26 to 2026-08-06.
 
     request_dt None → STALE (True). We cannot measure a window without a
     date, so we preserve the pre-2026-07-24 behavior (immediate NQ) rather

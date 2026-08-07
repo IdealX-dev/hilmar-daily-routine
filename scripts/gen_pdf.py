@@ -218,7 +218,12 @@ def build_cover(story, styles, data, cfg):
     client = data.get("client") or cfg["client"]["name"]
     provider = data.get("provider") or cfg["provider"]["name"]
     last_updated = data.get("last_updated", "—")
-    date_range = data.get("date_range", cfg.get("data_range", {}).get("start", "—") + " → today")
+    # The CLIENT PDF was printing the raw dict repr too — same cause as the
+    # staff email header, one shared formatter now.
+    date_range = core.format_date_range(
+        data.get("date_range"),
+        fallback_start=cfg.get("data_range", {}).get("start"),
+    )
 
     # Logo cover banner (top of page 1) — no-op if logo file missing
     logo_img = B.logo_reportlab_image(width=170)

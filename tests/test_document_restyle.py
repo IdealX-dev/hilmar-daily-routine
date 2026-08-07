@@ -946,3 +946,45 @@ def test_the_old_saas_palette_is_gone_from_the_emails(name):
                          "#d97706", "#7c3aed", "#8b5cf6", "#3b82f6", "#64748b")
              if h in html]
     assert not stale, f"{name} still ships the old SaaS palette: {stale}"
+
+
+# ── a section head must stay a landmark ─────────────────────────────────────
+
+def test_section_heads_carry_an_ink_rule_not_a_hairline():
+    """Michael 2026-08-06: "bad format.. go back to the older format".
+
+    Section ORDER, heading TEXT, heading LEVEL and empty-state rendering are
+    byte-for-byte unchanged across this repo's entire history — nothing was
+    reordered or demoted. What the 08-04/08-05 restyle did was flatten every
+    landmark: the solid navy table-header bars and the saturated KPI tiles
+    both went near-white, and the section rule became a 1px hairline in
+    DOC_LINE — the colour of the card ground it sits on.
+
+    Replacing the shouting bars was right. Replacing them with nothing was
+    not. A reader scanning for "where is my pending list" needs an anchor, and
+    a hairline the colour of the background is an absent one rather than a
+    quiet one.
+
+    This pins WEIGHT, not a hex, so the palette can keep moving.
+    """
+    src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
+    h2 = re.search(r"H2_STYLE = \((.*?)\)\n", src, re.S)
+    assert h2, "H2_STYLE moved — update this guard"
+    style = h2.group(1)
+    assert "2px solid" in style, "the section rule went back to a hairline"
+    assert "DOC_INK" in style, "the section rule is no longer an ink rule"
+    assert "DOC_LINE" not in style, (
+        "the section rule uses the hairline token again — DOC_LINE is the "
+        "card-ground colour, which makes the landmark invisible")
+
+
+def test_a_status_heading_rule_is_the_hue_not_its_tint():
+    """gen_email's Pending-OL heading drew its 2px rule in DOC_WARN_BG — the
+    pale TINT — under DOC_WARN text. A rule in the background tint of its own
+    colour is a rule you cannot see. Caught 2026-08-06; it came in with the
+    same restyle."""
+    src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
+    bad = re.findall(r"border-bottom:\s*2px solid \{B\.DOC_(\w+)_BG\}", src)
+    assert not bad, (
+        f"a 2px section rule is drawn in a background tint ({bad}) — use the "
+        f"solid hue so the landmark is visible")

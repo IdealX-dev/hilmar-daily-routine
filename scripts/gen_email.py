@@ -464,9 +464,20 @@ DOC_TH_BG = B.DOC_TH_BG
 TH_STYLE = (f"padding:8px;background-color:{DOC_TH_BG};color:{DOC_MUTED};"
             f"font-size:11px;font-weight:600;text-transform:uppercase;"
             f"letter-spacing:0.04em;border-bottom:2px solid {DOC_INK}")
-# Section rule: ink text, hairline under. Was #1e3a5f over a 2px #e5e7eb bar.
+# Section rule: ink text over an INK rule — the same 2px ink rule TH_STYLE
+# uses, so a section head and a table head are the same landmark at two
+# scales.
+#
+# It was a 1px DOC_LINE hairline for two days, and that was a mistake in the
+# 08-04/08-05 restyle. Replacing the solid navy bars was right — they shouted
+# over the data — but a hairline the colour of the card ground is not a
+# quieter landmark, it is an absent one. Michael 2026-08-06: "bad format.. go
+# back to the older format that shows pending hilmar pending ol then what
+# changed". Section ORDER and heading TEXT never changed (verified byte-for-
+# byte across the repo's whole history); what he lost were the anchors he
+# scanned for. Restoring weight is the fix; reverting the palette is not.
 H2_STYLE = (f"color:{DOC_INK};font-size:15px;margin:22px 0 10px;"
-            f"border-bottom:1px solid {DOC_LINE};padding-bottom:7px;font-weight:700")
+            f"border-bottom:2px solid {DOC_INK};padding-bottom:7px;font-weight:700")
 
 EMAIL_FONT_STACK = B.DOC_SANS_STACK
 EMAIL_MONO_STACK = B.DOC_MONO_STACK
@@ -1594,7 +1605,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     older_note = (f" • {older_count} older than {NQ_DISPLAY_WINDOW_DAYS}d hidden from listing "
                   f"but counted in volume tally for rate negotiation") if older_count > 0 else ""
     return f"""
-<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN_BG};padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
+<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN};padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
 <p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_WARN};color:white">
@@ -1676,7 +1687,7 @@ def _pending_ol_html(rows):
 </tr>
 """
     return f"""
-<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN_BG};padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
+<h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN};padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
 <p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_WARN};color:white">
@@ -2094,8 +2105,14 @@ def build_body(data, cfg):
     # Lonny's PT office has closed for the day).
     report_date = _report_date(now_et)
     report_label = _report_label(report_date)             # 'Wednesday May 6, 2026'
-    report_short = _fmt_date(datetime.combine(report_date, datetime.min.time()), "%b %-d, %Y")
-    date_range = data.get("date_range") or f"{cfg.get('data_range', {}).get('start', 'start')} – {report_short}"
+    # core.format_date_range, NOT `or <fallback>`. ingest writes this key as a
+    # DICT and a dict is truthy, so the fallback was unreachable in production
+    # and the header printed the repr. See the docstring there.
+    date_range = core.format_date_range(
+        data.get("date_range"),
+        fallback_start=cfg.get("data_range", {}).get("start"),
+        fallback_end=report_date.isoformat(),
+    )
     updated_label = _fmt_date(now_et, "%B %-d, %Y at %-I:%M %p ET")
 
     new_req, ol_resp, status_ch, pending = _today_events(data, report_date)

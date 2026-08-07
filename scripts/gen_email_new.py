@@ -746,7 +746,14 @@ def build_body(data, cfg):
     today = datetime.now(timezone.utc).astimezone(core.ET)
     today_date = today.date()
     today_label = _fmt_date(today, "%b %-d, %Y")
-    date_range = data.get("date_range") or f"{cfg.get('data_range', {}).get('start', 'start')} – {_fmt_date(today, '%b %-d, %Y')}"
+    # Same dead-fallback bug as gen_email.py:2098 — ingest writes a DICT and a
+    # dict is truthy. Dormant (not in run_pipeline) but it writes the SAME
+    # reports/email-body.html, so anyone who runs it ships the repr.
+    date_range = core.format_date_range(
+        data.get("date_range"),
+        fallback_start=cfg.get("data_range", {}).get("start"),
+        fallback_end=today.date().isoformat(),
+    )
     updated_label = _fmt_date(today, "%B %-d, %Y at %-I:%M %p ET")
 
     new_req, ol_resp, status_ch, pending = _today_events(data, today_date)
