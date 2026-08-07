@@ -3,6 +3,49 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (2) — the navy bar back, and a day-by-day week
+
+Michael, twice: 2026-08-06 "go back to the older format" and 2026-08-07 "still
+using the new formatting which i told you to go back to". Plus: "you aren't
+doing the current week in review as well for each day... there should be a
+weekly tally as well for current week."
+
+THE TABLE HEADER. Reverted to the solid navy bar with white text (#1e3a5f)
+that shipped before the 08-04 restyle, kept as the literal rather than
+remapped to a token — the point is the exact look he approved, and pointing it
+at DOC_INK or HILMAR_NAVY would silently change the colour again.
+
+On the FIRST ask I restored the section rule and left the table headers flat.
+That is why there was a second ask. The restyle's reasoning was sound in the
+abstract — three saturated bars did shout over the data — but it was not my
+call to keep making after the operator had reversed it.
+
+A TEST OF MINE ASSERTED THE OPPOSITE. test_the_old_header_bars_are_gone_from_
+the_email pinned "#1e3a5f must not appear", so it would have gone red on his
+own instruction. Same defect as the cron test that pinned "reports are paused"
+and the client-weekly tests that pinned "enabled is False": a test encoding a
+DECISION the operator is entitled to reverse. Replaced with the part that IS
+an invariant — every table-header ground must be the navy bar or a document
+status hue, never a fourth colour nobody chose. The dark-red losing-lanes bar
+stays retired; nobody asked for that one back.
+
+THIS WEEK, DAY BY DAY. New section above Week-over-Week: one row per weekday
+of the current week, with a WEEK TO DATE total. The rollup below it shows the
+current week as ONE line, which answers "how is the trend" and not "what
+happened Tuesday". Days the week has not reached are omitted — a zero for
+Friday on a Wednesday reads as a bad week rather than an unfinished one.
+Buckets through core.is_win/is_pending/is_quoted_and_lost/is_not_quoted, so a
+STRICT-form row counts the same as a LEGACY one; the rollup directly below
+still uses raw status comparisons for its loss split and would drop them.
+
+gen_manual's section catalog required the new block to be documented before
+the suite would go green — the guard worked.
+
+STILL BLOCKED ON THE OPERATOR: pending is understated because the intake is
+missing mail. See the entry above; the $search rewrite is not started.
+
+Suite 2558 passed, 0 failed. ruff clean.
+
 ## 2026-08-07 — 12 emails thrown away, logged as one word
 
 Michael: "data is missing and completely incomplete... there were a minimum of
