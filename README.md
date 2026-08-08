@@ -8,13 +8,13 @@
 > dormant repo is now archived for historical reference only.
 > ONE repo, ONE application — per Michael 2026-05-17.
 
-Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended at 6:07 PM ET each weekday from a Win365 Cloud PC (6 PM ET = 3 PM PT, end of Lonny's Pacific workday; moved from the old 10 AM ET morning fire).
+Production pipeline for the OL-USA / Hilmar Ingredients daily shipment tracker email + dashboard. Runs unattended in **GitHub Actions at 8:07 AM ET, Mon-Fri**, reporting the prior business day. (History: it fired from a Win365 Cloud PC at 6:07 PM ET until the 2026-06 cutover; that machine is retired — see `docs/MOVE-OFF-CLOUDPC.md`.)
 
 **Status (last reviewed 2026-06-26):** self-healing QC matrix (QC-001..QC-063; see [`reports/QC-INDEX.md`](reports/QC-INDEX.md)), 100% Q&L carrier coverage, idempotent sends, ol-quote-tracker reconciliation, schema.json + full pytest regression suite (full hilmar-tracker port), Codespaces-ready for editing from any device.
 
 ## Two code paths — both authoritative, by phase
 
-- **`scripts/`** — the ACTIVE production pipeline. `run_pipeline.py` orchestrates the daily 6:07 PM ET fire on the Cloud PC. Runs `ingest.py` → `qc_selfheal.py` → `gen_email.py` → `outlook_send.py`. This is what Lonny + the OL distribution list see daily.
+- **`scripts/`** — the ACTIVE production pipeline. `run_pipeline.py` orchestrates the daily 8:07 AM ET fire on the GitHub Actions runner. Runs `ingest.py` → `qc_selfheal.py` → `gen_email.py` → `outlook_send.py`. This is what Lonny + the OL distribution list see daily.
 - **`src/hilmar/`** — the inherited mature module library from the consolidated hilmar-tracker. Contains `baselines.py` (rolling P50/P90 stats), `insights.py` (LLM-driven daily narratives), `feedback_ingest.py` (👍/👎 self-learning), `model_router.py` (LLM task routing), `parser_fallback.py`, plus the full pytest-compatible test suite. Available for the next migration phase when `scripts/` evolves toward this richer architecture.
 
 The two folders coexist intentionally during the migration period. Tests run against `src/hilmar/`; production runs against `scripts/`. Daily pipeline is unaffected by `src/hilmar/` additions.
@@ -34,20 +34,24 @@ The two folders coexist intentionally during the migration period. Tests run aga
 2. Click the green **"<> Code"** button → **"Codespaces"** tab → **"Create codespace on main"**
 3. Full VS Code opens in your browser with Python 3.12, all dependencies pre-installed (per `.devcontainer/devcontainer.json`), and Claude Code extension
 4. Edit, test (`python scripts/run_tests.py`), commit, push — all from the browser
-5. **Tomorrow's wrapper auto-pulls your changes**: Cloud PC's `run_daily_laptop.cmd` runs `git pull` at startup and `xcopy`s updated scripts into the OneDrive folder before the pipeline fires (Step 0 in the wrapper)
+5. **The next fire picks your changes up**: the GitHub Actions fire checks out `main` at run time — nothing to copy anywhere.
 
-⚠️ Codespaces CANNOT send Outlook emails — the MSAL token cache lives in OneDrive (on the Cloud PC) and Conditional Access blocks sends from Anthropic's IP range anyway. Use Codespaces for code edits + tests only; let the Cloud PC handle the production fires.
+### 🖥️ Run the pipeline manually
+Actions → **Daily** → Run workflow. That is the whole procedure, from any
+browser including a phone.
 
-### 🖥️ Run the pipeline remotely — Win365 Cloud PC web access
-1. Open `https://windows.cloud.microsoft` in any browser (phone has clunky touch UX but works)
-2. Sign in with `michael.deitchman@idealx.us`
-3. Select `CPC-micha-E552L` to RDP into the Cloud PC from your browser
-4. Open File Explorer → `C:\Users\MichaelDeitchman\OneDrive - IdealX\claude\PROJECT HILMAR`
-5. Double-click `deploy\run_daily_laptop.cmd` to fire the wrapper manually. Idempotency flag (`reports/sent-YYYY-MM-DD.flag`) prevents duplicate sends if the 6:07 PM ET scheduled fire already ran.
+The idempotency flag (`reports/sent-YYYY-MM-DD.flag`) and the mailbox guard
+both block a duplicate send, so dispatching when you are unsure whether the
+8:07 AM ET run already went is safe.
+
+> **The Cloud PC is retired.** This section used to say "RDP into
+> `CPC-micha-E552L` and double-click `run_daily_laptop.cmd`". There is no
+> machine to log into and no wrapper to run. See RUNBOOK.md for the current
+> failure modes; the Windows-era ones there are labelled `[HISTORY]`.
 
 ### 🤖 Drive via Claude (any device with claude.ai)
 - Open `claude.ai` in any browser. Tell Claude what you want changed/checked. Claude can edit code via Codespaces / GitHub, schedule routines, or surface findings to your IdealX audit inbox.
-- The hilmar-daily-routine repo is the single source of truth; the Cloud PC pulls from it each fire.
+- The hilmar-daily-routine repo is the single source of truth; the GitHub Actions fire checks it out at run time.
 
 ---
 
@@ -55,7 +59,7 @@ The two folders coexist intentionally during the migration period. Tests run aga
 
 ```
 scripts/         Python pipeline modules (ingest → drift → QC → patch → render)
-deploy/          Wrapper batch (run_daily_laptop.cmd) + qc_alert + Cloud PC setup
+deploy/          [HISTORY] Cloud-PC wrapper batch + setup; qc_alert still used
 config.json      Distribution list, paths, rules
 schema.json      JSON Schema for tracking-data-v2.json
 requirements.txt reportlab, msal, requests, tzdata
@@ -76,16 +80,18 @@ Live data + secrets that must never hit GitHub:
 
 ## Daily flow
 
-Cloud PC `CPC-micha-E552L` Task Scheduler fires `deploy\run_daily_laptop.cmd` at 6:07 PM ET weekdays:
+GitHub Actions (`.github/workflows/daily.yml`) fires at **8:07 AM ET, Mon-Fri**,
+reporting the **prior business day**:
 
 | Step | Script | What |
 |---|---|---|
-| 0 | `git pull` + `xcopy` | Pull latest scripts from GitHub repo into OneDrive |
+| 0 | `actions/checkout` + `state_store.py pull` | Check out `main`, pull state from the Azure Blob store |
 | 1 | `refresh_stage.py` | Pull new Lonny↔OL emails + HILMAR booking confirmations via Microsoft Graph |
 | 2 | `run_pipeline.py` | backup → ingest → drift_check → QC → patch_carriers → QC → dashboard → PDF → scorecards → email body |
 | 3 | `outlook_send.py daily` | Send to full distribution (10 recipients incl. idealx.us). Idempotent via `reports/sent-YYYY-MM-DD.flag` |
 | 4 | `qc_alert_if_needed.py` | Email Michael if QC drifts from CLEAN |
 | 5 | `gen_improvements_report.py` + `outlook_send.py daily` | Daily Systems Audit to `michael.deitchman@idealx.us` only |
+| 6 | `state_store.py push` | Push updated state back to the blob store — the runner is ephemeral |
 
 ## QC + self-heal matrix
 
