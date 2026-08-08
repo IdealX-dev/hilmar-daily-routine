@@ -8,25 +8,61 @@ inherits this system.
 
 ---
 
-## Daily fire (6:07 PM ET weekdays)
-
-**Trigger**: Cloud PC `CPC-micha-E552L` Windows Task Scheduler → `deploy\run_daily_laptop.cmd`
-
-**Expected outcome by 6:25 PM ET**:
-- 10 OL/IdealX recipients receive `Hilmar Ingredients — Daily Shipment Tracker Update (May N, 2026)`
-- `michael.deitchman@idealx.us` receives audit `Hilmar Tracker — Daily Systems Audit (May N) — XR/YO/ZS`
-- Dual offline backups written: `OneDrive - IdealX/HILMAR_BACKUPS/hilmar-YYYY-MM-DD.tar.gz` + `~/hilmar-local-backups/hilmar-YYYY-MM-DD.tar.gz`
-- `reports/run-log.txt` has a new entry headed `Hilmar daily on CPC-micha-E552L — <day> <date> 18:07:0X`
-- `reports/sent-YYYY-MM-DD.flag` written
-
-**If no emails by 6:30 PM ET**:
-1. RDP into Cloud PC via `windows.cloud.microsoft` from any browser
-2. Check `reports/run-log.txt` tail — find today's date marker
-3. Read the failure mode below that matches what you see
+> ## ⚠️ THE CLOUD PC IS GONE
+>
+> It was decommissioned deliberately. Any step below that says "RDP",
+> "Task Scheduler", "MBD-TRAVEL" or `CPC-micha-E552L` is **history, not
+> procedure** — those sections are kept because they explain why the code
+> looks the way it does, and they are labelled. Nothing operational requires
+> that machine any more.
+>
+> If a step tells you to log into a Windows box, you are reading the wrong
+> section. Everything live runs in GitHub Actions.
+>
+> *2026-08-07. This warning exists because the runbook's FIRST recovery step
+> was "RDP into Cloud PC" for an unknown number of weeks after the machine was
+> retired — the single worst place in the repo for stale instructions, since
+> it is what you reach for when the thing is already broken. Michael: "the
+> drift from when it worked to now [is] absurd."*
 
 ---
 
-## Failure mode: wrapper exited rc=255 (no send after pipeline OK)
+## Daily fire (8:07 AM ET, Mon–Fri)
+
+**Trigger**: GitHub Actions `.github/workflows/daily.yml`, cron `7 12 * * 1-5`
+(EDT) / `7 13 * * 1-5` (EST, gated). Reports the **prior business day**.
+Nothing local fires; there is no scheduled task anywhere.
+
+**Expected outcome within ~20 minutes**:
+- the staff distribution receives `OL-USA — Daily Shipment Update for Hilmar Ingredients (activity for <prior business day>)`
+- `michael.deitchman@idealx.us` receives the systems audit
+- state is pushed back to the Azure Blob store (`tracking-data-v2.json`,
+  stage files, token cache)
+- `reports/sent-YYYY-MM-DD.flag` written — this is the idempotency guard that
+  stops a re-run double-sending
+
+**If no email by ~8:40 AM ET**:
+1. Open the [Daily workflow runs](https://github.com/IdealX-dev/hilmar-daily-routine/actions/workflows/daily.yml)
+   — did it run at all? A skipped run means the schedule gate declined
+   (weekend/holiday, or `HILMAR_FIRE_FROM_ACTIONS` unset).
+2. If it ran and failed, open the **Production fire** job and read the step
+   that went red. `Verify prerequisites` failing means a secret or the token
+   is bad — see the MSAL section below.
+3. If it ran green but nothing arrived, the send was idempotency-skipped:
+   check for an existing `reports/sent-<today>.flag` in the state store.
+4. `liveness.yml` files a GitHub issue when no heartbeat lands within 25h, so
+   a silent total absence should also show up as an open issue.
+
+**To fire manually**: dispatch `daily.yml` from the Actions UI. The mailbox
+guard and the sent-flag both block a duplicate send, so this is safe to do
+when in doubt.
+
+---
+
+## [HISTORY — Cloud PC era] wrapper exited rc=255 (no send after pipeline OK)
+
+*Cannot occur now: there is no wrapper and no Windows host. Kept because it
+explains why `run_daily_laptop.cmd` is shaped the way it is.*
 
 **Symptom**: run-log has "Pipeline exit code: 0" but no "Sent. request-id=" line. Task Scheduler reports LastTaskResult = 255.
 
@@ -39,7 +75,9 @@ inherits this system.
 
 ---
 
-## Failure mode: refresh_stage rc=3 path not found
+## [HISTORY — Cloud PC era] refresh_stage rc=3 path not found
+
+*Cannot occur now: the runner installs its own Python 3.12.*
 
 **Symptom**: run-log has "REFRESH_STAGE FAILED rc=3" or "The system cannot find the path specified."
 
@@ -58,14 +96,28 @@ inherits this system.
 
 **Root cause**: MSAL refresh token expires after ~90 days of disuse. The token cache at `secrets/token-cache.bin` (legacy `secrets/token-cache.json` still read during migration) needs interactive re-auth.
 
-**Fix**:
-1. Open Cloud PC RDP (or run from MBD-TRAVEL — same OneDrive token cache)
-2. `cd "PROJECT HILMAR"`
-3. `python scripts/outlook_send.py auth`
-4. Follow the device-code flow — paste URL into a browser, enter code, sign in as `michael.deitchman@ol-usa.com`
-5. New token cached. Next pipeline fire will use it.
+**Fix** — no machine required, ~30 seconds:
+1. Actions → **Re-seed the Graph token** → Run workflow
+2. `confirm` = `REAUTH`, `notify` = where to send the code (defaults to
+   `michael.deitchman@ol-usa.com`)
+3. You get an email **"Hilmar tracker — sign-in code XXXXXXXXX"**. Tap the
+   button, enter the code, sign in as `michael.deitchman@ol-usa.com`.
+4. The run pushes the refreshed cache to the blob store and prints which
+   mailboxes the pipeline can read. Code expires in ~15 minutes; re-dispatch
+   costs nothing.
 
-**Prevention**: QC-023 warns at 60 days. Set a calendar reminder to re-auth quarterly.
+The old procedure here was "Open Cloud PC RDP… `python scripts/outlook_send.py
+auth`". That machine is retired and the cache was originally seeded from it,
+so until 2026-08-07 an expired refresh token had **no recovery path at all**.
+`auth-refresh.yml` is that path. The scopes it requests are unchanged
+(`Mail.Send`, `Mail.Read`, `Files.ReadWrite`) — no admin consent, no OL IT.
+
+**Prevention**: QC-023 warns at 60 days. Re-seed quarterly; it is cheap.
+
+**Do NOT try to widen the scopes to read another mailbox.** That needs
+`Mail.Read.Shared` → ol-usa admin consent → OL IT, who declined
+(`docs/MOVE-OFF-CLOUDPC.md`). A guard in `tests/test_multi_mailbox_read.py`
+fails if any admin-consent scope is added.
 
 ### One-time: finish the token-cache `.json` → `.bin` migration (security)
 
@@ -131,7 +183,13 @@ exposure, once `secrets/token-cache.bin` exists on the box:
 
 ---
 
-## Failure mode: Cloud PC didn't fire at 6:07 PM
+## [HISTORY — Cloud PC era] Cloud PC didn't fire at 6:07 PM
+
+*Cannot occur now: there is no scheduled task and no Windows host. The
+equivalent today is "the Daily workflow didn't run" — see the top of this
+runbook. Kept because the S4U root cause below is the best-documented
+silent-miss in this project's history and the reasoning still generalises:
+a scheduler that looks healthy while skipping every fire.*
 
 **Symptom**: No 18:07 entry in run-log for today; Task Scheduler "LastRunTime" is yesterday or older.
 
@@ -148,17 +206,12 @@ exposure, once `secrets/token-cache.bin` exists on the box:
 4. Cloud PC's Windows credentials expired
 5. Microsoft 365 service incident
 
-**Fix**:
-1. RDP into Cloud PC via `windows.cloud.microsoft`
-2. Open Task Scheduler → find "Hilmar Daily Tracker - CloudPC"
-3. Right-click → Run (manual fire)
-4. If task missing entirely: re-run `deploy\setup_cloudpc.ps1` from RDP
+**Fix (historical — do not attempt, the machine is retired)**: RDP in, Task
+Scheduler → "Hilmar Daily Tracker - CloudPC" → Run; or re-run
+`deploy\setup_cloudpc.ps1` elevated.
 
-**Fallback while Cloud PC is broken**: fire manually from MBD-TRAVEL:
-```
-cd "C:\Users\MichaelDeitchman\OneDrive - IdealX\claude\PROJECT HILMAR"
-deploy\run_daily_laptop.cmd
-```
+**TODAY'S EQUIVALENT**: dispatch `daily.yml` from the Actions UI. The sent-flag
+and the mailbox guard both block a duplicate, so it is safe when in doubt.
 
 ---
 
@@ -309,7 +362,7 @@ days GH owned the fire — copy the latest from the blob container
 ## Routine tasks
 
 ### Push freshly-merged code to production NOW (don't wait for the evening fire)
-The daily wrapper auto-pulls `main` at the start of each 6:07 PM ET fire
+[HISTORY] The Cloud-PC wrapper auto-pulled `main` at the start of each 6:07 PM ET fire
 (Step 0), so production self-updates every evening — you normally never
 need to sync by hand. To go live *immediately* after a PR merges, run:
 ```
@@ -328,7 +381,7 @@ copies code). Run the one-command updater:
 deploy\update_box.cmd
 ```
 It does git pull (ONCE) -> installs the full `requirements.txt` -> deploys
-scripts/wrapper/config -> re-registers the 6:07 PM ET task, then verifies MSAL
+scripts/wrapper/config -> re-registers the 6:07 PM ET task, then verifies MSAL  [HISTORY]
 + smoke-tests `refresh_stage`. **No pipeline, no email.** It pulls the latest
 `setup_cloudpc.ps1` and *then* runs it, so a fix to the setup script itself
 lands on the same run. Replaces the manual `pull -> pip -> copy ->
@@ -399,7 +452,7 @@ python scripts/qc_selfheal.py      # post-run validation
 ```
 Cloud PC (CPC-micha-E552L, always on)
     │
-    │ 6:07 PM ET weekday — Windows Task Scheduler
+    │ 8:07 AM ET Mon-Fri — GitHub Actions (daily.yml)
     ▼
 deploy/run_daily_laptop.cmd
     ├── Step 0: git pull (sync Codespaces edits)

@@ -3,6 +3,69 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (12) — the runbook told you to RDP into a machine that is gone
+
+Michael: "the drift from when it worked to now [is] absurd." He is right, and
+the worst instance was in the worst possible place. RUNBOOK.md — the file you
+open BECAUSE something is already broken — opened with:
+
+    ## Daily fire (6:07 PM ET weekdays)
+    **Trigger**: Cloud PC CPC-micha-E552L Windows Task Scheduler
+    **If no emails by 6:30 PM ET**:
+    1. RDP into Cloud PC via windows.cloud.microsoft
+
+Every line false since the 2026-06 cutover. The fire is GitHub Actions at
+8:07 AM ET Mon-Fri, reporting the prior business day. An operator following
+that page would wait until 6:30 PM to worry about a report that failed at
+8 AM — most of a business day late — and then try to log into a retired
+machine.
+
+WORSE, AND THE ONE THAT NEARLY BIT: the documented fix for an expired Graph
+token was "Open Cloud PC RDP … python scripts/outlook_send.py auth". The
+machine is gone AND the cache was originally seeded from it, so the recovery
+path for this pipeline's single most critical credential was impossible to
+perform. Nobody would have discovered that until the day it expired. It now
+points at auth-refresh.yml, which needs a browser and nothing else.
+
+FIXED: RUNBOOK head (schedule, trigger, expected outcome, what to check when
+nothing arrives, how to fire manually), the MSAL recovery, README's intro,
+daily-flow table and "run it remotely" section, and docs/MOVE-OFF-CLOUDPC.md —
+a COMPLETED cutover plan still written as a numbered to-do list, whose step 2
+("Seed state once — on the Cloud PC") is the instruction that sent me hunting
+for that machine in the first place. It now declares itself done in a banner,
+and points at the live constraint it still holds: the auth path is the no-IT
+path because OL IT declined.
+
+KEPT DELIBERATELY: every Cloud-PC NARRATIVE. Comments explaining why
+state_store exists, why the wrapper is shaped as it is, why the scope list is
+short — that is the reasoning record, and deleting it is how the next person
+rebuilds a bad idea. Windows-era failure modes are relabelled [HISTORY] with a
+one-line note on why they cannot occur, not deleted; the S4U silent-miss is
+the best-documented failure in this project and still generalises.
+
+GUARDED — tests/test_docs_not_stale.py. The distinction it enforces is STEPS,
+not mentions: a numbered or bulleted list item telling you to RDP in, open
+Task Scheduler or run the wrapper is a trap; a paragraph describing that
+history is fine. It also pins the runbook's stated fire time against daily.yml's
+actual cron, so the next schedule change fails a test instead of rotting.
+
+MY FIRST VERSION OF THAT GUARD flagged the prose added in this very commit
+explaining that the old step was removed. Correct docs, red test — the seventh
+time this session that text in prose was indistinguishable from the thing it
+described. Narrowed to list items only, then verified by planting a live step
+under a non-history heading.
+
+ALSO CORRECTED: the redirect-rule recommendation from entry (11). Michael:
+"remember i'm already included in the group emails from ops, nothing has
+changed." He is on the ops distribution, so there is nothing to reroute. That
+leaves an open question — 373 messages in his mailbox on Aug 6, only 3
+involving Lonny, all ours — and refresh_stage now records it as OPEN with the
+instruction to run diag-day against a known-active day rather than theorise.
+Six theories were floated today; the measurement contradicted every one that
+was not measured first.
+
+Suite 2610 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (11) — Mail.Read.Shared needs OL IT. It was already written down.
 
 Michael: "these requires ol's it department to approve.. you have had these

@@ -179,14 +179,24 @@ SHARED_MAILBOX = os.environ.get("HILMAR_SHARED_MAILBOX", OS.SEND_MAILBOX)
 #: "these requires ol's it department to approve.. you have had these details
 #: before.. why recreate the wheel here." He is right; it was in the repo.
 #:
-#: THE ROUTE THAT WORKS WITHOUT IT is to move the mail, not widen the token:
-#: an inbox rule on MBD_OceanExportBookingShared that REDIRECTS mail
-#: from/to lupfold@hilmaringredients.com to michael.deitchman@ol-usa.com.
-#: REDIRECT, not FORWARD — a redirect preserves the original From header and
-#: internetMessageId, so classify() still buckets it as lonny_outbound and the
-#: two-key dedup still recognises it. A forward rewrites the sender to the
-#: shared mailbox, which classify() would read as mbd_inbound and file as a
-#: booking. Michael can set that rule himself; it needs no admin and no scope.
+#: I THEN PROPOSED A REDIRECT RULE and that was also wrong. Michael:
+#: "remember i'm already included in the group emails from ops, nothing has
+#: changed." He is on the ops distribution, so mail involving Hilmar already
+#: reaches michael.deitchman@ol-usa.com — there is nothing to reroute, and a
+#: redirect rule would only duplicate what arrives.
+#:
+#: WHICH LEAVES AN OPEN QUESTION, stated honestly rather than patched over.
+#: diag_day measured 373 messages in that mailbox on 2026-08-06, of which
+#: exactly 3 involved lupfold@hilmaringredients.com and all 3 were our own
+#: outbound report. If he is on the ops mail and nothing changed, then either
+#: that day was genuinely quiet for Lonny traffic, or those messages reach him
+#: in a shape the from/to/cc check does not recognise. DO NOT GUESS AT IT —
+#: run diag-day.yml against a day known to have had activity and read what it
+#: prints. Six theories were floated on 2026-08-07 and the measurement
+#: contradicted every one that was not measured first.
+#:
+#: If access to the shared mailbox ever IS granted (app registration, or a
+#: tenant policy change), everything below starts working with no edit.
 #:
 #: Everything below stays because it costs nothing and is CORRECT the moment
 #: access exists by any route — including the app-only path, where

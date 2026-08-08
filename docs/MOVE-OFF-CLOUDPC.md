@@ -7,8 +7,28 @@ silent-failure chain, and an unmerged PR sat for 5 days while the daily
 audit reported the SAME problems every morning. QC-053 catches that class
 now, but the underlying brittleness is unchanged.
 
-This doc is the cutover plan. **Each section is a prerequisite — not until
-all four are met can the Cloud PC be retired.**
+> ## ✅ DONE — THIS CUTOVER IS COMPLETE. THIS IS A RECORD, NOT A PLAN.
+>
+> The Cloud PC is retired. The daily fire runs in GitHub Actions at 8:07 AM ET
+> Mon–Fri. **Every numbered step below has already been performed** — do not
+> execute them.
+>
+> In particular, step 2 says "Seed state once — **on the Cloud PC**". That
+> machine no longer exists, and the token cache it seeded is now the only copy.
+> If that cache ever expires, the replacement is **`auth-refresh.yml`**
+> (Actions → *Re-seed the Graph token*), which needs a browser and nothing
+> else. See RUNBOOK.md → "MSAL silent token refresh failed".
+>
+> **The part of this doc that is still LIVE and still true** is the auth
+> constraint under CURRENT STATE: no app registration exists, Michael is not
+> an admin in the ol-usa.com tenant, and OL IT declined to create one. Any
+> Graph permission needing admin consent is a dead end. That is now also
+> guarded in `tests/test_multi_mailbox_read.py`, because on 2026-08-07 I read
+> the code and not this doc, added `Mail.Read.Shared`, and dispatched a
+> consent nobody could approve. Michael: "you have had these details before..
+> why recreate the wheel here."
+
+This doc WAS the cutover plan. Each section was a prerequisite; all were met.
 
 ## CURRENT STATE (2026-06-10 late) — delegated auth via blob store
 
