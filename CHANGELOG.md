@@ -3,6 +3,44 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-07 (13) — Aug 6 was quiet. The report was right.
+
+Michael, closing the last open item: "you're right, sixth was quiet."
+
+So the Aug 6 report showing zero activity was CORRECT. There was nothing to
+show. The open question from entry (12) is closed, and the flag in
+refresh_stage is updated rather than left to rot one commit after a whole PR
+spent removing stale text.
+
+WHAT THIS MEANS FOR THE DAY'S DIAGNOSIS, accounted for honestly:
+
+  REAL, and fixed — classify() silently dropping OL quote-only senders.
+  Reno's rate replies were discarded on arrival, which is what took
+  mbd_rate_response to 0 over seven days against 299 historically. That was
+  the actual intake defect.
+
+  REAL, and fixed — the drop log recording twelve thrown-away messages as the
+  single word "unclassified", with the sender printed only under --verbose,
+  which the daily fire does not pass. That is why it ran for a week.
+
+  REAL, but NOT a data gap — the pipeline reads /me (Michael's mailbox) and
+  not MBD_OceanExportBookingShared, despite READ_MAILBOX documenting the
+  latter. Measured, true, and it does not lose data, because Michael is on
+  the ops distribution and the traffic reaches him anyway. I spent hours
+  treating this as the root cause. It is a latent surprise for whoever next
+  wonders which mailbox is being read, not a bug.
+
+  NOT REAL — the $search cap (withdrawn on evidence), the missing Aug 6 mail
+  (there was none), and the redirect rule (nothing to reroute).
+
+THE PATTERN WORTH KEEPING: every one of the four things that turned out real
+was found by MEASURING — the drop log, the imid check, the $filter control,
+the /me identity print. Every one of the three that turned out false was
+found by REASONING from a number I had not looked behind. Six theories were
+floated today and the instrument contradicted all but the measured ones.
+
+Suite 2610 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (12) — the runbook told you to RDP into a machine that is gone
 
 Michael: "the drift from when it worked to now [is] absurd." He is right, and

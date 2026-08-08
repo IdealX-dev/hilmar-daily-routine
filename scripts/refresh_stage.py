@@ -185,15 +185,23 @@ SHARED_MAILBOX = os.environ.get("HILMAR_SHARED_MAILBOX", OS.SEND_MAILBOX)
 #: reaches michael.deitchman@ol-usa.com — there is nothing to reroute, and a
 #: redirect rule would only duplicate what arrives.
 #:
-#: WHICH LEAVES AN OPEN QUESTION, stated honestly rather than patched over.
-#: diag_day measured 373 messages in that mailbox on 2026-08-06, of which
-#: exactly 3 involved lupfold@hilmaringredients.com and all 3 were our own
-#: outbound report. If he is on the ops mail and nothing changed, then either
-#: that day was genuinely quiet for Lonny traffic, or those messages reach him
-#: in a shape the from/to/cc check does not recognise. DO NOT GUESS AT IT —
-#: run diag-day.yml against a day known to have had activity and read what it
-#: prints. Six theories were floated on 2026-08-07 and the measurement
-#: contradicted every one that was not measured first.
+#: AND THE DAY THAT STARTED ALL OF THIS WAS FINE. diag_day measured 373
+#: messages in that mailbox on 2026-08-06, of which exactly 3 involved
+#: lupfold@hilmaringredients.com and all 3 were our own outbound report.
+#: Michael, confirming: "sixth was quiet." So the Aug 6 report was CORRECT —
+#: there was no activity to show, and no bug behind the zeros.
+#:
+#: WHICH MATTERS FOR WHAT THIS COMMENT IS: reading /me instead of the shared
+#: mailbox is a real, measured fact, but it is NOT a data gap, because Michael
+#: is on the ops distribution and the traffic reaches him anyway. Do not treat
+#: the paragraphs above as a known bug waiting to be fixed. They are here so
+#: that anyone who DOES find mail missing knows which mailbox is being read
+#: and why it cannot simply be widened.
+#:
+#: The genuine intake defect found on 2026-08-07 was classify() silently
+#: dropping OL quote-only senders — see OL_QUOTE_ONLY_SENDERS. That is what
+#: took mbd_rate_response to 0 for seven days against 299 historically, and it
+#: is fixed.
 #:
 #: If access to the shared mailbox ever IS granted (app registration, or a
 #: tenant policy change), everything below starts working with no edit.
