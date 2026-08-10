@@ -128,6 +128,20 @@ def test_it_never_writes_state():
             f"diag_qc027 calls {forbidden}() — it must only read")
 
 
+def test_it_documents_that_it_cannot_replay_the_alert_day():
+    """Run 1 came back BEFORE == AFTER with Carrier at 97%, not the 87% that
+    was paged — because QC-056's backfills persist, so the stored state a later
+    run reads is already repaired. Anyone reading the BEFORE column as "what
+    shipped that day" draws the wrong conclusion, so the limitation is written
+    down and kept written down."""
+    doc = D.__doc__ or ""
+    assert "PERSIST" in doc or "persist" in doc, (
+        "the docstring no longer explains that heals persist into the stored "
+        "state — the BEFORE column reads as a replay of the alert day, which "
+        "it is not")
+    assert "NOT a reconstruction" in doc or "not a replay" in SRC
+
+
 def test_it_runs_the_phase_on_a_copy():
     """phase_6_rules MUTATES rows. Grading the stored object in place would
     leave healed values in a file the diag has no business editing."""

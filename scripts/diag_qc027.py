@@ -22,6 +22,21 @@ etd_offered or vessel_voyage is in QC-027's denominator but OUTSIDE QC-056's
 (which only ever looks at rows with a rate), so no heal will ever touch it —
 that gap is measured here rather than argued about.
 
+WHAT THIS CANNOT TELL YOU — read before trusting the BEFORE column.
+
+Run 1 (2026-08-10, 329 reachable rows) came back with BEFORE == AFTER on all
+seven fields, and Carrier at 97.0%, not the 87% that was paged. That is not a
+contradiction, it is the shape of the data: QC-056's backfills PERSIST to
+tracking-data, so by the time any later run reads the stored state, the repairs
+are already in it and there is nothing left to heal. The BEFORE column is
+"what the old ruler would say about TODAY's rows" — it is NOT a reconstruction
+of what shipped on the day of the alert, because those rows no longer exist in
+that condition. Only a run that ingests fresh unhealed rows can show the two
+columns diverge.
+
+So use this to answer "where does the data stand NOW, and which rows are still
+blank" — which it answers exactly. Do not use it to reconstruct a past page.
+
 READS ONLY. Pulls state (see diag_day for why into the repo root) and runs the
 QC in memory on a deep copy. No blob write, no send, no mutation of the stored
 tracking data.
@@ -131,13 +146,19 @@ def main() -> int:
     _rule("QC-027 completeness — as measured before vs after the heals")
     print(f"reachable rows: {n_reach_b} before / {n_reach_a} after   "
           f"(PDF-only excluded: {n_pdf_b} / {n_pdf_a})\n")
-    print(f"  {'field':<14} {'BEFORE (what shipped)':>24}   {'AFTER (the truth)':>22}")
+    print(f"  {'field':<14} {'BEFORE (old ruler)':>24}   {'AFTER (fixed ruler)':>22}")
     for _fld, label in QC.QC027_FIELDS:
         pb, pctb = before[label]
         pa, pcta = after[label]
         moved = "" if abs(pcta - pctb) < 0.05 else f"   {pcta - pctb:+.0f} pts"
         print(f"  {label:<14} {_verdict(pctb)} {pb:>4}/{n_reach_b} {pctb:>5.1f}%   "
               f"{_verdict(pcta)} {pa:>4}/{n_reach_a} {pcta:>5.1f}%{moved}")
+
+    if all(abs(after[lbl][1] - before[lbl][1]) < 0.05 for _f, lbl in QC.QC027_FIELDS):
+        print("\n  (BEFORE == AFTER: the stored state is ALREADY healed — QC-056's "
+              "backfills persist, so a later run has nothing left to repair. This "
+              "is today's truth, not a replay of the alert day. See the module "
+              "docstring.)")
 
     still_error = [lbl for _f, lbl in QC.QC027_FIELDS if after[lbl][1] < 90]
     print()
