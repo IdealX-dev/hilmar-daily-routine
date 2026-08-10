@@ -1,0 +1,199 @@
+"""diag_bookings.py — OL confirmed a booking. Where did the win go?
+
+2026-08-10, Michael: "if ol confirmed bookings with mdolx numbers it's a win.
+what are you talking about."
+
+That is the rule, and it is simpler than the code I was reasoning about. I had
+been treating a booking as a win only once it MATCHED an RFQ, and theorising
+about why the match failed. Wrong frame. ingest already agrees with Michael:
+an unmatched booking becomes a standalone `stand_<mdolx>` WIN row. So an MDOLX
+confirmation produces a win either way — matched or standalone — UNLESS one of
+three gates drops it before it ever reaches that code:
+
+    out_of_scope_reason()      numidia / agridairy / trucking / recalled
+    is_operational_subject()   FREE-TIME ISSUE, LOADING APPT, DRAFT RATED, …
+    no MDOLX parsed            extract_mdolx() found nothing
+
+Each gate was added to stop a real false positive, and each is a plausible
+place for a real booking to be eaten. The 2026-08-10 fire reported
+`requests=12 bookings=0` for Aug 3-7 while QC-009 counted 4 staged
+mbd_inbound messages that week. Four confirmations in, zero wins out.
+
+This does not guess which gate. It runs the REAL gates, in the real order,
+over the REAL staged rows, and prints the verdict per booking — then checks
+whether tracking-data actually holds a win for that MDOLX.
+
+READS ONLY. Pulls state (see diag_day for why into the repo root), runs pure
+predicates, prints. No writes to the blob, no send, no mutation of stage or
+tracking data.
+
+Usage
+    DIAG_SINCE=2026-08-03 DIAG_UNTIL=2026-08-07 python3 scripts/diag_bookings.py
+    DIAG_SINCE=2026-07-01 python3 scripts/diag_bookings.py     # until = today
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def _rule(title: str) -> None:
+    print(f"\n{'─' * 4} {title} {'─' * max(0, 62 - len(title))}")
+
+
+def _short(s, n: int) -> str:
+    s = (str(s) or "").replace("\n", " ").strip()
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def main() -> int:
+    import core
+
+    since = os.environ.get("DIAG_SINCE", "").strip()
+    until = os.environ.get("DIAG_UNTIL", "").strip() or "9999-12-31"
+    if not since:
+        print("::error::DIAG_SINCE is required (YYYY-MM-DD)")
+        return 2
+    print(f"diag_bookings: window {since} … {until} (ET dates)")
+
+    _rule("state store")
+    import state_store
+    print(f"pulling state into {ROOT} (overwrites local copies)")
+    try:
+        pulled = state_store.pull(root=ROOT)
+    except Exception as e:
+        print(f"pull FAILED: {type(e).__name__}: {e}")
+        return 2
+    print(f"pulled {len(pulled)} file(s)")
+
+    # The pipeline's OWN gates and loaders. No private copies — a diagnostic
+    # with its own idea of the rules clears a booking the pipeline still eats.
+    import ingest as IN
+    import refresh_stage as RS
+
+    stage_path = RS.STAGE_PATH
+    rows = []
+    for line in stage_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+    print(f"stage_emails: {len(rows)} records")
+
+    # Bodies, keyed the way qc_selfheal keys them — so a no-mdolx drop can be
+    # told apart from "the number was on disk and nobody looked".
+    import qc_selfheal as QC
+    bodies_by_imid = {
+        k: str((v or {}).get("html_body") or (v or {}).get("text_body") or "")
+        for k, v in QC._load_bodies_index().items()
+    }
+    print(f"bodies:       {len(bodies_by_imid)} records")
+
+    # Booking confirmations only, in window. Dated by the same fields the
+    # pipeline uses, through core's canonical ET clock.
+    bookings = []
+    for r in rows:
+        if r.get("bucket") != "mbd_inbound":
+            continue
+        d = core.et_date_of(r.get("received") or r.get("sent"))
+        if not d or not (since <= d <= until):
+            continue
+        bookings.append((d, r))
+    bookings.sort(key=lambda t: t[0])
+
+    _rule(f"staged booking confirmations in window: {len(bookings)}")
+    if not bookings:
+        print(">>> No mbd_inbound records staged in this window at all. The "
+              "loss is at INTAKE, not at these gates — run diag-day.yml.")
+
+    admitted, dropped = [], []
+    for d, r in bookings:
+        subject = str(r.get("subject") or "")
+        preview = str(r.get("summary_preview") or "")
+        # EXACT order ingest applies them in.
+        reason = IN.out_of_scope_reason(r)
+        if reason:
+            verdict = f"DROPPED out_of_scope:{reason}"
+        elif IN.is_operational_subject(subject):
+            hits = [h for h in IN._OPERATIONAL_SUBJECT_HINTS
+                    if h in subject.upper()]
+            verdict = f"DROPPED operational:{'/'.join(hits) or '?'}"
+        else:
+            mdolx = r.get("mdolx") or IN.extract_mdolx(subject) or IN.extract_mdolx(preview)
+            if mdolx:
+                verdict = f"ADMITTED mdolx={mdolx}"
+            else:
+                # ingest reads the SUBJECT and the 300-char preview only. If the
+                # number is in the body, the booking is dropped while the
+                # confirmation is sitting on disk with the reference in it.
+                # That is a silent loss of a real win, so name it distinctly.
+                body = (bodies_by_imid.get(r.get("imid")) or "")
+                in_body = IN.extract_mdolx(body)
+                verdict = (f"DROPPED no-mdolx-in-subject BUT body has "
+                           f"MDOLX{in_body}" if in_body else "DROPPED no-mdolx")
+        (admitted if verdict.startswith("ADMITTED") else dropped).append(
+            (d, r, verdict))
+        print(f"\n  {d}  {verdict}")
+        print(f"      {_short(subject, 100)}")
+
+    # ── does tracking-data actually hold a win for each admitted booking? ───
+    _rule("tracking-data — is there a WIN for each admitted booking?")
+    data_path = ROOT / "tracking-data-v2.json"
+    if not data_path.exists():
+        print("tracking-data-v2.json not in the store")
+        return 2
+    data = json.loads(data_path.read_text(encoding="utf-8"))
+    rows_td = data.get("requests") or []
+    print(f"{len(rows_td)} requests total; "
+          f"{sum(1 for r in rows_td if core.is_win(r))} WIN")
+
+    by_ref: dict[str, list] = {}
+    for r in rows_td:
+        for ref in ([r.get("mdolx_ref")] + list(r.get("mdolx_refs_all") or [])):
+            if ref:
+                by_ref.setdefault(str(ref), []).append(r)
+
+    missing = []
+    for d, r, verdict in admitted:
+        mdolx = verdict.split("mdolx=", 1)[-1]
+        hit = by_ref.get(mdolx) or [
+            t for t in rows_td if t.get("request_id") == f"stand_{mdolx}"]
+        if hit:
+            t = hit[0]
+            print(f"  {mdolx}: WIN present — {t.get('request_id')} "
+                  f"status={t.get('status')} lane={_short(t.get('lane'), 30)}")
+        else:
+            missing.append((d, mdolx, r))
+            print(f"  {mdolx}: >>> NO ROW. Admitted by every gate and still "
+                  f"produced neither a matched win nor stand_{mdolx}.")
+
+    _rule("verdict")
+    print(f"staged booking confirmations : {len(bookings)}")
+    print(f"  dropped by a gate          : {len(dropped)}")
+    print(f"  admitted                   : {len(admitted)}")
+    print(f"  admitted but NO win row    : {len(missing)}")
+    if dropped:
+        print("\nIf any DROPPED line above is a real Hilmar booking, the gate "
+              "that names it is too tight — that is the bug, and the gate name "
+              "tells you which one.")
+    if missing:
+        print("\nIf any MDOLX above has no row, the loss is AFTER the gates: "
+              "link_bookings_to_requests built neither a match nor a "
+              "standalone. That is ingest, not intake.")
+    if bookings and not dropped and not missing:
+        print("\nEvery staged booking became a win. The gap is upstream — "
+              "the confirmations are not reaching stage. Run diag-day.yml.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
