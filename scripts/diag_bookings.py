@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -50,6 +51,81 @@ def _rule(title: str) -> None:
 def _short(s, n: int) -> str:
     s = (str(s) or "").replace("\n", " ").strip()
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+_TAG_RX = re.compile(r"<[^>]+>")
+_WS_RX = re.compile(r"[ \t\r\f\v]+")
+
+
+def _plain(html: str, limit: int = 1400) -> str:
+    """Readable text out of an HTML body — enough to JUDGE a booking by.
+
+    Michael 2026-08-10: "read the emails.. that's your job to decide if it's a
+    problem with the file or a new win." Subjects were not enough: an
+    "UPDATED ETA BOOKING CONFIRMATION" could be a brand-new booking or a
+    schedule change on an old one, and only the body says which.
+    """
+    if not html:
+        return ""
+    txt = html.replace("</p>", "\n").replace("<br>", "\n").replace("<br/>", "\n")
+    txt = _TAG_RX.sub(" ", txt)
+    for ent, ch in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
+                    ("&gt;", ">"), ("&#39;", "'"), ("&quot;", '"')):
+        txt = txt.replace(ent, ch)
+    lines = [_WS_RX.sub(" ", ln).strip() for ln in txt.splitlines()]
+    txt = "\n".join(ln for ln in lines if ln)
+    return txt[:limit]
+
+
+def trace_one_mdolx(mdolx: str, rows, bodies_full, rows_td, core, IN) -> None:
+    """Everything the system holds about ONE booking, in one place."""
+    _rule(f"MDOLX{mdolx}")
+    hits = []
+    for r in rows:
+        blob = " ".join(str(r.get(k) or "") for k in
+                        ("subject", "summary_preview", "mdolx"))
+        body = bodies_full.get(r.get("imid")) or ""
+        if mdolx in blob or mdolx in body:
+            hits.append(r)
+    hits.sort(key=lambda r: str(r.get("received") or r.get("sent") or ""))
+    print(f"{len(hits)} staged email(s) mention it\n")
+
+    for r in hits:
+        subj = str(r.get("subject") or "")
+        reason = IN.out_of_scope_reason(r)
+        gate = (f"out_of_scope:{reason}" if reason
+                else "operational" if IN.is_operational_subject(subj)
+                else "admitted" if (IN.extract_mdolx(subj)
+                                    or IN.extract_mdolx(str(r.get("summary_preview") or "")))
+                else "no-mdolx")
+        print(f"  {str(r.get('received') or r.get('sent'))[:19]}  "
+              f"{str(r.get('bucket')):<18} gate={gate}")
+        print(f"      {_short(subj, 108)}")
+
+    # The body of the EARLIEST mention — that is the one that says whether
+    # this booking was created here or merely updated.
+    if hits:
+        first = hits[0]
+        body = bodies_full.get(first.get("imid")) or ""
+        print(f"\n  ── body of the earliest mention "
+              f"({str(first.get('received'))[:10]}, {first.get('bucket')}) ──")
+        print("  " + (_plain(body) or "(no body on disk)").replace("\n", "\n  "))
+
+    print(f"\n  ── tracking-data rows for MDOLX{mdolx} ──")
+    found = False
+    for t in rows_td:
+        refs = [str(t.get("mdolx_ref") or "")] + [str(x) for x in (t.get("mdolx_refs_all") or [])]
+        if mdolx in refs or t.get("request_id") == f"stand_{mdolx}":
+            found = True
+            print(f"  {t.get('request_id')}  status={t.get('status')} "
+                  f"request_date={t.get('request_date')} "
+                  f"lane={_short(t.get('lane'), 28)}")
+            print(f"      carrier_won={t.get('carrier_won')} "
+                  f"teu_won={t.get('teu_won')} etd={t.get('etd_offered')} "
+                  f"eta={t.get('eta_offered')} "
+                  f"resp_ts={str(t.get('response_timestamp'))[:10]}")
+    if not found:
+        print(f"  >>> NO ROW anywhere for MDOLX{mdolx}.")
 
 
 def main() -> int:
@@ -97,6 +173,21 @@ def main() -> int:
         for k, v in QC._load_bodies_index().items()
     }
     print(f"bodies:       {len(bodies_by_imid)} records")
+
+    # Per-MDOLX deep trace. Michael 2026-08-10: "read the emails.. that's your
+    # job to decide if it's a problem with the file or a new win." This is that
+    # read — every staged mention, the earliest body in full, and every
+    # tracking row, for one booking at a time.
+    only = [m.strip() for m in os.environ.get("DIAG_MDOLX", "").split(",") if m.strip()]
+    if only:
+        data_path = ROOT / "tracking-data-v2.json"
+        rows_td = (json.loads(data_path.read_text(encoding="utf-8")).get("requests") or []
+                   if data_path.exists() else [])
+        print(f"tracking-data: {len(rows_td)} requests")
+        import ingest as IN0
+        for m in only:
+            trace_one_mdolx(m, rows, bodies_by_imid, rows_td, core, IN0)
+        return 0
 
     # Booking confirmations only, in window. Dated by the same fields the
     # pipeline uses, through core's canonical ET clock.
