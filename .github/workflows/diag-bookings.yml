@@ -40,6 +40,9 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
       AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v5
 

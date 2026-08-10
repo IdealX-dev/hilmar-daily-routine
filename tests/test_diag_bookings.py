@@ -127,6 +127,35 @@ def test_it_is_read_only():
                 "diag_bookings writes a file")
 
 
+def test_the_mailbox_scan_reports_why_the_bookings_query_missed():
+    """Michael 2026-08-10: "yes they wind up in my mail because i'm part of the
+    mbd ocean export group emails." So the confirmations arrive. The gap is
+    between arriving and being staged.
+
+    The bookings query is `from:MBD_OceanExportBookingShared AND
+    subject:HILMAR`. Note which booking survived it in the first run: a NUMIDIA
+    move, whose subject carries HILMAR only because Hilmar is the ORIGIN. A
+    genuine Hilmar-client booking naming the lane instead would never match —
+    the filter selecting FOR the moves the numidia gate then discards.
+
+    So the scan must report BOTH halves of the query per message, not just
+    whether the row was staged. "NOT-staged" alone does not say why.
+    """
+    assert "RS.MBD_BOOKING_EMAIL" in SRC, (
+        "the scan does not check the sender half of the bookings query")
+    assert '"HILMAR" in subj.upper()' in SRC, (
+        "the scan does not check the subject:HILMAR half of the query")
+    assert "q2-MISS" in SRC and "q2-match" in SRC
+    assert "RS.classify(it)" in SRC, (
+        "the scan judges staging by its own rule instead of classify()")
+
+
+def test_the_mailbox_scan_can_be_skipped_offline():
+    """The gate analysis works from stage alone. Requiring Graph would make
+    the whole tool unusable when only the blob is reachable."""
+    assert 'os.environ.get("DIAG_SKIP_GRAPH")' in SRC
+
+
 def test_the_workflow_is_manual_and_installs_the_storage_sdk():
     wf = (ROOT / ".github" / "workflows" / "diag-bookings.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in wf and "schedule:" not in wf
