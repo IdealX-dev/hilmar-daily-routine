@@ -95,6 +95,68 @@ def _verdict(pct: float) -> str:
     return "ERROR" if pct < 90 else "WARN " if pct < 95 else "ok   "
 
 
+#: Lines worth showing when a field failed to parse — the neighbourhood the
+#: value would have lived in. For ETA the ETD hints matter as much as the ETA
+#: ones: all 22 ETA misses carry an ETD, so the two dates are in the same
+#: table row and the ETD line IS the failing line.
+_REGION_HINTS = {
+    "eta_offered":    ("eta", "arrival", "arriv", "etd", "sailing", "depart", "transit"),
+    "etd_offered":    ("etd", "sailing", "depart", "cut-off", "cutoff", "erd"),
+    "vessel_voyage":  ("vessel", "voyage", "vsl", "mv "),
+    "ol_rate":        ("rate", "usd", "ocean freight", "all in", "all-in"),
+    "carrier_quoted": ("carrier", "line", "ocean", "sailing"),
+    "pol":            ("pol", "port of loading", "origin", "load"),
+    "pod":            ("pod", "port of discharge", "destination", "discharge"),
+}
+
+
+def _field_region(r: dict, bodies_idx: dict, field: str, max_lines: int = 6,
+                  max_chars: int = 220) -> list[str]:
+    """The lines of this row's body where the missing value should have been.
+
+    Mirrors qc_selfheal._carrier_diag_snippet, including its PII scrub — this
+    text lands in a CI log, so it goes through sentry_setup._scrub_string
+    exactly as the carrier snippet does before reaching the audit email.
+    """
+    body = ""
+    for imid in (r.get("source_imids") or []):
+        rec = bodies_idx.get(imid) or {}
+        body = rec.get("text_body") or ""
+        if not body and rec.get("html_body"):
+            # Reuse diag_bookings' HTML flattener rather than keeping a second
+            # copy of it — two flatteners drift and then disagree about what
+            # the parser "saw".
+            from diag_bookings import _plain
+            body = _plain(rec["html_body"], limit=20000)
+        if body:
+            break
+    if not body:
+        return []
+
+    hints = _REGION_HINTS.get(field, (field.split("_")[0],))
+    # The row's OWN etd value is the strongest anchor: it names the exact table
+    # row whose sibling cell went missing.
+    anchors = [str(r.get("etd_offered") or "").strip()] if field == "eta_offered" else []
+    anchors = [a for a in anchors if len(a) >= 4]
+
+    out = []
+    for line in body.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if any(h in low for h in hints) or any(a in s for a in anchors):
+            out.append(s[:max_chars])
+        if len(out) >= max_lines:
+            break
+    try:
+        from sentry_setup import _scrub_string
+        out = [_scrub_string(s) for s in out]
+    except Exception:
+        pass
+    return out
+
+
 def main() -> int:
     _rule("state store")
     import state_store
@@ -238,6 +300,36 @@ def main() -> int:
               f"{_short(r.get('lane'), 32)}")
     if len(misses) > limit:
         print(f"    … and {len(misses) - limit} more (raise DIAG_LIST)")
+
+    # ── the text the parser failed on ──────────────────────────────────────
+    #
+    # DIAG_BODIES=1. "21 of 22 rows parsed every other graded field" says the
+    # rate table WAS read and one cell was missed — but it cannot say what
+    # shape defeated it, and no amount of reading body_parser.py will, because
+    # the answer is in OL's email, not in our code. This prints the region of
+    # each failing body where the value should have been.
+    if os.environ.get("DIAG_BODIES", "").strip() in ("1", "true", "yes"):
+        _rule(f"the text the {field} parse failed on")
+        try:
+            bodies_idx = QC._load_bodies_index()
+        except Exception as e:
+            print(f"  could not load bodies: {type(e).__name__}: {e}")
+            bodies_idx = {}
+        print(f"  bodies index: {len(bodies_idx)} record(s)\n")
+        shown = 0
+        for r in misses[:limit]:
+            region = _field_region(r, bodies_idx, field)
+            print(f"  {r.get('request_id')}  {r.get('request_date')}  "
+                  f"{_short(r.get('lane'), 30)}")
+            if not region:
+                print("      (no body cached for any source_imid — the value "
+                      "may have been in a PDF attachment)")
+            else:
+                shown += 1
+                for line in region:
+                    print(f"      | {line}")
+            print()
+        print(f"  {shown}/{min(limit, len(misses))} row(s) had a cached body to show.")
 
     print("\nNOTHING WAS WRITTEN. The stored tracking data is untouched.")
     return 0
