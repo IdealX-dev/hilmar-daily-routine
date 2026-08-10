@@ -3,6 +3,56 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (2) — the booking was built from the wrong email in the thread
+
+Michael: "read the emails.. that's your job to decide if it's a problem with
+the file or a new win." Read them. Both answers, in order.
+
+NOT A MISSING WIN. MDOLX260769 and MDOLX260797 are already WIN rows, created
+in June from real confirmations. The August 5 messages are "UPDATED ETA
+BOOKING CONFIRMATION" — revisions of those June bookings, correctly not new
+wins. bookings=0 for Aug 3-7 is right about these two.
+
+BUT ONE ROW IS BADLY WRONG, and that IS the file problem:
+
+  stand_260769   carrier_won=CMA CGM  teu_won=0  etd=22-Apr-26  eta=26-May-26
+  req_5d2685f3…  carrier_won=CMA CGM  teu_won=8  etd=1-Jul-26   eta=2026-07-25
+
+Zero TEU on a 3X40'RF — should be 6 — and sailing dates two months BEFORE the
+16 June booking existed. Impossible on their face.
+
+THE CAUSE, visible once the thread is read. Two emails, three minutes apart:
+
+  17:14:37  MDOLX260769_ *NEED UPDATE TO BOOKING # NAM8482648 // HILMAR
+  17:17:34  MDOLX260769_ *NEW BOOKING CONFIRMATION // HILMAR -
+            Oakland to Osaka - 3X40'RF // CMA BKG # NAM8482648
+
+collect_bookings kept "the earliest sighting of this MDOLX = booking creation
+time" — so it chose the 17:14 email, which is OL asking CMA to CHANGE a
+booking ("Can you please update this booking per below: -Reduce to 3 x 40'RF").
+That subject carries no lane and no container spec, and the row parses lane,
+carrier, containers and TEU FROM THE SUBJECT of whichever email is chosen. So
+every one of those fields came out empty or garbage, and the real confirmation
+three minutes later was discarded.
+
+FIXED by ranking instead of racing: NEW BOOKING CONFIRMATION > any other
+BOOKING CONFIRMATION > everything else, ties broken on earliest. The original
+creation therefore still beats a later "UPDATED ETA" revision — trading this
+bug for a re-dated win would have been worse than leaving it.
+
+BLAST RADIUS: which EMAIL represents a booking, never WHETHER an MDOLX becomes
+one. The gates above are untouched and a test pins the booking set.
+
+Tests use the verbatim production subjects from the trace, and assert the
+consequence rather than the choice: the chosen subject must parse to 6 TEU,
+and the ops message must parse to 0 — the exact number that shipped. Verified
+by restoring earliest-wins and watching four of seven go red.
+
+WHAT THIS DOES NOT EXPLAIN: the 4 bookings that passed every gate and produced
+no win row at all. Still open, still unidentified.
+
+Suite 2635 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 — we told Lonny a shipment was booked when it was not
 
 Michael: "data missing.. you sent lonny we won no shipment last week."
