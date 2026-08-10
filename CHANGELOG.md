@@ -3,6 +3,51 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (7) — the client gate stays loose, and now it is actually tested
+
+DECISION, recorded so a later session does not "fix" it: the Hilmar client gate
+`is_hilmar = "HILMAR" in subject.upper()` (ingest.py:677-679) is NOT tightened.
+
+Michael asked whether it should be, after MDOLX260821 — Agri Dairy cargo whose
+subject reads "Hilmar, CA to La Guaira, Venezuela" — passed it. Two measured
+facts decide it:
+
+  1. Hilmar Ingredients is IN Hilmar, California. A real Hilmar booking can
+     name the lane and never the customer, so requiring a "// HILMAR" tag would
+     drop real wins. The loose gate is deliberate.
+  2. The specificity already lives in the NEGATIVE gate. out_of_scope_reason()
+     names the other customers Hilmar ships for and returns "agridairy" on the
+     sibling message that gave MDOLX260821 away. Positive test loose, negative
+     test specific — tightening the positive side attacks the wrong half and
+     buys nothing the negative side does not already do.
+
+WHAT WAS ACTUALLY BROKEN — the test coverage, and it was mine. AST-verified
+over every scripts/*.py: NOTHING in the live tree ever writes `is_hilmar`, so
+`row.get("is_hilmar")` is always None and the substring test always runs. But
+tests/test_booking_email_choice.py — which I wrote earlier today — hard-coded
+`"is_hilmar": True` in its fixture, short-circuiting ingest.py:679 on all seven
+of its tests. The gate that decides which customer's bookings enter Hilmar's
+data had NO test exercising it. Any tightening would have shipped untested.
+
+Fixed: the fixture no longer sets the key, so those seven now run the real
+predicate. tests/test_hilmar_client_gate.py (8 tests) pins the gate itself with
+the verbatim production subjects, including the decision above as an assertion
+rather than prose. Verified non-vacuous by re-planting `is_hilmar: True` — the
+guard fires.
+
+RE-LEARNED THE REPO'S OLDEST LESSON, again. The first draft of that guard was a
+substring scan for `"is_hilmar": True`, and it matched the docstring EXPLAINING
+the fix — failing on a file that was already correct. An identifier in prose is
+indistinguishable from an identifier in code. Now an AST walk over dict keys.
+That is at least the seventh time this session.
+
+ALSO — QC-030's comment said "≥80% of WIN/Q&L rows". The code thresholds at
+ERROR <70 / WARN <85 and selects WIN/LOSS. Neither number nor status set
+matched. Corrected; a comment that misstates the gate it sits on is how an
+operator reads a passing 82% as a failure.
+
+Suite 2691 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (6) — OL writes a sail date two ways; the client report knew one
 
 Chasing QC-027's ETA at 93.3% (307/329) — the only field left under 95% once
