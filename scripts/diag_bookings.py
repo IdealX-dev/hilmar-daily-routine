@@ -335,6 +335,16 @@ def main() -> int:
               "that names it is too tight — that is the bug, and the gate name "
               "tells you which one.")
     if missing:
+        # NAME THEM HERE, not only where they were found. 2026-08-10: this
+        # count read "4" for a whole session while the four MDOLX numbers sat
+        # ~300 lines up, above a 200-line mailbox scan, off the end of every
+        # log fetch. A finding that scrolls out of reach is a finding nobody
+        # has. The verdict block is the part that gets read — so the verdict
+        # block carries the evidence.
+        print("\n  the ones with NO row:")
+        for d, mdolx, r in missing:
+            print(f"    MDOLX{mdolx}  staged {d}")
+            print(f"        {_short(r.get('subject'), 100)}")
         print("\nIf any MDOLX above has no row, the loss is AFTER the gates: "
               "link_bookings_to_requests built neither a match nor a "
               "standalone. That is ingest, not intake.")

@@ -108,6 +108,20 @@ def test_it_distinguishes_a_gate_drop_from_a_post_gate_loss():
     assert "not reaching stage" in tail
 
 
+def test_the_verdict_names_the_bookings_with_no_row():
+    """A count is not a finding. 2026-08-10 this printed "admitted but NO win
+    row: 4" for a whole session while the four MDOLX numbers sat ~300 lines
+    up, above a 200-line mailbox scan and off the end of every log fetch — so
+    the defect stayed unidentified despite being measured three times. The
+    verdict block is the part that gets read; it has to carry the evidence."""
+    tail = SRC.split("_rule(\"verdict\")", 1)[-1]
+    assert "the ones with NO row" in tail, (
+        "the verdict reports a COUNT of rowless bookings without naming them — "
+        "the number is unactionable and the names scroll out of reach")
+    assert "for d, mdolx, r in missing" in tail, (
+        "nothing iterates `missing` in the verdict block, so no MDOLX is printed")
+
+
 def test_it_is_read_only():
     """It pulls production state. It must not push, send, or edit."""
     import ast
