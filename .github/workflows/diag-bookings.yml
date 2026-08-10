@@ -1,0 +1,63 @@
+name: Diagnose missing bookings
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-10. The fire reported `requests=12 bookings=0` for Aug 3-7 while
+# QC-009 counted 4 staged mbd_inbound booking confirmations that week. Four
+# confirmations in, zero wins out.
+#
+# Michael: "if ol confirmed bookings with mdolx numbers it's a win." That is
+# the rule. ingest agrees — an unmatched booking becomes a standalone
+# stand_<mdolx> WIN — so a confirmation produces a win either way UNLESS a
+# gate drops it first. This runs the REAL gates over the REAL staged rows and
+# names the one that ate each booking, then checks whether tracking-data
+# actually holds a win for it.
+#
+# READ-ONLY: pulls state and prints. No blob write, no send, no mutation.
+# (It does overwrite the runner's working copy of state — see diag_day.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Start of window, YYYY-MM-DD (ET)"
+        required: true
+        default: "2026-08-03"
+      until:
+        description: "End of window, YYYY-MM-DD (ET). Blank = open-ended."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    name: Where did the bookings go
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # azure-storage-blob named explicitly — it is deliberately absent from
+        # requirements.txt; see tests/test_diag_day.py.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Trace
+        env:
+          DIAG_SINCE: ${{ inputs.since }}
+          DIAG_UNTIL: ${{ inputs.until }}
+        run: python3 scripts/diag_bookings.py
