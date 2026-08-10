@@ -149,6 +149,27 @@ def test_qc056_still_heals_before_qc027_grades_carrier():
         "healable row counts as a miss, which is the 87% Michael was paged for")
 
 
+def test_nothing_after_phase_6_writes_a_graded_field_either():
+    """The guard above is scoped to ONE function. main() keeps going after it —
+    _recompute_aggregates, _trade_region_reconciliation, phase_7_save — and a
+    graded-field write in any of those would put the measurement back in the
+    past without touching phase_6_rules at all. Measured, and pinned: today
+    all three write only summary dicts."""
+    src = (SCRIPTS / "qc_selfheal.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    offenders = []
+    for name in ("_recompute_aggregates", "_trade_region_reconciliation",
+                 "phase_7_save"):
+        fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == name), None)
+        assert fn is not None, f"{name}() is gone — main()'s tail changed shape"
+        for ln, f in _graded_field_writes(fn):
+            offenders.append(f"{name}() line {ln}: {f}")
+    assert not offenders, (
+        "these run AFTER phase_6_rules and write fields QC-027 grades, so the "
+        "measurement is stale again:\n  " + "\n  ".join(offenders))
+
+
 def test_the_polpod_heal_stays_ahead_of_the_scrub():
     """The half that must NOT move. QC-027's pol/pod derivation WRITES fields
     QC-064 scrubs; dragging it down with the measurement would put a derived
