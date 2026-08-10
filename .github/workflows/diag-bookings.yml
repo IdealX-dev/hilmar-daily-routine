@@ -27,6 +27,10 @@ on:
         description: "End of window, YYYY-MM-DD (ET). Blank = open-ended."
         required: false
         default: ""
+      mdolx:
+        description: "Deep-trace these MDOLX numbers instead (comma-separated)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -63,4 +67,5 @@ jobs:
         env:
           DIAG_SINCE: ${{ inputs.since }}
           DIAG_UNTIL: ${{ inputs.until }}
+          DIAG_MDOLX: ${{ inputs.mdolx }}
         run: python3 scripts/diag_bookings.py
