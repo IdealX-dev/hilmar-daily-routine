@@ -176,6 +176,64 @@ def main() -> int:
             print(f"  {mdolx}: >>> NO ROW. Admitted by every gate and still "
                   f"produced neither a matched win nor stand_{mdolx}.")
 
+    # ── the mailbox itself: what MDOLX mail exists, and what would we do? ───
+    #
+    # 2026-08-10, Michael: "yes they wind up in my mail because i'm part of the
+    # mbd ocean export group emails." So the confirmations ARE here. The gap is
+    # between arriving and being staged, and the pipeline's two queries are:
+    #
+    #   from:lonny OR to:lonny
+    #   from:MBD_OceanExportBookingShared AND subject:HILMAR
+    #
+    # The second requires the literal token HILMAR in the subject. Note which
+    # booking DID survive it above: a NUMIDIA move, whose subject carries
+    # "HILMAR" only because Hilmar is the ORIGIN. A genuine Hilmar-client
+    # booking whose subject names the lane instead would never match — the
+    # filter would be selecting FOR exactly the moves the numidia gate then
+    # discards. That is a hypothesis; this section is how it gets tested.
+    if os.environ.get("DIAG_SKIP_GRAPH"):
+        print("\n(DIAG_SKIP_GRAPH set — mailbox scan skipped)")
+    else:
+        _rule("mailbox — every MDOLX message, and what the pipeline does with it")
+        try:
+            token = RS.get_token()
+            print(f"reading: {RS._mailbox_base}")
+            found = RS.search_messages(token, "MDOLX", max_results=200)
+        except Exception as e:
+            print(f"mailbox scan FAILED: {type(e).__name__}: {e}")
+            found = []
+
+        staged_imids = {r.get("imid") for r in rows if r.get("imid")}
+        in_window = []
+        for it in found:
+            d = core.et_date_of(it.get("receivedDateTime") or it.get("sentDateTime"))
+            if d and since <= d <= until:
+                in_window.append((d, it))
+        in_window.sort(key=lambda t: t[0])
+        print(f"{len(found)} MDOLX message(s) returned; {len(in_window)} in window\n")
+
+        by_verdict: dict[str, int] = {}
+        for d, it in in_window:
+            sender = ((it.get("from") or {}).get("emailAddress") or {}).get("address") or "?"
+            subj = str(it.get("subject") or "")
+            bucket = RS.classify(it) or "DROPPED-by-classify"
+            staged = "staged" if it.get("internetMessageId") in staged_imids else "NOT-staged"
+            # why the bookings query would or would not have found it
+            q2 = ("q2-match" if sender.lower() == RS.MBD_BOOKING_EMAIL.lower()
+                  and "HILMAR" in subj.upper() else "q2-MISS")
+            key = f"{bucket} | {staged} | {q2}"
+            by_verdict[key] = by_verdict.get(key, 0) + 1
+            print(f"  {d}  {bucket:<22} {staged:<11} {q2}")
+            print(f"      {sender}")
+            print(f"      {_short(subj, 96)}")
+
+        if by_verdict:
+            print("\n  summary:")
+            for k, n in sorted(by_verdict.items(), key=lambda kv: -kv[1]):
+                print(f"    {n:>4}  {k}")
+            print("\n  q2-MISS + NOT-staged = a confirmation sitting in the "
+                  "mailbox that the bookings query never asked for.")
+
     _rule("verdict")
     print(f"staged booking confirmations : {len(bookings)}")
     print(f"  dropped by a gate          : {len(dropped)}")
