@@ -617,6 +617,38 @@ def _merge_thread_dupes(requests: list[dict]) -> list[dict]:
 # Collect MDOLX bookings (wins) from all three buckets
 # ─────────────────────────────────────────────────────────────────────
 
+#: A booking confirmation announces the booking; everything else in the thread
+#: merely mentions it. Ranked because the row's lane, carrier, containers and
+#: TEU are all parsed from the SUBJECT of whichever email we pick — see the
+#: stand_260769 note in collect_bookings for what picking wrong costs.
+_NEW_CONFIRMATION_RX = re.compile(r"NEW\s+BOOKING\s+CONFIRMATION", re.IGNORECASE)
+_ANY_CONFIRMATION_RX = re.compile(r"BOOKING\s+CONFIRMATION", re.IGNORECASE)
+
+
+def _booking_rank(subject: str | None, sent: str | None) -> tuple[int, str]:
+    """Sort key for "which email best represents this booking".
+
+    Higher is better. Ties break on EARLIEST sent, so the original creation
+    still beats a later revision of equal rank — hence the negated timestamp
+    via a descending string compare in the caller's `>` test.
+
+      2  NEW BOOKING CONFIRMATION — the creation event
+      1  any other BOOKING CONFIRMATION (REVISED / SSL CHANGED / UPDATED ETA)
+      0  anything else in the thread (ops asks, invoices, status chasers)
+    """
+    s = subject or ""
+    if _NEW_CONFIRMATION_RX.search(s):
+        tier = 2
+    elif _ANY_CONFIRMATION_RX.search(s):
+        tier = 1
+    else:
+        tier = 0
+    # Later strings sort higher, so invert the timestamp to make EARLIER win.
+    inverted = "".join(chr(0x10FFFF - ord(c)) if ord(c) < 0x10FFFF else c
+                       for c in (sent or "￿"))
+    return (tier, inverted)
+
+
 def collect_bookings(rows: list[dict]) -> dict[str, dict]:
     """
     Return {mdolx: booking_dict}. Each booking represents a unique MDOLX
@@ -676,9 +708,29 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
         # Carry forward any body-parsed signer so link_bookings_to_requests can
         # populate ol_responder_signer on the matched/standalone request.
         body_parsed = row.get("body_parsed") or {}
-        # First hit wins (earliest sighting of this MDOLX = booking creation time)
+        # BEST hit wins, then earliest. Not earliest alone.
+        #
+        # 2026-08-10. stand_260769 carried teu_won=0 on a 3X40'RF and
+        # etd=22-Apr-26 / eta=26-May-26 on a booking confirmed 16 June —
+        # sailing dates two months BEFORE the booking existed. The thread:
+        #
+        #   17:14:37  MDOLX260769_ *NEED UPDATE TO BOOKING # NAM8482648 // HILMAR
+        #   17:17:34  MDOLX260769_ *NEW BOOKING CONFIRMATION // HILMAR -
+        #             Oakland to Osaka - 3X40'RF // CMA BKG # NAM8482648
+        #
+        # Earliest-wins took the 17:14 email — OL asking CMA to CHANGE a
+        # booking, body "Can you please update this booking per below: -Reduce
+        # to 3 x 40'RF". Its subject has no lane and no container spec, so
+        # every field the row derives from the subject came out empty or
+        # wrong, and the real confirmation three minutes later was discarded.
+        #
+        # The MDOLX set is unchanged by this — only WHICH email represents
+        # each booking. A confirmation outranks an ops message; among
+        # confirmations, earliest still wins, so a genuine creation is never
+        # displaced by a later revision.
         existing = bookings.get(mdolx)
-        if not existing or (sent and existing.get("sent", "") > sent):
+        if not existing or _booking_rank(subject, sent) > _booking_rank(
+                existing.get("subject"), existing.get("sent")):
             bookings[mdolx] = {
                 "mdolx": mdolx,
                 "subject": subject,
