@@ -1252,7 +1252,29 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
         best["response_timestamp"] = sent
         best["olusa_time_et"] = C.fmt_et(sent_dt)
         best["etd_offered"] = rt.get("etd") or parsed.get("etd_offered")
-        best["eta_offered"] = rt.get("eta") or parsed.get("eta_offered")
+        # ETA KEEPS A KNOWN VALUE RATHER THAN BEING NULLED BY A LATER EMAIL.
+        #
+        # 2026-08-10, tracing QC-027's ETA at 93.3% (307/329, the only field
+        # under 95%). This line was unconditional, and Lonny re-uses Outlook
+        # threads for recurring rate requests (see the note ~50 lines up), so a
+        # SECOND rate response on the same thread whose table carries no ETA
+        # overwrote a good one with None. A later quote that states an ETA
+        # still wins — `rt`/`parsed` are tried first; the fallback only fires
+        # when the new email says nothing at all, where keeping the ETA we
+        # already had beats forgetting it.
+        #
+        # The correct shape was already two lines below, on pol/pod:
+        #     best["pol"] = rt.get("pol") or best.get("pol") or _dpol
+        # Ports preserved; the table fields did not.
+        #
+        # rt.get("eta_offered") added alongside the legacy rt.get("eta"):
+        # scripts/body_parser.parse_rate_table emits eta_offered and never
+        # emits "eta" (that key is the src/hilmar mirror's), so the old term is
+        # dead in production. fetch_bodies.py:208 already hedges both — this
+        # now matches it instead of relying on `parsed` having bubbled it up.
+        best["eta_offered"] = (rt.get("eta") or rt.get("eta_offered")
+                               or parsed.get("eta_offered")
+                               or best.get("eta_offered"))
         best["vessel_voyage"] = rt.get("vessel_voyage") or parsed.get("vessel_voyage")
         best["transshipment"] = rt.get("transshipment") or parsed.get("transshipment")
         # POL/POD: OL's stated ports win; fall back to the lane-derived

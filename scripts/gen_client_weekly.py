@@ -181,7 +181,7 @@ def active_shipments(data, end: date):
     for r in data.get("requests") or []:
         if not (core.is_confirmed_win(r) and _lane_resolved(r)):
             continue
-        eta = _iso_date(r.get("eta_offered"))
+        eta = core.offered_date(r.get("eta_offered"))
         if eta and eta < end:
             continue
         out.append(r)
