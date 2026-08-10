@@ -616,6 +616,43 @@ def _carrier_from_lane_rate_sibling(r: dict, requests: list, window_days: int = 
         return None
 
 
+# QC-027's denominator, named once so a diagnostic cannot hold a different
+# idea of it than the check does. 2026-08-10: QC-027 has reported Carrier
+# below 90% since August and "it used to work" — but a completeness
+# percentage is a ratio, and a ratio moves when the DENOMINATOR moves, not
+# only when the numerator breaks. Any tool that wants to explain the number
+# has to select exactly the rows the check selected; a re-typed list
+# comprehension in a diag script is the classic way to answer a question
+# about a set you are not actually looking at.
+QC027_FIELDS = [
+    ("etd_offered",    "ETD"),
+    ("eta_offered",    "ETA"),
+    ("vessel_voyage",  "Vessel/Voyage"),
+    ("ol_rate",        "Rate"),
+    ("carrier_quoted", "Carrier"),
+    ("pol",            "POL"),
+    ("pod",            "POD"),
+]
+
+
+def qc027_active_rows(requests: list) -> list:
+    """Rows QC-027 considers at all: a live status AND a response we timed."""
+    return [r for r in requests
+            if r.get("status") in ("WIN", "LOSS", "PENDING")
+            and r.get("response_timestamp")]
+
+
+def qc027_is_reachable(r: dict) -> bool:
+    """True when a rate-response body was parseable enough to leave a trace.
+
+    The comment on the original expression calls this an approximation of
+    "at least one source_imid points to an mbd_rate_response body", and it is:
+    if none of ETD / vessel / rate survived, the numbers were in a PDF we do
+    not parse. Those rows are counted as PDF-only instead of failing the gate.
+    """
+    return bool(r.get("etd_offered") or r.get("vessel_voyage") or r.get("ol_rate"))
+
+
 def _carrier_diag_snippet(r: dict, bodies_idx: dict, max_chars: int = 400) -> dict:
     """Build a SCRUBBED diagnostic dict for ONE stuck (no-carrier) row.
 
@@ -3863,15 +3900,18 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-029: check failed with exception: {_e}")
 
-    # QC-027: data completeness across key fields. Per Michael 2026-05-13
-    # "90 percent for all is the bare minimum". Measures REACHABLE rows
-    # only — i.e. rows whose rate-response body is in current stage. WIN
-    # rows whose only available body is the booking confirmation (data
-    # lives in the PDF attachment) are tracked separately as "PDF-only"
-    # so the gap is visible without breaking the 90% gate on parseable rows.
+    # QC-027 SELF-HEAL ONLY. The MEASUREMENT lives at the end of this phase,
+    # beside QC-039 — see the banner there.
+    #
+    # 2026-08-10, Michael on the Carrier=87% ERROR: "you have to fix this.. it
+    # used to work.. don't know what you did." The heal is deliberately left
+    # HERE rather than moved down with the measurement: it WRITES pol/pod, and
+    # QC-064 (which nulls garbage out of client-visible fields, pol and pod
+    # among them) runs later in this same phase. A heal that runs after the
+    # scrub puts a derived value in front of the client that nothing checks.
+    # Heals early, measurement last — that is the whole rule.
     try:
-        _active = [r for r in requests if r.get("status") in ("WIN", "LOSS", "PENDING")
-                   and r.get("response_timestamp")]
+        _active = qc027_active_rows(requests)
         # SELF-HEAL (2026-06-17): POL/POD were measured but never healed, so
         # QC-027 fired ERROR every day with nothing fixing it. POD is always
         # the destination (the ocean discharge port); POL is the origin when
@@ -3892,54 +3932,8 @@ def phase_6_rules(log: Log, data: dict):
                 log.fix(f"QC-027: derived {_healed_ports} missing POL/POD value(s) from lane endpoints")
         except Exception as _e:
             log.warn(f"QC-027: POL/POD self-heal skipped: {_e}")
-        # A row is "reachable" if at least one of its source_imids points
-        # to an mbd_rate_response body. We approximate by checking that
-        # the row has ETD or vessel populated — if patch_carriers' two
-        # passes + cross-thread lookup couldn't fill either, the data is
-        # in a PDF attachment we don't parse.
-        _reachable = [r for r in _active if r.get("etd_offered") or r.get("vessel_voyage") or r.get("ol_rate")]
-        _pdf_only = [r for r in _active if r not in _reachable]
-        _checks = [
-            ("etd_offered",   "ETD"),
-            ("eta_offered",   "ETA"),
-            ("vessel_voyage", "Vessel/Voyage"),
-            ("ol_rate",       "Rate"),
-            ("carrier_quoted","Carrier"),
-            ("pol",           "POL"),
-            ("pod",           "POD"),
-        ]
-        if _reachable:
-            _problems = []
-            _ok_count = 0
-            for fld, label in _checks:
-                _present = sum(1 for r in _reachable if r.get(fld))
-                _pct = _present * 100 / len(_reachable)
-                if _pct < 90:
-                    _problems.append(f"{label}={_pct:.0f}% (ERROR <90%)")
-                elif _pct < 95:
-                    _problems.append(f"{label}={_pct:.0f}% (WARN 90-95%)")
-                else:
-                    _ok_count += 1
-            _pdf_note = (f" — {len(_pdf_only)} PDF-only WIN(s) excluded (data in attachment)"
-                         if _pdf_only else "")
-            if any("ERROR" in p for p in _problems):
-                log.error(f"QC-027: data completeness on {len(_reachable)} reachable rows — "
-                          + "; ".join(_problems) + _pdf_note)
-            elif _problems:
-                log.warn(f"QC-027: data completeness on {len(_reachable)} reachable rows — "
-                         + "; ".join(_problems) + _pdf_note)
-            else:
-                log.ok(f"QC-027: data completeness OK on {len(_reachable)} reachable rows "
-                       f"({_ok_count}/{len(_checks)} fields ≥95%){_pdf_note}")
-        # Track PDF-only rows separately so they're visible — they
-        # need either PDF parsing or stage extension to surface
-        if len(_pdf_only) > 5:
-            log.warn(
-                f"QC-027b: {len(_pdf_only)} WIN(s) have rate data only in PDF attachment "
-                "— consider PDF parsing (pdfplumber) to lift completeness for confirmed bookings"
-            )
     except Exception as _e:
-        log.warn(f"QC-027: check failed with exception: {_e}")
+        log.warn(f"QC-027: POL/POD self-heal failed with exception: {_e}")
 
     # QC-026: script-sync drift between OneDrive (live) and git repo (remote).
     # Per Michael 2026-05-13 "i need this to become a remote app as well so i
@@ -5132,6 +5126,67 @@ def phase_6_rules(log: Log, data: dict):
         # Sentry, not get buried as a non-blocking WARN. Per CLAUDE.md rule #3
         # (solve root causes, never let a broken gate silently degrade).
         log.error(f"QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): {_e}")
+
+    # ── QC-027 MEASUREMENT. SAME RULE AS QC-039 ABOVE: DO NOT MOVE EARLIER. ──
+    # Data completeness across key fields. Per Michael 2026-05-13 "90 percent
+    # for all is the bare minimum". Measures REACHABLE rows only — rows whose
+    # rate-response body left a trace. WIN rows whose only body is the booking
+    # confirmation (data lives in the PDF attachment) are counted separately as
+    # "PDF-only" so the gap is visible without breaking the gate.
+    #
+    # 2026-08-10 — WHY IT MOVED. It used to sit ~1200 lines up, ahead of two
+    # heals that write the very fields it grades:
+    #     QC-056  backfills carrier_quoted (from row text, then from a
+    #             same-lane same-rate sibling)
+    #     QC-064  NULLS garbage out of carrier/origin/destination/lane/pol/
+    #             pod/vessel/transshipment
+    # So the daily "Carrier=87% (ERROR <90%)" was a reading of a state that no
+    # longer existed by the time the run ended — it counted as missing every
+    # carrier QC-056 was about to restore, and counted as present every value
+    # QC-064 was about to blank. Michael: "you have to fix this.. it used to
+    # work.. don't know what you did." Nothing broke the carriers; the ruler
+    # was held up before the repair and after the damage.
+    #
+    # This is the FOURTH instance of measure-before-heal in this phase (QC-039
+    # 2026-07-27, batch-5 #15's persisted aggregates, QC-075's stale summary,
+    # now QC-027). Enforced by tests/test_qc027_measures_final_state.py, which
+    # AST-walks every write to a graded field inside phase_6_rules.
+    try:
+        _active27 = qc027_active_rows(requests)
+        _reachable = [r for r in _active27 if qc027_is_reachable(r)]
+        _pdf_only = [r for r in _active27 if not qc027_is_reachable(r)]
+        if _reachable:
+            _problems = []
+            _ok_count = 0
+            for fld, label in QC027_FIELDS:
+                _present = sum(1 for r in _reachable if r.get(fld))
+                _pct27 = _present * 100 / len(_reachable)
+                if _pct27 < 90:
+                    _problems.append(f"{label}={_pct27:.0f}% (ERROR <90%)")
+                elif _pct27 < 95:
+                    _problems.append(f"{label}={_pct27:.0f}% (WARN 90-95%)")
+                else:
+                    _ok_count += 1
+            _pdf_note = (f" — {len(_pdf_only)} PDF-only WIN(s) excluded (data in attachment)"
+                         if _pdf_only else "")
+            if any("ERROR" in p for p in _problems):
+                log.error(f"QC-027: data completeness on {len(_reachable)} reachable rows — "
+                          + "; ".join(_problems) + _pdf_note)
+            elif _problems:
+                log.warn(f"QC-027: data completeness on {len(_reachable)} reachable rows — "
+                         + "; ".join(_problems) + _pdf_note)
+            else:
+                log.ok(f"QC-027: data completeness OK on {len(_reachable)} reachable rows "
+                       f"({_ok_count}/{len(QC027_FIELDS)} fields ≥95%){_pdf_note}")
+        # Track PDF-only rows separately so they're visible — they
+        # need either PDF parsing or stage extension to surface
+        if len(_pdf_only) > 5:
+            log.warn(
+                f"QC-027b: {len(_pdf_only)} WIN(s) have rate data only in PDF attachment "
+                "— consider PDF parsing (pdfplumber) to lift completeness for confirmed bookings"
+            )
+    except Exception as _e:
+        log.warn(f"QC-027: check failed with exception: {_e}")
 
 
 # ─────────────────────────────────────────────────────────────────────

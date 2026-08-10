@@ -3,6 +3,74 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (3) — QC-027 graded the rows before the heals repaired them
+
+Michael, on the daily Sentry page: "you have to fix this.. it used to work..
+don't know what you did."
+
+MEASURED, NOT ARGUED. Nothing broke the carriers. QC-027's measurement sat
+~1200 lines up inside phase_6_rules, ahead of two heals that write the very
+fields it grades — both in the same function, same pass, top to bottom:
+
+  QC-027  measures carrier_quoted, pol, pod, vessel_voyage, …   line ~3900
+  QC-056  BACKFILLS carrier_quoted from row text, then from a
+          same-lane same-rate sibling                           line ~4290
+  QC-064  NULLS garbage out of carrier_quoted / pol / pod /
+          vessel_voyage and five other client-visible fields    line ~4717
+
+Four of QC-027's seven graded fields are written by QC-064; one is written by
+QC-056. So "Carrier=87% (ERROR <90%)" described a state that did not survive
+its own run — it counted as MISSING every carrier QC-056 was about to restore,
+and as PRESENT every value QC-064 was about to blank. Wrong in both directions,
+every day.
+
+FOURTH INSTANCE OF THIS SHAPE in this one phase: QC-039 (2026-07-27, which
+withheld a business day's client report), batch-5 #15's persisted aggregates,
+QC-075's stale summary, now QC-027. QC-039's banner already states the rule —
+A GATE MEASURES THE FINAL STATE OF THE ROWS, AFTER EVERY MUTATING HEAL —
+and QC-027 was simply never brought under it.
+
+DECISION — split the check rather than move it whole. The MEASUREMENT moved to
+the end of phase_6_rules, beside QC-039. QC-027's own POL/POD derivation stays
+where it was, on purpose: it WRITES pol/pod, and QC-064 scrubs pol/pod later in
+the same phase, so a heal dragged down with the measurement would put a derived
+value in the client email with nothing checking it. Heals early, measurement
+last.
+
+DECISION — the denominator now has exactly one definition. `qc027_active_rows`,
+`qc027_is_reachable` and `QC027_FIELDS` are named in qc_selfheal and called by
+both the check and the diagnostic. A completeness number is a ratio, and a
+ratio moves when the DENOMINATOR moves; a re-typed comprehension in a diag
+script answers questions about a set nobody is measuring. Side effect: the
+reachable/PDF-only split was `r not in _reachable`, an equality scan over
+dicts — two identical rows collapsed, and the halves could overlap. Both sides
+now call the same predicate, so the partition is disjoint and exhaustive by
+construction (and O(n), not O(n²)).
+
+GUARD — tests/test_qc027_measures_final_state.py (11 tests). The structural one
+is an AST walk over every write to a graded field inside phase_6_rules,
+INCLUDING variable-key writes (`r[_f] = None`, which is exactly how QC-064
+nulls). A substring scan for `r["carrier_quoted"]` cannot see that write — the
+same blind spot that let the first QC-039 fix ship half-done. Verified
+non-vacuous by mechanically moving the measurement back above QC-056: 4 of 11
+failed, including both behavioural directions —
+
+  test_a_row_qc056_can_heal_is_not_counted_as_a_missing_carrier   FAILED
+  test_a_carrier_qc064_nulls_is_counted_as_missing                FAILED
+
+WHAT IS NOT YET KNOWN, stated plainly: whether the post-heal number clears 90%
+on the real 329 rows is a fact about the data, not the code, and no unit test
+can answer it. scripts/diag_qc027.py + .github/workflows/diag-qc027.yml print
+both readings on the live dataset — the one the old code sent to Sentry and the
+one the fixed code sends — plus every row still missing a carrier, bucketed by
+request month (does "it used to work" mean new rows or old ones?) and by why it
+is unhealed. One bucket is named in advance because the code says so: QC-056
+only ever looks at rows WITH a rate, so a row reachable by etd_offered or
+vessel_voyage alone is inside QC-027's denominator and outside every healer's
+reach. Read-only — pulls state, runs the phase on a deepcopy, writes nothing.
+
+Suite 2656 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (2) — the booking was built from the wrong email in the thread
 
 Michael: "read the emails.. that's your job to decide if it's a problem with

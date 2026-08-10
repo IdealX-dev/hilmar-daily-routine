@@ -72,7 +72,7 @@ Per Michael's standing rules in `~/.claude/CLAUDE.md`:
 | QC-024 | ERROR/WARN | Stage path drift (legacy .jsonl newer than .txt) | None | 2026-05-13 (new) |
 | QC-025 | ERROR/WARN | Today's sent-flag has > 5 entries (ERROR) / > 3 (WARN) — looping | None — investigate | 2026-05-13 (`cd5fe6c`) |
 | QC-026 | WARN | Scripts in OneDrive drift from git repo (>3 files differ) — remote-edit sync broken | Auto via wrapper Step 0 git-pull next fire | 2026-05-13 (`30f6cd9`) |
-| QC-027 | ERROR/WARN | Data completeness <90% on key fields (etd/eta/vessel/rate/carrier/pol/pod) | Auto via patch_carriers PASS 2 + PDF fallback | 2026-05-13 (`6efb1ad` → `df95e1b`) |
+| QC-027 | ERROR/WARN | Data completeness <90% on key fields (etd/eta/vessel/rate/carrier/pol/pod). **MEASURES LAST** — beside QC-039, after QC-056's carrier backfill and QC-064's nulling; its own POL/POD heal stays early, ahead of QC-064's scrub | Auto via patch_carriers PASS 2 + PDF fallback; POL/POD derived from lane | 2026-05-13 (`6efb1ad` → `df95e1b`); measurement moved 2026-08-10 |
 | QC-028 | WARN | Rate intelligence artifact missing or stale (>26h) | None — surface only | 2026-05-13 (`8c81341`) |
 | QC-029 | WARN | Shared cross-project store stale or row-count drift between local + shared | None — investigate | 2026-05-13 (`8c81341`) |
 | QC-030 | ERROR/WARN | Transit-time pair (ETD+ETA) coverage <85% on active rows | Auto via parse_rate_table extracting both dates | 2026-05-13 (`1c4f38f`) |
