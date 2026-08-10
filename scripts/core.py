@@ -1795,6 +1795,56 @@ def _parse_loose_date(s: str | None, fallback_year: int | None = None) -> date |
     return None
 
 
+def offered_date(value, fallback_year: int | None = None) -> date | None:
+    """THE reader for an ETD/ETA that OL *offered*. Route every one through here.
+
+    An offered date is a free-text table cell copied out of a carrier's email —
+    NOT a timestamp. OL writes both forms, in the same dataset, on the same day:
+
+        stand_260769   etd=22-Apr-26   eta=26-May-26      <- d-Mmm-yy
+        req_5d2685f3…  etd=1-Jul-26    eta=2026-07-25     <- ISO
+
+    2026-08-10: three different parsers were reading this one field, and the
+    CLIENT-FACING one was the strict one —
+
+        share_intel.py:255        _parse_loose_date(...)   internal, loose
+        gen_client_email.py:326   _iso_date(...)           Lonny's email, STRICT
+        gen_client_weekly.py:184  _iso_date(...)           Lonny's weekly, STRICT
+
+    `_iso_date` is `strptime(s[:10], "%Y-%m-%d")`. So a `26-May-26` ETA is
+    truthy for QC-027 (the field IS populated, it counts toward 93.3%) and
+    invisible to "Currently in transit", which drops any row whose ETA will not
+    parse. The internal intel feed saw those shipments; the client's report did
+    not. One fact, three readers, and the one that mattered held the wrong one.
+
+    A bare "Jul 25" with no year still returns None rather than guessing the
+    year — the cell genuinely does not carry one, and inventing it would put a
+    fabricated sail date in front of the customer.
+    """
+    d = _parse_loose_date(value, fallback_year=fallback_year)
+    if d:
+        # "%b %d" ("Jul 25") carries no year, and strptime defaults it to 1900.
+        # Without a fallback_year that is a FABRICATED date, not a parse — and
+        # a 1900 sail date sorts to the front of the client's transit table.
+        # None is the honest answer; the cell really does not say which year.
+        if d.year == 1900 and fallback_year is None:
+            return None
+        return d
+    # Non-zero-padded M/D/YY(YY). share_intel carried this fallback and the
+    # client renderers did not — part of how the two came to disagree.
+    if isinstance(value, str):
+        m = re.match(r"\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\s*$", value)
+        if m:
+            yr = int(m.group(3))
+            if yr < 100:
+                yr += 2000
+            try:
+                return date(yr, int(m.group(1)), int(m.group(2)))
+            except ValueError:
+                return None
+    return None
+
+
 def etd_fit_days(lonny_requested: str | None, ol_offered: str | None, fallback_year: int = 2026) -> int | None:
     """
     Positive = OL offered a later date than Lonny asked for (bad).

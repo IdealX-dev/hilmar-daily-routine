@@ -3,6 +3,84 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (6) — OL writes a sail date two ways; the client report knew one
+
+Chasing QC-027's ETA at 93.3% (307/329) — the only field left under 95% once
+Carrier was resolved. What it turned up is worse than a completeness number,
+and it was reaching the customer.
+
+MEASURED FIRST (diag-qc027 runs 2 and 3, live data):
+
+  rows missing eta_offered: 22
+    2026-04  1/83   2026-05  4/82   2026-06  16/83 (19%)   2026-07  1/69
+  why:  21  every OTHER graded field parsed — one cell missed
+         1  partial parse
+  bodies on disk for the first 8: 0
+
+All 22 carry ETD + vessel + rate, so the rate table WAS read. And not one of
+them has a cached body left, so the parser cannot be re-run over them — which
+killed both of my standing hypotheses and sent me to the write and read paths
+instead.
+
+THE CLIENT-FACING DEFECT. Both date forms are in the live data, weeks apart:
+
+  stand_260769   etd=22-Apr-26   eta=26-May-26      <- d-Mmm-yy
+  req_5d2685f3…  etd=1-Jul-26    eta=2026-07-25     <- ISO
+
+and THREE parsers were reading that one field:
+
+  share_intel.py:255        _parse_loose_date   internal feed   loose
+  gen_client_email.py:326   _iso_date           LONNY'S EMAIL   STRICT
+  gen_client_weekly.py:184  _iso_date           LONNY'S WEEKLY  STRICT
+
+`_iso_date` is `strptime(s[:10], "%Y-%m-%d")`. So a `26-May-26` ETA is truthy
+for QC-027 — it counts toward the 93.3% as PRESENT — and invisible to
+"Currently in transit", which drops any row whose ETA will not parse. The
+internal intel feed saw those shipments; the customer's report did not. One
+fact, three readers, and the one that reached Lonny held the wrong one. This is
+the fourth instance of that shape this session (sent_ts/sent, imid/
+internetMessageId, LOSS/quoted).
+
+DECISION — one predicate: `core.offered_date()`. Every reader of an OL-offered
+ETD/ETA goes through it; share_intel's private format table is deleted and its
+extra fallbacks (non-zero-padded M/D/YY) folded in, so nothing any of the three
+could parse is lost. Verified against the real strings before writing a line of
+it. It returns None for a yearless "Jul 25" rather than strptime's 1900 default
+— a fabricated sail date sorts to the FRONT of the client's transit table, and
+None is the honest answer. I caught that one by running the function, not by
+reading it; my first docstring claimed the behaviour the code did not have.
+
+TWO WRITE-SIDE LOSSES, both fixed:
+  * ingest.py:1255 assigned eta_offered UNCONDITIONALLY. Lonny re-uses Outlook
+    threads, so a second rate response with no ETA nulled a good one. A stated
+    ETA still wins; the fallback only fires when the new email says nothing.
+    The correct shape was already two lines below —
+        best["pol"] = rt.get("pol") or best.get("pol") or _dpol
+    ports preserved, table fields not. Deliberately NOT extended to
+    carrier/rate/etd: a re-quote replacing those is correct behaviour, and ETD
+    is at 100% so nothing there is measured as broken.
+  * patch_carriers.py:633 — BACKFILL_KEYS could always WRITE eta_offered, but
+    the gate deciding whether to GO LOOKING named only etd/vessel/rate. Every
+    one of the 22 rows carries all three, so every one failed the gate and
+    never triggered the sibling lookup. Gradeable, but unreachable.
+
+ALSO: `rt.get("eta")` in ingest is dead in production — scripts/body_parser
+emits `eta_offered` and never `eta` (that key belongs to the src/hilmar
+mirror). fetch_bodies.py:208 already hedges both; ingest now matches it rather
+than relying on `parsed` having bubbled the value up.
+
+WHAT THIS DOES NOT CLAIM. Whether these three fixes move the 93.3% is unknown
+and unknowable from here: the 22 rows have no bodies left to re-parse, so they
+cannot be repaired retroactively. The fixes stop NEW rows from being lost the
+same three ways. Said plainly rather than implied.
+
+Guard: tests/test_offered_dates.py (13 tests), built from the verbatim
+production strings. Verified non-vacuous by reverting the client renderer to
+_iso_date — 2 failed, including the end-to-end one asserting a future
+`15-Sep-26` ETA reaches the client's table.
+
+Suite 2683 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (5) — the "4 missing bookings" were 1 thread, correctly excluded
 
 CLOSED, and it was never an ingest bug. `admitted but NO win row: 4` had been

@@ -49,6 +49,10 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import core  # noqa: E402
+
 # Hilmar local tracker location (this project)
 HILMAR_ROOT = Path(__file__).resolve().parent.parent
 HILMAR_DATA = HILMAR_ROOT / "tracking-data-v2.json"
@@ -226,28 +230,19 @@ def export_from_hilmar() -> dict:
 
 
 def _parse_loose_date(s: str | None):
-    """Parse 'DD-MMM-YY' or 'YYYY-MM-DD' or 'M/D/YYYY' into a date.
-    Returns None on failure. Used by transit-time math."""
-    if not s:
-        return None
-    from datetime import datetime as _dt
-    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%d-%b-%Y", "%m/%d/%Y", "%-m/%-d/%Y"):
-        try:
-            return _dt.strptime(s, fmt).date()
-        except ValueError:
-            continue
-    # Try without leading zeros (cross-platform fallback)
-    import re as _re
-    m = _re.match(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", s)
-    if m:
-        try:
-            yr = int(m.group(3))
-            if yr < 100:
-                yr += 2000
-            return _dt(yr, int(m.group(1)), int(m.group(2))).date()
-        except ValueError:
-            pass
-    return None
+    """Kept as a name; the RULE now lives in core.offered_date.
+
+    2026-08-10: this was the THIRD parser for OL's offered ETD/ETA cells —
+    core._parse_loose_date, this one, and gen_email._iso_date — and the three
+    disagreed. The client-facing renderers held the strict ISO one, so a
+    `26-May-26` ETA counted as populated for QC-027 and was invisible in
+    Lonny's "Currently in transit" table, while THIS feed parsed it fine.
+    One field, three readers, and the one that reached the customer was wrong.
+
+    Its extra fallbacks (non-zero-padded M/D/YY) were folded into
+    core.offered_date, so nothing this module could parse before is lost.
+    """
+    return core.offered_date(s)
 
 
 def _transit_days(row: dict) -> int | None:

@@ -323,12 +323,12 @@ def _active_shipments(data, report_date):
         # haven't happened yet." Hard rule: a row is CURRENT iff it carries a
         # quoted ETA and that ETA has not passed. No ETA → not shown (also
         # kills the blank-row shape: no carrier/vessel/dates = no ETA).
-        eta = _iso_date(r.get("eta_offered"))
+        eta = core.offered_date(r.get("eta_offered"))
         if not eta or eta < report_date:
             continue
         rows.append(r)
-    rows.sort(key=lambda r: (_iso_date(r.get("etd_offered")) is None,
-                             _iso_date(r.get("etd_offered")) or date.max))
+    rows.sort(key=lambda r: (core.offered_date(r.get("etd_offered")) is None,
+                             core.offered_date(r.get("etd_offered")) or date.max))
     return rows
 
 
@@ -339,8 +339,8 @@ def _upcoming_cutoffs(active, report_date):
     horizon = report_date + timedelta(days=CUTOFF_HORIZON_DAYS)
     items = []
     for r in active:
-        doc = _iso_date(r.get("doc_cutoff"))
-        etd = _iso_date(r.get("etd_offered"))
+        doc = core.offered_date(r.get("doc_cutoff"))
+        etd = core.offered_date(r.get("etd_offered"))
         if doc and report_date <= doc <= horizon:
             items.append((doc, f"{_lane(r)} — doc cutoff {_day_label(doc)}"))
         elif etd and report_date <= etd <= horizon:

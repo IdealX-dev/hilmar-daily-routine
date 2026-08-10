@@ -630,7 +630,14 @@ def main():
         # "no.. 90 percent for all is the bare minimum". Booking-conf
         # rows now inherit ETD/vessel/rate from their corresponding
         # rate-response email.
-        needs_fields = not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
+        # eta_offered joins the trigger 2026-08-10. BACKFILL_KEYS has always
+        # been able to WRITE it, but this gate — the thing that decides whether
+        # we go looking — named only etd/vessel/rate. Every one of the 22 rows
+        # QC-027 counts as ETA-missing carries etd+vessel+rate, so every one of
+        # them failed this test and never triggered the sibling lookup that
+        # could have supplied an ETA. The field was gradeable but unreachable.
+        needs_fields = not all(parsed.get(k) for k in
+                               ("etd_offered", "eta_offered", "vessel_voyage", "ol_rate"))
         if needs_fields:
             sibling = _find_related_rate_response(r, rate_by_thread)
             if sibling:
