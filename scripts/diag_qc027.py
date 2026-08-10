@@ -331,6 +331,54 @@ def main() -> int:
             print()
         print(f"  {shown}/{min(limit, len(misses))} row(s) had a cached body to show.")
 
+        # ── EVIDENCE BEFORE VERDICT ────────────────────────────────────────
+        #
+        # Run 3 showed 0/8 — no body for ANY of them, against an index holding
+        # 1263 records. Two causes look identical from there and demand
+        # opposite fixes:
+        #
+        #   AGE-OUT   the index only holds recent mail; these rows are Apr-Jul,
+        #             their bodies are gone, and nothing can re-parse them.
+        #   KEY SHAPE source_imids and the index are keyed differently, in
+        #             which case NOTHING ever resolves — and every body-based
+        #             heal in qc_selfheal (_heal_missing_rate, _heal_containers,
+        #             _heal_undated_quote, _carrier_diag_snippet) has been
+        #             silently no-op'ing on every row, not just these.
+        #
+        # This session has already been burned three times by "one fact, two
+        # storages, and the reader holds the other one" (sent_ts vs sent,
+        # internetMessageId vs imid, LOSS vs quoted). Measure it, do not
+        # reason about it: the whole-dataset hit rate tells the two apart.
+        _rule("bodies-index reachability across ALL rows")
+        with_imids = [r for r in reachable if (r.get("source_imids") or [])]
+        hit = [r for r in with_imids
+               if any(i in bodies_idx for i in (r.get("source_imids") or []))]
+        pct = len(hit) * 100 / len(with_imids) if with_imids else 0.0
+        print(f"  reachable rows carrying >=1 source_imid : {len(with_imids)}")
+        print(f"  ...at least one imid found in the index : {len(hit)} ({pct:.1f}%)")
+        if with_imids:
+            by_m = Counter(str(r.get("request_date") or "?")[:7] for r in with_imids)
+            hit_m = Counter(str(r.get("request_date") or "?")[:7] for r in hit)
+            print("\n  hit rate by request month:")
+            for m in sorted(by_m):
+                print(f"    {m}   {hit_m.get(m, 0):>3} / {by_m[m]:<4} "
+                      f"({hit_m.get(m, 0) * 100 / by_m[m]:.0f}%)")
+        print("\n  sample source_imid values (from tracking-data):")
+        for r in with_imids[:3]:
+            for i in (r.get("source_imids") or [])[:1]:
+                print(f"    {i!r}")
+        print("\n  sample bodies-index keys:")
+        for k in list(bodies_idx)[:3]:
+            print(f"    {k!r}")
+        if pct < 5:
+            print("\n  >>> Near-zero across the WHOLE dataset. That is not age-out. "
+                  "The two key spaces do not meet, and every body-based heal in "
+                  "qc_selfheal is a no-op on every row.")
+        elif pct > 50:
+            print("\n  >>> The lookup works in general, so these particular bodies "
+                  "are genuinely absent (aged out of the index, or never stored). "
+                  "Nothing can re-parse them; only new mail can be fixed.")
+
     print("\nNOTHING WAS WRITTEN. The stored tracking data is untouched.")
     return 0
 
