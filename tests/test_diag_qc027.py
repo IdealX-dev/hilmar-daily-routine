@@ -159,6 +159,26 @@ def test_the_workflow_exposes_the_field_selector():
         "under 95% and the reason this selector exists")
 
 
+def test_a_zero_body_result_is_diagnosed_not_just_reported():
+    """Run 3 printed "0/8 row(s) had a cached body" against an index of 1263
+    records. Two causes look identical from there and need opposite fixes:
+    the bodies aged out, or the two key spaces never meet — and if it is the
+    latter, every body-based heal in qc_selfheal is a no-op on every row.
+
+    This session has already been burned three times by "one fact, two
+    storages, and the reader holds the other one". A diagnostic that reports
+    the symptom without the whole-dataset hit rate cannot tell them apart."""
+    assert "bodies-index reachability" in SRC, (
+        "a zero-body result is reported with no way to tell age-out from a "
+        "key-shape mismatch")
+    assert "sample bodies-index keys" in SRC, (
+        "the two key spaces are never shown side by side, so a mismatch "
+        "cannot be seen even when it is the cause")
+    # and it must state a verdict in BOTH directions, not only the alarming one
+    assert "That is not age-out" in SRC
+    assert "genuinely absent" in SRC
+
+
 def test_the_body_region_is_scrubbed_before_it_reaches_a_log():
     """This text goes into a CI log and is quoted into session notes. It goes
     through the same PII scrub qc_selfheal._carrier_diag_snippet uses."""
