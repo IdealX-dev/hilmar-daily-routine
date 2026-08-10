@@ -3,6 +3,63 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 — we told Lonny a shipment was booked when it was not
+
+Michael: "data missing.. you sent lonny we won no shipment last week."
+
+He is right, and the claim went out under headings that promised precisely
+what we could not support:
+
+  gen_client_email   "Booked shipments — upcoming and in transit"
+                     "Your confirmed bookings that have not yet reached…"
+  gen_client_email   "Bookings confirmed" / "Shipments confirmed on <day>"
+  gen_client_weekly  bookings, teu_booked, active_shipments
+
+Every one selected on status == "WIN" alone. A row flips to WIN on a
+SEND-SIGNAL — Lonny saying "please send" — and only becomes a real booking
+when OL issues an MDOLX confirmation. Between those two moments it is a WIN
+with nothing behind it. Both templates then rendered the reference cell as
+`mdolx_ref or "Confirmation to follow"`, which tells the customer a
+confirmation is coming when nothing says one is.
+
+WE ALREADY KNEW, WHICH IS THE WORST PART. QC-049 has flagged exactly these
+rows at ERROR severity since 2026-05: "UNCONFIRMED — flipped to WIN on a
+send-signal with no MDOLX booking confirmation linked." The internal audit
+reported them by request_id. The client-facing renderers never asked. One
+fact, two readers, and the one talking to the customer held the wrong half —
+the same shape as sent_ts/sent and LOSS/quoted, except this one left the
+building.
+
+FIXED with one predicate in one place: core.is_confirmed_win — WIN AND a
+booking reference — defined identically to QC-049's test, with a guard that
+fails if the two ever drift. Both client modules now select through it, and
+"Confirmation to follow" is gone from both.
+
+THE ASYMMETRY IS DELIBERATE and is itself pinned by a test: internal
+reporting KEEPS is_win. A send-signal win is a real business signal and the
+staff email and KPIs should count it. Only what leaves the building for
+Hilmar needs the confirmation. Narrowing the internal number to match would
+understate the desk.
+
+A TEST WAS DEFENDING THE BUG. test_active_shipments_lists_recent_wins_sorted_
+by_etd built a row with mdolx_ref=None and asserted "Booked shipments (3)"
+and that "Confirmation to follow" appeared — it encoded an unsupportable
+customer claim as expected behaviour. That is worse than having no test: it
+defends the defect during exactly the review that would otherwise catch it.
+Rewritten to assert (2) and the absence of the promise. Third test this week
+found pinning a wrong decision rather than an invariant.
+
+All four new guards verified by restoring the original selectors and watching
+them fail.
+
+STILL OPEN: Sentry QC-027 regression on 344eb1c — completeness on 329
+reachable rows, ETA 93% (WARN), Carrier 87% (ERROR, <90%). Not the same
+defect and not yet investigated. Filtering the client view to confirmed wins
+will incidentally drop some carrier-less rows from what Lonny sees, but it
+does nothing about the underlying 13%.
+
+Suite 2617 passed, 0 failed. ruff clean.
+
 ### 2026-08-07 (13) — Aug 6 was quiet. The report was right.
 
 Michael, closing the last open item: "you're right, sixth was quiet."
