@@ -3,6 +3,55 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (4) — the QC-027 numbers, measured on the live data
+
+diag-qc027 run 1 (`1dc1b26`, 340 requests / 329 reachable — the SAME row count
+the Sentry alert reported, so this is the same dataset):
+
+  field           BEFORE (old ruler)        AFTER (fixed ruler)
+  ETD             329/329  100.0%           329/329  100.0%
+  ETA             307/329   93.3%  WARN     307/329   93.3%  WARN
+  Vessel/Voyage   328/329   99.7%           328/329   99.7%
+  Rate            329/329  100.0%           329/329  100.0%
+  Carrier         319/329   97.0%           319/329   97.0%
+  POL             329/329  100.0%           329/329  100.0%
+  POD             329/329  100.0%           329/329  100.0%
+
+NO FIELD IS BELOW 90%. QC-027 would not fire an ERROR on today's data at all.
+Carrier is 97.0%, not 87%. ETA at 93.3% matches the alert's "ETA=93% (WARN)"
+exactly — same dataset, and the only field still under 95%.
+
+CORRECTION TO MY OWN ACCOUNT. I expected the diag to show the heals lifting
+Carrier from ~87% to something higher. It does not: BEFORE == AFTER on every
+field, and the run applied 1 fix, 0 of them touching a QC-027 field. The reason
+is that the STORED state is already healed — QC-056's backfills persist to
+tracking-data, so a later run has nothing left to repair. The diag cannot
+reproduce the alert-day reading, because the data it would have read no longer
+exists. That is a real limitation of this diagnostic and is now written into
+the script rather than left for the next reader to trip over.
+
+What the ordering defect actually cost is therefore this, and only this: on a
+day when unhealed rows ARRIVE, QC-027 reported the pre-heal number and paged
+Michael for a shortfall the same run was already fixing. The page was real; the
+shortfall was transient. [Likely, not proven] the 87% was one such reading —
+33 carriers separate 87% from 97% on 329 rows, and nothing in the stored state
+records when they were filled.
+
+"IT USED TO WORK" — ANSWERED FROM THE DATA. The 10 rows still missing a carrier
+are 9 from April 2026 and 1 from May. NONE from June, July or August. Nothing
+recent is failing; the misses are old rows that predate the current parser, and
+every month since is clean. There is no new regression to find.
+
+A PREDICTION OF MINE THAT THE DATA REFUTED: I wrote that rows reachable by
+etd_offered or vessel_voyage alone would sit inside QC-027's denominator and
+outside QC-056's reach, since QC-056 only looks at rows WITH a rate. That
+bucket is EMPTY — all 10 stragglers have a rate and are squarely QC-056's
+target; the parser simply finds no carrier token in them. PDF-only rows are
+also 0. The gap I named in advance does not exist in this dataset.
+
+REMAINING, not urgent and not new: ETA at 93.3% is a WARN (307/329, 22 rows).
+It was a WARN in the alert too. Not touched this session.
+
 ### 2026-08-10 (3) — QC-027 graded the rows before the heals repaired them
 
 Michael, on the daily Sentry page: "you have to fix this.. it used to work..
