@@ -128,6 +128,37 @@ def test_it_never_writes_state():
             f"diag_qc027 calls {forbidden}() — it must only read")
 
 
+def test_the_residual_analysis_is_not_hardwired_to_one_field():
+    """A residual analysis hardwired to carrier_quoted can only ever answer the
+    question that was already answered. With Carrier resolved at 97.0%, ETA is
+    the only field left under 95% (307/329) and this section could not look at
+    it."""
+    assert "DIAG_FIELD" in SRC, "the analysed field is not selectable"
+    tail = SRC.split("who is still missing", 1)[-1]
+    assert 'r.get(field)' in tail, (
+        "the miss list still reads a hardcoded field name rather than the "
+        "selected one")
+
+
+def test_an_unknown_field_is_refused_rather_than_silently_reporting_zero():
+    """`not r.get("etaoffered")` is True for every row, so a typo would report
+    100% of rows missing a field that does not exist — a confident, wrong
+    answer. Refuse instead."""
+    valid = {f for f, _lbl in QC.QC027_FIELDS}
+    assert "eta_offered" in valid and "carrier_quoted" in valid
+    assert "is not a QC-027 field" in SRC, (
+        "an unrecognised DIAG_FIELD is not rejected; a typo would produce a "
+        "full-looking report about nothing")
+
+
+def test_the_workflow_exposes_the_field_selector():
+    wf = (ROOT / ".github/workflows/diag-qc027.yml").read_text(encoding="utf-8")
+    assert "DIAG_FIELD" in wf, "the workflow cannot select a field"
+    assert "eta_offered" in wf, (
+        "eta_offered is not offered as a choice — it is the field currently "
+        "under 95% and the reason this selector exists")
+
+
 def test_it_documents_that_it_cannot_replay_the_alert_day():
     """Run 1 came back BEFORE == AFTER with Carrier at 97%, not the 87% that
     was paged — because QC-056's backfills persist, so the stored state a later

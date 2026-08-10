@@ -169,11 +169,23 @@ def main() -> int:
         print(">>> No field below 90% once the heals have run. The ERROR page was "
               "the ruler, not the data.")
 
-    # ── who is still missing a carrier, and why ────────────────────────────
+    # ── who is still missing the field under investigation, and why ────────
+    #
+    # DIAG_FIELD, default carrier_quoted — the field that was paging. 2026-08-10:
+    # with Carrier resolved at 97.0%, ETA is the only field left under 95%
+    # (307/329, 93.3%) and this section could not look at it. A residual
+    # analysis hardwired to one field can only ever answer one question.
+    field = (os.environ.get("DIAG_FIELD") or "carrier_quoted").strip()
+    valid = {f for f, _lbl in QC.QC027_FIELDS}
+    if field not in valid:
+        print(f"::error::DIAG_FIELD={field!r} is not a QC-027 field. "
+              f"Choose one of: {', '.join(sorted(valid))}")
+        return 2
+
     active = QC.qc027_active_rows(healed)
     reachable = [r for r in active if QC.qc027_is_reachable(r)]
-    misses = [r for r in reachable if not r.get("carrier_quoted")]
-    _rule(f"rows still missing carrier_quoted: {len(misses)}")
+    misses = [r for r in reachable if not r.get(field)]
+    _rule(f"rows still missing {field}: {len(misses)}")
 
     # THE question behind "it used to work": are these new rows, or old ones?
     by_month = Counter(str(r.get("request_date") or "?")[:7] for r in misses)
@@ -184,17 +196,32 @@ def main() -> int:
             print(f"    {m}   {by_month[m]:>3} / {all_by_month[m]:<4} "
                   f"({by_month[m] * 100 / all_by_month[m]:.0f}% of the month)")
 
-    # Why each is unhealed. QC-056 only ever looks at rows WITH a rate, so a
-    # row reachable by ETD or vessel alone is in the denominator of the check
-    # and outside the reach of the heal.
     reasons = Counter()
-    for r in misses:
-        if r.get("ol_rate"):
-            reasons["has a rate — QC-056's target, parser found no carrier"] += 1
-        elif r.get("etd_offered") or r.get("vessel_voyage"):
-            reasons["no rate — reachable by ETD/vessel, OUTSIDE QC-056's scope"] += 1
-        else:
-            reasons["unclassified"] += 1
+    if field == "carrier_quoted":
+        # QC-056 only ever looks at rows WITH a rate, so a row reachable by ETD
+        # or vessel alone is in the denominator of the check and outside the
+        # reach of the heal.
+        for r in misses:
+            if r.get("ol_rate"):
+                reasons["has a rate — QC-056's target, parser found no carrier"] += 1
+            elif r.get("etd_offered") or r.get("vessel_voyage"):
+                reasons["no rate — reachable by ETD/vessel, OUTSIDE QC-056's scope"] += 1
+            else:
+                reasons["unclassified"] += 1
+    else:
+        # WHICH SIBLING FIELDS DID PARSE. This is the whole diagnosis for a
+        # field with no dedicated healer: if the row carries an ETD and a rate
+        # but no ETA, the rate table WAS read and one cell was missed — a
+        # parser gap on a reachable body. If nothing else parsed either, the
+        # body was never usable and the gap is upstream of the parser.
+        for r in misses:
+            others = [lbl for f, lbl in QC.QC027_FIELDS if f != field and r.get(f)]
+            if len(others) >= len(QC.QC027_FIELDS) - 1:
+                reasons["every OTHER graded field parsed — one cell missed"] += 1
+            elif others:
+                reasons[f"partial parse — has {', '.join(others)}"] += 1
+            else:
+                reasons["nothing else parsed either — body unusable"] += 1
     print("\n  why they are still blank:")
     for why, n in reasons.most_common():
         print(f"    {n:>4}  {why}")
@@ -203,10 +230,11 @@ def main() -> int:
     print(f"\n  first {min(limit, len(misses))}:")
     for r in misses[:limit]:
         sig = "+".join(k for k, v in (("etd", r.get("etd_offered")),
+                                      ("eta", r.get("eta_offered")),
                                       ("vessel", r.get("vessel_voyage")),
                                       ("rate", r.get("ol_rate"))) if v)
         print(f"    {str(r.get('request_id')):<26} {str(r.get('status')):<8} "
-              f"{str(r.get('request_date') or '?'):<11} via={sig:<18} "
+              f"{str(r.get('request_date') or '?'):<11} has={sig:<22} "
               f"{_short(r.get('lane'), 32)}")
     if len(misses) > limit:
         print(f"    … and {len(misses) - limit} more (raise DIAG_LIST)")
