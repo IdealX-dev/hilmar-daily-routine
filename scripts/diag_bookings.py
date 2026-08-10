@@ -325,11 +325,28 @@ def main() -> int:
             print("\n  q2-MISS + NOT-staged = a confirmation sitting in the "
                   "mailbox that the bookings query never asked for.")
 
+    # COUNT BOOKINGS, NOT EMAILS. 2026-08-10: this block reported "admitted
+    # but NO win row: 4" and the next line told the reader the loss was in
+    # ingest. Both halves were wrong. The four were FOUR MESSAGES OF ONE
+    # THREAD — a single MDOLX, 260821 — and the pipeline dedupes to one
+    # booking per MDOLX (Michael's rule: 1 MDOLX = 1 win). A count in emails
+    # against a pipeline that counts in bookings inflates every number here
+    # and turns one correctly-excluded thread into a four-booking crisis.
+    def _mdolx_of(verdict: str) -> str:
+        return verdict.split("mdolx=", 1)[-1]
+
+    admitted_mdolx = {_mdolx_of(v) for _d, _r, v in admitted}
+    missing_mdolx: dict[str, tuple] = {}
+    for d, mdolx, r in missing:
+        missing_mdolx.setdefault(mdolx, (d, r))
+
     _rule("verdict")
-    print(f"staged booking confirmations : {len(bookings)}")
-    print(f"  dropped by a gate          : {len(dropped)}")
-    print(f"  admitted                   : {len(admitted)}")
-    print(f"  admitted but NO win row    : {len(missing)}")
+    print(f"staged booking messages      : {len(bookings)}")
+    print(f"  dropped by a gate          : {len(dropped)} message(s)")
+    print(f"  admitted                   : {len(admitted)} message(s) "
+          f"= {len(admitted_mdolx)} booking(s)")
+    print(f"  admitted but NO win row    : {len(missing)} message(s) "
+          f"= {len(missing_mdolx)} booking(s)")
     if dropped:
         print("\nIf any DROPPED line above is a real Hilmar booking, the gate "
               "that names it is too tight — that is the bug, and the gate name "
@@ -342,10 +359,32 @@ def main() -> int:
         # has. The verdict block is the part that gets read — so the verdict
         # block carries the evidence.
         print("\n  the ones with NO row:")
-        for d, mdolx, r in missing:
-            print(f"    MDOLX{mdolx}  staged {d}")
+        for mdolx, (d, r) in sorted(missing_mdolx.items()):
+            n_msgs = sum(1 for _d, m, _r in missing if m == mdolx)
+            print(f"    MDOLX{mdolx}  first staged {d}  ({n_msgs} message(s))")
             print(f"        {_short(r.get('subject'), 100)}")
-        print("\nIf any MDOLX above has no row, the loss is AFTER the gates: "
+            # BEFORE calling this an ingest bug, check whether the pipeline
+            # already knows this thread belongs to someone else. MDOLX260821
+            # read as "admitted" on ten messages titled "Hilmar, CA to La
+            # Guaira" — but "Hilmar" there is the ORIGIN CITY, and a sibling
+            # message in the same thread says "Agri Dairy Vendor Reference
+            # PO00-26002163". is_hilmar is `"HILMAR" in subject`, so an
+            # origin-city match is indistinguishable from a customer tag.
+            # No row is the CORRECT outcome for another customer's cargo that
+            # happens to load in the town of Hilmar.
+            siblings = [(dd, vv) for dd, rr, vv in dropped
+                        if mdolx in str(rr.get("subject") or "")
+                        or mdolx in str(rr.get("summary_preview") or "")]
+            if siblings:
+                reasons = sorted({v.split(":", 1)[-1] for _dd, v in siblings
+                                  if v.startswith("DROPPED out_of_scope")})
+                if reasons:
+                    print(f"        ^ {len(siblings)} sibling message(s) in this "
+                          f"thread WERE gated out_of_scope: {', '.join(reasons)}")
+                    print("          → almost certainly another customer's move. "
+                          "No row is correct; this is not a lost win.")
+        print("\nA rowless MDOLX with NO out-of-scope sibling is the real "
+              "signal: the loss is AFTER the gates, and "
               "link_bookings_to_requests built neither a match nor a "
               "standalone. That is ingest, not intake.")
     if bookings and not dropped and not missing:

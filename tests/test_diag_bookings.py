@@ -118,8 +118,39 @@ def test_the_verdict_names_the_bookings_with_no_row():
     assert "the ones with NO row" in tail, (
         "the verdict reports a COUNT of rowless bookings without naming them — "
         "the number is unactionable and the names scroll out of reach")
-    assert "for d, mdolx, r in missing" in tail, (
-        "nothing iterates `missing` in the verdict block, so no MDOLX is printed")
+    assert "MDOLX{mdolx}" in tail, (
+        "no MDOLX is printed in the verdict block, so the count stays "
+        "unactionable no matter which collection it iterates")
+
+
+def test_the_verdict_counts_bookings_not_just_messages():
+    """1 MDOLX = 1 win, so a count in EMAILS is a count in the wrong unit.
+
+    2026-08-10 this printed "admitted but NO win row: 4" and the next line
+    said the loss was in ingest. Both halves were wrong: the four were four
+    messages of ONE thread (MDOLX260821), and no row was the CORRECT outcome —
+    a sibling message in that thread reads "Agri Dairy Vendor Reference
+    PO00-26002163". The subject says "Hilmar, CA to La Guaira" because Hilmar
+    is the ORIGIN CITY, and is_hilmar is `"HILMAR" in subject`, so an
+    origin-city match is indistinguishable from a customer tag."""
+    tail = SRC.split("_rule(\"verdict\")", 1)[-1]
+    assert "booking(s)" in tail, (
+        "the verdict still reports message counts only; against a pipeline "
+        "that dedupes to one booking per MDOLX, every number here is inflated")
+    assert "missing_mdolx" in tail, "rowless bookings are not deduped by MDOLX"
+
+
+def test_the_verdict_checks_for_an_out_of_scope_sibling_before_blaming_ingest():
+    """The false alarm that cost a session. A rowless MDOLX whose thread has
+    out-of-scope siblings is another customer's move, correctly excluded — not
+    a lost win. The diagnostic must say so instead of pointing at ingest."""
+    tail = SRC.split("_rule(\"verdict\")", 1)[-1]
+    assert "sibling" in tail, (
+        "nothing checks whether a rowless MDOLX has out-of-scope siblings, so "
+        "a correctly-excluded thread still reads as an ingest bug")
+    assert "not a lost win" in tail
+    assert "NO out-of-scope sibling is the real" in tail, (
+        "the ingest verdict is still stated unconditionally")
 
 
 def test_it_is_read_only():

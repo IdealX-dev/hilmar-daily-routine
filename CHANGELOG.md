@@ -3,6 +3,57 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (5) — the "4 missing bookings" were 1 thread, correctly excluded
+
+CLOSED, and it was never an ingest bug. `admitted but NO win row: 4` had been
+printed on three separate runs across this session and never resolved, because
+the MDOLX numbers were logged ~300 lines up, above a 200-line mailbox scan, off
+the end of every log fetch. Fixed that first (see below), then read them:
+
+  MDOLX260821  staged 2026-07-13, -14, -20, -20
+      RE: Hilmar, CA to La Guaira, Venezuela - S38083 / MDOLX260821 -
+      Puerto Cabello. / EBKG17621387
+
+ALL FOUR ARE THE SAME MDOLX. Not four bookings — four messages of one thread.
+The pipeline dedupes to one booking per MDOLX (Michael: "1 MDOLX = 1 win"), so
+the verdict block was counting in emails against a pipeline that counts in
+bookings, and inflating every number in it.
+
+AND THE ONE BOOKING IS NOT A LOST WIN. From the deep trace, a sibling message
+in the same thread:
+
+  2026-07-22  gate=out_of_scope:numidia
+      RE: MDOLX260821_Load appointment needed for 1 x 40' HC /
+      Agri Dairy Vendor Reference PO00-26002163 / 93348…
+
+MDOLX260821 is AGRI DAIRY cargo. The subject says "Hilmar, CA" because Hilmar,
+California is the ORIGIN CITY — not because Hilmar Ingredients is the customer.
+No Hilmar win row is the CORRECT outcome. [Certain, from the emails.]
+
+WHY IT READ AS ADMITTED. ingest's client test is
+`is_hilmar = "HILMAR" in subject.upper()` (ingest.py:679). An origin-city match
+is indistinguishable from the "// HILMAR" customer tag, so ten messages of
+another customer's thread passed that gate. The comment on that line already
+records the same failure in 2026-05-17 with NUMIDIA. NOT CHANGED HERE — the
+gate is doing the job it was narrowed to do, the out-of-scope rule catches the
+thread elsewhere, and the outcome is right. Recorded so the next session knows
+the signal is weak rather than rediscovering it.
+
+DECISION — fix the diagnostic, not the pipeline. Two changes to diag_bookings:
+  - the verdict counts MESSAGES **and** BOOKINGS, so a ten-message thread stops
+    reading as ten findings
+  - before blaming ingest, it checks whether a rowless MDOLX has siblings gated
+    out_of_scope, and says "another customer's move, this is not a lost win"
+    instead of "the loss is AFTER the gates… that is ingest, not intake"
+That second line is what sent me chasing a defect that does not exist. A
+diagnostic that states one cause unconditionally is not a diagnostic.
+
+Also fixed en route: the rowless MDOLX numbers are now printed in the VERDICT
+block, not only where they are found. A finding that scrolls out of reach is a
+finding nobody has — this one survived three measurements that way.
+
+Suite 2661 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (4) — the QC-027 numbers, measured on the live data
 
 diag-qc027 run 1 (`1dc1b26`, 340 requests / 329 reachable — the SAME row count
