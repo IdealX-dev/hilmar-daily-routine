@@ -35,6 +35,10 @@ on:
         description: "How many residual rows to print"
         required: false
         default: "25"
+      bodies:
+        description: "Also print the body text the parse failed on (scrubbed)"
+        required: false
+        default: "0"
 
 permissions:
   contents: read
@@ -71,4 +75,5 @@ jobs:
         env:
           DIAG_FIELD: ${{ inputs.field }}
           DIAG_LIST: ${{ inputs.list }}
+          DIAG_BODIES: ${{ inputs.bodies }}
         run: python3 scripts/diag_qc027.py

@@ -159,6 +159,50 @@ def test_the_workflow_exposes_the_field_selector():
         "under 95% and the reason this selector exists")
 
 
+def test_the_body_region_is_scrubbed_before_it_reaches_a_log():
+    """This text goes into a CI log and is quoted into session notes. It goes
+    through the same PII scrub qc_selfheal._carrier_diag_snippet uses."""
+    assert "_scrub_string" in SRC, (
+        "body text is printed without the scrub the carrier snippet applies")
+
+
+def test_the_body_region_anchors_on_the_rows_own_etd():
+    """All 22 ETA misses carry an ETD, so the two dates sit in the SAME table
+    row — the ETD value names the exact line whose sibling cell went missing.
+    Keyword hints alone would show six unrelated date lines."""
+    rows = [{"source_imids": ["<a>"], "etd_offered": "2026-06-19"}]
+    bodies = {"<a>": {"text_body": "\n".join([
+        "Dear team, please see below",
+        "MAERSK SEALAND 123 / 2026-06-19 / Oakland / Yokohama / $3,150",
+        "unrelated line about invoices",
+    ])}}
+    got = D._field_region(rows[0], bodies, "eta_offered")
+    assert any("2026-06-19" in line for line in got), (
+        f"the row's own ETD did not anchor the region: {got}")
+
+
+def test_the_body_region_is_empty_rather_than_wrong_when_no_body_is_cached():
+    """A missing body must read as missing. Inventing a region from the row's
+    own fields would show the parser text that never existed."""
+    assert D._field_region({"source_imids": ["<gone>"]}, {}, "eta_offered") == []
+    assert D._field_region({}, {}, "eta_offered") == []
+
+
+def test_the_body_dump_is_opt_in():
+    """Default output stays compact; the bodies are a second, deliberate ask."""
+    assert "DIAG_BODIES" in SRC
+    wf = (ROOT / ".github/workflows/diag-qc027.yml").read_text(encoding="utf-8")
+    assert "DIAG_BODIES" in wf
+    assert 'default: "0"' in wf, "the body dump defaults to ON"
+
+
+def test_there_is_one_html_flattener_not_two():
+    """Two flatteners drift, and then they disagree about what the parser
+    'saw' — which is the only thing this diagnostic exists to report."""
+    assert "from diag_bookings import _plain" in SRC, (
+        "diag_qc027 has grown its own HTML-to-text conversion")
+
+
 def test_it_documents_that_it_cannot_replay_the_alert_day():
     """Run 1 came back BEFORE == AFTER with Carrier at 97%, not the 87% that
     was paged — because QC-056's backfills persist, so the stored state a later
