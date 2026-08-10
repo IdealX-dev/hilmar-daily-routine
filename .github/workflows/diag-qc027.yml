@@ -18,8 +18,21 @@ name: Diagnose QC-027 completeness
 on:
   workflow_dispatch:
     inputs:
+      field:
+        description: "Which QC-027 field to analyse the residual misses of"
+        required: false
+        default: "carrier_quoted"
+        type: choice
+        options:
+          - carrier_quoted
+          - eta_offered
+          - etd_offered
+          - vessel_voyage
+          - ol_rate
+          - pol
+          - pod
       list:
-        description: "How many residual no-carrier rows to print"
+        description: "How many residual rows to print"
         required: false
         default: "25"
 
@@ -56,5 +69,6 @@ jobs:
 
       - name: Measure
         env:
+          DIAG_FIELD: ${{ inputs.field }}
           DIAG_LIST: ${{ inputs.list }}
         run: python3 scripts/diag_qc027.py
