@@ -1064,6 +1064,33 @@ def is_win(r: dict) -> bool:
     return (r or {}).get("status") == "WIN"
 
 
+def is_confirmed_win(r: dict) -> bool:
+    """True if row is a win WITH a booking confirmation behind it.
+
+    THE PREDICATE FOR ANYTHING WE TELL THE CUSTOMER. `is_win` is the internal
+    business signal — a row flips to WIN on a send-signal, which is the right
+    call for our own KPIs and the wrong one for a claim to Hilmar.
+
+    2026-08-10, Michael: "data missing.. you sent lonny we won no shipment
+    last week." He is right and it was a promise we had not earned. The client
+    weekly counted bookings as `is_win`, and both client templates rendered
+    `mdolx_ref or "Confirmation to follow"` under headings reading "Your
+    confirmed bookings" and "Shipments confirmed". A row with no MDOLX
+    reference has no booking confirmation — printing "Confirmation to follow"
+    beside it tells the customer one is coming when nothing says it is.
+
+    The definition is deliberately IDENTICAL to QC-049's, which has flagged
+    exactly these rows internally as "UNCONFIRMED — flipped to WIN on a
+    send-signal with no MDOLX booking confirmation linked" at ERROR severity
+    since 2026-05. We knew. The client-facing renderers just never asked.
+    Keep the two definitions in step: if QC-049's changes, change this.
+    """
+    if not is_win(r):
+        return False
+    r = r or {}
+    return bool(r.get("mdolx_ref") or r.get("mdolx_refs_all"))
+
+
 def is_pending(r: dict) -> bool:
     """True if row is still pending. Same spelling in both forms — see is_win."""
     return (r or {}).get("status") == "PENDING"

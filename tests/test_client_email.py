@@ -282,10 +282,19 @@ def test_active_shipments_lists_recent_wins_sorted_by_etd():
              eta_offered=(rd + timedelta(days=40)).isoformat()),
     ]}
     html = gce.build_body(data, {})
-    assert "Booked shipments — upcoming and in transit (3)" in html
+    # TWO, not three. `w-noref` is a WIN with no MDOLX reference — a
+    # send-signal win with no booking confirmation behind it.
+    #
+    # 2026-08-10: this test used to assert (3) and that "Confirmation to
+    # follow" appeared, i.e. it PINNED the defect. Michael: "you sent lonny we
+    # won no shipment last week." A test that encodes an unsupportable claim to
+    # a customer as expected behaviour is worse than no test — it defends the
+    # bug during exactly the review that would otherwise catch it. See
+    # core.is_confirmed_win and tests/test_client_claims_confirmed_only.py.
+    assert "Booked shipments — upcoming and in transit (2)" in html
     assert "MDOLX-E1" in html and "MDOLX-L8" in html
     assert "MDOLX-OLD" not in html                 # outside the 14-day window
-    assert "Confirmation to follow" in html        # booking ref not yet issued
+    assert "Confirmation to follow" not in html    # never promise what we lack
     assert "MSC AURORA 331E" in html               # vessel column
     assert html.index("MDOLX-E1") < html.index("MDOLX-L8")  # ETD ascending
     assert f'bgcolor="{gce.STRIPE_BG}"' in html    # alternating row striping

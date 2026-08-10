@@ -232,7 +232,14 @@ def _client_sections(data, report_date):
         # put that row in "Bookings confirmed" AND "Awaiting your decision" in
         # the SAME client email — the most expensive place to contradict
         # ourselves. Require the PERSISTED outcome to still be WIN.
-        if r.get("status") != "WIN":
+        # ...and require an actual BOOKING CONFIRMATION, not just the status.
+        # 2026-08-10, Michael: "you sent lonny we won no shipment last week."
+        # The paragraph above got half of this right in July — a transition is
+        # not a booking — but still trusted status alone. A row with no MDOLX
+        # reference has nothing confirming it, and this section is headed
+        # "Bookings confirmed". QC-049 has flagged exactly these rows at ERROR
+        # internally since 2026-05; the client renderer never asked.
+        if not core.is_confirmed_win(r):
             continue
         if h.get("to") == "WIN" and id(r) not in seen:
             seen.add(id(r))
@@ -301,7 +308,9 @@ def _active_shipments(data, report_date):
     exactly what the client tracks daily."""
     rows = []
     for r in data.get("requests", []):
-        if r.get("status") != "WIN":
+        # CONFIRMED bookings only — the heading says "Your confirmed bookings".
+        # See core.is_confirmed_win.
+        if not core.is_confirmed_win(r):
             continue
         # Never surface an unresolved-lane booking to the client (2026-07-14).
         if not _lane_resolved(r):
@@ -643,7 +652,7 @@ def build_body(data, cfg, now=None):
         [[
             _lane(r),
             r.get("carrier_won") or r.get("carrier_quoted") or "—",
-            r.get("mdolx_ref") or "Confirmation to follow",
+            r.get("mdolx_ref") or (r.get("mdolx_refs_all") or ["—"])[0],
             r.get("vessel_voyage") or "—",
             r.get("etd_offered") or "—",
             r.get("eta_offered") or "—",
@@ -697,7 +706,7 @@ def build_body(data, cfg, now=None):
             _lane(r),
             f"{r.get('containers') or '—'} / {_teu(r)} TEU",
             r.get("carrier_won") or r.get("carrier_quoted") or "—",
-            r.get("mdolx_ref") or "Confirmation to follow",
+            r.get("mdolx_ref") or (r.get("mdolx_refs_all") or ["—"])[0],
             r.get("etd_offered") or "—",
             r.get("eta_offered") or "—",
         ] for r in s["bookings"]],

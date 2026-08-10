@@ -139,7 +139,11 @@ def client_sections(data, start: date, end: date) -> dict:
     week = [r for r in rows if _in_period(r, start, end)]
 
     requests = [r for r in week if _lane_resolved(r)]
-    bookings = [r for r in week if core.is_win(r) and _lane_resolved(r)]
+    # CONFIRMED wins only. A row flips to WIN on a send-signal; without an
+    # MDOLX booking reference there is no confirmation behind it, and calling
+    # it a booking to the customer is a claim we cannot support. Michael
+    # 2026-08-10: "you sent lonny we won no shipment last week."
+    bookings = [r for r in week if core.is_confirmed_win(r) and _lane_resolved(r)]
     # "Awaiting your decision" — we quoted, the customer has not booked.
     open_quotes = [
         r for r in rows
@@ -163,8 +167,9 @@ def volume_trend(data, end: date, weeks: int = TREND_WEEKS) -> list[dict]:
             "label": range_label(mon, fri),
             "requests": len(wk),
             "teu": _teu_sum(wk),
-            "bookings": sum(1 for r in wk if core.is_win(r)),
-            "teu_booked": _teu_sum([r for r in wk if core.is_win(r)], won=True),
+            "bookings": sum(1 for r in wk if core.is_confirmed_win(r)),
+            "teu_booked": _teu_sum(
+                [r for r in wk if core.is_confirmed_win(r)], won=True),
         })
     return out
 
@@ -174,7 +179,7 @@ def active_shipments(data, end: date):
     cutoff can still be upcoming for."""
     out = []
     for r in data.get("requests") or []:
-        if not (core.is_win(r) and _lane_resolved(r)):
+        if not (core.is_confirmed_win(r) and _lane_resolved(r)):
             continue
         eta = _iso_date(r.get("eta_offered"))
         if eta and eta < end:
@@ -280,7 +285,10 @@ def build_body(data, cfg, start: date, end: date, now=None) -> str:
         ["Lane", "Booking ref", "Equipment", "TEU", "Vessel", "ETD", "ETA"],
         [[
             _lane(r),
-            r.get("mdolx_ref") or "Confirmation to follow",
+            # is_confirmed_win guarantees a ref; the fallback is a guard, not
+            # a promise — "Confirmation to follow" told the customer one was
+            # coming when nothing said it was.
+            r.get("mdolx_ref") or (r.get("mdolx_refs_all") or ["—"])[0],
             r.get("containers") or "—",
             str(r.get("teu_won") or r.get("teu_requested") or 0),
             r.get("vessel_voyage") or "—",
