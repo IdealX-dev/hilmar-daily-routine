@@ -52,9 +52,18 @@ DEMURRAGE = ("MDOLX260769_ *ORIGIN EXPORT DEMURRAGE INVOICE // HILMAR - "
 
 
 def _row(subject, sent, imid="<x>"):
+    """A staged row EXACTLY as refresh_stage.build_stage_record emits one.
+
+    2026-08-10: this fixture used to carry `"is_hilmar": True`, which is not a
+    key production ever writes — an AST walk over every scripts/*.py finds ZERO
+    writes to it, so `row.get("is_hilmar")` is always None on a real row and
+    ingest falls through to `"HILMAR" in subject.upper()`. Setting it here
+    short-circuited that line, so all seven of these tests ran against a client
+    gate the pipeline never uses. Dropped, so the real predicate is exercised;
+    every subject below carries a HILMAR token and still passes.
+    """
     return {"bucket": "mbd_inbound", "subject": subject, "sent": sent,
-            "received": sent, "imid": imid, "summary_preview": "",
-            "is_hilmar": True}
+            "received": sent, "imid": imid, "summary_preview": ""}
 
 
 def test_the_confirmation_wins_over_the_earlier_ops_message():

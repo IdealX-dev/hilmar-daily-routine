@@ -3781,9 +3781,14 @@ def phase_6_rules(log: Log, data: dict):
         log.warn(f"QC-032: check failed with exception: {_e}")
 
     # QC-030: transit-time data coverage. ETD + ETA together yield transit
-    # days — Hilmar's carrier-comparison metric. We need both fields populated
-    # on ≥80% of WIN/Q&L rows to produce a useful Carrier Rate + Transit
-    # Ranges table in the daily rate intelligence section.
+    # days — Hilmar's carrier-comparison metric, feeding the Carrier Rate +
+    # Transit Ranges table in the daily rate intelligence section.
+    #
+    # Thresholds, as ACTUALLY enforced below: ERROR under 70%, WARN under 85%.
+    # The rows measured are WIN and LOSS with a response_timestamp. (Until
+    # 2026-08-10 this comment said "≥80% of WIN/Q&L rows" — neither the
+    # threshold nor the status set the code uses. A comment that misstates the
+    # gate it sits on is how an operator reads a passing 82% as a failure.)
     try:
         _eligible = [r for r in requests
                      if r.get("status") in ("WIN", "LOSS")
