@@ -1,0 +1,60 @@
+name: Diagnose QC-027 completeness
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-10. QC-027 pages "Carrier=87% (ERROR <90%)" every day and Michael:
+# "you have to fix this.. it used to work.. don't know what you did."
+#
+# The measurement ran ahead of QC-056 (which backfills carrier_quoted) and
+# QC-064 (which nulls garbage out of it), so the number described a state that
+# did not survive its own run. That ordering is fixed. This answers the part a
+# unit test cannot: what the real number becomes on the real 300-odd rows, and
+# which rows are still blank after every heal has run.
+#
+# READ-ONLY: pulls state and runs the QC in memory on a deep copy. No blob
+# write, no send, no mutation. (It does overwrite the runner's working copy of
+# state — see diag_day.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      list:
+        description: "How many residual no-carrier rows to print"
+        required: false
+        default: "25"
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: Before vs after the heals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # azure-storage-blob named explicitly — it is deliberately absent from
+        # requirements.txt; see tests/test_diag_day.py.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Measure
+        env:
+          DIAG_LIST: ${{ inputs.list }}
+        run: python3 scripts/diag_qc027.py
