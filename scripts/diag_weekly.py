@@ -230,7 +230,11 @@ def main() -> int:
         if wd and wd >= cutoff:
             jumped.append((wd, r))
     print(f"  {len(jumped)} row(s)")
-    for wd, r in sorted(jumped)[:20]:
+    # key= because bare sorted() on (date, dict) tuples compares the DICTS on
+    # tied dates and TypeErrors — which is exactly how run 2 died one line
+    # after announcing "9 row(s)", withholding the nine answers it existed
+    # to print.
+    for wd, r in sorted(jumped, key=lambda t: (t[0], str(t[1].get("request_id"))))[:20]:
         print(f"\n  {r.get('request_id')}  mdolx={r.get('mdolx_ref')}  "
               f"win_event={wd}  request_date={r.get('request_date')}")
         print(f"      booking_ts={r.get('booking_timestamp')!r}")
