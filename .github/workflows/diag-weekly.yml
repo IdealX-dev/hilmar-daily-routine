@@ -1,0 +1,65 @@
+name: Diagnose the weekly table
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-10, Michael on the dashboard's W24-W33 table: "this is absurd..
+# your data is consistently wrong. where it used to be correct before we did
+# formatting changes."
+#
+# Prints the ground under every cell: staged bucket counts per ET day (did OL
+# quote replies ever come back after the Aug 7 Reno fix), the rollup through
+# gen_dashboard.wow_bars itself, wins by request-week vs win-event week, the
+# row behind every recent-week cell, and misfile flags (premature no-response
+# losses, quoted-without-timestamp, teu_won=0 wins).
+#
+# READ-ONLY: pulls state and prints. No blob write, no send, no mutation.
+# (It does overwrite the runner's working copy of state — see diag_day.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      weeks:
+        description: "How many weeks of the rollup to print"
+        required: false
+        default: "10"
+      row_weeks:
+        description: "How many recent weeks to dump row by row"
+        required: false
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  decompose:
+    name: The table, decomposed to rows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # azure-storage-blob named explicitly — it is deliberately absent from
+        # requirements.txt; see tests/test_diag_day.py.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Decompose
+        env:
+          DIAG_WEEKS: ${{ inputs.weeks }}
+          DIAG_ROW_WEEKS: ${{ inputs.row_weeks }}
+        run: python3 scripts/diag_weekly.py
