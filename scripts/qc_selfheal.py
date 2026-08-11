@@ -425,6 +425,13 @@ def _stamp_response_time_from_bodies(r: dict, bodies_idx: dict, imid: str | None
         # reading only "sent" would leave those rows undated for a reason
         # that has nothing to do with the data being missing.
         sent = _body_send_time(rec)
+        # 2026-08-11: "the OL message its rate was parsed from" has to BE an
+        # OL message. On a rebuilt request row, source_imids is the ask
+        # itself, and stamping the ask's own send time manufactured the
+        # resp==req same-day quotes that filled W31/W32 with phantom Q&L.
+        if not core.quote_evidence_ok(rec.get("sender_email"), sent,
+                                      r.get("request_timestamp")):
+            continue
         if sent:
             r["response_timestamp"] = sent
             return True
@@ -497,7 +504,16 @@ def _heal_missing_rate(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> N
     if not r.get("carrier_quoted"):
         return  # nothing to anchor against
     for imid in (r.get("source_imids") or []):
-        body = (bodies_idx.get(imid) or {}).get("text_body") or ""
+        rec = bodies_idx.get(imid) or {}
+        # 2026-08-11: only an OL-authored message sent AFTER the ask may be
+        # mined for a rate. Lonny's new ask quotes the previous rate sheet
+        # below it, and mining the ask body "recovered" last cycle's rate
+        # onto this cycle's request — one link in the phantom-Q&L chain.
+        if not core.quote_evidence_ok(rec.get("sender_email"),
+                                      _body_send_time(rec),
+                                      r.get("request_timestamp")):
+            continue
+        body = rec.get("text_body") or ""
         if not body or " | " not in body:
             continue
         try:

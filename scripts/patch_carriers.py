@@ -82,6 +82,11 @@ def _load_stage_subjects_by_mdolx() -> dict[str, list[str]]:
 #: refresh_stage.py:546 has always written this; nothing read it until
 #: 2026-07-30, which is why rate recovered here never carried a response time.
 _SENT_BY_IMID: dict[str, str] = {}
+#: imid -> the email's sender, harvested alongside. 2026-08-11: a recovered
+#: quote's evidence must be OL-AUTHORED — on a rebuilt request row the
+#: source_imids include Lonny's own ask, whose body quotes the PREVIOUS rate
+#: sheet, and stamping from it manufactured same-day phantom quotes.
+_SENDER_BY_IMID: dict[str, str] = {}
 
 
 def _load_bodies_by_imid() -> dict[str, str]:
@@ -125,6 +130,9 @@ def _load_bodies_by_imid() -> dict[str, str]:
         _sent = C.body_send_time(d)
         if _sent:
             _SENT_BY_IMID[imid] = _sent
+        _snd = d.get("sender_email")
+        if _snd:
+            _SENDER_BY_IMID[imid] = _snd
     return out
 
 
@@ -372,6 +380,13 @@ def _stamp_response_time(r: dict, parsed: dict) -> bool:
         return False
     sent = _SENT_BY_IMID.get(imid)
     if not sent:
+        return False
+    # 2026-08-11: recovery is only recovery when the message is OL's and
+    # postdates the ask. Same predicate as qc_selfheal's stamp — one rule,
+    # one home (core.quote_evidence_ok); see its docstring for the
+    # phantom-Q&L machine this closes.
+    if not C.quote_evidence_ok(_SENDER_BY_IMID.get(imid), sent,
+                               r.get("request_timestamp")):
         return False
     r["response_timestamp"] = sent
     return True

@@ -999,6 +999,37 @@ def body_send_time(rec) -> str | None:
     return None
 
 
+def quote_evidence_ok(sender_email, sent_ts, request_timestamp) -> bool:
+    """May this cached message serve as evidence of an OL QUOTE on this row?
+
+    2026-08-11, the phantom-Q&L machine. Lonny re-uses Outlook threads, so his
+    new ask carries the PREVIOUS quote quoted below it. Every recovery heal
+    read bodies by the row's source_imids — which, on a rebuilt request row,
+    is the ask itself — and each step then "recovered" a fact out of Lonny's
+    own email: a carrier, then quoted=True, then the old rate, then a
+    response_timestamp equal to the ask's own send time. Individually each
+    step was recovery; jointly they FABRICATED a same-day OL quote. When OL's
+    real replies stopped being staged (~Jul 24, the Reno intake gap), the
+    fabricated ones became the only quotes, and W31/W32 rendered as 25
+    requests quoted-and-lost — the "consistently wrong" table.
+
+    Two facts a message must prove before it can evidence a quote:
+      1. OL WROTE IT. sender must end @ol-usa.com — a quote cannot come out
+         of the customer's own email. Missing sender fails CLOSED: a stamp
+         that cannot prove authorship is a guess, and an undated quote that
+         QC-077 flags honestly beats a dated fabrication.
+      2. IT POSTDATES THE ASK. A reply sent at-or-before the request it
+         answers is an impossible ordering (QC-066's class). Rows without a
+         request_timestamp (standalones, legacy) skip this half.
+    """
+    s = str(sender_email or "").strip().lower()
+    if not s.endswith("@ol-usa.com"):
+        return False
+    sent_dt = parse_iso(sent_ts)
+    req_dt = parse_iso(request_timestamp)
+    return not (sent_dt and req_dt and sent_dt <= req_dt)
+
+
 def format_date_range(value, fallback_start=None, fallback_end=None) -> str:
     """Render the data window as prose, from EITHER shape it is stored in.
 

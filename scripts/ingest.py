@@ -1773,10 +1773,43 @@ def _merge_prior_win_into(existing: dict, prior_win: dict, prior_mtime: str) -> 
     existing["quoted"] = True
     existing["has_send"] = True
     if existing.get("status") != "WIN":
-        C.record_transition(
-            existing, "WIN",
-            f"Prior-build WIN restored (MDOLX{prior_win.get('mdolx_ref') or '?'}) — "
-            f"booking not visible in the current stage window")
+        # DATE THE RESTORE FROM THE PRIOR EVIDENCE, NEVER FROM NOW.
+        #
+        # 2026-08-11. record_transition defaults at=now, and this restore runs
+        # on EVERY fire for a win whose booking never re-enters the stage
+        # window — so eight April wins carried a brand-new →WIN transition
+        # dated each morning's fire, forever. core.win_event_date reads the
+        # last →WIN transition, so those wins re-dated to "this week" daily
+        # and every win-event surface mis-bucketed them permanently
+        # (diag-weekly run 3: nine wins with win_event=2026-08-11, eight of
+        # them April bookings, history reason "Prior-build WIN restored").
+        #
+        # Preference order: the prior row's ORIGINAL →WIN transition, carried
+        # verbatim so its date survives the rebuild; else the booking time;
+        # else the response time; else the ask time. Only a row with none of
+        # those falls to now — and then once, not daily, since the carried
+        # history keeps its date on every later fire. Restore entries from
+        # the poisoned era are excluded as a date source by their reason
+        # prefix, so already-rolled rows self-heal to real evidence.
+        _orig_wins = [h for h in (prior_win.get("status_history") or [])
+                      if h.get("to") == "WIN" and h.get("at")
+                      and not str(h.get("reason") or "").startswith(
+                          "Prior-build WIN restored")]
+        if _orig_wins:
+            existing.setdefault("status_history", []).extend(_orig_wins)
+            existing["status"] = "WIN"
+        else:
+            _at = C.parse_iso(prior_win.get("booking_timestamp")
+                              or prior_win.get("response_timestamp")
+                              or prior_win.get("request_timestamp")
+                              # a degraded prior can lack even its ask time;
+                              # the rebuilt row carries the same ask
+                              or existing.get("request_timestamp"))
+            C.record_transition(
+                existing, "WIN",
+                f"Prior-build WIN restored (MDOLX{prior_win.get('mdolx_ref') or '?'}) — "
+                f"booking not visible in the current stage window",
+                at=_at)
     existing["loss_reason"] = None
     existing["preserved_from_prior"] = True
     existing["preserved_source_mtime"] = prior_mtime
