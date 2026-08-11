@@ -518,6 +518,7 @@ def test_a_recovered_rate_is_dated_from_the_email_it_came_from(monkeypatch):
     OL-USA RESPONSES."""
     PC = _pc()
     monkeypatch.setitem(PC._SENT_BY_IMID, "abc@ol", "2026-07-29T19:02:00Z")
+    monkeypatch.setitem(PC._SENDER_BY_IMID, "abc@ol", "MBD_Export_Pricing@ol-usa.com")
     row = {"request_id": "r1"}
     assert PC._stamp_response_time(row, {"_src_imid": "abc@ol"}) is True
     assert row["response_timestamp"] == "2026-07-29T19:02:00Z", (
@@ -675,7 +676,8 @@ def test_an_undated_quote_is_dated_from_its_own_source_message():
     messages their rates were parsed from, and those messages have a
     sentDateTime that was sitting unused."""
     import qc_selfheal as QC
-    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z", "text_body": "x"}}
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z", "text_body": "x",
+                        "sender_email": "MBD_Export_Pricing@ol-usa.com"}}
     row = {"request_id": "r1", "ol_rate": 4874, "source_imids": ["m1@ol"]}
     QC._heal_undated_quote(QC.Log(), "r1", row, bodies)
     assert row["response_timestamp"] == "2026-07-29T19:02:00Z"
@@ -695,7 +697,8 @@ def test_a_standalone_booking_is_never_back_dated():
     to signal 'no rate response was ever seen'. Filling it erases the
     signal — the same reason QC-077 excludes them."""
     import qc_selfheal as QC
-    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z"}}
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z",
+                        "sender_email": "MBD_Export_Pricing@ol-usa.com"}}
     row = {"request_id": "stand_260928", "ol_rate": 4874, "source_imids": ["m1@ol"]}
     QC._heal_undated_quote(QC.Log(), "stand_260928", row, bodies)
     assert not row.get("response_timestamp")
@@ -709,7 +712,9 @@ def test_the_send_time_falls_back_across_schema_versions():
     import qc_selfheal as QC
     for field in ("sent", "sentDateTime", "received"):
         row = {"request_id": "r1", "ol_rate": 4874, "source_imids": ["m@ol"]}
-        QC._heal_undated_quote(QC.Log(), "r1", row, {"m@ol": {field: "2026-07-29T19:02:00Z"}})
+        QC._heal_undated_quote(QC.Log(), "r1", row, {"m@ol": {
+            field: "2026-07-29T19:02:00Z",
+            "sender_email": "MBD_Export_Pricing@ol-usa.com"}})
         assert row.get("response_timestamp") == "2026-07-29T19:02:00Z", (
             f"send time in field {field!r} was not read")
 
@@ -722,14 +727,16 @@ def test_the_first_imid_with_a_send_time_wins():
            "source_imids": ["nothing@ol", "m2@ol"]}
     QC._heal_undated_quote(QC.Log(), "r1", row,
                            {"nothing@ol": {"text_body": "x"},
-                            "m2@ol": {"sent": "2026-07-30T12:00:00Z"}})
+                            "m2@ol": {"sent": "2026-07-30T12:00:00Z",
+                                      "sender_email": "MBD_Export_Pricing@ol-usa.com"}})
     assert row["response_timestamp"] == "2026-07-30T12:00:00Z"
 
 
 def test_the_nq_sentinel_row_is_not_dated_either():
     """A row marked Not Quoted has no quote, so there is nothing to date."""
     import qc_selfheal as QC
-    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z"}}
+    bodies = {"m1@ol": {"sent": "2026-07-29T19:02:00Z",
+                        "sender_email": "MBD_Export_Pricing@ol-usa.com"}}
     row = {"request_id": "r1", "ol_rate": "Not Quoted", "source_imids": ["m1@ol"]}
     QC._heal_undated_quote(QC.Log(), "r1", row, bodies)
     assert not row.get("response_timestamp")
@@ -1031,7 +1038,8 @@ def test_the_classifier_and_the_heal_read_the_same_fields():
     condition. Both go through _body_send_time now, so they cannot."""
     import qc_selfheal as QC
     for field in QC._BODY_SEND_FIELDS:
-        rec = {"imid": "m", field: "2026-04-01T10:00:00Z"}
+        rec = {"imid": "m", field: "2026-04-01T10:00:00Z",
+               "sender_email": "MBD_Export_Pricing@ol-usa.com"}
         assert QC._body_send_time(rec)
         r = {"ol_rate": 3150.0, "source_imids": ["m"]}
         assert QC._undated_reason(r, {"m": rec}) == "unexplained", (

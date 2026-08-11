@@ -3,6 +3,80 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-11 — "consistently wrong": three defects behind the weekly table
+
+Michael, on the staff email's W24-W33 table: "this is absurd.. your data is
+consistently wrong. where it used to be correct before we did formatting
+changes." Root-caused with measurements (diag-weekly runs 1-3, the Aug 7-11
+fire logs verbatim, and git diffs), then fixed. Three defects, one story.
+
+FIRST, THE ATTRIBUTION, settled with diffs: NOT the formatting changes. The
+aggregation code that built the Aug 10 artifact is byte-identical to HEAD
+(`git diff 344eb1c..HEAD -- gen_email.py gen_dashboard.py` is EMPTY); the
+Aug 4-7 commits touching the weekly renderer are provably styling-only, and
+the one predicate commit in the window is a pure widening. The wrongness is
+in the ROWS. Also corrected en route: the screenshotted table is
+gen_email.py's "This Week vs Last Week" (staff email), not the dashboard —
+red = Q&L, orange = NQ, purple = Pending, wins credited to the REQUEST week.
+
+DEFECT 1 — OL QUOTE INTAKE STRUCTURALLY DEAD SINCE ~JUL 24. Measured:
+mbd_rate_response staged per ET day is ZERO Aug 3 through Aug 11, across TWO
+fires that ran WITH the Aug-7 Reno classify fix and a 14-day window. Cause:
+classify can only keep what a query FETCHED, and both queries miss her —
+q1 needs Lonny ON the message, q2 needs the shared mailbox as sender. The
+Aug 10 fire's own log confirms: its only 3 new rate responses were Jul 30-31
+replies that happened to carry Lonny. FIX: graph_queries() gains q3, built
+FROM OL_QUOTE_ONLY_SENDERS (`from:reno.gurusinghe@ol-usa.com`), so the fetch
+side and the classify side share one sender list and cannot drift.
+
+DEFECT 2 — THE PHANTOM-Q&L MACHINE. All 25 W31/W32 requests read quoted=1
+LOSS (PRICE / ETD_MISS / UNDIFFERENTIATED) with response_timestamp == request
+date, SAME DAY, in a window with zero staged replies. The chain, every step
+individually defensible as "recovery": Lonny re-uses Outlook threads, so his
+new ask quotes the PREVIOUS rate sheet below it; the heals read bodies by
+source_imids — the ask itself, on a rebuilt row — and mined a carrier, then
+reconciled quoted=True (qc_selfheal:1066), then recovered last cycle's rate
+(_heal_missing_rate), then stamped the ask's own send time as the response
+(_stamp_response_time_from_bodies; patch_carriers._stamp_response_time is the
+mirror). Real OL replies used to arrive first and overwrite all of it — "it
+used to be correct" — until defect 1 removed them and the fabrications became
+the only quotes. FIX: core.quote_evidence_ok, ONE rule at all three sites: a
+message may evidence an OL quote only if OL WROTE it (@ol-usa.com; missing
+sender fails CLOSED — an undated quote QC-077 flags honestly beats a dated
+fabrication) and it POSTDATES the ask (resp <= req is QC-066's impossible
+ordering). Guarded at both stamps and at the rate-mining body pick.
+
+DEFECT 3 — ROLLING WIN DATES. Nine wins carried win_event=2026-08-11; eight
+are APRIL bookings. ingest's prior-WIN restore (_merge_prior_win_into) called
+record_transition with no `at`, which defaults to NOW — and the restore runs
+EVERY fire for a win whose booking never re-enters the stage window, so those
+wins re-dated to "this week" daily, forever. NOT the booking-rank change, as
+was feared and said aloud; the history reasons name the restore. FIX: the
+restore carries the prior row's ORIGINAL →WIN transition verbatim; lacking
+one (including priors already poisoned by the old behaviour, excluded by
+reason prefix), it dates from booking → response → ask evidence. now is the
+last resort, once, not daily.
+
+WHAT REMAINS WRONG UNTIL A FIRE RUNS THE FIXED CODE: the stored rows. Ingest
+rebuilds everything from stage each fire (verified: prior tracking-data is
+read ONLY to preserve WINs), so the next fire re-derives W31/W32 honestly
+(unquoted rows show as NQ/pending — or genuinely quoted, if q3 finds real
+Aug replies within the 14-day window) and re-dates the eight wins to April.
+Numbers cannot be promised in advance; the diag re-run after that fire is
+the evidence.
+
+Also fixed en route: diag-weekly run 2 died one line after "9 row(s)" — bare
+sorted() on (date, dict) tuples compares dicts on tied dates. A diagnostic
+that dies on the rows it exists to explain has negative value.
+
+Guard: tests/test_phantom_quotes.py (15 tests, verbatim production shapes).
+Non-vacuous: with all three fixes neutered, 11 of 15 fail. Older fixtures
+that built body records without sender_email were updated to match the real
+writer (fetch_bodies always records it); the guard fails closed on sender-
+less records BY DESIGN.
+
+Suite 2736 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (9) — the tightening's blast radius on real mail: ZERO
 
 diag-bookings run 8 (`4f56570`, window 2026-04-01 → today, the whole store):

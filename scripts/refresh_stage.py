@@ -116,6 +116,38 @@ OL_QUOTE_ONLY_SENDERS = {
     "reno.gurusinghe@ol-usa.com",
 }
 
+def graph_queries() -> list[tuple[str, str]]:
+    """The Graph queries a fire runs. Named so a test can hold the list still.
+
+    Two queries were the whole intake until 2026-08-11, and that was the hole:
+      q1 reaches a message only when Lonny is ON it, and q2 only when the
+      SHARED MAILBOX sent it with HILMAR in the subject. An OL pricer's quote
+      reply that drops Lonny — Reno's normal reply shape — matched NEITHER, so
+      it never reached classify() at all. The Aug 7 classify fix
+      (OL_QUOTE_ONLY_SENDERS) was necessary but NOT sufficient: measured on
+      live stage, mbd_rate_response stayed ZERO Aug 3→11 through two fires
+      that ran with it. classify can only keep what a query fetched.
+
+    q3 closes it: fetch BY the quote-only senders themselves. Same set that
+    classify admits, so the two ends of the pipe cannot drift — a sender added
+    to OL_QUOTE_ONLY_SENDERS is fetched AND kept, or neither.
+
+    The HILMAR-bookings query MUST use `subject:HILMAR` (not bare-word
+    HILMAR) — bare-word matches body content too, and NUMIDIA bookings
+    frequently quote/forward HILMAR templates and trip a body match
+    (2026-05-05: 6 NUMIDIA confirmations bled in as Unknown-destination
+    HILMAR wins). KQL property restrictors limit scope to the parsed subject.
+    """
+    q1 = f'from:{LONNY_EMAIL} OR to:{LONNY_EMAIL}'
+    q2 = f'from:{MBD_BOOKING_EMAIL} AND subject:HILMAR'
+    q3 = " OR ".join(f"from:{s}" for s in sorted(OL_QUOTE_ONLY_SENDERS))
+    return [
+        ("lonny-flow", q1),
+        ("hilmar-bookings", q2),
+        ("ol-quote-senders", q3),
+    ]
+
+
 REPLY_PREFIX = re.compile(r"^\s*(re|fw|fwd)\s*:", re.I)
 # Shared with ingest — built from body_parser.KNOWN_ORIGINS so a new Hilmar
 # site (Dalhart was the 2026-06-11 miss) extends ONE list, not N regexes.
@@ -766,19 +798,8 @@ def main() -> int:
           f"{len(existing_stage_imids)} (by imid)")
     print(f"refresh_stage: existing body records  = {len(existing_body_imids)}")
 
-    # Two queries. The HILMAR-bookings query MUST use `subject:HILMAR` (not
-    # bare-word `HILMAR`) — bare-word matches body content too, and NUMIDIA
-    # bookings (a different MBD client) frequently quote/forward HILMAR
-    # templates and trip a body match. Caught 2026-05-05 during the live
-    # cutover attempt: 6 NUMIDIA booking confirmations bled in as Unknown-
-    # destination HILMAR wins. KQL property restrictors limit scope to
-    # the parsed subject.
-    q1 = f'from:{LONNY_EMAIL} OR to:{LONNY_EMAIL}'
-    q2 = f'from:{MBD_BOOKING_EMAIL} AND subject:HILMAR'
-    queries = [
-        ("lonny-flow", q1),
-        ("hilmar-bookings", q2),
-    ]
+    # Query semantics and the 2026-08-11 third query: see graph_queries().
+    queries = graph_queries()
 
     # Dedupe across queries AND across folder-copies (Inbox vs Sent Items vs
     # archive subfolders all carry distinct Graph `id`s for the same email).

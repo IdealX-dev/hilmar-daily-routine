@@ -96,6 +96,7 @@ def test_the_written_record_survives_the_real_loader(tmp_path, monkeypatch):
         subject="RE: rate",
         html_body="<p>MSC | $2,900</p>",
         sent_ts="2026-04-09T11:00:00Z",
+        sender_email="MBD_Export_Pricing@ol-usa.com",
     )
     monkeypatch.setattr(QC, "_load_bodies_index",
                         lambda: {r["imid"]: r for r in
@@ -173,7 +174,8 @@ def test_the_heal_dates_a_row_end_to_end():
     rather than through the reader alone."""
     import qc_selfheal as QC
     row = {"request_id": "r1", "ol_rate": 3150.0, "source_imids": ["AAA@ol"]}
-    bodies = {"AAA@ol": {"imid": "AAA@ol", "sent_ts": "2026-04-08T15:04:12Z"}}
+    bodies = {"AAA@ol": {"imid": "AAA@ol", "sent_ts": "2026-04-08T15:04:12Z",
+                         "sender_email": "MBD_Export_Pricing@ol-usa.com"}}
     assert QC._stamp_response_time_from_bodies(row, bodies) is True
     assert row["response_timestamp"] == "2026-04-08T15:04:12Z"
 
@@ -182,7 +184,8 @@ def test_a_dated_row_leaves_the_qc077_set():
     """The property that makes the count able to go DOWN. Before this fix the
     set was monotonic — recovery added members and nothing removed them."""
     import qc_selfheal as QC
-    bodies = {"AAA@ol": {"imid": "AAA@ol", "sent_ts": "2026-04-08T15:04:12Z"}}
+    bodies = {"AAA@ol": {"imid": "AAA@ol", "sent_ts": "2026-04-08T15:04:12Z",
+                         "sender_email": "MBD_Export_Pricing@ol-usa.com"}}
     row = {"request_id": "r1", "ol_rate": 3150.0, "source_imids": ["AAA@ol"]}
     assert QC._undated_reason(row, bodies) != "no_send_time"
     QC._stamp_response_time_from_bodies(row, bodies)
