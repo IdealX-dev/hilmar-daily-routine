@@ -363,12 +363,23 @@ def main() -> int:
     # change ships with the diff measured against real staged mail rather than
     # asserted safe — run both gates over the same rows and name every booking
     # whose verdict moved.
+    # MIRROR main()'s ORDER OR THE NUMBER IS WRONG. ingest.main removes
+    # out-of-scope rows at line ~1713 and only THEN calls collect_bookings, so
+    # a row whose own subject says NUMIDIA never reaches the booking collector
+    # in production at all. Run 7 compared against unfiltered rows and reported
+    # 4 lost bookings, two of which (260874, 260991) say "NUMIDIA" in their own
+    # subject — they were never in production's "before", so counting them as
+    # newly-dropped overstates what this change actually does. The delta that
+    # matters is the one the pipeline would see: kept rows, thread rule on/off.
     _rule("client-gate tightening — what changed")
     _dropped_rows = [r for r in rows if IN.out_of_scope_reason(r)]
+    _kept_rows = [r for r in rows if not IN.out_of_scope_reason(r)]
     _excluded = IN.out_of_scope_mdolx(_dropped_rows)
-    before = set(IN.collect_bookings(rows))
-    after = set(IN.collect_bookings(rows, excluded_mdolx=_excluded))
+    before = set(IN.collect_bookings(_kept_rows))
+    after = set(IN.collect_bookings(_kept_rows, excluded_mdolx=_excluded))
     lost, gained = sorted(before - after), sorted(after - before)
+    print(f"  staged rows                        : {len(rows)}"
+          f"  (kept {len(_kept_rows)} / out-of-scope {len(_dropped_rows)})")
     print(f"  MDOLX with an out-of-scope sibling : {len(_excluded)}")
     print(f"  bookings BEFORE tightening         : {len(before)}")
     print(f"  bookings AFTER  tightening         : {len(after)}")
