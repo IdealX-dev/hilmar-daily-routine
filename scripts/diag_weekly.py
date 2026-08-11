@@ -197,11 +197,71 @@ def main() -> int:
         if core.is_win(r) and not (r.get("teu_won") or 0) and r.get("containers"):
             marks.append("TEU0")
             flags["WIN with containers parsed but teu_won=0 (booking-rank class)"] += 1
-        print(f"  {wk}  {rid:<24} {status:<8} quoted={int(quoted)} "
-              f"resp={int(resp)} {reason:<12} "
+        # THE TIMESTAMPS, NOT BOOLEANS. Run 1 printed resp=1 on 25 recent rows
+        # while the staged mbd_rate_response count for that window was ZERO —
+        # so the response times came from somewhere other than a staged reply,
+        # and a boolean hides exactly the evidence that says where. A response
+        # stamped BEFORE its own request is QC-066's impossible ordering.
+        req_d = str(r.get("request_timestamp") or "")[:10]
+        resp_d = str(r.get("response_timestamp") or "")[:10]
+        if resp_d and req_d and resp_d < req_d:
+            marks.append("RESP<REQ")
+            flags["response_timestamp BEFORE request (QC-066 impossible order)"] += 1
+        print(f"  {wk}  {rid:<24} {status:<8} q={int(quoted)} "
+              f"req={req_d or '—':<10} resp={resp_d or '—':<10} {reason:<12} "
               f"teu={r.get('teu_requested')}/{r.get('teu_won')} "
-              f"{_short(r.get('lane'), 28)}"
+              f"{_short(r.get('lane'), 24)}"
               + ("  [" + ",".join(marks) + "]" if marks else ""))
+
+    # ── the wins whose confirm-week jumped to THIS week ────────────────────
+    #
+    # Run 1: nine April-era MDOLX (260364..260487) carry a win-event date in
+    # the CURRENT week. win_event_date reads the last →WIN transition's `at`,
+    # so something wrote those transitions recently — either a booking email
+    # re-chosen by the 2026-08-10 booking-rank change (an August revision now
+    # representing an April booking: a REGRESSION I shipped), or a heal
+    # re-stamping history. The status_history tail says which.
+    _rule("WIN rows whose win-event date is within the last 7 days")
+    from datetime import timedelta
+    cutoff = (datetime.now(core.ET).date() - timedelta(days=7)).isoformat()
+    jumped = []
+    for r in requests:
+        wd = core.win_event_date(r)
+        if wd and wd >= cutoff:
+            jumped.append((wd, r))
+    print(f"  {len(jumped)} row(s)")
+    for wd, r in sorted(jumped)[:20]:
+        print(f"\n  {r.get('request_id')}  mdolx={r.get('mdolx_ref')}  "
+              f"win_event={wd}  request_date={r.get('request_date')}")
+        print(f"      booking_ts={r.get('booking_timestamp')!r}")
+        print(f"      subject   ={_short(r.get('subject'), 90)}")
+        for h in (r.get("status_history") or [])[-2:]:
+            print(f"      history: at={h.get('at')}  {h.get('from')}->{h.get('to')}"
+                  f"  {_short(h.get('reason'), 60)}")
+
+    # ── what the pipeline's own audit said today ───────────────────────────
+    _rule("QC-066 / QC-067 / QC-009 lines from today's qc-result.json")
+    qc_path = ROOT / "reports" / "qc-result.json"
+    if not qc_path.exists():
+        qc_path = ROOT / "qc-result.json"
+    if qc_path.exists():
+        try:
+            qc = json.loads(qc_path.read_text(encoding="utf-8"))
+            lines = []
+            for k in ("error_details", "warning_details", "errors", "warnings"):
+                v = qc.get(k)
+                if isinstance(v, list):
+                    lines.extend(str(x) for x in v)
+            hits = [ln for ln in lines
+                    if any(t in ln for t in ("QC-066", "QC-067", "QC-009"))]
+            print(f"  qc-result status={qc.get('status')!r}; "
+                  f"{len(hits)} matching line(s)")
+            for ln in hits[:15]:
+                print(f"    {_short(ln, 110)}")
+        except Exception as e:
+            print(f"  could not parse {qc_path.name}: {e}")
+    else:
+        print("  qc-result.json not in the pulled state")
 
     _rule("misfile flags across ALL rows (not just recent weeks)")
     all_flags = Counter()
