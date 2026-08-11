@@ -3,6 +3,48 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (9) — the tightening's blast radius on real mail: ZERO
+
+diag-bookings run 8 (`4f56570`, window 2026-04-01 → today, the whole store):
+
+  staged rows                        : 1277  (kept 1008 / out-of-scope 269)
+  MDOLX with an out-of-scope sibling : 45
+  bookings BEFORE tightening         : 66
+  bookings AFTER  tightening         : 66
+    no longer bookings               : 0
+    newly bookings                   : 0
+
+NOT ONE BOOKING CHANGES VERDICT across four months of real staged mail. The
+risk I raised — a stricter client gate silently deleting a real win — does not
+materialise on any data we hold. That is the outcome to want from a tightening:
+it closes the hole without touching live business.
+
+WHY ZERO, stated honestly rather than sold as a win: 45 MDOLX numbers DO have
+an out-of-scope sibling, and the thread rule would have removed any booking
+they produced. None produced one, because the existing per-row body check
+already catches every such thread in THIS dataset — the Agri Dairy / Numidia
+text is quoted into the fetched bodies. The thread-level rule is therefore
+insurance for the case the body check cannot cover: a thread where no body was
+fetched for the message that names the other customer. It is not currently
+doing work; it is standing where the July leak came through.
+
+A CORRECTION TO RUN 7, caught before it was reported as final. Run 7 said FOUR
+bookings were lost — MDOLX260741, 260821, 260874, 260991, all Numidia/Agri
+Dairy moves loading at the Hilmar plant, all classified 'origin_city' and none
+'tag'. The qualitative read held (no tagged Hilmar win was touched) but the
+COUNT was wrong: two of the four say "NUMIDIA" in their own subject, so
+ingest.main's per-row filter removes them at line ~1713 and they never reach
+collect_bookings in production at all. They were never in production's
+"before". The comparison had run the old gate over UNFILTERED rows.
+
+Same class of error as the diagnostic that judged the gates without attaching
+bodies, and the second time in one session: a tool that models the pipeline in
+a different ORDER than the pipeline runs reports a number about a system that
+does not exist. Fixed, guarded by a test, and re-run — which is where the zero
+came from.
+
+Suite 2708 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (8) — full tightening of the client gate, per Michael
 
 REVERSED FROM ENTRY (7). I recommended leaving the gate loose; Michael: "i want
