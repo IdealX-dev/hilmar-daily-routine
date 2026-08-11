@@ -75,6 +75,33 @@ def test_it_calls_out_zero_quote_intake_days():
     assert "ZERO quote intake" in SRC
 
 
+def test_recent_rows_print_timestamps_not_booleans():
+    """Run 1 printed resp=1 on 25 rows while zero rate responses were staged
+    in their window — the boolean hid exactly the evidence that says where
+    the timestamp came from. RESP<REQ is QC-066's impossible ordering."""
+    assert "RESP<REQ" in SRC
+    assert "resp={resp_d" in SRC, (
+        "the row dump no longer prints the response date — a boolean cannot "
+        "distinguish a staged reply from a stale-thread inheritance")
+
+
+def test_it_investigates_wins_that_jumped_into_the_current_week():
+    """Nine April-era wins carried a win-event date in the current week on
+    run 1. Either the booking-rank change re-chose an August revision to
+    represent an April booking (a shipped regression) or a heal re-stamped
+    history — the status_history tail says which, so it must be printed."""
+    assert "win-event date is within the last 7 days" in SRC
+    assert "status_history" in SRC and "booking_ts=" in SRC
+
+
+def test_it_reads_the_pipelines_own_audit():
+    """QC-066 exists precisely for the impossible-ordering shape. If it fired
+    today, that is the pipeline agreeing; if it stayed quiet on 25 such rows,
+    the guard itself has a blind spot — both answers matter."""
+    assert "qc-result.json" in SRC
+    assert "QC-066" in SRC
+
+
 def test_it_is_read_only():
     """AST, not grep — a mention in the docstring is not a call."""
     called = set()
