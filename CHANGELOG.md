@@ -3,6 +3,73 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-10 (8) — full tightening of the client gate, per Michael
+
+REVERSED FROM ENTRY (7). I recommended leaving the gate loose; Michael: "i want
+full tightening." His call. The risk I raised does not evaporate by being
+overruled, so the work is built to avoid it rather than to accept it: a
+stricter client gate fails by making a REAL WIN quietly stop existing.
+
+FIRST, A CORRECTION TO MY OWN EARLIER FINDING. Entry (5) reported MDOLX260821
+as "admitted by every gate, no win row" and called it correct-by-accident. It
+was correct BY DESIGN: ingest.py:295-301 already carries an Agri Dairy rule
+added on 2026-07-01 for this exact leak, Michael's words at the time being
+"only moves booked by Lonny are Hilmar the client". The pipeline had been
+excluding it via the BODY check ever since. My diagnostic reported "admitted"
+because IT NEVER ATTACHED BODIES — out_of_scope_reason reads text_body, and
+ingest.main attaches bodies before filtering while diag_bookings did not. A
+tool that models the gates with less evidence than the pipeline gets does not
+model the gates. Fixed; guarded.
+
+WHAT TIGHTENING IS NOT: requiring a "// HILMAR" tag. Hilmar Ingredients is
+physically in Hilmar, California, so a genuine move can name the lane and never
+the customer. That rule would drop real wins, which is the concern from entry
+(7) and the reason it is not the design.
+
+WHAT SHIPPED, three parts:
+
+  1. hilmar_signal() — the substring test is now a CLASSIFIER returning
+     'tag' | 'origin_city' | None. Any tag-shaped mention wins outright;
+     "Hilmar, CA" alone is recognised as a place.
+  2. out_of_scope_mdolx() — the check is now THREAD-LEVEL. One MDOLX is one
+     shipment, so it has one paying customer; if any message carrying that
+     number names a different customer, the number is theirs. Per-row
+     filtering could never see this — it only caught the Agri Dairy sibling
+     when that sibling's text happened to be quoted into a fetched body.
+     Derived from the DROPPED rows at the filter, because two lines later they
+     are gone and the signal would be permanently empty (guarded by test).
+  3. The customer list now covers who is actually in this mailbox — Hoogwegt,
+     Erno Laszlo, Brisar — sourced from senders observed in the live stage on
+     2026-08-10, not invented. Word-bounded so none can fire on a port or
+     carrier substring. `la[sz]{1,2}lo` because BOTH spellings are live
+     (ernolaszlo.com and ERNO-LAZLO-SHIPMENT-REPORT); my first regex matched
+     only one and my own test caught it. Deliberately NOT added: "Solis" (a
+     report feed, not a counterparty) and tts-worldwide / Quality Forms
+     (internal commission mail, no MDOLX).
+
+THE ESCAPE HATCH THAT KEEPS IT SAFE: an explicit "// HILMAR" tag OVERRIDES the
+thread verdict. Hilmar and another customer can share a thread — same plant,
+same week — and a stated customer tag is not discarded on a sibling's say-so.
+Only ambiguous origin-city-only rows defer to the thread.
+
+NEVER SILENT. Every thread-level drop prints its MDOLX, reason and subject, and
+main() logs the count. A booking count that falls with no line explaining why is
+indistinguishable from the pipeline breaking.
+
+MEASURED, NOT ASSERTED SAFE. diag_bookings now runs BOTH gates over the same
+staged rows and names every booking whose verdict moved, with hilmar_signal for
+each drop so "tag or city?" — the fact that says whether a drop was safe — is
+on the page. Blast radius on live mail is not yet run; that is the next step
+and it gates nothing else.
+
+Guard: tests/test_client_gate_tightened.py (16 tests), real production
+subjects. Verified non-vacuous by disabling the thread-level check — 2 failed,
+including the stand_260821 reproduction. The must-NOT-regress half is tested
+too: the same lane-only subject IS admitted when no sibling condemns it, and a
+tagged row survives a condemned thread.
+
+Suite 2707 passed, 0 failed. ruff clean.
+
 ### 2026-08-10 (7) — the client gate stays loose, and now it is actually tested
 
 DECISION, recorded so a later session does not "fix" it: the Hilmar client gate
