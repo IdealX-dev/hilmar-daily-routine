@@ -94,6 +94,20 @@ def test_it_investigates_wins_that_jumped_into_the_current_week():
     assert "status_history" in SRC and "booking_ts=" in SRC
 
 
+def test_the_jumped_wins_sort_cannot_die_on_tied_dates():
+    """Run 2 crashed one line after announcing "9 row(s)": bare sorted() on
+    (date, dict) tuples compares the dicts when dates tie. A diagnostic that
+    dies on the very rows it exists to explain has negative value — the
+    answer was in hand and withheld."""
+    import diag_weekly  # noqa: F401 — the behavioural check is below
+    rows = [("2026-08-11", {"request_id": "b"}), ("2026-08-11", {"request_id": "a"})]
+    got = sorted(rows, key=lambda t: (t[0], str(t[1].get("request_id"))))
+    assert [r["request_id"] for _d, r in got] == ["a", "b"]
+    assert "key=lambda t:" in SRC, (
+        "the jumped-wins sort has no key again — two wins on the same date "
+        "will compare dicts and TypeError")
+
+
 def test_it_reads_the_pipelines_own_audit():
     """QC-066 exists precisely for the impossible-ordering shape. If it fired
     today, that is the pipeline agreeing; if it stayed quiet on 25 such rows,
