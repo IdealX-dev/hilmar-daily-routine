@@ -211,13 +211,30 @@ def test_the_diagnostic_attaches_bodies_like_production_does():
         "weaker than production's and it will invent 'admitted' rows again")
 
 
+def test_the_blast_radius_is_measured_on_the_rows_production_would_see():
+    """ingest.main removes out-of-scope rows and THEN calls collect_bookings,
+    so a row whose own subject says NUMIDIA never reaches the collector in
+    production. Run 7 compared against unfiltered rows and reported 4 lost
+    bookings, two of which name NUMIDIA in their own subject — they were never
+    in production's "before", so counting them overstates the change. A
+    blast-radius number measured in a different order than the pipeline runs
+    is not a blast-radius number."""
+    src = (ROOT / "scripts/diag_bookings.py").read_text(encoding="utf-8")
+    assert "_kept_rows = [r for r in rows if not IN.out_of_scope_reason(r)]" in src, (
+        "the comparison does not pre-filter, so it measures a 'before' the "
+        "pipeline never had")
+    assert "IN.collect_bookings(_kept_rows)" in src, (
+        "the OLD-gate side still runs over unfiltered rows")
+
+
 def test_the_diagnostic_measures_the_blast_radius():
     """The tightening ships with its diff against real staged mail measured,
     not asserted safe. A stricter client gate fails by making a real win
     quietly stop existing."""
     src = (ROOT / "scripts/diag_bookings.py").read_text(encoding="utf-8")
-    assert "collect_bookings(rows, excluded_mdolx=" in src
-    assert "collect_bookings(rows)" in src, (
+    assert "collect_bookings(_kept_rows, excluded_mdolx=" in src, (
+        "nothing runs the NEW gate, so there is nothing to diff")
+    assert "collect_bookings(_kept_rows)" in src, (
         "nothing runs the OLD gate, so there is nothing to diff against")
     assert "hilmar_signal(subj)" in src, (
         "the dropped list does not say whether each drop was a tag or a "
