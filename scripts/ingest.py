@@ -301,6 +301,90 @@ _NUMIDIA_RX  = re.compile(r"numidia", re.IGNORECASE)
 _AGRIDAIRY_RX = re.compile(r"agri[\s\-_]?dairy", re.IGNORECASE)
 _TRUCKING_RX = re.compile(r"\bFTL\b|\bLTL\b|truck\s?load|trucking", re.IGNORECASE)
 _RECALL_RX   = re.compile(r"\brecall:", re.IGNORECASE)
+# Other MBD customers seen in this mailbox, added 2026-08-10 with Michael's
+# "i want full tightening". Same class as Numidia and Agri Dairy: MBD ships
+# for them too, so their mail lands in the same ocean-export group inbox, and
+# any of them could load out of the Hilmar plant and put "HILMAR" in a subject.
+# Sourced from senders observed in the live stage during the 2026-08-10
+# mailbox scan, NOT invented:
+#     d.passarelli@hoogwegtus.com        HOOGWEGT
+#     VGesualdo@ernolaszlo.com           ERNO LASZLO
+#     claza@brisar.com                   BRISAR
+# Word-bounded so they cannot fire on a substring of a port or carrier name.
+# NOT added: "Solis" (a report-hub feed, not a booking counterparty) and
+# tts-worldwide / Quality Forms (internal commission mail, no MDOLX).
+# `la[sz]{1,2}lo` because BOTH spellings are live: the domain is
+# ernolaszlo.com and the report-hub subject says ERNO-LAZLO-SHIPMENT-REPORT.
+# A pattern matching only one of them is a rule that fires half the time.
+_OTHER_CLIENT_RX = re.compile(
+    r"\bhoogwegt\w*\b|\berno[\s\-_]?la[sz]{1,2}lo\b|\bbrisar\b", re.IGNORECASE)
+
+# ── the Hilmar client signal ────────────────────────────────────────────────
+#
+# "HILMAR" is BOTH the customer tag and the origin city — Hilmar Ingredients is
+# physically in Hilmar, California — so `"HILMAR" in subject` cannot tell
+# "// HILMAR" (our customer) from "Hilmar, CA to La Guaira" (someone else's
+# cargo loading at the same plant). That ambiguity is the whole reason
+# stand_260821 leaked in July.
+#
+# The fix is NOT to demand a tag: a genuine Hilmar move can describe the lane
+# and never name the customer, and requiring a tag would drop it. Instead,
+# classify WHICH kind of mention it is, and hold origin-city-only mentions to a
+# higher bar (see hilmar_admits_row).
+_HILMAR_TOKEN_RX = re.compile(r"HILMAR", re.IGNORECASE)
+#: What follows a HILMAR that is being used as a PLACE, not a customer:
+#: "Hilmar, CA", "Hilmar CA", "Hilmar, California".
+_HILMAR_AS_CITY_RX = re.compile(r"\s*,?\s*(?:CA\b|CALIF)", re.IGNORECASE)
+
+
+def hilmar_signal(text: str | None) -> str | None:
+    """How this text mentions HILMAR: 'tag' | 'origin_city' | None.
+
+    'tag'          at least one mention that is NOT followed by a state — a
+                   customer marker ("// HILMAR", "HILMAR - Oakland to Osaka").
+    'origin_city'  every mention is followed by CA/California — the town.
+    None           the word does not appear.
+
+    Any single tag-shaped mention wins: a subject that says both
+    "Hilmar, CA to Osaka // HILMAR" is our customer's, unambiguously.
+    """
+    if not text:
+        return None
+    saw_city = False
+    for m in _HILMAR_TOKEN_RX.finditer(text):
+        if _HILMAR_AS_CITY_RX.match(text, m.end()):
+            saw_city = True
+        else:
+            return "tag"
+    return "origin_city" if saw_city else None
+
+
+def out_of_scope_mdolx(rows: list[dict]) -> dict[str, str]:
+    """{mdolx: reason} for every MDOLX any of whose messages is out of scope.
+
+    THREAD-LEVEL, which per-row filtering cannot be. out_of_scope_reason runs
+    on one message at a time (ingest main, ~line 1713), so a thread whose
+    booking-confirmation subjects read "Hilmar, CA to La Guaira" survives on
+    its own merits while a SIBLING message in the same thread says "Agri Dairy
+    Vendor Reference PO00-26002163". Today that only gets caught when the
+    sibling's text is quoted into a fetched body; where no body was fetched,
+    nothing connects the two.
+
+    An MDOLX is one shipment (Michael: "1 MDOLX = 1 win"), so it has exactly
+    one paying customer. If any message carrying that number names another
+    customer, the number is theirs — every message of it, body or no body.
+    """
+    out: dict[str, str] = {}
+    for r in rows:
+        reason = out_of_scope_reason(r)
+        if not reason:
+            continue
+        for field in ("subject", "summary_preview", "text_body"):
+            mdolx = extract_mdolx(str(r.get(field) or ""))
+            if mdolx:
+                out.setdefault(mdolx, reason)
+                break
+    return out
 
 
 def out_of_scope_reason(row: dict) -> str | None:
@@ -321,6 +405,13 @@ def out_of_scope_reason(row: dict) -> str | None:
     # note). Subject AND body, same as Numidia.
     if _AGRIDAIRY_RX.search(subject) or _AGRIDAIRY_RX.search(body) or _AGRIDAIRY_RX.search(preview):
         return "agridairy"
+    # Other MBD customers (Hoogwegt / Erno Laszlo / Brisar). Same rule and same
+    # three fields as Numidia and Agri Dairy — added 2026-08-10 under "full
+    # tightening" so the list matches the customers actually in this mailbox
+    # rather than only the two that happened to leak.
+    if (_OTHER_CLIENT_RX.search(subject) or _OTHER_CLIENT_RX.search(body)
+            or _OTHER_CLIENT_RX.search(preview)):
+        return "other_client"
     # Trucking — the FTL/LTL request type is declared in the subject line.
     if _TRUCKING_RX.search(subject) or _TRUCKING_RX.search(preview):
         return "trucking"
@@ -649,12 +740,24 @@ def _booking_rank(subject: str | None, sent: str | None) -> tuple[int, str]:
     return (tier, inverted)
 
 
-def collect_bookings(rows: list[dict]) -> dict[str, dict]:
+def collect_bookings(rows: list[dict], excluded_mdolx: dict[str, str] | None = None,
+                     log_excluded=None) -> dict[str, dict]:
     """
     Return {mdolx: booking_dict}. Each booking represents a unique MDOLX
     shipment confirmation for Hilmar (1 MDOLX = 1 win, per Michael).
+
+    `excluded_mdolx` is out_of_scope_mdolx(rows) — the thread-level verdict.
+    Passing None keeps the pre-2026-08-10 per-row behaviour, which is what the
+    blast-radius diagnostic uses to compare old against new.
+
+    `log_excluded(mdolx, reason, subject)` is called for every booking the
+    thread-level rule drops. NEVER let a tightening be silent: the failure mode
+    of a stricter client gate is a real win that quietly stops existing, and a
+    number that goes down with no line explaining why is indistinguishable
+    from the pipeline breaking.
     """
     bookings: dict[str, dict] = {}
+    excluded_mdolx = excluded_mdolx or {}
 
     for row in rows:
         bucket = row.get("bucket")
@@ -674,9 +777,17 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
         # the subject — either as the customer tag "// HILMAR" or the
         # lane origin "Hilmar, CA". A row that says only "// NUMIDIA"
         # without "HILMAR" anywhere is a different customer's booking.
+        #
+        # 2026-08-10, Michael: "i want full tightening." The substring test
+        # became a CLASSIFIER — see hilmar_signal. It still admits an
+        # origin-city-only subject, because a genuine Hilmar move can name the
+        # lane and never the customer and demanding a tag would drop it; what
+        # changed is that such a row must also survive the thread-level check
+        # below. A "// HILMAR" tag needs no corroboration.
         is_hilmar = row.get("is_hilmar")
+        signal = hilmar_signal(subject)
         if is_hilmar is None:
-            is_hilmar = "HILMAR" in subject.upper()
+            is_hilmar = signal is not None
         if not is_hilmar:
             # Push the rejection to Sentry as a metric so we can track
             # mis-routed standalone WINs and improve over time.
@@ -702,6 +813,22 @@ def collect_bookings(rows: list[dict]) -> dict[str, dict]:
         # Try mdolx field first, else parse from subject/preview
         mdolx = row.get("mdolx") or extract_mdolx(subject) or extract_mdolx(preview)
         if not mdolx:
+            continue
+
+        # THREAD-LEVEL EXCLUSION. One MDOLX is one shipment, so it has exactly
+        # one paying customer: if any message carrying this number named a
+        # different one, this number is theirs. Per-row filtering cannot see
+        # that — it only catches the sibling when the sibling's text happens to
+        # be quoted into a fetched body, which is how stand_260821 (Agri Dairy,
+        # subject "Hilmar, CA to La Guaira") leaked in July.
+        #
+        # A "// HILMAR" TAG OVERRIDES IT. Hilmar and another customer can share
+        # a thread — same plant, same week — and an explicit customer tag is
+        # not something to discard on a sibling's say-so. Only the ambiguous
+        # origin-city-only rows defer to the thread.
+        if mdolx in excluded_mdolx and signal != "tag":
+            if log_excluded:
+                log_excluded(mdolx, excluded_mdolx[mdolx], subject)
             continue
 
         sent = row.get("sent")
@@ -1709,16 +1836,27 @@ def main() -> int:
     # bookings, wins, not-quoted) can count them.
     _oos = Counter()
     _kept_rows = []
+    _dropped_rows = []
     for _r in rows:
         _reason = out_of_scope_reason(_r)
         if _reason:
             _oos[_reason] += 1
+            _dropped_rows.append(_r)
         else:
             _kept_rows.append(_r)
+    # The MDOLX numbers those dropped messages carry, captured HERE because in
+    # two lines they are gone: `rows` becomes the kept set and nothing
+    # downstream can ever see the sibling that gave the thread away. This is
+    # the whole thread-level signal (see out_of_scope_mdolx).
+    _excluded_mdolx = out_of_scope_mdolx(_dropped_rows)
     rows = _kept_rows
     if _oos:
         print("Out-of-scope exclusion: dropped "
               + ", ".join(f"{n} {k}" for k, n in sorted(_oos.items())))
+    if _excluded_mdolx:
+        print(f"Thread-level: {len(_excluded_mdolx)} MDOLX number(s) belong to "
+              "another customer — " + ", ".join(
+                  f"{m}={why}" for m, why in sorted(_excluded_mdolx.items())))
 
     lonny_out   = [r for r in rows if r.get("bucket") == "lonny_outbound"]
     lonny_reply = [r for r in rows if r.get("bucket") == "lonny_reply"]
@@ -1732,8 +1870,21 @@ def main() -> int:
     quoted = apply_rate_responses(requests, rate_rsps)
     print(f"Rate-response matches: {quoted}/{len(rate_rsps)} (requests now marked quoted)")
 
-    bookings = collect_bookings(rows)
-    print(f"Collected {len(bookings)} unique HILMAR MDOLX bookings")
+    # NEVER SILENT. A stricter client gate fails by making a real win quietly
+    # stop existing, and a booking count that drops with no line explaining
+    # why is indistinguishable from the pipeline breaking. Every thread-level
+    # drop names itself, with the subject, so the next reader can judge it.
+    _tl_dropped = []
+
+    def _log_thread_drop(mdolx, reason, subject):
+        _tl_dropped.append((mdolx, reason, subject))
+        print(f"  thread-level drop: MDOLX{mdolx} ({reason}) — {subject[:90]}")
+
+    bookings = collect_bookings(rows, excluded_mdolx=_excluded_mdolx,
+                                log_excluded=_log_thread_drop)
+    print(f"Collected {len(bookings)} unique HILMAR MDOLX bookings"
+          + (f" ({len(_tl_dropped)} message(s) dropped by the thread-level "
+             "client check)" if _tl_dropped else ""))
 
     requests, standalones = link_bookings_to_requests(requests, bookings)
     matched = sum(1 for r in requests if r.get("status") == "WIN")

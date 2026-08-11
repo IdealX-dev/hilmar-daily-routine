@@ -174,6 +174,22 @@ def main() -> int:
     }
     print(f"bodies:       {len(bodies_by_imid)} records")
 
+    # ATTACH THE BODIES, exactly as ingest.main does before it filters.
+    # 2026-08-10: without this, out_of_scope_reason() runs against an empty
+    # text_body here and returns None where production returns "agridairy" —
+    # which is precisely how this tool reported MDOLX260821 as "admitted by
+    # every gate" for a thread the pipeline had been correctly excluding since
+    # July. A diagnostic that models the gates with less evidence than the
+    # pipeline gets does not model the gates.
+    _attached = 0
+    for r in rows:
+        body = bodies_by_imid.get(r.get("imid")) or ""
+        if body:
+            r["text_body"] = body
+            _attached += 1
+    print(f"bodies attached to stage rows: {_attached}/{len(rows)} "
+          "(out_of_scope_reason reads text_body — see ingest.main)")
+
     # Per-MDOLX deep trace. Michael 2026-08-10: "read the emails.. that's your
     # job to decide if it's a problem with the file or a new win." This is that
     # read — every staged mention, the earliest body in full, and every
@@ -339,6 +355,43 @@ def main() -> int:
     missing_mdolx: dict[str, tuple] = {}
     for d, mdolx, r in missing:
         missing_mdolx.setdefault(mdolx, (d, r))
+
+    # ── blast radius of the 2026-08-10 client-gate tightening ──────────────
+    #
+    # Michael asked for full tightening. I flagged the failure mode: a stricter
+    # client gate fails by making a REAL WIN quietly stop existing. So the
+    # change ships with the diff measured against real staged mail rather than
+    # asserted safe — run both gates over the same rows and name every booking
+    # whose verdict moved.
+    _rule("client-gate tightening — what changed")
+    _dropped_rows = [r for r in rows if IN.out_of_scope_reason(r)]
+    _excluded = IN.out_of_scope_mdolx(_dropped_rows)
+    before = set(IN.collect_bookings(rows))
+    after = set(IN.collect_bookings(rows, excluded_mdolx=_excluded))
+    lost, gained = sorted(before - after), sorted(after - before)
+    print(f"  MDOLX with an out-of-scope sibling : {len(_excluded)}")
+    print(f"  bookings BEFORE tightening         : {len(before)}")
+    print(f"  bookings AFTER  tightening         : {len(after)}")
+    print(f"    no longer bookings               : {len(lost)}")
+    print(f"    newly bookings                   : {len(gained)}")
+    if lost:
+        print("\n  DROPPED — read every one of these. Each is either another "
+              "customer's cargo correctly removed, or a Hilmar win lost:")
+        for m in lost:
+            subj = next((str(r.get("subject") or "") for r in rows
+                         if m in str(r.get("subject") or "")), "")
+            print(f"    MDOLX{m}  ({_excluded.get(m, '?')})")
+            print(f"        {_short(subj, 100)}")
+            print(f"        hilmar_signal={IN.hilmar_signal(subj)!r} "
+                  "(a 'tag' here would NOT have been dropped)")
+    if gained:
+        print("\n  NEWLY ADMITTED (unexpected — tightening should not add):")
+        for m in gained:
+            print(f"    MDOLX{m}")
+    if not lost and not gained:
+        print("\n  No booking changed verdict on this window's staged mail. "
+              "The tightening is a no-op here — which is the outcome to want: "
+              "it closes a hole without touching live business.")
 
     _rule("verdict")
     print(f"staged booking messages      : {len(bookings)}")
