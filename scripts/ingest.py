@@ -784,8 +784,35 @@ def collect_bookings(rows: list[dict], excluded_mdolx: dict[str, str] | None = N
         # lane and never the customer and demanding a tag would drop it; what
         # changed is that such a row must also survive the thread-level check
         # below. A "// HILMAR" tag needs no corroboration.
+        # THE SUBJECT IS NOT THE ONLY PLACE OL NAMES THE CUSTOMER (2026-08-12).
+        #
+        # Michael sent Linda Echevarria's two example bookings. The July one
+        # reads "MDOLX260963_NEW BOOKING CONFIRMATION// HILMAR 2X20'DV Oakland
+        # to HCMC (Cat Lai)"; the August one reads "Oakland to Manila (North) /
+        # MDOLX261070 / ONE BKG # RICGAZ641400" — same desk, same customer, no
+        # HILMAR tag. OL changed the convention. Measured on both .eml files:
+        # subject has HILMAR False / body has HILMAR True (7 occurrences,
+        # "HILMAR INGREDIENTS").
+        #
+        # This gate read the SUBJECT ONLY, so every new-format booking was
+        # dropped here — 15 of the 35 bookings in OL's own Jun-Aug recap
+        # (MDOLX261025 through 261072) never reached the tracker. diag_find
+        # proved the mail was staged with its body fetched and the ref still
+        # absent from tracking-data, which is what separates this from the
+        # delivery question it was mistaken for.
+        #
+        # The body is available here (attach_bodies runs before this in main)
+        # and it is where the booking names its shipper. A body mention is
+        # treated as the WEAKER signal deliberately: only a SUBJECT tag
+        # overrides the thread-level exclusion below, exactly as before, so a
+        # forwarded digest that merely mentions Hilmar cannot claim another
+        # customer's MDOLX.
         is_hilmar = row.get("is_hilmar")
-        signal = hilmar_signal(subject)
+        subject_signal = hilmar_signal(subject)
+        body_signal = None
+        if subject_signal is None:
+            body_signal = hilmar_signal(row.get("text_body"))
+        signal = subject_signal or body_signal
         if is_hilmar is None:
             is_hilmar = signal is not None
         if not is_hilmar:
@@ -826,7 +853,10 @@ def collect_bookings(rows: list[dict], excluded_mdolx: dict[str, str] | None = N
         # a thread — same plant, same week — and an explicit customer tag is
         # not something to discard on a sibling's say-so. Only the ambiguous
         # origin-city-only rows defer to the thread.
-        if mdolx in excluded_mdolx and signal != "tag":
+        # subject_signal, not signal: a body mention is corroborating evidence,
+        # never an override. Only an explicit customer tag in the SUBJECT is
+        # strong enough to outrank a sibling naming another customer.
+        if mdolx in excluded_mdolx and subject_signal != "tag":
             if log_excluded:
                 log_excluded(mdolx, excluded_mdolx[mdolx], subject)
             continue
