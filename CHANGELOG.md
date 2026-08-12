@@ -3,6 +3,33 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (5) — verification results + the last rolling win
+
+VERIFICATION FIRE (run 31611357523, send_to=test, days_back=21) — measured
+by diag-weekly on the state it pushed:
+  - W31: 13 requests → 0 Q&L, 13 NQ (was 13 phantom Q&L). Every row
+    honestly q=0/no-response.
+  - W32: 12 requests → 1 GENUINE Q&L (req Aug-3, real OL resp Aug-4),
+    11 NQ (was 12 phantom Q&L).
+  - The three Aug-11 asks: PENDING, no carrier, no rate (were fabricated
+    Yang Ming $797 / CMA CGM $725 / ONE $505 in the CEO email).
+  - QC-077: 49 → 13. Zero "PATCH PND/Q&L" fabrication lines in the log.
+  - QC-066 clean; wins render in their April weeks.
+The [VERIFY] email is in Michael's inbox; reports remain off pending his
+approval to restore crons.
+
+FOUND BY THE SAME DIAG, FIXED: the last rolling win. The operator-
+corrections applier re-runs every fire (rebuild wipes its fields) and
+appended a fire-time WIN→WIN entry each time; core.win_event_date reads
+the last →WIN entry, so stand_260905's Jul-9 booking re-dated to "today"
+daily. Two-sided fix: win_event_date ignores self-transitions (from==WIN
+to==WIN is a touch, not a win event), and the applier only writes a
+history entry when the status actually changes. 2 tests.
+
+NEW WATCH ITEM from the fire: QC-009 now warns lonny_reply zero-in-7d
+(Lonny simply hasn't replied this week — watch, not fix). QC-057's 3
+dropped RFQs unchanged (pre-existing; DIAG lines name the three subjects).
+
 ### 2026-08-12 (4) — one unfetchable message must not kill the fire
 
 The first verification fire (run 31609735248) died in refresh_stage: 46 of

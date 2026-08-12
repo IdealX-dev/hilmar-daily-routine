@@ -808,12 +808,20 @@ def win_event_date(r) -> str | None:
     LAST transition, not any: a row reversed out of WIN and later re-won has
     two →WIN entries, and testing "any transition on this day" credited it to
     both days. The booking that stands is the latest one.
+
+    Self-transitions (WIN→WIN) are NOT win events (2026-08-12). The
+    operator-corrections applier appends a fire-time WIN→WIN entry on every
+    fire it re-applies a correction, so counting them re-dated stand_260905's
+    April... rather, its Jul-9 booking to "today", every day — the last
+    survivor of the rolling-win defect (diag-weekly on run 31611357523). A
+    row's win event is when it BECAME a win, not when a correction re-touched
+    a row that already was one.
     """
     if (r.get("status") or "").upper() != "WIN":
         return None
     dated = [d for d in (et_date_of(h.get("at"))
                          for h in (r.get("status_history") or [])
-                         if h.get("to") == "WIN") if d]
+                         if h.get("to") == "WIN" and h.get("from") != "WIN") if d]
     if dated:
         return max(dated)
     return et_date_of(r.get("request_date") or r.get("request_timestamp"))
