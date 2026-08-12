@@ -182,6 +182,17 @@
       },
       "note": "MDOLX261068 booked (ONE, booking RICGZ5629700) — Oakland → HCMC. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
+    },
+    {
+      "request_id": "req_e54685b379d8c950",
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "261072",
+        "carrier_won": "ONE",
+        "carrier_quoted": "ONE"
+      },
+      "note": "MDOLX261072 booked (ONE, booking RICGBS913900) — Oakland to Cai Mep. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12. TWO JUDGEMENTS RECORDED HERE, both Michael's to overturn: (1) OL booked CAI MEP while Lonny's ask names CAT LAI — different HCMC terminals, so the automatic matcher refused it on core.same_port, which is the rule that keeps Manila North off Manila South; Michael: 'everything she sent as a booking is a win... each was clearly a request'. (2) Two Cat Lai asks were open (Aug 11 and Aug 12); this takes the OLDER one, leaving the same-morning Aug 12 ask free for its own booking. Flip the request_id if that is backwards.",
+      "source": "ol-booking-recap-2026-08-12"
     }
   ]
 }
