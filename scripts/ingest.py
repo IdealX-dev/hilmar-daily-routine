@@ -1242,7 +1242,8 @@ def counts_as_rate_response(row: dict) -> bool:
     return bool(BP.RATE_RESPONSE_SUBJECT_RX.match(row.get("subject") or ""))
 
 
-def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
+def apply_rate_responses(requests: list[dict], rate_rsps: list[dict],
+                         trace=None) -> int:
     """
     For each rate-response email, match it back to the most-recent Lonny outbound
     request with the same destination (case-insensitive), request_ts <= response_ts,
@@ -1253,7 +1254,20 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
     same request it will overwrite the status to WIN, which is the correct outcome.
 
     Returns the number of requests that were quoted.
+
+    `trace` (2026-08-12, Michael: "ol responded to everything") — optional
+    callback(rr, outcome, detail_dict) invoked at every point this function
+    decides a rate response's fate. Production passes nothing; scripts/
+    diag_matching.py passes a collector so a diagnostic can report WHY each
+    reply failed to attach WITHOUT modelling the matcher a second time. The
+    repo has been burned before by a diagnostic that reimplemented pipeline
+    logic in a different order and confidently answered questions about a
+    system that does not exist; observing the real function is the fix.
     """
+    def _t(rr, outcome, **detail):
+        if trace is not None:
+            trace(rr, outcome, detail)
+
     quoted_count = 0
     by_lane: dict[str, list[dict]] = defaultdict(list)
     for r in requests:
@@ -1267,10 +1281,13 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
     for rr in rate_rsps_sorted:
         dest = rr.get("destination") or clean_destination(rr.get("subject", ""))
         if not dest:
+            _t(rr, "no_destination", subject=rr.get("subject"),
+               row_destination=rr.get("destination"))
             continue
         sent = rr.get("sent")
         sent_dt = C.parse_iso(sent)
         if not sent_dt:
+            _t(rr, "no_send_time", subject=rr.get("subject"), sent=rr.get("sent"))
             continue
 
         # Primary: exact canonical match.
@@ -1300,8 +1317,13 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
             # is compatible then there is no match, and leaving the row
             # unquoted is the correct outcome — a wrong rate on the client's
             # quote is worse than a missing one.
+            _pre_narrow = len(candidates)
             candidates = [r for r in candidates
                           if C.same_port(dest, r.get("destination"))]
+            if _pre_narrow and not candidates:
+                _t(rr, "terminal_filter_emptied", dest=dest,
+                   subject=rr.get("subject"), pre_narrow=_pre_narrow,
+                   lane_key=canonical_lane_key(dest))
 
         # 2026-05-19 PM (Michael "you have to check each email header as
         # often lonny sends same rate requests/routes for the same moves he
@@ -1363,7 +1385,29 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict]) -> int:
                     best = r
 
         if not best:
+            # WHY no candidate survived — the four reasons are mutually
+            # exclusive per row, so counting them apportions the failure.
+            _why = Counter()
+            for r in candidates:
+                if r.get("quoted"):
+                    _why["already_quoted"] += 1
+                    continue
+                _rdt = C.parse_iso(r.get("request_timestamp"))
+                if not _rdt:
+                    _why["request_undated"] += 1
+                elif _rdt > sent_dt:
+                    _why["ask_after_reply"] += 1
+                elif (sent_dt - _rdt) > timedelta(days=14):
+                    _why["outside_14d"] += 1
+                else:
+                    _why["unexplained"] += 1
+            _t(rr, "no_candidate_matched", dest=dest, subject=rr.get("subject"),
+               sent=sent, candidates=len(candidates), conv=bool(rr_conv),
+               reasons=dict(_why))
             continue
+        _t(rr, "matched", dest=dest, subject=rr.get("subject"), sent=sent,
+           via=best_via, request_id=best.get("request_id"),
+           request_timestamp=best.get("request_timestamp"))
         best["_match_via"] = best_via  # for QC + audit observability
 
         # Prefer body-parsed rate_table (populated when body was fetched);
@@ -1851,13 +1895,19 @@ def _prior_win_captured(wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates) ->
 # Main
 # ─────────────────────────────────────────────────────────────────────
 
-def main() -> int:
-    rows = load_stage()
-    by_bucket = Counter(r.get("bucket") for r in rows)
-    print(f"Loaded {len(rows)} staged rows: {dict(by_bucket)}")
+def attach_bodies(rows: list[dict]) -> int:
+    """Join fetched bodies onto stage rows; return how many rows got one.
 
-    # Attach body-parsed fields (Plan A, Day 1). For imids without a fetched
-    # body, `body_parsed` stays empty — everything still works on preview only.
+    Plan A, Day 1. For imids without a fetched body, `body_parsed` stays empty
+    — everything still works on preview only. Note this is also the ONLY place
+    conversation_id reaches a stage row, so anything that reasons about
+    threads must run after it.
+
+    Extracted from main() 2026-08-12 so diag_matching.py can replay the real
+    join instead of copying it. A diagnostic that skips this step sees rows
+    with no bodies and no conversation_id and answers questions about a
+    pipeline nobody runs (the 2026-08-10 diag_bookings lesson).
+    """
     bodies_idx = load_bodies_index()
     attached = 0
     for r in rows:
@@ -1871,6 +1921,15 @@ def main() -> int:
         else:
             r["body_parsed"] = {}
             r["text_body"] = ""
+    return attached
+
+
+def main() -> int:
+    rows = load_stage()
+    by_bucket = Counter(r.get("bucket") for r in rows)
+    print(f"Loaded {len(rows)} staged rows: {dict(by_bucket)}")
+
+    attached = attach_bodies(rows)
     print(f"Body enrichment: {attached}/{len(rows)} rows have fetched bodies")
 
     # Out-of-scope exclusion (Michael 2026-05-20; Linda Echevarria audit) —

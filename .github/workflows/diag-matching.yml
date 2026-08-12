@@ -1,0 +1,62 @@
+name: Diagnose OL reply matching
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-12, Michael: "ol responded to everything." The weekly table said
+# W31 13 requests / 0 quoted and W32 12 / 1, while 455 mbd_rate_response
+# records sat in stage. Both cannot be true — so this replays the REAL
+# matcher (ingest.apply_rate_responses with its trace hook) over freshly
+# rebuilt requests and reports the fate of every rate response, plus the
+# unquoted asks that have a same-lane OL reply within the window.
+#
+# READ-ONLY: pulls state, rebuilds in memory, prints. No blob write, no send,
+# no mutation. (It does overwrite the runner's working copy of state.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: "Subjects to print per failure category"
+        required: false
+        default: "8"
+      days:
+        description: "How many days back to list unquoted asks"
+        required: false
+        default: "21"
+
+permissions:
+  contents: read
+
+jobs:
+  matching:
+    name: Why the replies do not attach
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # azure-storage-blob named explicitly — it is deliberately absent from
+        # requirements.txt; see tests/test_diag_day.py.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Trace the matcher
+        env:
+          DIAG_SAMPLES: ${{ inputs.samples }}
+          DIAG_DAYS: ${{ inputs.days }}
+        run: python3 scripts/diag_matching.py
