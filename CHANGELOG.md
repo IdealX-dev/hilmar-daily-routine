@@ -3,6 +3,50 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (14) — 35/35: corrections can now record a win with no email
+
+Michael: "everything she sent as a booking is a win... assume that each win
+was a quote request so just use the wins if you cannot find the emails from
+lonny in my ol emails which you should as they are there."
+
+Two things, and the second is new capability rather than a fix.
+
+FIRST — MDOLX261072, matched. diag_find showed why the automatic matcher
+refused it: OL booked CAI MEP while Lonny's ask names CAT LAI, and
+core.same_port demands terminal equality (the rule that keeps Manila North
+off Manila South). Michael: "they are wins and replaced cat lai if lonny
+approved which he did" — so the terminal swap is normal business, not a
+mismatch. Matched to the Aug-11 Cat Lai ask; both that and the choice of
+the older of two open asks are written into the correction note, each
+reversible with a one-line edit.
+
+SECOND — `create: true` on an operator correction. operator_corrections
+could only AMEND an existing row, which cannot express a booking that has
+no row at all, and MDOLX261071 has none: no confirmation in the mailbox,
+and OL's own recap row carries NO POD, carrier or booking number. It is now
+recorded as a WIN with the lane left UNRESOLVED rather than guessed —
+QC-015 keeps flagging it until someone supplies the lane.
+
+THE GUARD THAT MAKES THIS SAFE: forwarding is fixed, so the real
+confirmation will start arriving and ingest will build its own row for that
+MDOLX. A created row stands down whenever any row already carries the
+number (primary or secondary ref) — the derived row wins because it has the
+email behind it. Without that, this feature would double-count every
+booking it healed, which is the same error in the opposite direction.
+7 tests, including the duplicate guard, the re-apply idempotency
+(qc_selfheal re-runs the applier after ingest), and create being opt-in so
+a typo'd request_id still warns instead of inventing a row.
+
+RESULT: 34 matched to real Lonny requests, 1 recorded from the recap alone
+= 35/35. Started the day at 20/35.
+
+STILL OPEN and unchanged: the 15 tracker wins the recap does not list
+(260716, 260718-260723, 260748, 260770, 260809, 260811, 260833, 260842,
+260928, 260963). One question to Linda decides whether the win count is
+~74 or ~59; I am not guessing it.
+
+Suite 2820 passed, ruff clean.
+
 ### 2026-08-12 (13) — 13 wins recovered from OL's recap; 2 need Michael
 
 Michael: "now use the report that was sent by linda with all the bookings

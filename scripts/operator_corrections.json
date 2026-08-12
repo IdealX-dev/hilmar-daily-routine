@@ -193,6 +193,17 @@
       },
       "note": "MDOLX261072 booked (ONE, booking RICGBS913900) — Oakland to Cai Mep. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12. TWO JUDGEMENTS RECORDED HERE, both Michael's to overturn: (1) OL booked CAI MEP while Lonny's ask names CAT LAI — different HCMC terminals, so the automatic matcher refused it on core.same_port, which is the rule that keeps Manila North off Manila South; Michael: 'everything she sent as a booking is a win... each was clearly a request'. (2) Two Cat Lai asks were open (Aug 11 and Aug 12); this takes the OLDER one, leaving the same-morning Aug 12 ask free for its own booking. Flip the request_id if that is backwards.",
       "source": "ol-booking-recap-2026-08-12"
+    },
+    {
+      "request_id": "ol_261071",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "261071",
+        "booking_timestamp": "2026-08-12T00:00:00Z"
+      },
+      "note": "MDOLX261071 booked 2026-08-12. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12. Michael: 'everything she sent as a booking is a win... assume that each win was a quote request so just use the wins if you cannot find the emails from lonny'. No confirmation email for this MDOLX exists in the tracked mailbox (diag_find, 2026-08-12) and OL's own row carries NO POD, carrier or booking number — so the lane is left unresolved rather than guessed. Supply the lane and this row gains it; if the real confirmation ever arrives, ingest's own row takes precedence and this one stands down automatically.",
+      "source": "ol-booking-recap-2026-08-12"
     }
   ]
 }
