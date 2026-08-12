@@ -3,6 +3,45 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (13) — 13 wins recovered from OL's recap; 2 need Michael
+
+Michael: "now use the report that was sent by linda with all the bookings
+and match to the lonny requests since july 1 i assume and clean up and the
+go forward all emails will again be in my inbox."
+
+Backfill dry run (backfill-ol run 1, --since 2026-07-01 --max-age 60):
+  already present   20
+  proposed matches  13  — every one flips a real LOSS row to WIN
+  not matched        2
+Applied all 13 to scripts/operator_corrections.json (17 total), each
+verified against the stored recap before writing and each carrying a note
+naming its source, carrier and booking number. Version-controlled, so the
+change is a reviewable diff and reverts with a revert.
+
+  260896 Nagoya (Jul 9 ask)      261025 Singapore (Aug 3)
+  261026 Yokohama (Aug 10)       261027 Yokohama (Aug 7)
+  261028 Yokohama (Aug 5)        261029 Yokohama (Aug 3)
+  261030 Yokohama (Aug 3)        261031 Yokohama (Jul 30)
+  261032 Yokohama (Jul 30)       261033 Yokohama (Jul 29)
+  261046 Yokohama (Jul 17)       261047 Yokohama (Jul 10)
+  261068 HCMC     (Jul 7)
+
+NEEDS A DECISION, not invented:
+  MDOLX261071 — the recap row carries no POD at all (it is the sparse row
+                with "No" in the carrier column).
+  MDOLX261072 — Cai Mep, ETD Sep 1; the one open HCMC (Cai Mep) ask was
+                already claimed by 261068. Either it answers an older ask
+                outside the window or Lonny never sent a request for it.
+
+Nine of these (261026-261033, 261046) are the Yokohama cluster that had
+been rendering as W31/W32 losses. They were wins the whole time.
+
+WHY CORRECTIONS AND NOT A DATA WRITE: ingest rebuilds every row from staged
+mail each fire, so a direct write is erased by morning. operator_corrections
+is the one durable human-verdict store the rebuild honours.
+
+Suite 2813 passed, ruff clean.
+
 ### 2026-08-12 (12) — RECONCILED against OL's recap: 20 of 35, not all
 
 Michael: "you mean you found all of these emails and more??" No. Measured,
