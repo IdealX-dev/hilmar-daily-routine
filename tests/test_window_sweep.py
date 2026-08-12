@@ -107,33 +107,34 @@ def test_it_reports_how_far_back_it_actually_REACHED(monkeypatch, capsys):
     """The first live run read 4000 messages and stopped — newest-first, so
     it never reached Jul 29-31 and W31 stayed empty for a THIRD reason. A
     count cannot show that; the oldest date reached can. Coverage, not
-    volume, is the number that says whether the window was read."""
+    volume, is the number that says whether the window was read — so it is
+    printed on EVERY run, warning or not."""
     fake = _FakeGraph([{"value": [
         {"id": "1", "receivedDateTime": "2026-08-12T10:00:00Z"},
         {"id": "2", "receivedDateTime": "2026-08-09T10:00:00Z"},
     ]}])
     monkeypatch.setattr(RS, "graph_get", fake)
     RS.list_messages_since("tok", SINCE, base="https://g/me", max_results=999)
-    out = capsys.readouterr()
-    combined = out.out + out.err
+    combined = "".join(capsys.readouterr())
     assert "2026-08-09" in combined, "the oldest message reached is not reported"
-    assert "did NOT reach the window floor" in combined, (
-        "the sweep stopped 18 days short of the requested window and did not "
-        "say so — exactly the silence that hid the $search ceiling")
+    assert SINCE[:19] in combined, "the requested floor is not shown beside it"
 
 
-def test_full_coverage_of_the_window_is_not_flagged(monkeypatch, capsys):
-    """The warning must mean something: reaching the floor is silent."""
+def test_a_naturally_complete_read_raises_no_alarm(monkeypatch, capsys):
+    """Pagination ending on its own means Graph had nothing older — the
+    window IS fully read, and the oldest message sits a little after the
+    floor simply because no mail arrived in that last gap. The live run
+    proved this the hard way: a 37-SECOND gap on a complete 5666-message
+    read produced 'did NOT reach the window floor'. A warning that fires on
+    success is the same crying-wolf that let the $search ceiling hide."""
     fake = _FakeGraph([{"value": [
         {"id": "1", "receivedDateTime": "2026-08-12T10:00:00Z"},
-        {"id": "2", "receivedDateTime": "2026-07-21T10:00:00Z"},   # past the floor
+        {"id": "2", "receivedDateTime": "2026-07-22T00:00:37Z"},  # 37s after floor
     ]}])
     monkeypatch.setattr(RS, "graph_get", fake)
     RS.list_messages_since("tok", SINCE, base="https://g/me", max_results=999)
-    out = capsys.readouterr()
-    assert "did NOT reach" not in (out.out + out.err), (
-        "a fully-read window raised a false alarm — a warning that fires on "
-        "success is one people learn to ignore")
+    assert "WARNING" not in "".join(capsys.readouterr()), (
+        "a complete read raised a false alarm on a sub-minute gap")
 
 
 def test_the_page_size_is_large_enough_to_finish(monkeypatch):

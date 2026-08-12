@@ -632,11 +632,16 @@ def list_messages_since(token: str, since_iso: str, max_results: int = 30000,
     floor = min((m.get("receivedDateTime") or "" for m in out), default="")
     print(f"refresh_stage:   sweep read {len(out)} message(s); oldest reached "
           f"{floor or 'n/a'} (window floor requested: {since_iso[:19]})")
-    if len(out) >= max_results or (floor and floor[:19] > since_iso[:19]):
-        msg = (f"refresh_stage: WARNING — date sweep did NOT reach the window "
-               f"floor: read {len(out)} message(s) back to {floor or 'n/a'}, "
-               f"but the window starts {since_iso[:19]} (guard "
-               f"{max_results}). Mail older than the reached point is missing "
+    # Warn on the GUARD only. Pagination ending on its own means Graph had
+    # nothing older left — the window is fully read, and the oldest message is
+    # naturally a little after the floor because no mail happened to arrive in
+    # that last gap. The first version also compared floor > since and fired on
+    # a 37-SECOND gap during a complete read: a false alarm, and the same
+    # crying-wolf that let the $search ceiling hide for weeks.
+    if len(out) >= max_results:
+        msg = (f"refresh_stage: WARNING — date sweep hit the {max_results}-message "
+               f"guard: read back only to {floor or 'n/a'}, but the window starts "
+               f"{since_iso[:19]}. Mail older than the reached point is MISSING "
                "from this run. Raise --max-window-messages.")
         print(msg, file=sys.stderr)
         print(f"::warning::{msg}")
