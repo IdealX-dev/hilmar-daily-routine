@@ -147,6 +147,24 @@ def test_it_proves_or_refutes_recoverability_from_stage():
         "which ports are the same lane")
 
 
+def test_it_walks_the_ask_thread_when_no_lane_match_exists():
+    """Run 1: 35 unquoted asks, 0 with a same-lane reply in stage. That result
+    cannot distinguish "OL never replied", "the reply is staged under another
+    bucket/subject", and "the reply went to a mailbox we do not read" —
+    Michael says OL responded to everything, so telling those apart IS the
+    finding. conversation_id survives all three, so the thread walk must run
+    over ALL staged rows, pre-gate, whatever their bucket."""
+    assert "thread walk" in SRC
+    assert "by_conv" in SRC and "for r in rows:" in SRC, (
+        "the thread walk does not scan the full staged set — a reply "
+        "misfiled into another bucket would stay invisible, which is the "
+        "hypothesis it exists to test")
+    assert "NO REPLY IN THREAD" in SRC
+    assert "intake/access finding" in SRC, (
+        "an empty thread is reported without naming what it means; the "
+        "reader is left to guess between an OL problem and a code problem")
+
+
 def test_it_is_read_only():
     """AST, not grep — a mention in the docstring is not a call."""
     called = set()

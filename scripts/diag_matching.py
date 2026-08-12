@@ -209,6 +209,57 @@ def main() -> int:
     if recoverable:
         print("  Those pairings are provably recoverable from data already in "
               "stage — the matcher is dropping them, OL is not silent.")
+    else:
+        print("  NONE are recoverable by lane. Either the reply never reached "
+              "this mailbox, or it is staged under a shape the lane test "
+              "cannot see — the thread walk below tells them apart.")
+
+    # ── 5. the thread walk — the question lane-matching cannot answer ──────
+    # "OL responded to everything" (Michael) vs "no same-lane reply exists"
+    # (above) can BOTH be true if the reply is staged under another bucket,
+    # another subject, or reached a mailbox we do not read. conversation_id
+    # is the one identifier that survives all three, so walk the ask's own
+    # thread and print EVERY staged message after it, whatever its bucket.
+    # If the thread is empty after the ask, the reply is not in our data at
+    # all and no matcher change can conjure it — that is an ACCESS finding,
+    # not a parsing one, and it belongs to OL IT rather than to this repo.
+    _rule(f"thread walk — every staged message after each unquoted ask ({days}d)")
+    by_conv: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:                      # ALL staged rows, pre-gate, any bucket
+        conv = r.get("conversation_id")
+        if conv:
+            by_conv[conv].append(r)
+    silent_threads = 0
+    with_traffic = 0
+    for r in sorted(requests, key=lambda r: r.get("request_timestamp") or ""):
+        req_dt = C.parse_iso(r.get("request_timestamp"))
+        if not req_dt or req_dt < cutoff or r.get("quoted"):
+            continue
+        conv = r.get("conversation_id")
+        after = []
+        for m in by_conv.get(conv or "", []):
+            m_dt = C.parse_iso(m.get("sent") or m.get("received"))
+            if m_dt and m_dt > req_dt:
+                after.append((m_dt, m))
+        if after:
+            with_traffic += 1
+        else:
+            silent_threads += 1
+        print(f"\n  {str(r.get('request_timestamp'))[:16]:<17} "
+              f"{_short(r.get('lane') or r.get('destination'), 30):<30} "
+              f"{'NO REPLY IN THREAD' if not after else str(len(after)) + ' msg(s) after the ask'}"
+              f"{'' if conv else '   [ask has no conversation_id]'}")
+        for _m_dt, m in sorted(after, key=lambda t: t[0])[:4]:
+            print(f"      {str(m.get('sent') or m.get('received'))[:16]:<17} "
+                  f"{_short(m.get('bucket'), 18):<18} "
+                  f"{_short(m.get('sender_email') or m.get('sender'), 34):<34} "
+                  f"{_short(m.get('subject'), 46)}")
+    print(f"\n  {silent_threads} ask thread(s) have NO staged message after the ask; "
+          f"{with_traffic} do.")
+    if silent_threads and not with_traffic:
+        print("  VERDICT: the replies are not in this mailbox in ANY bucket. "
+              "This is an intake/access finding (which mailboxes refresh_stage "
+              "can read), NOT a matcher or parser defect.")
 
     print("\nNOTHING WAS WRITTEN. The stored tracking data is untouched.")
     return 0
