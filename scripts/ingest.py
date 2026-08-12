@@ -1787,6 +1787,59 @@ def apply_operator_corrections(requests: list[dict]) -> int:
                 print(f"Operator correction: EXCLUDED {rid} — "
                       f"{corr.get('note') or corr.get('source') or 'not a Hilmar-client move'}")
             continue
+        if not row and corr.get("create"):
+            # `create: true` — RECORD A WIN THAT NO EMAIL CAN PRODUCE.
+            #
+            # Michael, 2026-08-12: "everything she sent as a booking is a win
+            # ... assume that each win was a quote request so just use the
+            # wins if you cannot find the emails from lonny". OL's booking
+            # recap is the system of record; a booking in it happened whether
+            # or not the confirmation reached the mailbox we read. Amending an
+            # existing row cannot express that when there is no row at all,
+            # which is the case for a booking whose entire thread went
+            # To: Lonny, Cc: the group.
+            #
+            # GUARDED AGAINST THE DUPLICATE IT WOULD OTHERWISE CAUSE: once the
+            # forwarding fix lets the real confirmation through, ingest builds
+            # its own row for that MDOLX. If any row already carries this
+            # number, the created row is skipped — the derived row wins,
+            # because it has the email behind it. So this heals a gap without
+            # becoming a second source of the same win.
+            _ref = str(changes.get("mdolx_ref") or "").lstrip("0")
+            _seen = {str(x).lstrip("0")
+                     for r in requests
+                     for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])]
+                     if x}
+            if _ref and _ref in _seen:
+                continue
+            _at = changes.get("booking_timestamp") or corr.get("at") or C.now_utc().isoformat()
+            row = {
+                "request_id": rid,
+                "status": changes.get("status", "WIN"),
+                "origin": changes.get("origin") or "Oakland",
+                "destination": changes.get("destination") or "Unknown",
+                "lane": changes.get("lane") or "Lane unresolved",
+                "request_timestamp": None,
+                "request_date": C.et_date_of(_at),
+                "response_timestamp": None,
+                "booking_timestamp": _at,
+                "quoted": True,
+                "has_send": True,
+                "teu_requested": changes.get("teu_requested", 0),
+                "teu_won": changes.get("teu_won", changes.get("teu_requested", 0)),
+                "source_imids": [],
+                "source_ids": [],
+                "status_history": [{
+                    "at": _at, "from": "PENDING", "to": "WIN",
+                    "reason": f"MDOLX{_ref or '?'} booked — recorded from OL's "
+                              "booking recap; no confirmation email reached "
+                              "this mailbox",
+                }],
+            }
+            requests.append(row)
+            by_id[rid] = row
+            print(f"Operator correction: CREATED {rid} (MDOLX{_ref}) — "
+                  f"{corr.get('note') or corr.get('source') or 'from OL booking recap'}")
         if not row:
             print(f"WARN: operator correction for {rid} has no matching row — skipped")
             continue
