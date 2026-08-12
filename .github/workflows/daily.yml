@@ -89,6 +89,11 @@ on:
         required: false
         default: false
         type: boolean
+      days_back:
+        description: "refresh_stage window in days (default 14). The 2026-08-12 verification catch-up uses 21 so W31's real OL replies (Jul 27-31 asks) come back into stage."
+        required: false
+        default: "14"
+        type: string
 
 # Serialize Daily runs so the multiple morning ticks (and any manual
 # dispatch) can't run concurrently and race the blob state push/pull.
@@ -132,7 +137,14 @@ concurrency:
 # pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  HILMAR_REPORTS_PAUSED: "true"
+  # verify_only (2026-08-12, Michael "go" on the resume plan): a third state
+  # between hard-stopped and live. Scheduled fires and ANY send_to=full stay
+  # blocked exactly as under "true"; the ONLY thing that may run is a manual
+  # dispatch with send_to=test (Michael alone), so the fixed pipeline can be
+  # verified without a single client-facing send. Crons stay out — the
+  # pairing tests treat verify_only like a pause. Resume = flag "false" +
+  # crons restored, in one PR, after Michael approves the verification email.
+  HILMAR_REPORTS_PAUSED: "verify_only"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
@@ -167,6 +179,23 @@ jobs:
           # RESUMED 2026-08-04 — Michael: "crons back on".
           if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
             echo "::warning::Hilmar reports are HARD-STOPPED (HILMAR_REPORTS_PAUSED=true). Nothing will be sent by ANY trigger, including manual dispatch."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # VERIFY-ONLY (2026-08-12): schedule and send_to=full stay blocked
+          # exactly as under the hard stop; the ONLY opening is a manual
+          # dispatch to the test recipient (Michael alone), so the fixed
+          # pipeline can prove itself before anything client-facing resumes.
+          # Checked BEFORE the open-dispatch branch below, same reason the
+          # hard stop is — an opening checked too late is not a gate.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+               [ "${{ github.event.inputs.send_to }}" != "full" ]; then
+              echo "verify_only — manual test dispatch allowed (send_to=test, Michael only)."
+              echo "proceed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::verify_only — blocked. Only a manual dispatch with send_to=test may run; schedule and full sends stay off until the flag is 'false' and the crons are restored."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -436,8 +465,10 @@ jobs:
         # pipeline's true exit code so the integrity gate below can assert on
         # it (rather than assuming success by reaching the last line).
         id: pipeline
+        env:
+          DAYS_BACK: ${{ github.event.inputs.days_back || '14' }}
         run: |
-          python3 scripts/refresh_stage.py --days-back 14
+          python3 scripts/refresh_stage.py --days-back "${DAYS_BACK}"
           rc=0
           python3 scripts/run_pipeline.py || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"

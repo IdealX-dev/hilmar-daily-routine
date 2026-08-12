@@ -855,19 +855,83 @@ def test_pausing_removes_the_cron_triggers_not_just_the_flag():
     hard stop was on and became a false failure the moment Michael said
     "crons back on" (2026-08-04) — a test that pins an operational state
     fails on the day the state legitimately changes, and teaches people to
-    edit tests to ship. The rule that is true in BOTH states is the pairing:
+    edit tests to ship. The rule that is true in ALL states is the pairing:
     paused means flag AND no triggers; live means flag AND triggers.
+
+    2026-08-12: "verify_only" joined "true" as a no-triggers state — the
+    resume path after the phantom-quote stop. It opens exactly one thing a
+    hard stop closes (a manual send_to=test dispatch, Michael alone) and
+    keeps the schedule out, so on the trigger axis it IS a pause.
     """
     for name in ("daily", "weekly"):
         on = _wf(name).get(True) or _wf(name).get("on")
-        if _paused(name) == "true":
+        if _paused(name) in ("true", "verify_only"):
             assert "schedule" not in on, (
-                f"{name}.yml is flagged paused but still has a cron trigger — "
-                "a run can spawn from the pre-pause SHA and never see the gate")
+                f"{name}.yml is flagged {_paused(name)} but still has a cron "
+                "trigger — a run can spawn from the pre-pause SHA and never "
+                "see the gate")
         else:
             assert "schedule" in on, (
                 f"{name}.yml is not paused but has no cron trigger — it would "
                 "only ever run by hand, which is a silent outage")
+
+
+def test_verify_only_opens_test_dispatch_and_nothing_else():
+    """The 2026-08-12 resume path: after the phantom-quote hard stop, the
+    fixed pipeline must PROVE itself with a send_to=test fire before any
+    client-facing send resumes. verify_only is that state: the gate opens
+    ONLY for a manual dispatch that is not send_to=full — schedule ticks and
+    full sends fall through to proceed=false, exactly as under the stop."""
+    for name in ("daily", "weekly"):
+        gate = _gate_code(name)
+        i = gate.find('if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]')
+        if i < 0:
+            assert _paused(name) != "verify_only", (
+                f"{name}.yml is flagged verify_only but its gate has no "
+                "verify_only branch — the flag would fall through to the "
+                "open-dispatch branch and behave as fully LIVE")
+            continue
+        window = gate[i:i + 700]
+        assert '= "workflow_dispatch"' in window and '!= "full"' in window, (
+            f"{name}.yml's verify_only branch does not restrict to non-full "
+            "manual dispatches")
+        assert "proceed=false" in window, (
+            f"{name}.yml's verify_only branch never blocks — schedule/full "
+            "would proceed")
+        # Ordering: like the hard stop, verify_only must be decided BEFORE
+        # the unconditional manual-dispatch opening.
+        open_dispatch = gate.find('event_name }}" != "schedule"')
+        assert open_dispatch == -1 or i < open_dispatch, (
+            f"{name}.yml checks the open-dispatch branch before verify_only — "
+            "a full-distribution dispatch would slip through")
+
+
+def test_liveness_stands_down_under_verify_only_too():
+    """verify_only keeps the schedule off, so the fire's absence is still
+    chosen — the watchdog must treat it exactly like the pause."""
+    live = _wf_text("liveness")
+    i = live.index('if [ "$HILMAR_REPORTS_PAUSED" = "true" ]')
+    line_end = live.index("then", i)
+    assert '"verify_only"' in live[i:line_end], (
+        "liveness's stand-down condition does not recognize verify_only — "
+        "it would alarm about (and try to recover) a silence Michael chose")
+
+
+def test_the_refresh_window_is_dispatchable_but_defaults_to_14():
+    """The verification catch-up needs --days-back 21 (W31's real OL replies
+    predate the 14-day window), but a scheduled fire must stay at 14 — the
+    input only exists on workflow_dispatch, and the step falls back to 14
+    when it is absent."""
+    wf = _wf("daily")
+    on = wf.get(True) or wf.get("on")
+    inp = (on.get("workflow_dispatch") or {}).get("inputs", {}).get("days_back")
+    assert inp, "daily.yml has no days_back dispatch input"
+    assert str(inp.get("default")) == "14", "days_back default drifted from 14"
+    text = _wf_text("daily")
+    assert 'refresh_stage.py --days-back "${DAYS_BACK}"' in text, (
+        "the pipeline step does not consume the DAYS_BACK env")
+    assert "inputs.days_back || '14'" in text, (
+        "DAYS_BACK has no schedule-safe fallback to 14")
 
 
 def test_a_half_pause_is_impossible_across_the_two_report_workflows():

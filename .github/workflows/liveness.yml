@@ -88,15 +88,17 @@ jobs:
           # reports". Kept as a literal rather than read from daily.yml so
           # this workflow has no cross-file parse to get wrong; a test in
           # tests/test_audit_batch8.py asserts the two never drift apart.
-          # PAUSED 2026-08-12 — Michael: "turn off all reports going out".
-          HILMAR_REPORTS_PAUSED: "true"
+          # PAUSED 2026-08-12 — Michael: "turn off all reports going out";
+          # verify_only same day (Michael "go"): manual test fires allowed,
+          # schedule still off, so liveness keeps standing down.
+          HILMAR_REPORTS_PAUSED: "verify_only"
         run: |
           set -e
           # PAUSE gate. The fire is intentionally suppressed, so its silence
           # is expected and must NOT page anyone. A watchdog that alarms about
           # a decision you deliberately made is a watchdog you learn to ignore
           # — and then it is worthless on the day something is genuinely wrong.
-          if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
+          if [ "$HILMAR_REPORTS_PAUSED" = "true" ] || [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
             echo "::notice::Hilmar reports are PAUSED — liveness is standing down. No missing-fire alarm will be raised while the pause is in effect."
             echo "no_fire=false" >> "$GITHUB_OUTPUT"
             echo "reason=paused" >> "$GITHUB_OUTPUT"
