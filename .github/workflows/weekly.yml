@@ -60,7 +60,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  HILMAR_REPORTS_PAUSED: "true"
+  # verify_only mirrors daily.yml (2026-08-12) — manual test-sends only;
+  # schedule and full sends blocked. Tests assert the two files agree.
+  HILMAR_REPORTS_PAUSED: "verify_only"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 
@@ -96,6 +98,16 @@ jobs:
           # RESUMED 2026-08-04 — Michael: "crons back on".
           if [ "$HILMAR_REPORTS_PAUSED" = "true" ]; then
             echo "::warning::Hilmar reports are HARD-STOPPED — weekly summary suppressed by ANY trigger, nothing sent."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # VERIFY-ONLY: only a manual test dispatch may run — see daily.yml.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+               [ "${{ github.event.inputs.send_to }}" != "full" ]; then
+              echo "verify_only — manual test dispatch allowed."
+              echo "proceed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "::warning::verify_only — blocked (only manual send_to=test dispatches may run)."
             echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           if [ "${{ github.event_name }}" != "schedule" ]; then

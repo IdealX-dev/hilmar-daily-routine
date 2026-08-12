@@ -3,6 +3,20 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (3) — verify_only: the resume path (Michael: "go")
+
+Third gate state between hard-stopped and live, in daily + weekly +
+liveness (tests keep the three agreeing): schedule and send_to=full stay
+blocked exactly as under "true"; the ONLY opening is a manual dispatch with
+send_to=test — Michael alone — so the gated pipeline proves itself on a
+real fire before anything client-facing resumes. Crons stay out (the
+pairing test now treats verify_only as a no-triggers state). Also:
+daily.yml gains a days_back dispatch input (default 14) so the
+verification fire can run --days-back 21 and pull W31's real OL replies
+(Jul 27-31 asks — their responses predate the 14-day window) back into
+stage. 4 test changes/additions. Resume remains: flag "false" + crons
+restored in one PR, only after Michael approves the verification email.
+
 ### 2026-08-12 (2) — the rest of the phantom machine: carrier/rate mining gated
 
 Root cause of the 49, from the Aug-12 fire's own log (run 31602529593, on
