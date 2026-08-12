@@ -3,6 +3,42 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (11) — FOUND: OL changed the booking subject, our gate reads
+### only the subject, 15 wins were thrown away
+
+Michael sent Linda Echevarria's reply with two real bookings attached and
+OL's own recap (35 Hilmar bookings Jun 1 - Aug 12): "FIGURE OUT WHY YOU
+AREN'T SEEING THESE EMAILS".
+
+MEASURED on the two .eml files:
+  "MDOLX260963_NEW BOOKING CONFIRMATION// HILMAR 2X20'DV Oakland to HCMC"
+      subject HILMAR: True    body HILMAR: True
+  "RE: Oakland to Manila (North) / MDOLX261070 / ONE BKG # RICGAZ641400"
+      subject HILMAR: FALSE   body HILMAR: True (7x "HILMAR INGREDIENTS")
+
+Same desk, same customer, new subject convention. collect_bookings gated on
+hilmar_signal(SUBJECT) alone — the "full tightening" of 2026-08-10 — so
+every new-format booking was discarded on arrival. 15 of the 35 bookings in
+OL's recap (MDOLX261025 through 261072) never reached the tracker; the
+highest win it held was 260980.
+
+diag_find is what settled it, and it is worth keeping for the next time:
+the Manila message was STAGED, bucket=mbd_inbound, body fetched (9224
+chars), and "261070: NO tracking row carries this ref". Present, read, and
+thrown away by us — not a delivery problem, which is what I had concluded
+twice and been wrong about twice.
+
+FIX: when the subject carries no signal, read the body — which is where the
+booking names its shipper, and which attach_bodies has already populated by
+the time this gate runs. The body is deliberately the WEAKER signal: only a
+SUBJECT tag overrides the thread-level exclusion, so a forwarded digest that
+merely mentions Hilmar still cannot claim another customer's MDOLX. 7 tests
+from the real subjects; non-vacuity proven (revert -> 2 fail).
+
+WHAT THIS DOES NOT EXPLAIN, and is still open: the quote/rate responses
+(OL-USA RESPONSES stays empty, matches 286/379). Bookings and quotes are
+separate paths; this fixes the wins. Suite 2801 passed, ruff clean.
+
 ### 2026-08-12 (10) — MEASURED: the mailbox is now read whole, and the
 ### recent replies are genuinely not in it
 
