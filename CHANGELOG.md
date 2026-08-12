@@ -3,6 +3,48 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (6) — the NQ rows are an ACCESS finding, not a code defect
+
+Michael: "ol responded to everything." Measured, twice, read-only
+(diag-matching runs 1 and 2, both reconciling exactly with the verification
+fire's own line "Built 339 rate_requests" / "Rate-response matches:
+286/378"):
+
+RUN 1 — the matcher is NOT dropping them. Fate of all 378 rate responses:
+286 matched, 56 no_destination, 36 no_candidate_matched. And the decisive
+negative: 35 unquoted asks examined, ZERO with a same-lane OL reply
+anywhere in stage inside 14 days. The 36 no_candidate_matched are all
+April-June duplicates on threads already quoted (already_quoted 335,
+ask_after_reply 262 across candidates) — normal, not the recent weeks. The
+56 no_destination are CARRIER NEWSLETTERS swept in by the broad from:
+sender query: "Maersk: Flash sale", "*GRI ALERT* EVERGREEN EUROPE", "YML
+TAEB New Bunker", "MSC Middle East Rates", "CMA Week 30 TP Newsletter",
+"CARRIER EQUIPMENT REPORT". Not quotes at all.
+
+RUN 2 — the thread walk. For each of the 35 unquoted asks, every staged
+message in its own conversation AFTER the ask, any bucket, pre-gate.
+Result: 12 threads have NO message after the ask; the other 23 contain
+ONLY lonny_outbound — Lonny asking again days later. Not one OL message
+in any of the 35 threads.
+
+VERDICT: OL's replies to those asks are not in the mailbox this pipeline
+reads, in any form. Not misfiled, not misparsed — absent. refresh_stage
+authenticates as /me (Michael's mailbox; OL IT declined the app-only Entra
+registration 2026-06-10, see daily.yml), and it warns on every run that it
+cannot read MBD_OceanExportBookingShared. Lonny puts Michael on the ask,
+so the ask is visible; OL replies to Lonny WITHOUT Michael, so the reply
+is invisible. Both "OL responded to everything" and "no reply exists in
+our data" are true at once. No matcher, parser, or query change can
+conjure mail this account never received — the fix is access or process at
+OL, and it is named for Michael rather than papered over here.
+
+CORRECTION to entry (2): "the intake fix WORKS — 107 mbd_rate_response
+staged on its first fire" overstated it. Those 107 include the newsletter
+noise above; the fix genuinely closed the fetch/keep drift for Reno's
+address, but it did not restore quote coverage for the recent asks,
+because those replies never reach this mailbox. Stated plainly because the
+earlier line reads as a win it did not earn.
+
 ### 2026-08-12 (5) — verification results + the last rolling win
 
 VERIFICATION FIRE (run 31611357523, send_to=test, days_back=21) — measured
