@@ -1722,12 +1722,22 @@ def apply_operator_corrections(requests: list[dict]) -> int:
         prior_status = row.get("status")
         row.update(changes)
         row["manual_locked"] = True
-        row.setdefault("status_history", []).append({
-            "at": C.now_utc().isoformat(),
-            "from": prior_status,
-            "to": changes.get("status", prior_status),
-            "reason": "Operator correction: " + (corr.get("note") or corr.get("source") or ""),
-        })
+        # History records a TRANSITION, so it is written only when the status
+        # actually changes. The rebuild wipes correction fields every fire, so
+        # this applier re-runs daily — and until 2026-08-12 it appended a
+        # fire-time WIN→WIN entry each time on rows whose status the
+        # correction merely confirmed. core.win_event_date reads the last
+        # →WIN entry, so stand_260905's Jul-9 booking re-dated to "today",
+        # every day — the last survivor of the rolling-win defect
+        # (diag-weekly, run 31611357523).
+        new_status = changes.get("status", prior_status)
+        if new_status != prior_status:
+            row.setdefault("status_history", []).append({
+                "at": C.now_utc().isoformat(),
+                "from": prior_status,
+                "to": new_status,
+                "reason": "Operator correction: " + (corr.get("note") or corr.get("source") or ""),
+            })
         if corr.get("note"):
             row["reason_detail"] = corr["note"]
         applied += 1

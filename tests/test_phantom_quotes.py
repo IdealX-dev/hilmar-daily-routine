@@ -319,6 +319,44 @@ def test_a_poisoned_prior_history_self_heals_to_booking_evidence():
         "back to the booking evidence")
 
 
+def test_a_win_to_win_correction_touch_is_not_a_win_event():
+    """The last survivor of the rolling-win defect (diag on run 31611357523):
+    the operator-corrections applier re-runs every fire (the rebuild wipes
+    its fields), and until 2026-08-12 appended a fire-time WIN→WIN entry each
+    time. A correction touching a row that already IS a win is not the win
+    happening — stand_260905's booking is Jul 9, not "today", every day."""
+    r = {"status": "WIN", "status_history": [
+        {"at": "2026-07-09T21:42:21Z", "from": "PENDING", "to": "WIN",
+         "reason": "MDOLX260905 standalone booking confirmation"},
+        {"at": "2026-08-12T15:17:27+00:00", "from": "WIN", "to": "WIN",
+         "reason": "Operator correction: MDOLX260905 (OOCL booking …)"},
+    ]}
+    assert core.win_event_date(r) == "2026-07-09", (
+        f"win_event={core.win_event_date(r)} — the WIN→WIN correction touch "
+        "re-dated the booking to the fire day")
+
+
+def test_the_corrections_applier_writes_no_entry_without_a_transition(monkeypatch, tmp_path):
+    """Kill it at the source too: re-applying a correction whose status the
+    row already holds must not grow status_history — that append is what
+    manufactured the daily WIN→WIN entries."""
+    corr = {"corrections": [{"request_id": "stand_x",
+                             "set": {"status": "WIN", "carrier_won": "OOCL"},
+                             "note": "confirm booking"}]}
+    p = tmp_path / "operator_corrections.json"
+    p.write_text(__import__("json").dumps(corr), encoding="utf-8")
+    monkeypatch.setattr(IN, "CORRECTIONS_PATH", p, raising=False)
+    row = {"request_id": "stand_x", "status": "WIN", "carrier_won": None,
+           "status_history": [{"at": "2026-07-09T21:42:21Z",
+                               "from": "PENDING", "to": "WIN",
+                               "reason": "booking confirmed"}]}
+    IN.apply_operator_corrections([row])
+    assert row["carrier_won"] == "OOCL", "the correction itself must still apply"
+    assert len(row["status_history"]) == 1, (
+        "a WIN→WIN history entry was appended for a correction that changed "
+        "no status — the daily re-dating machine, reborn")
+
+
 def test_a_prior_with_no_evidence_at_all_still_restores():
     """Never lose the win itself — dating it imperfectly beats dropping it."""
     prior = {"request_id": "req_z", "status": "WIN", "mdolx_ref": None,
