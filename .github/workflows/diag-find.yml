@@ -1,0 +1,46 @@
+name: Find a specific message
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-12. Michael: "but i am in the group email and you can see from her
+# email to me was from the shared box so it does come to me". Whether a
+# message addressed To: Lonny with the group on Cc reaches Michael's OWN
+# mailbox is not settleable by argument — it depends on whether the group
+# fans out to members or holds mail in its own store. This looks.
+#
+# READ-ONLY: pulls state and prints. No blob write, no send, no mutation.
+
+on:
+  workflow_dispatch:
+    inputs:
+      find:
+        description: "Subject fragment / MDOLX ref / Message-ID (separate several with ||)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    name: Is this message in the mailbox we read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+      - name: Find
+        env:
+          DIAG_FIND: ${{ inputs.find }}
+        run: python3 scripts/diag_find.py
