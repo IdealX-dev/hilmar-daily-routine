@@ -3,7 +3,47 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (9) — the real cause, from Michael, and the durable fix
+
+Michael, after correcting my model of who does what: "export pricig doesn't
+book cargo.. mbd oceanbooking shared books cargo, they send the options and
+the pricing to the client normally then lonny books". Noted and wrong on my
+part — entry (8) below reasoned from the assumption that the export pricing
+desk answers rate requests. It does not.
+
+THE ACTUAL CAUSE, found by Michael, not by this pipeline: "the team stopped
+copying the group email address for bookings sent to lonny and then lonny's
+approvals are not going to group but to the individual email that sent them".
+So the options-and-pricing mail that used to arrive from
+MBD_OceanExportBookingShared now arrives from whichever OL person sent it,
+and classify() keyed on a three-address whitelist — group mailbox, Lonny,
+Reno. Everything else was dropped. The ask then aged out as Not Quoted while
+OL was answering normally. He is fixing the copying process at OL.
+
+FIX — stop identifying OL correspondence by a roster of individuals. An
+@ol-usa.com sender WITH LONNY ON THE MESSAGE (to or cc) is OL↔Hilmar
+correspondence, bucketed exactly as the shared mailbox is: lane-shaped
+subject → mbd_rate_response, anything else → mbd_inbound. Identity comes
+from the tenant plus a participant, neither of which a staffing change can
+drift out of. Requiring Lonny is also the guardrail that keeps every other OL
+client out — he is Hilmar's buyer and nobody else's, so Numidia/Hoogwegt/TTS
+mail (3537 correctly-dropped messages on this fire) still cannot enter.
+The report no longer silently depends on OL's copying discipline holding.
+
+REVERTED from (8): MBD_Export_Pricing and caren.tobel are NOT unconditional
+quote senders — that came from my incorrect model. They are now covered by
+the participant rule only when Lonny is actually on the message. What stands
+from (8) is EXCLUDED_SENDERS being empty: a mailbox-scan rule
+(config.json ingest_scope.mailboxes_excluded, "stop searching idealx, ignore
+MBD_Export_Pricing" — about which MAILBOXES TO READ) had been applied as a
+sender filter, discarding OL mail arriving into the mailbox we do scan.
+
+10 tests: the direct-to-Lonny quote, cc-only, non-lane subjects, and three
+negative cases (OL mail without Lonny, non-OL sender with Lonny, Lonny's own
+mail still classifying as Lonny). Suite 2784 passed, ruff clean.
+
 ### 2026-08-12 (8) — WE WERE DELETING OL'S QUOTES ON ARRIVAL
+### PARTIALLY SUPERSEDED by (9): the pricing-desk-quotes premise was wrong.
 
 Michael: "same bullshit ... ol responded to everything ... they are in my
 mailbox where they always have been since day one". All true, and this is

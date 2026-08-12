@@ -125,23 +125,28 @@ EXCLUDED_SENDERS: set[str] = set()
 # Before this, classify() returned None for any sender that is not Lonny or
 # the shared mailbox, so three of Reno's messages were discarded on arrival
 # and QC-057 separately flagged one of them as a silently dropped RFQ.
-# 2026-08-12: the export pricing desk joins the list. These are the addresses
-# that actually answer Lonny's rate requests; they were in EXCLUDED_SENDERS
-# (see above for how a mailbox-scan exclusion became a sender filter), so every
-# quote they sent was dropped before classification. Unconditional for the same
-# two reasons as Reno: they quote rather than book, and their subjects do not
-# follow the shared mailbox's "Re: <origin> to <dest>" shape.
-#
-# These desks serve every OL client, not just Hilmar. That is handled where it
-# belongs and already is — ingest's out_of_scope gate drops numidia /
-# agridairy / other_client rows (325 / 26 / 64 on the 2026-08-12 fire), and the
-# lane+thread matcher only attaches a response to an ask it actually answers.
-# Filtering by sender here would repeat the mistake this comment documents.
 OL_QUOTE_ONLY_SENDERS = {
     "reno.gurusinghe@ol-usa.com",
-    "mbd_export_pricing@ol-usa.com",
-    "caren.tobel@ol-usa.com",
 }
+
+#: The OL tenant. Any sender here is OL staff; combined with Lonny being ON
+#: the message (see classify), that is sufficient to know it is OL↔Hilmar
+#: correspondence without maintaining a list of individuals.
+OL_DOMAIN = "@ol-usa.com"
+
+
+def _addresses(item: dict) -> set[str]:
+    """Every address on the message — from, to, cc — lowercased."""
+    out: set[str] = set()
+    frm = ((item.get("from") or {}).get("emailAddress") or {}).get("address")
+    if frm:
+        out.add(frm.lower())
+    for key in ("toRecipients", "ccRecipients"):
+        for r in item.get(key) or []:
+            a = ((r or {}).get("emailAddress") or {}).get("address")
+            if a:
+                out.add(a.lower())
+    return out
 
 def graph_queries() -> list[tuple[str, str]]:
     """The Graph queries a fire runs. Named so a test can hold the list still.
@@ -733,6 +738,31 @@ def classify(item: dict) -> str | None:
     # OL_QUOTE_ONLY_SENDERS for why this is not subject-matched.
     if sender_l in {s.lower() for s in OL_QUOTE_ONLY_SENDERS}:
         return "mbd_rate_response"
+
+    # ANY OL person, when Lonny is ON the message (2026-08-12).
+    #
+    # Michael found the operational cause: "the team stopped copying the group
+    # email address for bookings sent to lonny and then lonny's approvals are
+    # not going to group but to the individual email that sent them". So the
+    # options-and-pricing mail that used to arrive from
+    # MBD_OceanExportBookingShared now arrives from whichever OL person sent
+    # it, and keying on the group address alone makes those quotes invisible —
+    # the ask then ages out as Not Quoted while OL is answering normally.
+    #
+    # He is fixing the process at OL. This exists so the report does not
+    # silently depend on that process holding: identity comes from the tenant
+    # (OL staff) plus Lonny actually being a participant, which no individual
+    # roster can drift out of. Requiring Lonny on the message is also what
+    # keeps every other OL client out — he is Hilmar's buyer and nobody
+    # else's, so this cannot bleed Numidia/Hoogwegt/TTS mail in.
+    #
+    # Bucketing mirrors the shared mailbox exactly, because these people are
+    # doing the shared mailbox's job: a lane-shaped subject is a rate
+    # response, anything else is inbound (bookings, amendments, chatter).
+    if sender_l.endswith(OL_DOMAIN) and LONNY_EMAIL.lower() in _addresses(item):
+        if RATE_RESPONSE_SUBJECT.match(subject):
+            return "mbd_rate_response"
+        return "mbd_inbound"
 
     return None  # any other sender → drop
 
