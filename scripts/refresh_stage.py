@@ -544,7 +544,7 @@ def search_messages(token: str, kql: str, max_results: int = 500,
     return out
 
 
-def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
+def list_messages_since(token: str, since_iso: str, max_results: int = 30000,
                         base: str | None = None) -> list[dict]:
     """EVERY message in the mailbox since `since_iso`, newest first.
 
@@ -576,7 +576,11 @@ def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
     """
     url: str | None = f"{base or _mailbox_base}/messages"
     params: dict | None = {
-        "$top": "100",
+        # 500/page, not 100. Michael's OL mailbox carries every other client
+        # too (TTS, Hoogwegt, Numidia, Hilldrup...), so a 21-day window is
+        # thousands of messages; at 100/page the first run spent two minutes
+        # and still stopped short. Graph allows up to 1000 here.
+        "$top": "500",
         "$filter": f"receivedDateTime ge {since_iso}",
         "$orderby": "receivedDateTime desc",
         "$select": GRAPH_SELECT,
@@ -587,10 +591,21 @@ def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
         out.extend(data.get("value", []))
         url = data.get("@odata.nextLink")
         params = None  # nextLink carries the query string
-    if len(out) >= max_results:
-        msg = (f"refresh_stage: WARNING — date sweep hit the {max_results}-message "
-               f"guard since {since_iso}; the window may be incompletely read. "
-               "Raise --max-window-messages or narrow the window.")
+    # COVERAGE IS THE THING TO REPORT, not the raw count. Ordering is newest
+    # first, so a guard-stop truncates the OLDEST end — the safe direction
+    # (today's mail is never the part lost), but it silently shortens the
+    # window, which is how the first run of this sweep still missed Jul 29-31.
+    # State the floor we actually reached and compare it to the one asked for;
+    # "reached back to Aug 7" against a Jul 22 cutoff is the honest headline.
+    floor = min((m.get("receivedDateTime") or "" for m in out), default="")
+    print(f"refresh_stage:   sweep read {len(out)} message(s); oldest reached "
+          f"{floor or 'n/a'} (window floor requested: {since_iso[:19]})")
+    if len(out) >= max_results or (floor and floor[:19] > since_iso[:19]):
+        msg = (f"refresh_stage: WARNING — date sweep did NOT reach the window "
+               f"floor: read {len(out)} message(s) back to {floor or 'n/a'}, "
+               f"but the window starts {since_iso[:19]} (guard "
+               f"{max_results}). Mail older than the reached point is missing "
+               "from this run. Raise --max-window-messages.")
         print(msg, file=sys.stderr)
         print(f"::warning::{msg}")
     return out
@@ -815,10 +830,13 @@ def main() -> int:
                     help="Lower bound for receivedDateTime (default 14)")
     ap.add_argument("--since", type=str,
                     help="Explicit lower bound, ISO date e.g. 2026-04-01. Overrides --days-back.")
-    ap.add_argument("--max-window-messages", type=int, default=4000,
-                    help="Runaway guard for the date sweep (default 4000). Not a "
+    ap.add_argument("--max-window-messages", type=int, default=30000,
+                    help="Runaway guard for the date sweep (default 30000). Not a "
                          "business limit — the sweep must read the whole window; "
-                         "hitting this is a loud warning, not normal operation.")
+                         "hitting it means the window was NOT fully read and is a "
+                         "loud warning. The 4000 first tried was too low: a 21-day "
+                         "window of this mailbox is thousands of messages because "
+                         "every other client shares it.")
     ap.add_argument("--dry", action="store_true",
                     help="Don't write — log what would be added")
     ap.add_argument("--verbose", action="store_true",
