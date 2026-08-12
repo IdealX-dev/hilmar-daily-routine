@@ -3,6 +3,49 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (10) — MEASURED: the mailbox is now read whole, and the
+### recent replies are genuinely not in it
+
+The fire on f7b32b19 (all fixes in, --days-back 21), verbatim:
+
+  sweep read 5666 message(s); oldest reached 2026-07-22T18:21:52Z
+    (window floor requested 2026-07-22T18:21:15)   → the WHOLE window
+  total unique: 5789 (5421 from the sweep, 368 added by $search outside it)
+  NEW staged records: 18 — mbd_inbound: 18      ← zero new rate responses
+  Rate-response matches: 286/379                ← unchanged
+  QC-077: 13
+
+So with complete visibility into every message in Michael's OL mailbox for
+21 days, there are NO OL quote replies to the Jul 23 - Aug 12 asks. Not a
+scanning gap: we now read all 5666. The dropped senders are other clients
+(TTS 493, Hoogwegt 83, Numidia 62, Hilldrup 64, dewittmove, 2ship) plus OL
+staff on other clients' work — correctly dropped, because Lonny is not on
+those messages.
+
+This is exactly what Michael diagnosed himself: "the team stopped copying
+the group email address for bookings sent to lonny and then lonny's
+approvals are not going to group but to the individual email that sent
+them". Those replies live between an OL individual and Lonny and never
+reach this mailbox at all. He is fixing that at OL. The participant rule
+(9) means the pipeline will pick them up the moment either the group or
+Michael is back on the thread — no code change needed then.
+
+Corrections to my own record, both directions: entry (6) said "not in the
+mailbox we read" and was retracted by (7) as wrong — it was PARTLY right
+about this window but for the wrong mechanism (I blamed mailbox access;
+the cause is a dropped CC). And (7) stands on its own merits regardless:
+the $search ceiling was a real, separate defect that was hiding recent mail
+independently of the CC break. Both were true at once, which is why fixing
+either alone changed nothing visible.
+
+ALSO FIXED: the coverage warning I added in (7) fired on a 37-SECOND gap
+during a complete 5666-message read. Pagination ending on its own means
+Graph had nothing older; the guard is the only real incompleteness signal.
+Coverage is still printed every run. A warning that fires on success is the
+same crying-wolf that let the ceiling hide for weeks.
+
+Suite 2784 passed, ruff clean.
+
 ### 2026-08-12 (9) — the real cause, from Michael, and the durable fix
 
 Michael, after correcting my model of who does what: "export pricig doesn't
