@@ -57,9 +57,15 @@ on:
   # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
   # the one matching the current ET offset, so DST never doubles or skips.
   #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
-  schedule:
-    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+  # PAUSED 2026-08-12 (Michael: "turn off all reports going out until you
+  # finally figure out where you made system changes in the last month that
+  # the report is all wrong still"). BOTH halves of the stop, per the
+  # 2026-08-03 lesson below: triggers out AND HILMAR_REPORTS_PAUSED=true.
+  # To resume: restore the two cron lines AND flip the flag back to "false"
+  # (here, weekly.yml, liveness.yml — tests enforce the pairing).
+  # schedule:
+  #   - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
+  #   - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -93,7 +99,14 @@ concurrency:
   cancel-in-progress: false
 
 # ─────────────────────────────────────────────────────────────────────
-# REPORTS LIVE — resumed 2026-08-04. Michael: "crons back on".
+# REPORTS HARD-STOPPED — 2026-08-12. Michael: "turn off all reports going
+# out until you finally figure out where you made system changes in the
+# last month that the report is all wrong still." (After the Aug-12 email
+# surfaced QC-077's 49 undated quotes to the CEO.) Zero goes out: the flag
+# below blocks EVERY trigger including manual dispatch, and the cron
+# triggers are removed so no run can spawn from a pre-pause SHA.
+#
+# Previously: LIVE since 2026-08-04 ("crons back on").
 #
 # History, because the next pause should be cheaper than the last one:
 #   2026-07-30  "pause all hilmar reports" — flag set to "true".
@@ -119,7 +132,7 @@ concurrency:
 # pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  HILMAR_REPORTS_PAUSED: "false"
+  HILMAR_REPORTS_PAUSED: "true"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"

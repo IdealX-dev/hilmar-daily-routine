@@ -88,7 +88,8 @@ jobs:
           # reports". Kept as a literal rather than read from daily.yml so
           # this workflow has no cross-file parse to get wrong; a test in
           # tests/test_audit_batch8.py asserts the two never drift apart.
-          HILMAR_REPORTS_PAUSED: "false"
+          # PAUSED 2026-08-12 — Michael: "turn off all reports going out".
+          HILMAR_REPORTS_PAUSED: "true"
         run: |
           set -e
           # PAUSE gate. The fire is intentionally suppressed, so its silence
@@ -168,6 +169,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # While reports are paused, the fire's absence is CHOSEN — recovery
+          # must stand down with the alarm. Without this, every ≥10 AM ET tick
+          # would dispatch a daily run that no-ops at the hard stop: zero
+          # sends, but machinery visibly lunging at the trigger all pause long.
+          if [ "${{ steps.check.outputs.reason }}" = "paused" ]; then
+            echo "Reports are paused — no recovery dispatch."; exit 0
+          fi
           created="${{ steps.check.outputs.created }}"
           today_et=$(TZ=America/New_York date +%F)
           dow=$(TZ=America/New_York date +%u)     # 1=Mon .. 7=Sun

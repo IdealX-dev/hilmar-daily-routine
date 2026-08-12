@@ -17,9 +17,14 @@ name: Weekly exec summary
 # one matching the current ET offset so DST never doubles. dow 1 = Monday.
 
 on:
-  schedule:
-    - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
-    - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
+  # PAUSED 2026-08-12 (Michael: "turn off all reports going out"). Both
+  # halves, per the 2026-08-03 lesson: triggers out AND the flag below —
+  # tests/test_audit_batch8.py fails a half-pause. To resume: restore the
+  # cron lines AND flip HILMAR_REPORTS_PAUSED back to "false" here, in
+  # daily.yml, and in liveness.yml.
+  # schedule:
+  #   - cron: "7 9 * * 1"     # ~5:07 AM EDT, Monday
+  #   - cron: "7 10 * * 1"    # ~5:07 AM EST, Monday (gated out in EDT)
   workflow_dispatch:
     inputs:
       send_to:
@@ -55,7 +60,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  HILMAR_REPORTS_PAUSED: "false"
+  HILMAR_REPORTS_PAUSED: "true"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 
