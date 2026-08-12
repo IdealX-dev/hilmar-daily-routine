@@ -176,6 +176,7 @@
     "mailbox_folder": "Hilmar Tracker",
     "rule_filter": "from:lupfold@hilmaringredients.com OR to:lupfold@hilmaringredients.com",
     "updated": "2026-04-30",
-    "updated_by": "Michael — 'stop searching idealx, ignore MBD_Export_Pricing'"
+    "updated_by": "Michael — 'stop searching idealx, ignore MBD_Export_Pricing'",
+    "_note_mailboxes_excluded": "MAILBOXES NOT TO SCAN AS A SOURCE — not a sender filter. Michael 2026-04-30 'stop searching idealx, ignore MBD_Export_Pricing' meant do not go READ those mailboxes. Until 2026-08-12 refresh_stage applied this list to classify() as EXCLUDED_SENDERS, which discarded every rate quote the OL export pricing desk sent INTO the mailbox we do scan — the cause of weeks of false 'Not Quoted' rows. Scope belongs at the layer it names."
   }
 }

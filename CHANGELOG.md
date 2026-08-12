@@ -3,6 +3,39 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (8) — WE WERE DELETING OL'S QUOTES ON ARRIVAL
+
+Michael: "same bullshit ... ol responded to everything ... they are in my
+mailbox where they always have been since day one". All true, and this is
+the cause. Not the matcher, not access, not $search alone.
+
+refresh_stage.classify() held EXCLUDED_SENDERS = {MBD_Export_Pricing@ol-usa.com,
+caren.tobel@ol-usa.com} — "never stage from these senders even if they appear
+in the search". That is the OL EXPORT PRICING DESK: the people who answer
+Lonny's rate requests, an address on this report's own distribution list, and
+the sender used in this repo's own OL-body test fixtures. Every quote they
+sent into the mailbox we scan was discarded before classification. The ask
+then aged out as Not Quoted, which is what W31/W32 have been showing.
+
+PROVENANCE — a scope rule applied one layer off. config.json
+`ingest_scope.mailboxes_excluded`, from Michael 2026-04-30: "stop searching
+idealx, ignore MBD_Export_Pricing". That instruction is about WHICH MAILBOXES
+TO SCAN AS A SOURCE — the key is literally named mailboxes_excluded. The code
+turned it into a sender filter. Same shape as every other defect found today:
+the rule was right, the layer was wrong.
+
+FIX: EXCLUDED_SENDERS is now empty; both addresses move to
+OL_QUOTE_ONLY_SENDERS (unconditional, same reasoning as Reno — they quote
+rather than book, and their subjects do not follow the shared mailbox's
+"Re: <origin> to <dest>" shape). q3 derives from that set, so the fetch side
+follows automatically. Cross-client bleed is handled where it already is:
+ingest's out_of_scope gate (325 numidia / 26 agridairy / 64 other_client
+dropped on the 2026-08-12 fire) and the lane+thread matcher. config.json
+keeps the mailbox list for its real purpose plus a note that it is NOT a
+sender filter. 7 tests, including one asserting the two lists can never again
+contradict each other.
+
+'
 ### 2026-08-12 (7) — I WAS WRONG. It is $search, and it is a code defect
 
 Michael: "they are in my mailbox ... where they always have been since day

@@ -86,13 +86,26 @@ BODIES_PATH = _resolve("stage_emails_bodies")
 LONNY_EMAIL = "lupfold@hilmaringredients.com"
 MBD_BOOKING_EMAIL = "MBD_OceanExportBookingShared@ol-usa.com"
 
-# Drops — never stage from these senders even if they appear in the search
-EXCLUDED_SENDERS = {
-    "MBD_Export_Pricing@ol-usa.com",
-    "caren.tobel@ol-usa.com",
-    # michael.deitchman@idealx.us is also excluded per ingest_scope.mailboxes_excluded,
-    # but those won't appear here because we auth as @ol-usa.com — different mailbox.
-}
+# Drops — never stage from these senders even if they appear in the search.
+#
+# EMPTY SINCE 2026-08-12, AND THE REASON MATTERS MORE THAN THE LIST.
+# This set used to hold MBD_Export_Pricing@ol-usa.com and caren.tobel@ol-usa.com,
+# taken from config.json `ingest_scope.mailboxes_excluded`, whose provenance is
+# Michael on 2026-04-30: "stop searching idealx, ignore MBD_Export_Pricing".
+#
+# That instruction is about MAILBOXES TO SCAN — do not go and read the
+# MBD_Export_Pricing mailbox as a SOURCE. The key is literally named
+# `mailboxes_excluded`. Applying it here turned it into a SENDER filter, which
+# is a different and much worse thing: every quote the OL export pricing desk
+# sent INTO the mailbox we do scan was discarded on arrival. That desk is where
+# Hilmar rate quotes come from — it is on the daily report's own distribution
+# list, and it is the sender in this repo's own OL-body test fixtures.
+#
+# Michael, 2026-08-12: "ol responded to everything ... they are in my mailbox
+# ... where they always have been since day one". They were. We deleted them.
+# Scope belongs at the layer it names: mailbox exclusions live in
+# read_targets()/mailboxes_to_scan, never in classify().
+EXCLUDED_SENDERS: set[str] = set()
 
 # OL people who QUOTE Hilmar but never book. Michael 2026-08-07: "reno only
 # quotes hilmar so she doesn't book."
@@ -112,8 +125,22 @@ EXCLUDED_SENDERS = {
 # Before this, classify() returned None for any sender that is not Lonny or
 # the shared mailbox, so three of Reno's messages were discarded on arrival
 # and QC-057 separately flagged one of them as a silently dropped RFQ.
+# 2026-08-12: the export pricing desk joins the list. These are the addresses
+# that actually answer Lonny's rate requests; they were in EXCLUDED_SENDERS
+# (see above for how a mailbox-scan exclusion became a sender filter), so every
+# quote they sent was dropped before classification. Unconditional for the same
+# two reasons as Reno: they quote rather than book, and their subjects do not
+# follow the shared mailbox's "Re: <origin> to <dest>" shape.
+#
+# These desks serve every OL client, not just Hilmar. That is handled where it
+# belongs and already is — ingest's out_of_scope gate drops numidia /
+# agridairy / other_client rows (325 / 26 / 64 on the 2026-08-12 fire), and the
+# lane+thread matcher only attaches a response to an ask it actually answers.
+# Filtering by sender here would repeat the mistake this comment documents.
 OL_QUOTE_ONLY_SENDERS = {
     "reno.gurusinghe@ol-usa.com",
+    "mbd_export_pricing@ol-usa.com",
+    "caren.tobel@ol-usa.com",
 }
 
 def graph_queries() -> list[tuple[str, str]]:
