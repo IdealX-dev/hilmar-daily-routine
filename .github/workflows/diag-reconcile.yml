@@ -1,0 +1,52 @@
+name: Reconcile against OL's booking recap
+
+# MANUAL ONLY, read-only.
+#
+# 2026-08-12. Michael forwarded Linda Echevarria's booking recap (35 Hilmar
+# bookings, Jun 1 - Aug 12) pulled from OL's operational system: "ALSO A
+# REPORT ATTACHED SHOWING ALL OUR WINS". That list is authoritative in a way
+# nothing derived from email can be — it does not depend on which mailbox a
+# message reached. Every other diagnostic this session compared the tracker to
+# the mail we managed to stage, which shares the blind spot being measured.
+#
+# READ-ONLY: pulls state and prints. No blob write, no send, no mutation.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mdolx:
+        description: "MDOLX refs from OL's recap (comma/space separated)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    name: Tracker vs OL's system of record
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # azure-storage-blob named explicitly — it is deliberately absent from
+        # requirements.txt; see tests/test_diag_day.py.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Reconcile
+        env:
+          DIAG_MDOLX: ${{ inputs.mdolx }}
+        run: python3 scripts/diag_reconcile.py
