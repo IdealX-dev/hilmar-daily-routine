@@ -144,11 +144,13 @@ def _load_rate_responses_by_thread() -> dict[tuple, str]:
     has no inline ETD/vessel/rate (data is in the PDF attachment, but the
     rate-response email for the SAME MDOLX has the pipe-table inline).
 
-    Returns dict keyed by (conversation_id|mdolx_ref|lane_key) → body text.
-    Each key is a separate index entry pointing to the same body, so a
-    lookup by any of the three signals finds the rate-response.
+    Returns dict keyed by (conversation_id|mdolx_ref|lane_key) → record dict
+    {body, sender, sent}. Each key is a separate index entry pointing to the
+    same record, so a lookup by any of the three signals finds the
+    rate-response. sender/sent ride along so _find_related_rate_response can
+    hold the sibling to the same quote-evidence bar as a direct body.
     """
-    out: dict[tuple, str] = {}
+    out: dict[tuple, dict] = {}
     bodies_path = ROOT / "scripts" / "stage_emails_bodies.txt"
     if not bodies_path.exists():
         return out
@@ -166,37 +168,53 @@ def _load_rate_responses_by_thread() -> dict[tuple, str]:
         body = d.get("text_body") or d.get("body") or ""
         if not body:
             continue
+        rec = {"body": body, "sender": d.get("sender_email"),
+               "sent": C.body_send_time(d)}
         conv = (d.get("conversation_id") or "").strip()
         if conv:
-            out[("conv", conv)] = body
+            out[("conv", conv)] = rec
         subject = d.get("subject") or ""
         m = _re.search(r"MDOLX\s*0*(\d{4,})", subject, _re.IGNORECASE)
         if m:
-            out[("mdolx", m.group(1))] = body
+            out[("mdolx", m.group(1))] = rec
         # Lane fallback (Oakland-to-Yokohama-type subjects)
         m2 = _re.search(r"([A-Z][a-z]+)\s+to\s+([A-Z][a-z]+)", subject)
         if m2:
             lane_key = f"{m2.group(1)}->{m2.group(2)}".lower()
-            out.setdefault(("lane", lane_key), body)
+            out.setdefault(("lane", lane_key), rec)
     return out
 
 
-def _find_related_rate_response(row: dict, by_thread: dict[tuple, str]) -> str | None:
-    """Look up a rate-response body for this row by thread signals."""
+def _find_related_rate_response(row: dict, by_thread: dict[tuple, dict]) -> str | None:
+    """Look up a rate-response body for this row by thread signals.
+
+    Every hit must pass core.quote_evidence_ok against THIS row's ask time.
+    The conv-id join is the dangerous one: Lonny re-uses Outlook threads, so
+    "the rate-response in this conversation" is routinely LAST cycle's sheet,
+    sent before this ask ever existed — pasting it on is the same phantom
+    quote as mining the ask body, arriving through the side door.
+    """
+    req_ts = row.get("request_timestamp")
+
+    def _ok(rec: dict | None) -> str | None:
+        if rec and C.quote_evidence_ok(rec.get("sender"), rec.get("sent"), req_ts):
+            return rec["body"]
+        return None
+
     conv = (row.get("conversation_id") or "").strip()
     if conv:
-        body = by_thread.get(("conv", conv))
+        body = _ok(by_thread.get(("conv", conv)))
         if body:
             return body
     for cand in [row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or []):
         if cand:
-            body = by_thread.get(("mdolx", str(cand)))
+            body = _ok(by_thread.get(("mdolx", str(cand))))
             if body:
                 return body
     origin = (row.get("origin") or "").strip().lower()
     dest = (row.get("destination") or "").strip().lower()
     if origin and dest:
-        body = by_thread.get(("lane", f"{origin}->{dest}"))
+        body = _ok(by_thread.get(("lane", f"{origin}->{dest}")))
         if body:
             return body
     return None
@@ -392,18 +410,33 @@ def _stamp_response_time(r: dict, parsed: dict) -> bool:
     return True
 
 
-def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> dict:
-    """Return the full parsed quote from any source body — carrier, rate, ETD,
-    ETA, vessel/voyage, transshipment, free-time, POL/POD.
+def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str, str],
+                                     request_ts: str | None = None) -> dict:
+    """Return the full parsed quote from a QUALIFYING source body — carrier,
+    rate, ETD, ETA, vessel/voyage, transshipment, free-time, POL/POD.
 
     Returns a dict ready to merge into the request row. Empty dict if nothing
     parseable. Extended 2026-05-13 per Michael "data missing throughout the
     report" — ingest's old runs lost these fields; this backfills.
+
+    QUALIFYING (2026-08-12): the body must pass core.quote_evidence_ok —
+    written by OL, sent after the ask. On a rebuilt row source_imids is the
+    ask itself, and Lonny re-uses threads, so his new ask carries the
+    PREVIOUS rate sheet quoted below it. Parsing it here is how the Aug-12
+    staff email showed three fresh requests "quoted" (Yang Ming $797 /
+    CMA CGM $725 / ONE $505) that OL never sent — the run log's own
+    "PATCH PND" lines, and 46 more of QC-077's 49 undated quotes. The
+    aa39f16 guard stopped this function's timestamps but not its rates:
+    a quote this function returns must clear the same bar as the time it
+    would be stamped with.
     """
     for imid in imids or []:
         key = imid.strip("<>").strip()
         body = bodies_by_imid.get(key)
         if not body:
+            continue
+        if not C.quote_evidence_ok(_SENDER_BY_IMID.get(key),
+                                   _SENT_BY_IMID.get(key), request_ts):
             continue
         try:
             parsed = BP.parse_rate_table(body)
@@ -439,48 +472,10 @@ def _discover_full_quote_from_bodies(imids: list[str], bodies_by_imid: dict[str,
     return {}
 
 
-def _discover_carrier_from_bodies(imids: list[str], bodies_by_imid: dict[str, str]) -> tuple[str | None, float | None]:
-    """Back-compat wrapper around _discover_full_quote_from_bodies.
-    Returns (carrier, rate) for existing call-sites; new code should use
-    the full-dict variant to backfill etd, eta, vessel, transshipment too.
-    """
-    for imid in imids or []:
-        key = imid.strip("<>").strip()
-        body = bodies_by_imid.get(key)
-        if not body:
-            continue
-
-        # PRIMARY: structured table parse
-        try:
-            parsed = BP.parse_rate_table(body)
-        except Exception:
-            parsed = {}
-        carrier = parsed.get("carrier_quoted")
-        rate = parsed.get("ol_rate")
-        if carrier:
-            canon = C.normalize_carrier(carrier) or carrier
-            return canon, (float(rate) if rate is not None else None)
-
-        # FALLBACK: prose-format body scan (truncate at boilerplate first)
-        truncated = _strip_boilerplate(body)
-        if not truncated:
-            continue
-        rate_m = _BODY_RATE_PATTERN.search(truncated)
-        if not rate_m:
-            continue
-        best_pos = None
-        best_canon = None
-        for canonical, pat in _BODY_CARRIER_PATTERNS:
-            m = pat.search(truncated)
-            if m and (best_pos is None or m.start() < best_pos):
-                best_pos = m.start()
-                best_canon = canonical
-        if best_canon:
-            rate_val = None
-            with contextlib.suppress(ValueError):
-                rate_val = float(rate_m.group(1).replace(",", ""))
-            return best_canon, rate_val
-    return None, None
+# _discover_carrier_from_bodies was deleted 2026-08-12: zero callers, and it
+# duplicated _discover_full_quote_from_bodies' mining loop WITHOUT the
+# quote-evidence gate — dead code holding the ungated fabrication path open
+# for the next caller to find.
 
 
 def _discover_carrier_from_subjects(subjects: list[str]) -> str | None:
@@ -636,7 +631,9 @@ def main():
 
     for r in requests:
         imids = r.get("source_imids") or []
-        parsed = _discover_full_quote_from_bodies(imids, bodies_by_imid) if imids else {}
+        parsed = (_discover_full_quote_from_bodies(
+                      imids, bodies_by_imid, r.get("request_timestamp"))
+                  if imids else {})
 
         # Cross-thread fallback: if the source_imid body had no parseable
         # table (booking-confirmation bodies are signature-only — data is

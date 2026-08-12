@@ -156,6 +156,95 @@ def test_patch_carriers_stamp_is_guarded_by_the_same_rule():
             PC._SENDER_BY_IMID.pop(k, None)
 
 
+# ── the mining sites enforce it too (2026-08-12, the Aug-12 staff email) ────
+#
+# aa39f16 guarded the TIMESTAMP stamps but not the CARRIER/RATE mining, so the
+# very first fire on the fix printed "PATCH PND req_73be1541f11b -> Yang Ming
+# @ $797" (and CMA CGM $725, ONE $505) — three fresh Aug-11 asks "quoted" out
+# of Lonny's own thread text, undated, straight into the email the CEO read.
+# QC-077 counted 49 such rows. The rate a function returns must clear the same
+# bar as the time it would be stamped with.
+
+LONNY_RATE_SHEET = (
+    "POL | POD | Carrier | Rate | ETD | ETA\n"
+    "Oakland | Manila (North) | Yang Ming | $797 | 15-Jul | 8-Aug\n"
+)
+
+
+def _with_body_maps(monkeypatch, sender_by_imid, sent_by_imid):
+    import patch_carriers as PC
+    monkeypatch.setattr(PC, "_SENDER_BY_IMID", dict(sender_by_imid))
+    monkeypatch.setattr(PC, "_SENT_BY_IMID", dict(sent_by_imid))
+    return PC
+
+
+def test_pass1_mining_refuses_the_ask_body(monkeypatch):
+    """THE Aug-12 fabrication, reproduced: the only body on the rebuilt row is
+    Lonny's ask, carrying the previous rate sheet quoted below it."""
+    PC = _with_body_maps(monkeypatch,
+                         {"ask@hilmar": "lonny.x@hilmar.com"},
+                         {"ask@hilmar": ASK_TS})
+    parsed = PC._discover_full_quote_from_bodies(
+        ["ask@hilmar"], {"ask@hilmar": LONNY_RATE_SHEET}, ASK_TS)
+    assert parsed == {}, (
+        f"mined {parsed.get('carrier_quoted')} @ {parsed.get('ol_rate')} out "
+        "of Lonny's own email — the PATCH PND machine still runs")
+
+
+def test_pass1_mining_accepts_a_genuine_ol_reply(monkeypatch):
+    """The half that must not regress: a real OL reply still yields the quote."""
+    PC = _with_body_maps(monkeypatch,
+                         {"reply@ol": "Reno.Gurusinghe@ol-usa.com"},
+                         {"reply@ol": REPLY_TS})
+    parsed = PC._discover_full_quote_from_bodies(
+        ["reply@ol"], {"reply@ol": LONNY_RATE_SHEET}, ASK_TS)
+    assert parsed.get("carrier_quoted") == "Yang Ming"
+    assert parsed.get("_src_imid") == "reply@ol"
+
+
+def test_pass1_mining_skips_the_ask_and_keeps_looking(monkeypatch):
+    """A row with both bodies must yield the OL reply, not first-hit-wins on
+    the ask."""
+    PC = _with_body_maps(monkeypatch,
+                         {"ask@hilmar": "lonny.x@hilmar.com",
+                          "reply@ol": "linda.echevarria@ol-usa.com"},
+                         {"ask@hilmar": ASK_TS, "reply@ol": REPLY_TS})
+    parsed = PC._discover_full_quote_from_bodies(
+        ["ask@hilmar", "reply@ol"],
+        {"ask@hilmar": LONNY_RATE_SHEET, "reply@ol": LONNY_RATE_SHEET},
+        ASK_TS)
+    assert parsed.get("_src_imid") == "reply@ol"
+
+
+def test_sibling_lookup_refuses_last_cycles_rate_sheet():
+    """Lonny re-uses threads, so the conv-id join finds LAST cycle's rate
+    response — sent before this ask existed. Same phantom, side door."""
+    import patch_carriers as PC
+    stale = {"body": LONNY_RATE_SHEET, "sender": "Reno.Gurusinghe@ol-usa.com",
+             "sent": "2026-07-15T10:00:00Z"}
+    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS}
+    assert PC._find_related_rate_response(row, {("conv", "conv1"): stale}) is None, (
+        "a rate response sent 19 days BEFORE the ask was accepted as this "
+        "cycle's quote")
+
+
+def test_sibling_lookup_accepts_a_post_ask_ol_response():
+    import patch_carriers as PC
+    fresh = {"body": LONNY_RATE_SHEET, "sender": "Reno.Gurusinghe@ol-usa.com",
+             "sent": REPLY_TS}
+    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS}
+    assert PC._find_related_rate_response(
+        row, {("conv", "conv1"): fresh}) == LONNY_RATE_SHEET
+
+
+def test_the_ungated_mining_wrapper_stays_deleted():
+    """_discover_carrier_from_bodies had zero callers and duplicated the
+    mining loop WITHOUT the gate — dead code holding the fabrication path
+    open for the next caller to find."""
+    src = (ROOT / "scripts/patch_carriers.py").read_text(encoding="utf-8")
+    assert "def _discover_carrier_from_bodies" not in src
+
+
 # ── the intake hole ─────────────────────────────────────────────────────────
 
 def test_the_quote_only_senders_are_fetched_not_just_kept():
