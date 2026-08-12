@@ -3,7 +3,37 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-08-11 — "consistently wrong": three defects behind the weekly table
+### 2026-08-12 — HARD STOP: all reports off (Michael, after the CEO reply)
+
+The Aug-12 staff email (first fire on the aa39f16 fixes) surfaced QC-077's
+warning banner — "49 further quotes are recorded with a rate or carrier but
+no response time" — to the full distribution. Carrie Murphy King (OL USA
+CEO) replied asking why 49 quotes "are not being recorded" and how the
+analysis can be trusted. Michael: "turn off all reports going out until you
+finally figure out where you made system changes in the last month that the
+report is all wrong still."
+
+DONE, both halves per the 2026-08-03 lesson (a flag alone lets an
+already-spawned run send): cron triggers removed from daily.yml and
+weekly.yml, HILMAR_REPORTS_PAUSED="true" in daily.yml + weekly.yml +
+liveness.yml (tests enforce the three agree and fail any half-pause). The
+hard stop blocks manual dispatch too — zero goes out by ANY trigger until
+the flag flips back. Also fixed en route: liveness's auto-recover step now
+stands down on reason=paused instead of dispatching a no-op daily run every
+paused weekday ≥10 AM ET.
+
+WHAT THE 49 ARE (for Carrie's question): rows whose carrier/rate were mined
+out of Lonny's OWN emails by the recovery heals (the phantom-quote machine,
+see 2026-08-11 below). The aa39f16 fix stopped the fabricated response
+TIMESTAMPS — so those rows became "quote with no date" and QC-077 flagged
+them honestly, straight into the staff email. The half-fix made the rot
+visible before removing it: carrier/rate/quoted fabrication from ask bodies
+was NOT yet gated, only the timestamp/rate stamp sites were. Diagnosis of
+the remaining fabrication sites is the open work item; reports stay off
+until the rows are honest.
+
+To resume when fixed: restore the cron lines in daily.yml + weekly.yml and
+flip the three flags back to "false" in the same PR.
 
 Michael, on the staff email's W24-W33 table: "this is absurd.. your data is
 consistently wrong. where it used to be correct before we did formatting
