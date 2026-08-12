@@ -3,6 +3,21 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (4) — one unfetchable message must not kill the fire
+
+The first verification fire (run 31609735248) died in refresh_stage: 46 of
+47 bodies fetched, ONE Graph GET failed (an Evergreen GRI ALERT blast), and
+`return 0 if body_failures == 0 else 1` exited 1 under bash -e — pipeline
+never ran, no email. The rule was also a permanent trap: a fetch-failed
+message never lands in the bodies file, so it retries every run — a message
+deleted from the mailbox would fail every fire forever. New rule
+(body_fetch_exit_code, tested): non-zero ONLY when fetching is dead
+(failures with zero successes — the broken-auth signature); partial
+failures warn per-message and proceed, the staged record keeps its retry.
+Same principle as the 2026-07-30 snapshot-backup lesson: a safety net must
+never hold the client report hostage. Verification fire re-dispatched after
+merge.
+
 ### 2026-08-12 (3) — verify_only: the resume path (Michael: "go")
 
 Third gate state between hard-stopped and live, in daily + weekly +

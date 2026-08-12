@@ -1073,7 +1073,28 @@ def main() -> int:
                         print(f"  backfill FAIL {imid[:50]}: {e}")
         print(f"refresh_stage: PDF backfill — {pdf_backfilled} new, {pdf_skipped} already-cached, {pdf_fail} failed")
 
-    return 0 if body_failures == 0 else 1
+    return body_fetch_exit_code(body_count, body_failures)
+
+
+def body_fetch_exit_code(body_count: int, body_failures: int) -> int:
+    """Non-zero ONLY when body fetching is DEAD — failures with not one
+    success, the signature of broken auth or no network.
+
+    Until 2026-08-12 ANY body-fetch failure returned 1, and the whole fire
+    step runs under bash -e: the first verification fire after the phantom-
+    quote fixes died because ONE message (an Evergreen GRI ALERT) failed its
+    Graph GET — 46 of 47 bodies fetched, pipeline never ran, no email. Worse
+    than disproportionate, it was a permanent trap: a fetch-failed message
+    never lands in the bodies file, so it is retried every run, and a message
+    DELETED from the mailbox would fail every fire forever.
+
+    A failed body is not lost data — the staged record stays and the fetch
+    retries next run. Same rule as the 2026-07-30 snapshot-backup lesson in
+    daily.yml: a safety net must never hold the client report hostage. The
+    per-message FAIL lines above stay loud, and QC-009/QC-077 independently
+    catch the downstream symptoms if bodies go systematically missing.
+    """
+    return 1 if (body_failures > 0 and body_count == 0) else 0
 
 
 if __name__ == "__main__":
