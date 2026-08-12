@@ -215,12 +215,24 @@ def test_the_source_tag_never_reaches_the_stage_file():
 
 def test_one_unreadable_mailbox_does_not_cost_us_the_other():
     """Partial credit is the whole point of reading two. A 403 on the shared
-    mailbox mid-run must not abort the /me pass that still works."""
-    block = SRC.split("for mbox, base, mtoken in targets:", 1)[-1][:1200]
-    assert "except Exception" in block, (
-        "a failing mailbox query aborts the whole loop")
-    assert "continue" in block
-    assert "::warning::" in block, "a failed mailbox query is not surfaced"
+    mailbox mid-run must not abort the /me pass that still works.
+
+    2026-08-12: the first per-mailbox loop is now the date sweep (the primary
+    intake), whose failure is annotated ::error:: rather than ::warning:: —
+    losing the sweep degrades that mailbox to $search alone, which is the
+    known-defective relevance-ranked path. The requirement being tested is
+    "the failure is SURFACED, and the other mailbox still runs", so accept
+    either annotation rather than pinning the severity of one call site.
+    """
+    for block in (
+        SRC.split("for mbox, base, mtoken in targets:", 1)[-1][:1200],
+        SRC.split("for mbox, base, mtoken in targets:", 2)[-1][:1200],
+    ):
+        assert "except Exception" in block, (
+            "a failing mailbox query aborts the whole loop")
+        assert "continue" in block
+        assert ("::warning::" in block or "::error::" in block), (
+            "a failed mailbox read is not surfaced to the run log")
 
 
 def test_the_code_is_emailed_before_the_blocking_wait():

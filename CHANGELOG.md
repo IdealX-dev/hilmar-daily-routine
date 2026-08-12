@@ -3,7 +3,60 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (7) — I WAS WRONG. It is $search, and it is a code defect
+
+Michael: "they are in my mailbox ... where they always have been since day
+one and toh have access to my ol emakl". Correct on both counts. Entry (6)
+below concluded the replies were not in the mailbox we read; that
+conclusion was WRONG and is retracted. What it actually proved is narrower:
+the replies are not in our STAGED data. I extrapolated from "not staged" to
+"not in the mailbox" and sent Michael to OL for a process fix he does not
+need.
+
+THE EVIDENCE WAS IN THE FIRE LOG THE WHOLE TIME:
+    query 'lonny-flow':       got 275 results
+    query 'hilmar-bookings':  got 275 results
+    query 'ol-quote-senders': got 275 results
+Three semantically unrelated queries cannot each match exactly 275
+messages. Graph stops paginating $search at a service-side ceiling that
+sits BELOW our own 500 cap — so `truncated` stayed False and
+_warn_search_cap never fired. And $search ranks by RELEVANCE and cannot be
+combined with $orderby (documented in _warn_search_cap since June), so the
+275 kept were an arbitrary slice: 357 of the 599 unique results were
+PRE-CUTOFF. The ranker handed back mostly old mail and dropped the current
+week.
+
+WHY IT "WORKED WEEKS AGO AND THEN DIDN'T" (Michael's question, and the
+right one): nothing changed in the mechanism — $search + the 500 cap
+predate the squashed base (2026-06-25). What changed is the DATA. While
+fewer than ~275 messages matched a query, the slice covered everything
+including today. As the mailbox's matching history grew past the ceiling,
+coverage rotted from the NEWEST end, invisibly, because no count ever
+looked wrong and QC never had a rule for "the ranker is lying". The
+Aug-10 fire already showed the symptom — QC-008: "stage_emails latest
+received is 71.4h old". Adding q3 on Aug 11 could not help: each query
+independently hits the same ceiling.
+
+FIX — stop asking a ranker for the truth. list_messages_since() sweeps the
+window with $filter=receivedDateTime ge <cutoff> + $orderby
+receivedDateTime desc: date-ordered, deterministic, complete — pagination
+ends because the WINDOW ends. It runs FIRST as the primary intake in every
+mailbox; the $search queries remain only as a supplement for pre-cutoff
+mail a thread may need, deduped on imid. A failed sweep is ::error::, not
+a quiet fallback to the defective path. And the detector that failed is
+replaced: identical result counts across unrelated queries are now
+reported as the service-ceiling fingerprint they are.
+
+7 tests incl. non-vacuity (drop $orderby → the date-order test fails) and
+a request-level assertion that no $search appears in the sweep. One
+pre-existing test (test_multi_mailbox_read) legitimately caught the new
+loop and was updated to assert its stated intent — failure SURFACED, other
+mailbox still runs — rather than the severity of one call site.
+
+Suite 2771 passed, ruff clean.
+
 ### 2026-08-12 (6) — the NQ rows are an ACCESS finding, not a code defect
+### RETRACTED by entry (7) above — the replies WERE in the mailbox.
 
 Michael: "ol responded to everything." Measured, twice, read-only
 (diag-matching runs 1 and 2, both reconciling exactly with the verification

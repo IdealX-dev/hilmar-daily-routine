@@ -544,6 +544,58 @@ def search_messages(token: str, kql: str, max_results: int = 500,
     return out
 
 
+def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
+                        base: str | None = None) -> list[dict]:
+    """EVERY message in the mailbox since `since_iso`, newest first.
+
+    THE 2026-08-12 DEFECT, and why $search cannot be the primary intake.
+    Michael: "they are in my mailbox ... where they always have been since day
+    one". They were. The verification fire's own log:
+
+        query 'lonny-flow':       got 275 results
+        query 'hilmar-bookings':  got 275 results
+        query 'ol-quote-senders': got 275 results
+
+    Three semantically unrelated queries cannot each match exactly 275
+    messages. Graph stopped paginating $search at a service-side ceiling —
+    below our 500 cap, so `truncated` stayed False and _warn_search_cap never
+    fired. Worse, $search ranks by RELEVANCE and cannot be combined with
+    $orderby (see _warn_search_cap), so the 275 we kept were an ARBITRARY
+    slice and the tail it dropped included the recent OL quote replies. That
+    is how "OL responded to everything" and "no reply in our data" were both
+    true, and why it degraded gradually: as the mailbox grew, the relevance
+    slice stopped reaching the current week.
+
+    $filter + $orderby on receivedDateTime is the opposite in every respect:
+    date-ordered, deterministic, and complete for the window — pagination ends
+    because the window ends, not because a ranker lost interest. Classification
+    stays where it belongs (classify_email, client-side), which is what
+    main()'s "apply client-side date filter, classify" step already assumes.
+
+    max_results is a runaway guard, not a business limit; hitting it is loud.
+    """
+    url: str | None = f"{base or _mailbox_base}/messages"
+    params: dict | None = {
+        "$top": "100",
+        "$filter": f"receivedDateTime ge {since_iso}",
+        "$orderby": "receivedDateTime desc",
+        "$select": GRAPH_SELECT,
+    }
+    out: list[dict] = []
+    while url and len(out) < max_results:
+        data = graph_get(token, url, params=params)
+        out.extend(data.get("value", []))
+        url = data.get("@odata.nextLink")
+        params = None  # nextLink carries the query string
+    if len(out) >= max_results:
+        msg = (f"refresh_stage: WARNING — date sweep hit the {max_results}-message "
+               f"guard since {since_iso}; the window may be incompletely read. "
+               "Raise --max-window-messages or narrow the window.")
+        print(msg, file=sys.stderr)
+        print(f"::warning::{msg}")
+    return out
+
+
 def get_message_body(token: str, message_id: str, base: str | None = None) -> dict:
     """Fetch a single message including body.
 
@@ -763,6 +815,10 @@ def main() -> int:
                     help="Lower bound for receivedDateTime (default 14)")
     ap.add_argument("--since", type=str,
                     help="Explicit lower bound, ISO date e.g. 2026-04-01. Overrides --days-back.")
+    ap.add_argument("--max-window-messages", type=int, default=4000,
+                    help="Runaway guard for the date sweep (default 4000). Not a "
+                         "business limit — the sweep must read the whole window; "
+                         "hitting this is a loud warning, not normal operation.")
     ap.add_argument("--dry", action="store_true",
                     help="Don't write — log what would be added")
     ap.add_argument("--verbose", action="store_true",
@@ -824,6 +880,32 @@ def main() -> int:
           f"{', '.join(label for label, _, _ in targets)}")
 
     all_items: dict[str, dict] = {}  # imid (or id) -> Graph item
+
+    # PRIMARY INTAKE — the complete, date-ordered window (2026-08-12).
+    # $search is relevance-ranked and silently ceilinged (see
+    # list_messages_since); this sweep is the one that cannot miss a message
+    # inside the window. The $search queries still run below as a SUPPLEMENT
+    # for mail older than the cutoff that a thread may need; anything they
+    # return that is already here dedupes on imid.
+    for mbox, base, mtoken in targets:
+        try:
+            swept = list_messages_since(mtoken, cutoff.isoformat(), base=base,
+                                        max_results=args.max_window_messages)
+        except Exception as e:
+            print(f"::error::refresh_stage: [{mbox}] date sweep FAILED: "
+                  f"{type(e).__name__}: {e} — falling back to $search only, "
+                  "which is known to drop recent mail")
+            continue
+        print(f"refresh_stage: [{mbox}] date sweep since {cutoff.date()}: "
+              f"{len(swept)} message(s) in window")
+        for it in swept:
+            key = it.get("internetMessageId") or it["id"]
+            if key not in all_items:
+                it["_src"] = mbox
+                all_items[key] = it
+    _swept_total = len(all_items)
+
+    _search_counts: dict[str, int] = {}
     for mbox, base, mtoken in targets:
         for label, kql in queries:
             print(f"refresh_stage: [{mbox}] query {label!r}: {kql}")
@@ -836,12 +918,29 @@ def main() -> int:
                       f"FAILED: {type(e).__name__}: {e}")
                 continue
             print(f"refresh_stage:   got {len(items)} results from {label}")
+            _search_counts[f"{mbox}/{label}"] = len(items)
             for it in items:
                 key = it.get("internetMessageId") or it["id"]
                 if key not in all_items:
                     it["_src"] = mbox
                     all_items[key] = it
-    print(f"refresh_stage: total unique results across queries: {len(all_items)}")
+    # THE DETECTOR THAT FAILED. _warn_search_cap only fires when our own cap is
+    # reached; Graph's service-side $search ceiling sits BELOW it and is
+    # invisible — on 2026-08-12 three unrelated queries each returned exactly
+    # 275 and nothing complained. Identical counts across semantically
+    # different queries is that ceiling's fingerprint, so say so out loud. The
+    # date sweep above already makes this non-fatal; the warning exists so the
+    # next person does not spend a day proving it again.
+    _dupe = {n for n in _search_counts.values() if list(_search_counts.values()).count(n) > 1}
+    for n in sorted(_dupe):
+        _who = [k for k, v in _search_counts.items() if v == n]
+        print(f"::warning::refresh_stage: {len(_who)} unrelated $search queries "
+              f"each returned exactly {n} results ({', '.join(_who)}) — that is "
+              "Graph's relevance-ranked service ceiling, not a real count. The "
+              "date sweep is the authoritative intake; $search is supplementary.")
+    print(f"refresh_stage: total unique results across queries: {len(all_items)} "
+          f"({_swept_total} from the date sweep, "
+          f"{len(all_items) - _swept_total} added by $search outside it)")
     if len(targets) > 1:
         per_src: Counter = Counter(it.get("_src") or "?" for it in all_items.values())
         for mbox, n in per_src.most_common():
