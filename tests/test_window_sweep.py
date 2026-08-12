@@ -90,8 +90,9 @@ def test_the_guard_is_a_runaway_stop_not_a_business_limit(monkeypatch, capsys):
     """A cap that silently truncates is how this defect stayed hidden for
     weeks. If the guard ever binds it must SAY so."""
     fake = _FakeGraph([
-        {"value": [{"id": str(i)} for i in range(100)], "@odata.nextLink": "https://g/p2"},
-        {"value": [{"id": "x"}]},
+        {"value": [{"id": str(i), "receivedDateTime": "2026-08-11T00:00:00Z"}
+                   for i in range(100)], "@odata.nextLink": "https://g/p2"},
+        {"value": [{"id": "x", "receivedDateTime": "2026-08-10T00:00:00Z"}]},
     ])
     monkeypatch.setattr(RS, "graph_get", fake)
     got = RS.list_messages_since("tok", SINCE, base="https://g/me", max_results=100)
@@ -100,6 +101,48 @@ def test_the_guard_is_a_runaway_stop_not_a_business_limit(monkeypatch, capsys):
     assert "guard" in (out.out + out.err).lower(), (
         "the sweep hit its guard and said nothing — a silent ceiling, the "
         "exact failure being fixed")
+
+
+def test_it_reports_how_far_back_it_actually_REACHED(monkeypatch, capsys):
+    """The first live run read 4000 messages and stopped — newest-first, so
+    it never reached Jul 29-31 and W31 stayed empty for a THIRD reason. A
+    count cannot show that; the oldest date reached can. Coverage, not
+    volume, is the number that says whether the window was read."""
+    fake = _FakeGraph([{"value": [
+        {"id": "1", "receivedDateTime": "2026-08-12T10:00:00Z"},
+        {"id": "2", "receivedDateTime": "2026-08-09T10:00:00Z"},
+    ]}])
+    monkeypatch.setattr(RS, "graph_get", fake)
+    RS.list_messages_since("tok", SINCE, base="https://g/me", max_results=999)
+    out = capsys.readouterr()
+    combined = out.out + out.err
+    assert "2026-08-09" in combined, "the oldest message reached is not reported"
+    assert "did NOT reach the window floor" in combined, (
+        "the sweep stopped 18 days short of the requested window and did not "
+        "say so — exactly the silence that hid the $search ceiling")
+
+
+def test_full_coverage_of_the_window_is_not_flagged(monkeypatch, capsys):
+    """The warning must mean something: reaching the floor is silent."""
+    fake = _FakeGraph([{"value": [
+        {"id": "1", "receivedDateTime": "2026-08-12T10:00:00Z"},
+        {"id": "2", "receivedDateTime": "2026-07-21T10:00:00Z"},   # past the floor
+    ]}])
+    monkeypatch.setattr(RS, "graph_get", fake)
+    RS.list_messages_since("tok", SINCE, base="https://g/me", max_results=999)
+    out = capsys.readouterr()
+    assert "did NOT reach" not in (out.out + out.err), (
+        "a fully-read window raised a false alarm — a warning that fires on "
+        "success is one people learn to ignore")
+
+
+def test_the_page_size_is_large_enough_to_finish(monkeypatch):
+    """At 100/page the live sweep spent two minutes and still fell short.
+    Graph allows up to 1000."""
+    fake = _FakeGraph([{"value": []}])
+    monkeypatch.setattr(RS, "graph_get", fake)
+    RS.list_messages_since("tok", SINCE, base="https://g/me")
+    assert int(fake.calls[0][1]["$top"]) >= 500
 
 
 def test_the_sweep_is_the_primary_intake_and_search_is_supplementary():

@@ -86,13 +86,26 @@ BODIES_PATH = _resolve("stage_emails_bodies")
 LONNY_EMAIL = "lupfold@hilmaringredients.com"
 MBD_BOOKING_EMAIL = "MBD_OceanExportBookingShared@ol-usa.com"
 
-# Drops — never stage from these senders even if they appear in the search
-EXCLUDED_SENDERS = {
-    "MBD_Export_Pricing@ol-usa.com",
-    "caren.tobel@ol-usa.com",
-    # michael.deitchman@idealx.us is also excluded per ingest_scope.mailboxes_excluded,
-    # but those won't appear here because we auth as @ol-usa.com — different mailbox.
-}
+# Drops — never stage from these senders even if they appear in the search.
+#
+# EMPTY SINCE 2026-08-12, AND THE REASON MATTERS MORE THAN THE LIST.
+# This set used to hold MBD_Export_Pricing@ol-usa.com and caren.tobel@ol-usa.com,
+# taken from config.json `ingest_scope.mailboxes_excluded`, whose provenance is
+# Michael on 2026-04-30: "stop searching idealx, ignore MBD_Export_Pricing".
+#
+# That instruction is about MAILBOXES TO SCAN — do not go and read the
+# MBD_Export_Pricing mailbox as a SOURCE. The key is literally named
+# `mailboxes_excluded`. Applying it here turned it into a SENDER filter, which
+# is a different and much worse thing: every quote the OL export pricing desk
+# sent INTO the mailbox we do scan was discarded on arrival. That desk is where
+# Hilmar rate quotes come from — it is on the daily report's own distribution
+# list, and it is the sender in this repo's own OL-body test fixtures.
+#
+# Michael, 2026-08-12: "ol responded to everything ... they are in my mailbox
+# ... where they always have been since day one". They were. We deleted them.
+# Scope belongs at the layer it names: mailbox exclusions live in
+# read_targets()/mailboxes_to_scan, never in classify().
+EXCLUDED_SENDERS: set[str] = set()
 
 # OL people who QUOTE Hilmar but never book. Michael 2026-08-07: "reno only
 # quotes hilmar so she doesn't book."
@@ -112,8 +125,22 @@ EXCLUDED_SENDERS = {
 # Before this, classify() returned None for any sender that is not Lonny or
 # the shared mailbox, so three of Reno's messages were discarded on arrival
 # and QC-057 separately flagged one of them as a silently dropped RFQ.
+# 2026-08-12: the export pricing desk joins the list. These are the addresses
+# that actually answer Lonny's rate requests; they were in EXCLUDED_SENDERS
+# (see above for how a mailbox-scan exclusion became a sender filter), so every
+# quote they sent was dropped before classification. Unconditional for the same
+# two reasons as Reno: they quote rather than book, and their subjects do not
+# follow the shared mailbox's "Re: <origin> to <dest>" shape.
+#
+# These desks serve every OL client, not just Hilmar. That is handled where it
+# belongs and already is — ingest's out_of_scope gate drops numidia /
+# agridairy / other_client rows (325 / 26 / 64 on the 2026-08-12 fire), and the
+# lane+thread matcher only attaches a response to an ask it actually answers.
+# Filtering by sender here would repeat the mistake this comment documents.
 OL_QUOTE_ONLY_SENDERS = {
     "reno.gurusinghe@ol-usa.com",
+    "mbd_export_pricing@ol-usa.com",
+    "caren.tobel@ol-usa.com",
 }
 
 def graph_queries() -> list[tuple[str, str]]:
@@ -544,7 +571,7 @@ def search_messages(token: str, kql: str, max_results: int = 500,
     return out
 
 
-def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
+def list_messages_since(token: str, since_iso: str, max_results: int = 30000,
                         base: str | None = None) -> list[dict]:
     """EVERY message in the mailbox since `since_iso`, newest first.
 
@@ -576,7 +603,11 @@ def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
     """
     url: str | None = f"{base or _mailbox_base}/messages"
     params: dict | None = {
-        "$top": "100",
+        # 500/page, not 100. Michael's OL mailbox carries every other client
+        # too (TTS, Hoogwegt, Numidia, Hilldrup...), so a 21-day window is
+        # thousands of messages; at 100/page the first run spent two minutes
+        # and still stopped short. Graph allows up to 1000 here.
+        "$top": "500",
         "$filter": f"receivedDateTime ge {since_iso}",
         "$orderby": "receivedDateTime desc",
         "$select": GRAPH_SELECT,
@@ -587,10 +618,21 @@ def list_messages_since(token: str, since_iso: str, max_results: int = 4000,
         out.extend(data.get("value", []))
         url = data.get("@odata.nextLink")
         params = None  # nextLink carries the query string
-    if len(out) >= max_results:
-        msg = (f"refresh_stage: WARNING — date sweep hit the {max_results}-message "
-               f"guard since {since_iso}; the window may be incompletely read. "
-               "Raise --max-window-messages or narrow the window.")
+    # COVERAGE IS THE THING TO REPORT, not the raw count. Ordering is newest
+    # first, so a guard-stop truncates the OLDEST end — the safe direction
+    # (today's mail is never the part lost), but it silently shortens the
+    # window, which is how the first run of this sweep still missed Jul 29-31.
+    # State the floor we actually reached and compare it to the one asked for;
+    # "reached back to Aug 7" against a Jul 22 cutoff is the honest headline.
+    floor = min((m.get("receivedDateTime") or "" for m in out), default="")
+    print(f"refresh_stage:   sweep read {len(out)} message(s); oldest reached "
+          f"{floor or 'n/a'} (window floor requested: {since_iso[:19]})")
+    if len(out) >= max_results or (floor and floor[:19] > since_iso[:19]):
+        msg = (f"refresh_stage: WARNING — date sweep did NOT reach the window "
+               f"floor: read {len(out)} message(s) back to {floor or 'n/a'}, "
+               f"but the window starts {since_iso[:19]} (guard "
+               f"{max_results}). Mail older than the reached point is missing "
+               "from this run. Raise --max-window-messages.")
         print(msg, file=sys.stderr)
         print(f"::warning::{msg}")
     return out
@@ -815,10 +857,13 @@ def main() -> int:
                     help="Lower bound for receivedDateTime (default 14)")
     ap.add_argument("--since", type=str,
                     help="Explicit lower bound, ISO date e.g. 2026-04-01. Overrides --days-back.")
-    ap.add_argument("--max-window-messages", type=int, default=4000,
-                    help="Runaway guard for the date sweep (default 4000). Not a "
+    ap.add_argument("--max-window-messages", type=int, default=30000,
+                    help="Runaway guard for the date sweep (default 30000). Not a "
                          "business limit — the sweep must read the whole window; "
-                         "hitting this is a loud warning, not normal operation.")
+                         "hitting it means the window was NOT fully read and is a "
+                         "loud warning. The 4000 first tried was too low: a 21-day "
+                         "window of this mailbox is thousands of messages because "
+                         "every other client shares it.")
     ap.add_argument("--dry", action="store_true",
                     help="Don't write — log what would be added")
     ap.add_argument("--verbose", action="store_true",
