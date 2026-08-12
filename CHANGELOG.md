@@ -3,6 +3,43 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (2) — the rest of the phantom machine: carrier/rate mining gated
+
+Root cause of the 49, from the Aug-12 fire's own log (run 31602529593, on
+aa39f16): at 13:42:41 pre-patch QC says "✅ QC-077 every quoted row has a
+response_timestamp"; at 13:42:43 patch_carriers PASS 1 prints "PATCH PND
+req_73be1541f11b -> Yang Ming @ $797" (+ CMA CGM $725, ONE $505 — the exact
+three "quotes" in the email the CEO read, on requests OL had not yet
+answered); at 13:43:10 post-patch QC errors "QC-077: 49 rows". The aa39f16
+fix guarded the TIMESTAMP stamps but not the CARRIER/RATE mining — so the
+fabrication kept running, now undated, and QC-077 surfaced it to the staff
+list.
+
+Two vectors, both in patch_carriers, both now gated by the same
+core.quote_evidence_ok predicate as the stamps (OL-authored AND post-ask):
+(1) _discover_full_quote_from_bodies parsed ANY source_imids body — on a
+rebuilt row that is Lonny's ask, carrying the previous rate sheet quoted
+below it; (2) _find_related_rate_response's conversation-id join — Lonny
+re-uses threads, so "the rate response in this conversation" is routinely
+LAST cycle's sheet, sent before this ask existed. Also deleted
+_discover_carrier_from_bodies: zero callers, duplicated the mining loop
+ungated. Audited and left alone: ingest's rate-response matcher (already
+enforces req≤resp on classified OL responses — the legitimate path),
+the booking/WIN paths (MDOLX evidence), qc_selfheal's quoted-reconcile and
+QC-056 carrier heals (read the row's own fields — honest once the writers
+are). 6 new tests incl. non-vacuity (gates removed → 3 fail).
+
+ALSO MEASURED, same log: the intake fix WORKS — the ol-quote-senders query
+staged 107 mbd_rate_response records on its first fire (7-day bucket ZERO →
+63). And the win re-dating fix held: the emailed table shows the April wins
+back in April weeks. What remains wrong until a fire runs THIS fix: the 49
+undated phantom quotes and W31/W32's fabricated Q&L rows. W32 asks (Aug 3-7)
+have their real OL replies in stage now; W31 (Jul 27-31) replies predate the
+14-day window — a --days-back 21 refresh would recover them if wanted.
+
+Noted, not yet fixed: QC-057 (3/343 Lonny RFQs dropped, no destination
+parse) — pre-existing, unrelated to the fabrication.
+
 ### 2026-08-12 — HARD STOP: all reports off (Michael, after the CEO reply)
 
 The Aug-12 staff email (first fire on the aa39f16 fixes) surfaced QC-077's
