@@ -1,0 +1,68 @@
+name: Backfill wins from OL's booking recap
+
+# MANUAL ONLY. Dry run by default — --apply is the only writer, and it writes
+# to scripts/operator_corrections.json, which is version-controlled, so the
+# change lands as a reviewable diff rather than a silent mutation.
+#
+# 2026-08-12. Michael: "now use the report that was sent by linda with all the
+# bookings and match to the lonny requests since july 1 i assume and clean up".
+# 15 of OL's 35 bookings never reached the tracked mailbox (sent To: Lonny,
+# Cc: the group). They are real wins that cannot be derived from mail we never
+# received, so the evidence comes from OL's own operational export.
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Ignore Lonny requests before this date"
+        required: false
+        default: "2026-07-01"
+      max_age:
+        description: "Most days a request may predate its booking"
+        required: false
+        default: "60"
+      apply:
+        description: "Write the corrections (false = report only)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: Match OL's bookings to Lonny's requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+      - name: Propose (and optionally apply)
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.apply }}" = "true" ]; then EXTRA="--apply"; fi
+          python3 scripts/backfill_ol_bookings.py \
+            --since "${{ inputs.since }}" \
+            --max-age "${{ inputs.max_age }}" $EXTRA
+      - name: Show the correction diff
+        if: ${{ inputs.apply == 'true' }}
+        run: git --no-pager diff -- scripts/operator_corrections.json
+      - name: Upload the updated corrections for review
+        if: ${{ inputs.apply == 'true' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: operator-corrections-${{ github.run_id }}
+          path: scripts/operator_corrections.json
+          retention-days: 14

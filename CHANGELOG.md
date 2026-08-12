@@ -3,6 +3,39 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-12 (12) — RECONCILED against OL's recap: 20 of 35, not all
+
+Michael: "you mean you found all of these emails and more??" No. Measured,
+diag-reconcile run 1 against OL's own 35-booking recap:
+
+  20/35 recorded as WIN, 0 present-but-not-won, 15 ABSENT entirely.
+  Absent: 261072 261071 261068 261047 261046 261033 261032 261031 261030
+          261029 261028 261027 261026 261025 260896
+
+The body-signal fix (11) recovered 3 bookings, 66 -> 69, NOT 15. One of
+them is MDOLX261070 — the message Michael forwarded, which is why it was
+in his mailbox to be found. That is the fix working, and it is also the
+proof of what limits it: the other 14 bookings' messages are not in the
+staged corpus at all, because they went To: Lonny, Cc: the group, and only
+the forwarded ones reached the mailbox we read.
+
+REVERSE DIRECTION, and it is not settled: 15 tracker WINs inside the
+recap's own range that the recap does not list — 260716, 260718-260723,
+260748, 260770, 260809, 260811, 260833, 260842, 260928, 260963 (Jun 8 -
+Jul 20, mostly Oakland->Yokohama). Either OL's export is narrower than it
+appears (its filename is Container_Report_With_TEU_By_Container_Size, so
+it may only include rows with container data) or this pipeline is
+over-counting. I am NOT claiming either. It needs one question to Linda:
+does that report include every booking, or only those with container/TEU
+detail?
+
+The Aug-12 test email still showed nothing for the day: the report covers
+the PRIOR business day by design (window=previous), and OL's quote
+responses still do not match (286/379 unchanged). Bookings and quotes are
+separate paths; (11) fixed part of the bookings path only.
+
+Reports remain hard-stopped.
+
 ### 2026-08-12 (11) — FOUND: OL changed the booking subject, our gate reads
 ### only the subject, 15 wins were thrown away
 
