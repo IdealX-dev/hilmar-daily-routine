@@ -162,12 +162,18 @@ def parse_ol_options(body_text: str) -> list[dict]:
     if not parsed:
         return []
 
+    # Vessel / voyage come from their own table cells now. parse_rate_table
+    # emits them split (2026-08-13, when it moved to header-to-cell alignment)
+    # AND joined as `vessel_voyage` in the house "NYK METEOR 0CLNCE1MA" form.
+    # The legacy split-on-"/" below stays as the fallback for the prose and
+    # vertical-column paths, which still join with " / ".
+    vessel = parsed.get("vessel")
+    voyage = parsed.get("voyage")
     vessel_voyage = parsed.get("vessel_voyage")
-    vessel = voyage = None
-    if vessel_voyage:
+    if not vessel and vessel_voyage:
         parts = [p.strip() for p in vessel_voyage.split("/", 1)]
         vessel = parts[0] or None
-        voyage = parts[1] if len(parts) > 1 and parts[1] else None
+        voyage = voyage or (parts[1] if len(parts) > 1 and parts[1] else None)
 
     rate_val = parsed.get("ol_rate")
     rate_usd = int(rate_val) if isinstance(rate_val, (int, float)) else None

@@ -3,6 +3,111 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (3) — OL quote tables are read by header-to-cell alignment;
+### the Dummy-SI footer and "vessel diversion" are now unreachable
+
+Michael supplied two real OL quote emails. Measured this session, both were
+misparsed by `src/hilmar/body_parser.parse_rate_table`, which had no table
+parser at all and regex-scanned the entire flattened body:
+
+  ALGECIRAS  carrier "MSC"  <- the standing footer "Maersk, Sealand, MSC, ONE,
+                               CMA and Cosco do not accept Dummy SI"
+             vessel  "dive" <- the standing disclaimer "... routing changes,
+                               vessel diversion, or alternate discharge ..."
+             eta 2026-10-19 <- Lonny's OWN requested "ETA 10/19", quoted at
+                               the bottom of the forwarded chain
+             transshipment "Direct" <- Lonny's "direct service if possible"
+  HCMC       carrier "MSC", vessel "dive", NO RATE AT ALL (a `500 <= val`
+             gate on the prose fallback dropped the real $475.00), no POL,
+             no POD
+
+THE BLOCKER, AND IT REVERSES THE BRIEF: `scripts/body_parser.py` — the tree
+production actually binds — was ALREADY correct on both emails, 15/15. The two
+"mirrored" files had diverged into completely different algorithms and NOTHING
+in the suite compared them. So this defect never reached the daily fire; the
+client-report symptoms it was blamed for (QC-077, QC-039 at 92.8%, empty
+OL-USA RESPONSES) have a different root cause and still need one. The
+consumers' two dead keys are the better candidates — see UNFIXED below.
+
+DECISIONS
+
+  Both trees now share ONE rate-table core, copied verbatim, 14,868 bytes,
+  and `tests/test_body_parser_parity.py` fails if the copies drift. That guard
+  is the actual fix for how this shipped.
+
+  Every field comes from a CELL of the data row aligned under its own header.
+  parse_rate_table no longer scans body prose for carrier, vessel or rate at
+  all. Boilerplate is unreachable by construction, not by blocklist.
+
+  Header cells are matched WHOLE-CELL, then by word token — never by
+  substring. OL's NRA footer ("ACCEPTANCE OF THE RATES AND TERMS OF THIS NRA
+  OR NRA AMENDMENT.") scored a "rate" hint under the old substring scan;
+  "RATES" is not the token "rate", so it is now rejected, while OL's qualified
+  labels ("RATE (USD)", "Ocean Rate", "ETD (POL)") still map.
+
+  The one surviving prose path is the carrier for a grid with NO carrier
+  column (the 2026-06-15 Manila fix, which a green test requires). It is
+  double-guarded: OL's standing disclaimer lines are stripped first, and a
+  line naming TWO OR MORE carriers is rejected outright — a LIST of carriers
+  can never identify THE quoted carrier, which is exactly what the Dummy-SI
+  line is.
+
+  No sanity gate on the RATE cell. The value comes from the column OL headed
+  RATE and alignment already rules out a stray date landing there; the old
+  `500 <= val` gate is what threw away HCMC's real $475.00.
+
+  `parse_vessel` was hardened too. Its blanket `re.IGNORECASE` defeated the
+  `[A-Z]` doing the work and its lazy `{3,40}?` stopped at the 4-char minimum
+  — together that is where "dive" came from. src/hilmar/ingest.py:350 calls it
+  on the raw body for EVERY bucket, so a clean table parser alone would not
+  have cleared the field.
+
+  `vessel` and `voyage` are now emitted as their own keys, and `vessel_voyage`
+  joins them in the house form "NYK METEOR 0CLNCE1MA" (matching
+  scripts/pdf_parser). src/hilmar previously joined with " / ".
+  scripts/build_ops_flow_v2.py recovered the voyage by splitting on "/", so it
+  was updated to read the split keys — it had no test at all before; it has
+  two now.
+
+  DELIBERATELY NOT CHANGED — both are persisted-data migrations, not parser
+  fixes, and need Michael's sign-off:
+  - Production keeps RAW table dates ("7-Sep-26"). src/hilmar keeps ISO plus
+    the legacy `etd`/`eta` keys its consumers read. The divergence is declared
+    once, as `_LEGACY_SRC_CONTRACT`, instead of hiding in two parsers.
+  - `detention_free`/`demurrage_free` stay out of the production tree.
+    schema.json documents them as "origin-side"/"destination-side" free time,
+    but OL's cells read "4 DETENTION + 5 DEMURRAGE" — different meanings, and
+    I have no ground truth to pick one. Guessing writes bad data into a
+    schema field. src/hilmar keeps them (nothing reads them there).
+    "7 COMBINED FREE DAYS" yields neither, on purpose.
+
+  Removed `_carrier_from_cells` / `_CARRIER_HEADER_ALIASES` from production
+  and `_TABLE_HEADER_HINTS` from both: three lists of OL column names that
+  could disagree, replaced by the single `_TABLE_CELL_ALIASES` map.
+
+TESTS. `tests/test_ol_quote_table_alignment.py`, 35 cases driven by the two
+real emails, now committed as `tests/fixtures/ol_quote_algeciras.eml` and
+`tests/fixtures/ol_quote_hcmc_cat_lai.eml` so they are self-contained.
+Asserts the full field set for each in both trees, that the Dummy-SI line
+alone yields NO carrier, that "vessel diversion" prose yields NO vessel, that
+appending OL's whole footer to a real table changes not one field, and that
+an absent column stays absent. Verified they FAIL on the pre-fix code: 21 of
+the 29 that existed at that point were red. Plus 3 drift guards in
+`tests/test_body_parser_parity.py`. Suite 2931 -> 2968 passed, 1 skipped
+(the day-count case, which production deliberately does not emit).
+`ruff check scripts/ src/ tests/ deploy/` clean.
+
+UNFIXED, FOUND WHILE READING THE CONSUMERS — not touched, no approval to
+change persisted behavior, and each needs its own tests:
+  - scripts/ingest.py:1463 reads `rt.get("etd")`, which production has never
+    emitted. Dead. So the `reason_detail` string is ALWAYS "ETD ?".
+  - scripts/ingest.py:1503-1504 write `detention_free`/`demurrage_free`
+    UNCONDITIONALLY, clobbering any earlier value with None. Both fields are
+    structurally always null in production.
+  - scripts/ingest.py:82 `_etd_fit_days` parses with `datetime.fromisoformat`,
+    but `eta_offered` holds a raw "24-Oct-26" from the table. `etd_fit_days`
+    is dead for every table-parsed row.
+
 ### 2026-08-13 (2) — OL's own 2026 book is now the authority; 12 phantom
 ### wins removed, 54 real ones recovered, the response clock switched off
 

@@ -771,7 +771,7 @@ def main():
                 patched_lane += 1
                 print(f"  PATCH lane    {r.get('request_id', '')[:16]} -> "
                       f"{r['lane']} (from booking-PDF POD)")
-            elif str(r.get("request_id") or "").startswith("stand_"):
+            elif C.has_no_rfq_chain(r):
                 # Say WHY the row stays unresolved — pod missing vs pod
                 # unmappable vs no PDF fields at all — so the run log alone
                 # is enough to target the next fix (no ad-hoc diagnostics).

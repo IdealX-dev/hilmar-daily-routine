@@ -488,7 +488,7 @@ def _heal_undated_quote(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> 
     # Standalone bookings are excluded for the same reason QC-077 excludes
     # them: ingest.py:887 leaves the field None DELIBERATELY to signal "no
     # rate response was ever seen", and filling it would erase that signal.
-    if str(r.get("request_id") or "").startswith("stand_"):
+    if core.has_no_rfq_chain(r):
         return
     if _stamp_response_time_from_bodies(r, bodies_idx):
         log.fix(f"{rid_label}: undated quote dated {r['response_timestamp']} "
@@ -930,6 +930,11 @@ def phase_3_entries(log: Log, data: dict):
         if oos:
             removed_oos.append((oos, rid or (r.get("subject") or "")[:40]))
             continue
+        # DELIBERATELY a bare stand_ check, NOT core.has_no_rfq_chain.
+        # This purge drops a standalone row whose SUBJECT does not say
+        # HILMAR. A backfilled ol_ row has no subject at all, so the
+        # HILMAR test fails for it by construction and adopting the
+        # shared prefix here would delete all 49 recovered wins.
         if rid.startswith("stand_") and "HILMAR" not in subj_up:
             removed_misclassified.append(rid)
             continue
@@ -1930,12 +1935,12 @@ def qc073_standalone_booking_hygiene(rows):
             out.append((rid or "?", "error",
                         f"degenerate lane {origin} → {dest} — origin and "
                         f"destination are the same port"))
-        if (rid.startswith("stand_") and r.get("response_timestamp")
+        if (core.has_no_rfq_chain(rid) and r.get("response_timestamp")
                 and not r.get("ol_rate")):
             out.append((rid, "error",
                         f"response_timestamp={r['response_timestamp']} with no "
                         f"ol_rate — a booking confirmation is not a rate quote"))
-        if rid.startswith("stand_") and not r.get("carrier_won"):
+        if core.has_no_rfq_chain(rid) and not r.get("carrier_won"):
             out.append((rid, "warn",
                         "standalone booking WIN with no carrier_won — "
                         "unattributable win, find the thread"))
@@ -2191,7 +2196,7 @@ def qc066_impossible_states(rows, report_day=None):
             out.append((rid, f"newest status event {newest} predates request {req_d}"))
             continue
         if (report_day and req_d == report_day
-                and not str(rid).startswith("stand_")
+                and not core.has_no_rfq_chain(rid)
                 and r.get("status") in ("WIN", "LOSS")
                 and not any(d >= req_d for d, _ in dated)):
             out.append((rid, f"report-day request in terminal {r.get('status')} "
@@ -4349,7 +4354,7 @@ def phase_6_rules(log: Log, data: dict):
             r for r in data.get("requests", [])
             if (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
             and not r.get("response_timestamp")
-            and not str(r.get("request_id") or "").startswith("stand_")
+            and not core.has_no_rfq_chain(r)
         ]
         if _q_nots:
             _lanes = ", ".join(

@@ -32,7 +32,6 @@ Parser-gap fixes 2026-05-19 (per Michael "no field should be empty ever"):
 from __future__ import annotations
 
 import calendar
-import contextlib
 import re
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
@@ -350,37 +349,13 @@ def detect_carrier_token(text, *, allow_short: bool = False):
     return None
 
 
-# Alternate column headers OL has used for the ocean carrier across its
-# evolving rate-table templates. _norm_header() lowercases + underscores, so
-# "Ocean Carrier" -> "ocean_carrier", "SSL" -> "ssl", "Carrier/Line" ->
-# "carrier_line". parse_rate_table walks these before giving up on the column.
-_CARRIER_HEADER_ALIASES = (
-    "carrier", "ocean_carrier", "ocean_line", "line", "carrier_line",
-    "line_carrier", "steamship_line", "steamship", "ssl", "scac",
-    "vessel_operator", "operator", "co_carrier",
-)
+# NOTE: the carrier column's alternate header names used to live here as
+# _CARRIER_HEADER_ALIASES, consulted by a _carrier_from_cells() helper. Both
+# were removed 2026-08-13 when parse_rate_table moved to header-to-cell
+# alignment: the same aliases now sit in the single _TABLE_CELL_ALIASES map
+# (all of them mapping to "carrier"), so there is exactly ONE list of header
+# names to keep current instead of two that could drift apart.
 
-
-def _carrier_from_cells(cells: dict):
-    """Resolve the quoted carrier from a parsed rate-table row.
-
-    Order: (1) a column whose header is a known carrier alias; (2) failing
-    that, any data cell that contains a distinctive carrier token (covers
-    unlabeled / merged / mis-headed columns). Returns the raw carrier string
-    (canonicalization happens in the caller).
-    """
-    for key in _CARRIER_HEADER_ALIASES:
-        val = (cells.get(key) or "").strip()
-        if val:
-            val = re.sub(r"[\*\(].*$", "", val).strip()
-            if val:
-                # Trust the labeled column; map through tokens when possible.
-                return detect_carrier_token(val, allow_short=True) or val
-    for val in cells.values():
-        tok = detect_carrier_token(val or "", allow_short=False)
-        if tok:
-            return tok
-    return None
 
 def parse_subject_carrier(subject):
     """Extract the winning carrier from an MDOLX confirmation subject.
@@ -977,24 +952,160 @@ _VESSEL_RX = re.compile(
 
 _CARRIER_EXCLUDE = {"MSC", "CMA", "ONE", "HMM", "OOCL", "ZIM"}
 
-# OL rate-table parser. After html_to_text inserts " | " between <td>/<th>
-# cells, the body looks like:
-#   POL | POD | Container Size | Vessel | Voyage | ERD | ...
-#   Oakland | Busan | 5x40'RF | HMM RUBY | 0012W | 17-Apr-26 | ...
-# So we locate the header row (case-insensitive scan for "Vessel" and "Voyage"
-# headers) and pull the aligned cells from the next row.
-# Header tokens that mark a row as the OL rate/schedule table header. Includes
-# the relabeled schedule columns (sailing/departure/arrival) + pol/pod/carrier
-# so a schedule that never literally says "ETD"/"ETA"/"vessel" is still detected
-# (2026-06-16, "parse the schedules we send"). A header line still needs >=2 of
-# these AND >=4 pipe-delimited cells, so prose can't false-match.
-_TABLE_HEADER_HINTS = ("vessel", "voyage", "etd", "eta", "rate",
-                       "sailing", "departure", "arrival", "pol", "pod", "carrier")
+# ---------- OL rate table: HEADER-TO-CELL ALIGNMENT ----------
+#
+# OL sends every quote as an HTML <table>. html_to_text already flattens it
+# into pipe-separated rows whose header line and data line are exactly
+# aligned, e.g. (real body, 2026-08-12 Oakland->HCMC):
+#
+#   POL | POD | Container Size | Vessel | Voyage | ERD | ... | DESTINATION FREE TIME
+#   Oakland | HCMC (CAT LAI) | 2 X 20'DV | WAN HAI A01 | W019 | 24-Aug-26 | ... | 14 DETENTION + 14 DEMURRAGE FREE DAYS
+#
+# THE INVARIANT: when that grid is present, every field is read out of a CELL
+# of the data row sitting under its own header. parse_rate_table does not
+# regex-scan the surrounding body for carrier, vessel or rate. That is what
+# makes OL's standing boilerplate structurally unreachable rather than merely
+# unlikely.
+#
+# Measured 2026-08-13 on two real OL quotes before this rewrite, the
+# whole-body scan returned:
+#   carrier_quoted "MSC"  <- the standing footer "Maersk, Sealand, MSC, ONE,
+#                            CMA and Cosco do not accept Dummy SI"
+#   vessel_voyage  "dive" <- the standing disclaimer "... routing changes,
+#                            vessel diversion, or alternate discharge ..."
+# and both emails lost their real values (ALGECIRAS's ETA became Lonny's own
+# requested "ETA 10/19" from the bottom of the forwarded chain; HCMC's
+# $475.00 was dropped entirely by a `500 <= rate` prose gate).
+
+# Normalized header cell -> canonical cell key.
+#
+# A header cell is recognised only as a WHOLE CELL, never as a substring. That
+# is the structural half of the fix: OL's NRA footer row
+#   "ACCEPTANCE OF THE RATES AND TERMS OF THIS NRA OR NRA AMENDMENT."
+# contains the substring "rate" and scored as a header hint under the old
+# substring scan. Normalized whole-cell, it is simply not a header name.
+_TABLE_CELL_ALIASES = {
+    # POL/POD — OL relabels these across templates (2026-06-17).
+    "pol": "pol", "port_of_loading": "pol", "load_port": "pol",
+    "loading_port": "pol", "origin_port": "pol", "pol_port": "pol",
+    "pod": "pod", "port_of_discharge": "pod", "discharge_port": "pod",
+    "destination_port": "pod", "dest_port": "pod", "pod_port": "pod",
+    "container_size": "container_size",
+    "vessel": "vessel", "voyage": "voyage",
+    "erd": "erd", "doc_cut": "doc_cut", "port_cut": "port_cut",
+    "rail_cut": "rail_cut",
+    # ETD/ETA — OL relabels these across schedule templates (2026-06-16).
+    "etd": "etd", "etd_pol": "etd", "pol_etd": "etd", "sailing": "etd",
+    "departure": "etd", "departs": "etd", "sail": "etd", "ets": "etd",
+    "eta": "eta", "eta_pod": "eta", "pod_eta": "eta", "arrival": "eta",
+    "arrives": "eta", "arriving": "eta",
+    "rate": "rate", "dthc": "dthc",
+    # Carrier — OL relabels this too (2026-06-15 Manila fix).
+    "carrier": "carrier", "ocean_carrier": "carrier", "ocean_line": "carrier",
+    "line": "carrier", "carrier_line": "carrier", "line_carrier": "carrier",
+    "steamship_line": "carrier", "steamship": "carrier", "ssl": "carrier",
+    "scac": "carrier", "vessel_operator": "carrier", "operator": "carrier",
+    "co_carrier": "carrier",
+    "transshipment": "transshipment",
+    "origin_free_time": "origin_free_time",
+    "destination_free_time": "dest_free_time",
+    "dest_free_time": "dest_free_time",
+}
+
+# A header row needs this many pipe cells AND this many recognised header
+# names. Three recognised names is the floor that still accepts the narrowest
+# real OL grid ("POL | POD | RATE | CARRIER") while rejecting every prose and
+# footer line in the two measured emails (the NRA rows collapse to 1 cell and
+# 0 recognised names, so they fail both gates).
+_HEADER_MIN_CELLS = 4
+_HEADER_MIN_KNOWN = 3
+# How far under the header the data row may sit (blank / decoration lines).
+_HEADER_DATA_WINDOW = 6
+
+# Cell values that mean "OL left this column blank". Dropped before typing so
+# a genuinely absent field stays absent instead of becoming the literal "-".
+_TABLE_PLACEHOLDERS = frozenset({
+    "", "-", "--", "---", "n/a", "na", "n.a.", "tbd", "tba", "tbn",
+    "none", "null", "nil", "pending", "?",
+})
+
+_TABLE_MONEY_RX = re.compile(r"\$?\s*(\d[\d,]*(?:\.\d{1,2})?)")
+
+# Detention/demurrage day counts, read ONLY from inside the free-time cells.
+# "7 COMBINED FREE DAYS" deliberately yields neither: a combined pool is not
+# detention and is not demurrage, and splitting it would be a guess.
+_FREE_DAYS_RXES = (
+    ("detention_free", re.compile(r"(\d{1,3})\s*(?:FREE\s+)?(?:DAYS?\s+)?DETENTION",
+                                  re.IGNORECASE)),
+    ("demurrage_free", re.compile(r"(\d{1,3})\s*(?:FREE\s+)?(?:DAYS?\s+)?DEMURRAGE",
+                                  re.IGNORECASE)),
+)
+
+# OL's standing footer / legal / advisory lines. The prose carrier last-resort
+# below never sees these, so the Dummy-SI carrier list and the vessel-diversion
+# disclaimer cannot supply a carrier no matter what else changes.
+_CARRIER_BOILERPLATE_RXES = (
+    re.compile(r"dummy\s+si", re.IGNORECASE),
+    re.compile(r"these\s+carriers\s+will\s+not\s+accept", re.IGNORECASE),
+    re.compile(r"\bdisclaimer\b", re.IGNORECASE),
+    re.compile(r"customer\s+advisory", re.IGNORECASE),
+    re.compile(r"war\s+risk|bunker\s+surcharge|force\s+majeure", re.IGNORECASE),
+    re.compile(r"nra\s+(?:or\s+nra\s+)?amendment", re.IGNORECASE),
+    re.compile(r"vessel\s+diversion|voyage\s+termination|routing\s+changes",
+               re.IGNORECASE),
+    re.compile(r"labor\s+unrest", re.IGNORECASE),
+    re.compile(r"are\s+estimates\s+and\s+may\s+change", re.IGNORECASE),
+    re.compile(r"carriers?\s+are\s+initiating", re.IGNORECASE),
+    re.compile(r"follow\s+us\s+on\s+social\s+media", re.IGNORECASE),
+)
+
+
+def _norm_header(h: str) -> str:
+    """Header cell -> comparable key: 'Ocean Carrier' -> 'ocean_carrier'."""
+    return re.sub(r"[^a-z0-9]+", "_", (h or "").lower()).strip("_")
+
+
+def _header_key(cell: str):
+    """Canonical field key for a header cell, or None if it names no field.
+
+    Whole-cell match FIRST. That is the structural half of the boilerplate
+    fix: OL's NRA footer row "ACCEPTANCE OF THE RATES AND TERMS OF THIS NRA
+    OR NRA AMENDMENT." contains the substring "rate" and scored as a header
+    under the old substring scan; as a whole cell it names nothing.
+
+    Failing that, fall back to the cell's own WORD TOKENS, so OL's qualified
+    column labels keep mapping without anyone having to enumerate every one
+    ("RATE (USD)" -> rate, "Ocean Rate" -> rate, "ETD (POL)" -> etd). This is
+    still not a substring scan — "RATES" is not the token "rate", so the NRA
+    footer is rejected here too. A cell whose tokens imply TWO different
+    fields (a merged "Vessel/Voyage" column) is ambiguous and stays unmapped
+    rather than being guessed at.
+    """
+    norm = _norm_header(cell)
+    if norm in _TABLE_CELL_ALIASES:
+        return _TABLE_CELL_ALIASES[norm]
+    keys = {_TABLE_CELL_ALIASES[tok] for tok in norm.split("_")
+            if tok in _TABLE_CELL_ALIASES}
+    return keys.pop() if len(keys) == 1 else None
+
+
+def _split_pipe_cells(line: str) -> list:
+    """Split one flattened table line into trimmed cells.
+
+    Drops the trailing empties html_to_text leaves behind ("a | b | " ends in
+    a pipe). Returns [] for a line carrying no pipe at all.
+    """
+    if "|" not in (line or ""):
+        return []
+    cells = [c.replace("\xa0", " ").strip() for c in line.split("|")]
+    while cells and not cells[-1]:
+        cells.pop()
+    return cells
 
 
 def _collapse_multiline_pipe_table(text: str) -> str:
-    """Convert multi-line pipe-table format (each cell on its own line with
-    leading '|') into the single-line format _find_table_rows expects.
+    """Convert the multi-line pipe-table template (each cell on its own line
+    with a leading '|') into the single-line form the row finder expects.
 
     NEW OL TEMPLATE (caught 2026-05-13 — Michael "status change of pending to
     quoted with no carrier and no rate"):
@@ -1006,18 +1117,13 @@ def _collapse_multiline_pipe_table(text: str) -> str:
          |
         Oakland
          | Yokohama
-         | 2x40'RF
          ...
          | $3500
          | CMA
 
-    OLD OL TEMPLATE (still works):
+    OLD OL TEMPLATE (unchanged):
         POL | POD | Container Size | ... | RATE | CARRIER | ...
         Oakland | Yokohama | 2x40'RF | ... | $3500 | CMA | ...
-
-    Both templates need to parse. This collapser detects the multi-line
-    shape (a non-pipe-leading word/phrase followed by 5+ pipe-leading lines)
-    and joins them with ' | ' separators. Old template is unchanged.
     """
     if not text:
         return text
@@ -1027,24 +1133,19 @@ def _collapse_multiline_pipe_table(text: str) -> str:
     while i < len(lines):
         line = lines[i].rstrip()
         stripped = line.strip()
-        # Multi-line table opener: a non-empty non-pipe line followed by
-        # several pipe-leading lines. Threshold: 4+ continuation lines to
-        # avoid false positives on regular prose.
+        # Multi-line row opener: a non-empty non-pipe line followed by several
+        # pipe-leading lines. 5+ collected cells to avoid firing on prose.
         if (stripped and not stripped.startswith("|") and i + 1 < len(lines)
                 and lines[i + 1].strip().startswith("|")):
             row = [stripped]
             j = i + 1
             while j < len(lines):
                 nxt = lines[j].strip()
-                if nxt.startswith("|"):
-                    # Strip leading '|' (and optional ' ') then capture cell
-                    cell = nxt[1:].strip()
-                    row.append(cell)
-                    j += 1
-                else:
+                if not nxt.startswith("|"):
                     break
-            if len(row) >= 5:  # Real multi-line row, not a fluke
-                # Drop trailing blank cells (from trailing "| " lines)
+                row.append(nxt[1:].strip())
+                j += 1
+            if len(row) >= 5:
                 while row and not row[-1]:
                     row.pop()
                 out_lines.append(" | ".join(row))
@@ -1056,37 +1157,249 @@ def _collapse_multiline_pipe_table(text: str) -> str:
 
 
 def _find_table_rows(text: str):
-    """Extract pipe-delimited rate-table rows from OL response bodies.
-    Returns [header_row, data_row] or None.
-    Handles both single-line and multi-line pipe-table formats — multi-line
-    bodies are pre-collapsed before scanning.
+    """Locate OL's rate-table header row and the data row aligned under it.
+
+    Returns ``[header_cells, data_cells]`` or None. The FIRST qualifying
+    header wins: in a flattened reply chain the newest message sits at the
+    top, so first-found is the current quote, not a quoted older one.
     """
     if not text:
         return None
-    text = _collapse_multiline_pipe_table(text)
-    rows = []
-    header_idx = None
-    for line in text.split("\n"):
-        if " | " not in line:
+    lines = _collapse_multiline_pipe_table(text).split("\n")
+    for i, line in enumerate(lines):
+        header = _split_pipe_cells(line)
+        if len(header) < _HEADER_MIN_CELLS:
             continue
-        cells = [c.strip() for c in line.split("|")]
-        while cells and not cells[-1]:
-            cells.pop()
-        if len(cells) < 4:
+        known = sum(1 for c in header if _header_key(c))
+        if known < _HEADER_MIN_KNOWN:
             continue
-        low = line.lower()
-        hint_count = sum(1 for h in _TABLE_HEADER_HINTS if h in low)
-        if header_idx is None and hint_count >= 2:
-            header_idx = len(rows)
-            rows.append(cells)
-        elif header_idx is not None:
-            rows.append(cells)
-            break
-    return rows if rows and header_idx is not None else None
+        for j in range(i + 1, min(i + 1 + _HEADER_DATA_WINDOW, len(lines))):
+            data = _split_pipe_cells(lines[j])
+            if sum(1 for c in data if c) >= 2:
+                return [header, data]
+        return None
+    return None
 
 
-def _norm_header(h: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", h.lower()).strip("_")
+def _table_cells(header: list, data: list) -> dict:
+    """Zip a header row onto its data row BY POSITION, keyed by canonical name.
+
+    A short data row is padded and a long one truncated, so a value can never
+    slide under the wrong header. Unknown headers still consume their column
+    slot (that is what preserves alignment) but emit nothing.
+    """
+    data = list(data[:len(header)]) + [""] * max(0, len(header) - len(data))
+    cells: dict = {}
+    for raw_header, raw_value in zip(header, data, strict=True):
+        key = _header_key(raw_header)
+        if not key:
+            continue
+        value = re.sub(r"\s+", " ", (raw_value or "").replace("\xa0", " ")).strip()
+        if value.lower() in _TABLE_PLACEHOLDERS:
+            continue
+        if value and key not in cells:
+            cells[key] = value
+    return cells
+
+
+def _cell_money(value: str):
+    """Float out of a RATE cell, or None when the cell holds no number.
+
+    No plausibility gate. The value comes from the column OL headed RATE, and
+    header-to-cell alignment already rules out a stray date or voyage landing
+    here — whereas the old prose fallback's `500 <= val` gate is precisely
+    what dropped HCMC's real $475.00 quote on the floor.
+    """
+    m = _TABLE_MONEY_RX.search(value or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _strip_carrier_boilerplate(text: str) -> str:
+    """Drop OL's standing legal/advisory lines before any prose carrier scan."""
+    return "\n".join(
+        ln for ln in (text or "").split("\n")
+        if not any(rx.search(ln) for rx in _CARRIER_BOILERPLATE_RXES)
+    )
+
+
+def _carrier_from_prose(text: str):
+    """Last-resort carrier from the sentence that introduces the grid
+    ("Pleased to offer the below on Maersk ..." — the 2026-06-15 Manila fix,
+    and OL's prose-only quotes such as the 2026-06-24 Houston->Busan Hapag).
+
+    Two guards make boilerplate unusable as a source:
+      1. OL's standing disclaimer lines are stripped first.
+      2. A line naming TWO OR MORE distinct carriers is rejected outright. A
+         LIST of carriers never identifies THE quoted carrier — and a list is
+         exactly what "Maersk, Sealand, MSC, ONE, CMA and Cosco do not accept
+         Dummy SI" is. Reading "MSC" off that line is the defect this replaces.
+    """
+    for line in _strip_carrier_boilerplate(text).split("\n"):
+        tok = detect_carrier_token(line, allow_short=False)
+        if not tok:
+            continue
+        up = line.upper()
+        named = {canon for raw, canon in _SUBJECT_CARRIER_TOKENS
+                 if raw not in _AMBIGUOUS_CARRIER_TOKENS
+                 and re.search(rf"\b{re.escape(raw)}\b", up)}
+        if len(named) == 1:
+            return tok
+    return None
+
+
+def _rate_table_from_cells(cells: dict) -> dict:
+    """Build the rate-table output dict from aligned cells and NOTHING else.
+
+    Every value here traces to one cell of the matched data row. Callers add
+    only the carrier fallbacks (for grids with no carrier column) and the
+    tree-local date/legacy keys.
+    """
+    out: dict = {}
+
+    carrier = re.sub(r"[\*\(].*$", "", cells.get("carrier") or "").strip()
+    if carrier:
+        # This IS the dedicated carrier cell, so allow_short is safe here and
+        # nowhere else: a bare "CMA" / "ONE" in this column is the carrier,
+        # not English prose. core.normalize_carrier does the canonicalizing
+        # ("ONE LINE" -> ONE, "CMA" -> CMA CGM).
+        out["carrier_quoted"] = _canon_carrier(
+            detect_carrier_token(carrier, allow_short=True) or carrier)
+
+    rate = _cell_money(cells.get("rate") or "")
+    if rate is not None:
+        out["ol_rate"] = rate
+
+    vessel = cells.get("vessel") or ""
+    voyage = cells.get("voyage") or ""
+    if vessel:
+        out["vessel"] = vessel
+    if voyage:
+        out["voyage"] = voyage
+    if vessel or voyage:
+        # House convention, matching scripts/pdf_parser ("ONE OLYMPUS 080W").
+        out["vessel_voyage"] = f"{vessel} {voyage}".strip()
+
+    for key in ("pol", "pod", "container_size", "transshipment", "dthc",
+                "origin_free_time", "dest_free_time"):
+        if cells.get(key):
+            out[key] = cells[key]
+
+    return out
+
+
+def _free_day_counts(out: dict) -> dict:
+    """Detention/demurrage day counts read ONLY from the free-time strings
+    already extracted from their own cells. Never from body prose."""
+    blob = " ".join(v for v in (out.get("origin_free_time"),
+                                out.get("dest_free_time")) if v)
+    found = {}
+    for key, rx in _FREE_DAYS_RXES:
+        m = rx.search(blob)
+        if m:
+            found[key] = int(m.group(1))
+    return found
+
+def _canon_carrier(name):
+    """Canonicalize a carrier name through core.normalize_carrier
+    ("ONE LINE" -> ONE, "CMA" -> CMA CGM). Returns the name unchanged when
+    core is unavailable or has no mapping — never None for a non-empty name."""
+    if not name:
+        return None
+    try:
+        import core as _core
+        return _core.normalize_carrier(name) or name
+    except Exception:
+        return name
+
+
+# The src/hilmar mirror sets this True. It selects that tree's HISTORICAL
+# output contract (ISO dates, the legacy `etd`/`eta` key spellings,
+# detention/demurrage day integers, prose rate_expiry), which
+# src/hilmar/ingest.py and scripts/build_ops_flow_v2.py read. Production
+# (scripts/) persists the RAW cell text — scripts/ingest.py and every report
+# renderer have always written "7-Sep-26". Converting either side is a
+# persisted-data migration, not a parser fix, so both contracts stand and the
+# divergence is DECLARED HERE instead of hiding in two different parsers.
+_LEGACY_SRC_CONTRACT = False
+
+
+_TABLE_DATE_RX = re.compile(
+    r"^(\d{1,2})[-\s/]"
+    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+    r"[-\s/](\d{2,4})$",
+    re.IGNORECASE,
+)
+
+
+def _parse_table_date(s):
+    """'DD-Mon-YY' / 'DD-Mon-YYYY' / ISO 'YYYY-MM-DD' -> ISO date, else None.
+    Only consulted under _LEGACY_SRC_CONTRACT; production keeps the raw cell."""
+    if not s:
+        return None
+    s = s.strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+    m = _TABLE_DATE_RX.match(s)
+    if not m:
+        return None
+    d, mon, y = m.groups()
+    mon_num = _MONTHS.get(mon.lower()[:3])
+    if not mon_num:
+        return None
+    yi = int(y)
+    if yi < 100:
+        yi += 2000
+    try:
+        return date(yi, mon_num, int(d)).isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+def _carrier_fallback(data_cells, text: str) -> dict:
+    """Carrier for a grid that has no carrier column at all.
+
+    Scans the matched row's OWN data cells first (OL sometimes merges the
+    carrier into an unlabeled column), then falls back to the grid's
+    introducing prose through _carrier_from_prose's boilerplate guards.
+    """
+    tok = next((t for t in (detect_carrier_token(c, allow_short=False)
+                            for c in data_cells) if t), None)
+    tok = tok or _carrier_from_prose(text)
+    return {"carrier_quoted": _canon_carrier(tok)} if tok else {}
+
+
+def _table_date_fields(cells: dict) -> dict:
+    """Date-ish columns, in whichever format this tree's consumers read.
+    See _LEGACY_SRC_CONTRACT above for why the two trees differ here."""
+    out: dict = {}
+    for cell_key, out_keys in (
+        ("etd", ("etd_offered",)),
+        ("eta", ("eta_offered",)),
+        # ERD goes to both schema names (erd is canonical, origin_cutoff is
+        # the legacy alias ingest/patch_carriers read). Same value, two names.
+        ("erd", ("erd", "origin_cutoff")),
+        ("doc_cut", ("doc_cutoff",)),
+        ("port_cut", ("port_cutoff",)),
+    ):
+        raw = cells.get(cell_key)
+        if not raw:
+            continue
+        value = (_parse_table_date(raw) or raw) if _LEGACY_SRC_CONTRACT else raw
+        for key in out_keys:
+            out[key] = value
+    if _LEGACY_SRC_CONTRACT:
+        if "etd_offered" in out:
+            out["etd"] = out["etd_offered"]
+        if "eta_offered" in out:
+            out["eta"] = out["eta_offered"]
+    return out
+
+
 
 
 def _prose_lane(text: str):
@@ -1158,13 +1471,13 @@ def parse_prose_rate(text: str) -> dict:
     if "ol_rate" not in out:
         return {}
     # Carrier — normalized through core's alias map ("Hapag" -> "Hapag-Lloyd").
-    car = detect_carrier_token(text, allow_short=False)
+    # Routed through _carrier_from_prose, NOT a raw whole-body token scan: this
+    # body has no grid, so OL's standing footer is the only other place a
+    # carrier name appears, and a bare scan reads "MSC" straight out of
+    # "Maersk, Sealand, MSC, ONE, CMA and Cosco do not accept Dummy SI".
+    car = _carrier_from_prose(text)
     if car:
-        try:
-            import core as _core
-            out["carrier_quoted"] = _core.normalize_carrier(car) or car
-        except Exception:
-            out["carrier_quoted"] = car
+        out["carrier_quoted"] = _canon_carrier(car)
     # Lane -> POL/POD.
     pol, pod = _prose_lane(text)
     if pol:
@@ -1206,111 +1519,35 @@ def parse_prose_rate(text: str) -> dict:
 
 
 def parse_rate_table(text: str) -> dict:
-    """Extract carrier_quoted / ol_rate / etd_offered / eta_offered /
-    vessel_voyage / transshipment / pol / pod from an OL rate reply.
+    """Extract the quote from an OL rate reply.
 
-    Pipe/column grid is the common case; when no table is present OL has
-    also sent the same quote as free prose, so fall back to parse_prose_rate
-    rather than returning nothing (2026-06-24 Houston->Busan Hapag miss —
-    production had no prose path at all, pure drift from src/hilmar)."""
+    HEADER-TO-CELL ALIGNMENT ONLY. When OL's grid is present, every field is
+    read out of the cell sitting under its own header, and the body prose is
+    never consulted for carrier, vessel or rate — see the invariant note above
+    _TABLE_CELL_ALIASES for the boilerplate this makes unreachable.
+
+    When there is NO grid at all, the prose path runs instead: OL does send
+    some quotes as free prose (2026-06-24 Houston->Busan Hapag), and returning
+    nothing there loses a real quote.
+
+    Emits, all optional and all absent when OL left the column blank:
+      carrier_quoted, ol_rate, pol, pod, container_size, dthc,
+      vessel, voyage, vessel_voyage, transshipment,
+      etd_offered, eta_offered, erd, origin_cutoff, doc_cutoff, port_cutoff,
+      origin_free_time, dest_free_time
+
+    rate_expiry is deliberately NOT emitted here: it lives in the body prose,
+    not the grid, and fetch_bodies composes it from parse_rate_expiry at the
+    call site. Keeping the table parser pure is the point.
+    """
     rows = _find_table_rows(text or "")
-    if not rows or len(rows) < 2:
+    if not rows:
         return parse_prose_rate(text or "")
-    header = [_norm_header(c) for c in rows[0]]
-    data = rows[1]
-    if len(data) < len(header):
-        data = data + [""] * (len(header) - len(data))
-    elif len(data) > len(header):
-        data = data[:len(header)]
-    cells = dict(zip(header, [d.strip() for d in data], strict=False))
-    out = {}
-    # Carrier: a column headed "Carrier" is the common case, but OL relabels
-    # it ("Ocean Carrier", "Line", "SSL", ...) and sometimes drops it into an
-    # unlabeled cell or the surrounding prose. _carrier_from_cells walks the
-    # header aliases then scans the data cells; the body-prose scan is the
-    # last resort. (2026-06-15 Manila fix — was bare `cells.get("carrier")`,
-    # which blanked the carrier whenever the column wasn't literally "Carrier".)
-    car = _carrier_from_cells(cells)
-    if not car:
-        car = detect_carrier_token(text, allow_short=False)
-    if car:
-        car = re.sub(r"[\*\(].*$", "", car).strip()
-        if car:
-            try:
-                import core as _core
-                norm = _core.normalize_carrier(car)
-                out["carrier_quoted"] = norm or car
-            except Exception:
-                out["carrier_quoted"] = car
-    rate_raw = cells.get("rate") or ""
-    if rate_raw:
-        m = re.search(r"\$?\s*([\d,]+(?:\.\d+)?)", rate_raw.replace(",", ""))
-        if m:
-            with contextlib.suppress(ValueError):
-                out["ol_rate"] = float(m.group(1))
-    vessel = cells.get("vessel") or ""
-    voy = cells.get("voyage") or ""
-    if vessel or voy:
-        out["vessel_voyage"] = (vessel + (" " + voy if voy else "")).strip()
-    # ETD/ETA columns — OL relabels these across schedule templates
-    # ("Sailing", "Departure", "ETD POL", "Arrival", "ETA POD"). Pick the
-    # first populated alias so a relabeled schedule still fills the offered
-    # dates (2026-06-16, Michael "parse the schedules we send").
-    _etd_cell = next((cells[k] for k in
-        ("etd", "etd_pol", "pol_etd", "sailing", "departure", "departs", "sail", "ets")
-        if cells.get(k)), None)
-    if _etd_cell:
-        out["etd_offered"] = _etd_cell
-    _eta_cell = next((cells[k] for k in
-        ("eta", "eta_pod", "pod_eta", "arrival", "arrives", "arriving")
-        if cells.get(k)), None)
-    if _eta_cell:
-        out["eta_offered"] = _eta_cell
-    for k_in, k_out in (
-        # ERD column → both `erd` (schema field) and `origin_cutoff` (legacy
-        # alias used by ingest/patch_carriers). Same value, two names.
-        # Per docs/PARSER-GAPS.md 2026-05-19: `erd` was 155/155 empty because
-        # parse_rate_table only emitted origin_cutoff. Fixed by surfacing both.
-        ("erd", "erd"),
-        ("erd", "origin_cutoff"),
-        ("doc_cut", "doc_cutoff"),
-        ("port_cut", "port_cutoff"),
-    ):
-        if cells.get(k_in):
-            out[k_out] = cells[k_in]
-    for k in ("transshipment", "container_size", "dthc"):
-        v = cells.get(k)
-        if v:
-            out[k] = v
-    # POL/POD — OL labels these "Port of Loading"/"Port of Discharge"/
-    # "Load Port"/"Origin Port" etc. across templates, not always "POL"/"POD".
-    # Pick the first populated alias so a relabeled schedule still fills them
-    # (2026-06-17: POL/POD completeness sat at 87% — QC-027 ERROR).
-    _pol = next((cells[k] for k in
-        ("pol", "port_of_loading", "load_port", "loading_port", "origin_port", "pol_port")
-        if cells.get(k)), None)
-    if _pol:
-        out["pol"] = _pol
-    _pod = next((cells[k] for k in
-        ("pod", "port_of_discharge", "discharge_port", "destination_port", "dest_port", "pod_port")
-        if cells.get(k)), None)
-    if _pod:
-        out["pod"] = _pod
-    # 2026-05-19 parser-gap fix: surface free-time + rate-expiry from the
-    # table cells. Header normalization via _norm_header() lowercases +
-    # replaces non-alnum with underscores, so:
-    #   "ORIGIN FREE TIME"      -> "origin_free_time"
-    #   "DESTINATION FREE TIME" -> "destination_free_time"  (alias to dest_free_time)
-    if cells.get("origin_free_time"):
-        out["origin_free_time"] = cells["origin_free_time"]
-    if cells.get("destination_free_time"):
-        out["dest_free_time"] = cells["destination_free_time"]
-    elif cells.get("dest_free_time"):
-        out["dest_free_time"] = cells["dest_free_time"]
-    # rate_expiry — typically NOT in the table itself but in the body
-    # prose (e.g. "valid through 5/31", "rate expires 6/15"). Parsed
-    # separately by parse_rate_expiry which is called from fetch_bodies.
-    # Leave the table parser pure; expiry is composed at the call site.
+    cells = _table_cells(rows[0], rows[1])
+    out = _rate_table_from_cells(cells)
+    if "carrier_quoted" not in out:
+        out.update(_carrier_fallback(rows[1], text or ""))
+    out.update(_table_date_fields(cells))
     return out
 
 

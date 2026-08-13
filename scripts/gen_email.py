@@ -192,7 +192,7 @@ def _today_events(data, today_date):
         # 0 TEU). They surface in STATUS CHANGES instead (the builder writes a
         # PENDING→WIN history entry), which is the honest event: "a booking
         # confirmed today".
-        _is_standalone = str(r.get("request_id") or "").startswith("stand_")
+        _is_standalone = core.has_no_rfq_chain(r)
         if req_d == today_date and not _is_standalone:
             new_requests.append(r)
         if resp_d == today_date and not _is_standalone:
@@ -617,7 +617,7 @@ def undated_quotes(data) -> list:
     """
     out = []
     for r in data.get("requests", []):
-        if str(r.get("request_id") or "").startswith("stand_"):
+        if core.has_no_rfq_chain(r):
             continue
         if r.get("response_timestamp"):
             continue

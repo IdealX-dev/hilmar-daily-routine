@@ -72,3 +72,49 @@ def test_origin_strip_fix_is_live_in_both_trees():
     for bp in (SBP, HBP):
         assert bp.parse_subject_lane("HILMAR 1x20'DV Oakland to Bangkok") == (
             "Oakland", "Bangkok")
+
+
+# ── The rate-table core must be BYTE-IDENTICAL in both trees ──────────────
+#
+# 2026-08-13. This is the guard that was missing. The two parse_rate_table
+# implementations had silently diverged into completely different algorithms —
+# production read the pipe grid by header alignment and was correct, while
+# src/hilmar had no table parser at all and regex-scanned the whole body,
+# returning carrier "MSC" out of OL's Dummy-SI footer and vessel "dive" out of
+# "vessel diversion". Nothing in the suite compared them, so it shipped.
+#
+# The table core is now one block of source, copied verbatim into both files.
+# If someone edits one copy, this fails and names the file to mirror.
+_CORE_START = "# ---------- OL rate table: HEADER-TO-CELL ALIGNMENT ----------"
+_CORE_END = "def _canon_carrier(name):"
+
+
+def _table_core(path):
+    text = (ROOT / path).read_text(encoding="utf-8")
+    assert _CORE_START in text, f"{path}: rate-table core marker missing"
+    assert _CORE_END in text, f"{path}: rate-table core end marker missing"
+    return text[text.index(_CORE_START):text.index(_CORE_END)]
+
+
+def test_rate_table_core_is_byte_identical_across_trees():
+    a = _table_core("scripts/body_parser.py")
+    b = _table_core("src/hilmar/body_parser.py")
+    assert a == b, (
+        "The OL rate-table core drifted between scripts/body_parser.py and "
+        "src/hilmar/body_parser.py. This exact drift is what let the "
+        "boilerplate-scraping parse_rate_table ship in src/hilmar while "
+        "production was already correct. Mirror the edit to the paired file.")
+
+
+def test_table_cell_aliases_are_identical_across_trees():
+    """The single list of OL column names. It replaced two lists that could
+    disagree (_TABLE_HEADER_HINTS and _CARRIER_HEADER_ALIASES)."""
+    assert SBP._TABLE_CELL_ALIASES == HBP._TABLE_CELL_ALIASES
+
+
+def test_only_the_declared_contract_flag_differs():
+    """The trees are allowed to differ on ONE thing: the output contract flag
+    that keeps each side's persisted date format and legacy key spellings.
+    Anything else diverging is drift."""
+    assert SBP._LEGACY_SRC_CONTRACT is False, "scripts/ is production: raw dates"
+    assert HBP._LEGACY_SRC_CONTRACT is True, "src/hilmar: ISO dates + etd/eta"

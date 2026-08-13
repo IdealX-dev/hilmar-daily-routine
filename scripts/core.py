@@ -487,6 +487,38 @@ CARRIER_ALIASES: dict[str, str] = {
 }
 
 
+#: request_id prefixes for rows with NO Lonny->OL RFQ chain behind them.
+#:   stand_  a booking confirmation arrived with no matching RFQ.
+#:   ol_     the booking was recovered from OL's operational export and no
+#:           email exists AT ALL.
+#:
+#: Added 2026-08-13 after the SECOND place a bare `startswith("stand_")`
+#: failed to recognise the 49 backfilled bookings. The first cost a blocked
+#: fire (QC-039 graded them on a rate they cannot have); the second put all
+#: 49 into QC-077's "quotes recorded with a rate or carrier but no response
+#: time" banner on the report Michael reads — they carry carrier_quoted from
+#: OL's export and can never have a response time, because there was never a
+#: quote. Michael: "this is absurd ... we should be clean."
+#:
+#: One tuple, one predicate, so the next surface cannot know only half of it.
+#: NOT every stand_ check should adopt this — qc_selfheal's scope purge
+#: drops stand_ rows whose SUBJECT lacks HILMAR, and an ol_ row has no
+#: subject at all, so adopting it there would delete every backfilled win.
+NO_RFQ_CHAIN_PREFIXES = ("stand_", "ol_")
+
+
+def has_no_rfq_chain(row_or_id) -> bool:
+    """True when this row was recorded from a booking, not from an RFQ.
+
+    Accepts a row dict or a bare request_id. These rows have no
+    rate-response email, so rate/ETD/response-time fields are correctly
+    absent rather than missing.
+    """
+    rid = (row_or_id.get("request_id") if isinstance(row_or_id, dict)
+           else row_or_id) or ""
+    return str(rid).startswith(NO_RFQ_CHAIN_PREFIXES)
+
+
 def normalize_carrier(name: str | None) -> str | None:
     """Canonicalize a carrier string. Returns None on empty input; otherwise best-effort canonical.
 
