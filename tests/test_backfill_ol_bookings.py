@@ -80,8 +80,12 @@ def test_the_terminal_must_match_not_just_the_city():
 
 
 def test_an_unmapped_port_is_reported_never_guessed():
-    m, un, _ = _p([_bk("261099", "LAEM CHABANG,THAILAND")],
-                  [_req("r1", "Yokohama", "2026-08-05T15:00:00Z")])
+    """Bare "MANILA" is the standing example and is deliberately absent from
+    POD_TO_DESTINATION: North and South are different terminals, so an
+    unqualified Manila cannot be resolved to either without guessing which
+    lane a real booking belongs to."""
+    m, un, _ = _p([_bk("261099", "MANILA")],
+                  [_req("r1", "Manila (North)", "2026-08-05T15:00:00Z")])
     assert not m
     assert "POD_TO_DESTINATION" in un[0][2]
 
@@ -123,6 +127,104 @@ def test_it_writes_nothing_without_apply():
     assert "DRY RUN" in src
     i = src.find("path.write_text")
     assert i > src.find("if not args.apply:"), "a write happens before the dry-run guard"
+
+
+# ── --create-missing: a booking with no request behind it ────────────────
+
+def _txn(mdolx="252071", pod="CAI MEP", pol="OAKLAND", carrier="ONE",
+         date="2026-01-03", teu="2.0", **kw):
+    b = {"mdolx": mdolx, "pod": pod, "pol": pol, "carrier": carrier,
+         "sheet_date": date, "teu": teu, "booking_no": ""}
+    b.update(kw)
+    return b
+
+
+def test_a_created_win_carries_the_lane_carrier_and_teu():
+    """Michael 2026-08-13: "if it's a booking it's a win and yes the 54 that
+    predate the tracker should be entered so we can see complete and total
+    volumes booked on lanes". The TEU is the whole point — a win row with
+    no volume adds a tally mark and no lane volume."""
+    c = B.creation("252071", _txn())
+    s = c["set"]
+    assert c["create"] is True and c["request_id"] == "ol_252071"
+    assert s["status"] == "WIN" and s["mdolx_ref"] == "252071"
+    assert s["lane"] == "Oakland → HCMC (Cai Mep)"
+    assert s["teu_requested"] == 2 and s["teu_won"] == 2
+    assert s["carrier_won"] == "ONE"
+
+
+def test_the_win_is_stamped_with_the_SAILING_date_not_today():
+    """THE one that matters. ingest's create branch stamps the WIN
+    transition with booking_timestamp, falling back to NOW. Without this
+    field all 54 backfilled bookings would report as won TODAY — 54 phantom
+    wins on one morning's report."""
+    s = B.creation("252071", _txn(date="2026-01-03"))["set"]
+    assert s["booking_timestamp"].startswith("2026-01-03")
+    assert s["request_date"] == "2026-01-03"
+
+
+def test_a_created_row_records_no_turnaround():
+    """The dates are SAILING dates (Michael, 2026-08-13). Deriving 'request
+    to quote' hours from a sail date is invented timing — the exact thing
+    the same day's clock reset exists to stop."""
+    s = B.creation("252071", _txn())["set"]
+    assert "turnaround_biz_hours" not in s
+    assert "turnaround_hours" not in s
+    assert "response_timestamp" not in s
+
+
+def test_the_note_says_where_the_win_came_from_and_that_the_date_is_a_sailing():
+    note = B.creation("252071", _txn())["note"]
+    assert "transaction report" in note
+    assert "SAILING DATE" in note
+    assert "252071" in note
+
+
+def test_an_unmapped_port_keeps_ols_spelling_on_a_created_row():
+    """label_for is lenient where destination_for is strict: nothing is
+    being matched, so the lane just has to be readable and distinct.
+    Collapsing unmapped ports to 'Unknown' would merge real lanes."""
+    assert B.label_for("LYTTELTON") == "Lyttelton"
+    assert B.label_for("PASIR GUDANG,MALAYSIA") == "Pasir Gudang"
+    assert B.label_for("") == "Unknown"
+
+
+def test_matching_still_refuses_the_port_that_labelling_accepts():
+    """The leniency must not leak into the matcher, or a booking lands on
+    someone else's request."""
+    assert B.destination_for("MANILA") is None, (
+        "bare MANILA resolved to a terminal — North and South are different "
+        "ports and core.same_port depends on that")
+    assert B.label_for("MANILA") == "Manila"
+
+
+def test_the_transaction_reports_port_spellings_are_mapped():
+    """The 2026 export drops the country from most ports; an unmapped POD
+    is skipped by the matcher, so a missing spelling silently loses a
+    match."""
+    for pod, want in [("YOKOHAMA", "Yokohama"), ("CAI MEP", "HCMC (Cai Mep)"),
+                      ("BUSAN", "Busan"), ("XINGANG", "Xingang"),
+                      ("KAOHSIUNG,TAIWAN", "Kaohsiung")]:
+        assert B.destination_for(pod) == want
+
+
+def test_teu_survives_the_float_string_the_export_writes():
+    assert B._teu({"teu": "8.0"}) == 8
+    assert B._teu({"teu": ""}) == 0
+    assert B._teu({}) == 0
+
+
+def test_creating_is_opt_in():
+    src = (ROOT / "scripts" / "backfill_ol_bookings.py").read_text(encoding="utf-8")
+    assert "--create-missing" in src
+    assert "if args.create_missing:" in src, (
+        "created wins are not behind the flag")
+
+
+def test_the_2026_export_is_the_default_recap():
+    """Michael 2026-08-13: "ahhh my transaction report is better"."""
+    src = (ROOT / "scripts" / "backfill_ol_bookings.py").read_text(encoding="utf-8")
+    assert "ol-transaction-report-2026.json" in src
 
 
 def test_the_recap_file_is_stored_and_parseable():
