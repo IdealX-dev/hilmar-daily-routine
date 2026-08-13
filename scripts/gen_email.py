@@ -176,6 +176,68 @@ def _win_landed(r, h) -> bool:
     return h.get("to") == "WIN" and (r.get("status") or "").upper() == "WIN"
 
 
+#: How recent the UNDERLYING event must be for a derived loss to count as news.
+#: Michael 2026-08-13: "clean up the massive status changes asap to just what's
+#: current last two days.. we don't need to see all that you fixed".
+STATUS_CHANGE_CURRENT_DAYS = 2
+
+#: Reason prefixes written by RECONCILIATION, not by anything that happened.
+#: An operator correction is Michael's own transaction report being folded in;
+#: a prior-build restore is the tracker recovering a row it had degraded. Both
+#: are stamped the day the tracker acted, so they pile onto whatever day the
+#: work was done — 11 of Aug 12's 16 "status changes" were the MDOLX bookings
+#: reconciled out of his .xls, none of which were booked that day.
+_RECONCILIATION_REASONS = ("Operator correction:", "Prior-build WIN restored")
+
+
+def _is_current_status_change(r, h) -> bool:
+    """Does this transition report something that HAPPENED, recently?
+
+    THE PROBLEM (2026-08-13, measured on stored state): status_history is
+    stamped when the PIPELINE decided, not when the business event occurred —
+    core.record_transition defaults `at` to now. So the day a backlog flushes,
+    every row in it lands on that one day. Aug 13 carried 249 transitions: 35
+    "OL-USA never responded", 32 "Send received but no MDOLX", and ~180 quotes
+    aged out at ages up to 2926 HOURS. Rendered raw, the next morning's report
+    would open with a 249-row wall of things that did not happen yesterday.
+
+    A →WIN or →QUOTED transition is kept unconditionally: a booking landing or
+    OL answering IS the news, whatever the row's age. What gets dropped is a
+    derived loss recorded LONG AFTER it came due.
+
+    LATENESS, NOT AGE, is the test, and the difference is the whole fix. Aging
+    never fires before the decision window closes (48h, 72h on a Friday
+    anchor), so a plain "is the quote younger than N days" rule with N=2 would
+    hide EVERY genuine aging — the section would go permanently silent instead
+    of merely quiet. Measuring how late the record is separates "this quote
+    timed out yesterday, as scheduled" from "this quote timed out in April and
+    the tracker only wrote it down today".
+
+    This trims the FEED, not the ledger. Every one of these rows still counts
+    in the KPIs, the win/loss totals and the lane rollups; the audit still
+    names them. The section is "what happened", so it has to hold only that.
+    """
+    reason = h.get("reason") or ""
+    if reason.startswith(_RECONCILIATION_REASONS):
+        return False
+    to = (h.get("to") or "").upper()
+    if to in ("WIN", "QUOTED"):
+        return True
+    at = core.parse_iso(h.get("at"))
+    anchor = (core.parse_iso(r.get("response_timestamp"))
+              or core.parse_iso(r.get("request_timestamp")))
+    if at is None or anchor is None:
+        # No clock to judge it by. Keep it — a transition we cannot date is a
+        # data defect the audit should surface, not something to hide.
+        return True
+    # The most generous window any aging rule in core uses, so a loss that
+    # fired on schedule under ANY of them reads as on-time here.
+    due_h = max(core.PENDING_HILMAR_LOSS_HOURS_FRIDAY,
+                core.PENDING_OL_LOSS_HOURS)
+    late_h = (at - anchor).total_seconds() / 3600.0 - due_h
+    return late_h <= STATUS_CHANGE_CURRENT_DAYS * 24
+
+
 def _today_events(data, today_date):
     """Buckets the activity for the 'What Happened Today' block."""
     new_requests = []
@@ -200,7 +262,9 @@ def _today_events(data, today_date):
         # status changes today
         for h in (r.get("status_history") or []):
             at = h.get("at")
-            if at and _et_date(at) == today_date and h.get("from") and h.get("to") and h["from"] != h["to"]:
+            if (at and _et_date(at) == today_date and h.get("from")
+                    and h.get("to") and h["from"] != h["to"]
+                    and _is_current_status_change(r, h)):
                 status_changes.append((r, h))
         if r.get("status") == "PENDING":
             pending_today.append(r)

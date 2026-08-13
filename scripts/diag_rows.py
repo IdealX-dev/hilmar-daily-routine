@@ -211,6 +211,43 @@ def main() -> int:
     for label, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         print(f"    {n:4d}  {label}")
 
+    # ── The EXACT QC-077 population, and where its evidence came from ─
+    # The banner counts a row as an undated QUOTE on `rate or carrier`. But a
+    # carrier written by the operator correction that folded in Michael's
+    # transaction report is BOOKING evidence, not evidence that a quote email
+    # ever arrived — and for Jun-Aug it demonstrably did not (OL replied to
+    # Lonny, cc the group, never this mailbox). Print the split so the fix is
+    # chosen on what these rows actually are.
+    print(f"\n{'=' * 78}\nTHE QC-077 POPULATION (banner's own filter)\n{'=' * 78}")
+    if C is None:
+        print("  core unavailable — skipped")
+    else:
+        pop = [r for r in quoted_no_ts if not C.has_no_rfq_chain(r)]
+        print(f"  rows QC-077 counts: {len(pop)}")
+        split: dict[str, int] = {}
+        for r in pop:
+            has_rate = C.has_quote_evidence(r) and r.get("ol_rate") is not None
+            booking = bool(r.get("mdolx_ref") or r.get("booking_no")
+                           or r.get("booking_timestamp"))
+            reasons = " ".join(str((h or {}).get("reason") or "")
+                               for h in (r.get("status_history") or []))
+            corrected = "Operator correction" in reasons
+            key = (f"status={r.get('status')} rate={'yes' if has_rate else 'NO'} "
+                   f"booking_ref={'yes' if booking else 'no'} "
+                   f"operator_corrected={'yes' if corrected else 'no'}")
+            split[key] = split.get(key, 0) + 1
+        for key, n in sorted(split.items(), key=lambda kv: -kv[1]):
+            print(f"    {n:4d}  {key}")
+        print("\n  first 25, with the evidence fields that decide this:")
+        for r in pop[:25]:
+            reasons = " ".join(str((h or {}).get("reason") or "")
+                               for h in (r.get("status_history") or []))
+            print(f"    {r.get('request_id')}  {r.get('lane')}  "
+                  f"status={r.get('status')} rate={r.get('ol_rate')!r} "
+                  f"carrier={r.get('carrier_quoted')!r} "
+                  f"mdolx={r.get('mdolx_ref')!r} "
+                  f"corrected={'Operator correction' in reasons}")
+
     # ── STATUS CHANGES, by day and by reason ─────────────────────────
     # Michael 2026-08-13: "clean up the massive status changes asap to just
     # what's current last two days.. we don't need to see all that you fixed".
