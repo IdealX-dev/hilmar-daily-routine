@@ -1254,6 +1254,66 @@
       },
       "note": "MDOLX260366 booked (CMA CGM SA, Oakland → Kaohsiung, inland TAICHUNG, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-04-02, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
       "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "stand_260928",
+      "exclude": true,
+      "note": "MDOLX260928 (Oakland → Oakland) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA BV-LZ booking (Oakland to Penang, Malaysia, 2x40'RF, CMA CGM, sailing 2026-08-04) — confirmed by Michael from OL MOVE, screenshot 2026-08-13. Reached the tracker because its subject reads \"MDOLX260928_LOAD APPTS // 00+080435// 2X40'RF HILMAR -> OAKLAND\": the operational gate listed \"LOADING APPT\" and OL wrote \"LOAD APPTS\", and the HILMAR in it is the town the boxes were trucked from. The lane recorded, Oakland → Oakland, was the drayage leg. Michael: \"MDOLX260928 IS NOT ON THE TRANSACTION REPORT I SENT YOU FOR HILMAR\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_037afb9da2a0335a",
+      "exclude": true,
+      "note": "MDOLX260388 (Oakland → Jakarta) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA booking — \"MDOLX260388_ *REVISED BOOKING CONFIRMATION // NUMIDIA - 00+073690 / Hilmar, CA to Jakarta\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_a4b842ad3d7cc6a3",
+      "exclude": true,
+      "note": "MDOLX260387 (Oakland → Busan) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA booking — \"MDOLX260387_ *ROLLED BOOKING CONFIRMATION // NUMIDIA - 00+074173 / Hilmar, CA to Busan\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_6406e8c075d3f109",
+      "exclude": true,
+      "note": "MDOLX260486 (Oakland → Busan) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA booking — \"MDOLX260486_ *NEW BOOKING CONFIRMATION // NUMIDIA - 00+075012 / Port Oakland, CA to ...\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_b3c8c92c496cf65d",
+      "exclude": true,
+      "note": "MDOLX260487 (Oakland → Busan) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA booking — \"MDOLX260487_ *NEW BOOKING REQUEST // NUMIDIA - 00+075061 / Port Oakland to Port Busan\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_56dcf8fc1b6f65e7",
+      "exclude": true,
+      "note": "MDOLX260407 (Oakland → Tokyo) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). NUMIDIA booking — \"MDOLX260407_ *REVISED BOOKING CONFIRMATION // NUMIDIA - 00+074402 / Hilmar, CA to Tokyo\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_b84be17b47c73d68",
+      "exclude": true,
+      "note": "MDOLX260895 (Oakland → Yokohama) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). CANCELLED, not won — \"MDOLX260895_ *CANCELED BOOKING CONFIRMATION // HILMAR - Oakland to Yokohama - 3X40'RF\". A cancelled booking counted as a win is a win that did not happen; OL's report carries a cancelled flag and excludes it, which is why the reconciliation surfaced it.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_8b74b5cba593f757",
+      "exclude": true,
+      "note": "MDOLX260772 (Oakland → Yokohama) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Absent from OL's 2026 transaction report. The mailbox holds a HILMAR-tagged confirmation (\"MDOLX260772_NEW BOOKING CONFIRMATION// HILMAR 1X40'RF Oakland to Yokohama// CMA\"), so this one is worth querying with OL rather than assuming it never happened — but Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\", and the report does not list it.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_7144836d5bf4873e",
+      "exclude": true,
+      "note": "MDOLX260963 (Oakland → HCMC (Cat Lai)) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Absent from OL's 2026 transaction report, though the mailbox holds \"MDOLX260963_NEW BOOKING CONFIRMATION// HILMAR 2X20'DV Oakland to HCMC (Cat Lai)// ONE\" — the .eml Michael forwarded on 2026-08-12. This is the one most worth querying with OL: a HILMAR-tagged confirmation for a booking their own book does not carry. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\".",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "stand_260905",
+      "exclude": true,
+      "note": "MDOLX260905 (Oakland → Tokyo) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Its only staged message is \"MDOLX260905_ *PLEASE UPDATE BKG # 2329180920 - OOCL Booking Acknowledgement SLC // HILMAR\" — an ops update, not a booking confirmation, and it became a standalone WIN. Worth querying with OL. This does NOT overwrite Michael's 2026-07-14 lane correction above, which is a separate claim (what the lane IS, not whether the booking belongs to Hilmar); that correction stays in the file and applies first. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\".",
+      "source": "ol-transaction-report-2026"
     }
   ]
 }

@@ -237,9 +237,16 @@ def test_the_committed_corrections_cannot_double_count_a_booking():
     doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
                       ).read_text(encoding="utf-8"))
     cs = doc["corrections"]
-    ids = Counter(c["request_id"] for c in cs)
+    # Only WIN-PRODUCING corrections are checked for duplicate ids. A `set`
+    # and an `exclude` on the same request_id is legitimate and deliberate —
+    # stand_260905 carries Michael's lane correction from 2026-07-14 and the
+    # 2026-08-13 exclusion, and apply_operator_corrections is duplicate-
+    # tolerant precisely so the exclusion can win. What must never repeat is
+    # a booking counted twice.
+    winners = [c for c in cs if not c.get("exclude")]
+    ids = Counter(c["request_id"] for c in winners)
     assert [k for k, v in ids.items() if v > 1] == []
-    refs = Counter(str(c.get("set", {}).get("mdolx_ref") or "") for c in cs)
+    refs = Counter(str(c.get("set", {}).get("mdolx_ref") or "") for c in winners)
     refs.pop("", None)
     assert [k for k, v in refs.items() if v > 1] == [], "one booking, two wins"
 
