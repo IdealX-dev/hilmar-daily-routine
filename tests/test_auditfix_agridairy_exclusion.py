@@ -136,11 +136,24 @@ def test_stand_260821_exclusion_is_recorded():
     assert "AgriDairy" in entry.get("note", "")
 
 
-def test_stand_260905_lane_correction_resolves_oakland_tokyo():
-    """stand_260905 (OOCL booking 2329180920) is Oakland → Tokyo per Michael
-    2026-07-14 — its lane aged out of the ingest window and was unresolvable.
-    The tracked operator correction must resolve it durably (every fire), so
-    the row shows as a real Oakland → Tokyo booking, not 'Lane unresolved'."""
+def test_stand_260905_is_excluded_despite_its_lane_correction():
+    """SUPERSEDED 2026-08-13, and the supersession is the point.
+
+    Michael 2026-07-14 supplied the lane for stand_260905 (OOCL booking
+    2329180920, Oakland → Tokyo) because it had aged out of the ingest window
+    and rendered "Lane unresolved". That correction is still in the file and
+    still correct about the LANE.
+
+    What changed is a different question: whether the booking is Hilmar's at
+    all. OL's 2026 transaction report does not list MDOLX260905, and Michael
+    2026-08-13: "THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND
+    USE." Its only staged message is an ops "PLEASE UPDATE BKG" note that
+    became a standalone WIN.
+
+    So both corrections live in the file and the exclusion wins — which is
+    the behaviour worth pinning, because a `set` and an `exclude` on one
+    request_id is exactly the collision apply_operator_corrections was made
+    duplicate-tolerant for."""
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
@@ -152,14 +165,10 @@ def test_stand_260905_lane_correction_resolves_oakland_tokyo():
              "lane": "Lane unresolved", "carrier_won": "OOCL",
              "mdolx_ref": "260905"}]
     ingest.apply_operator_corrections(rows)
-    r = rows[0]
-    assert r["destination"] == "Tokyo"
-    assert r["origin"] == "Oakland"
-    assert r["lane"] == "Oakland → Tokyo"
-    assert r.get("manual_locked") is True
-    # And it is now client-renderable (no longer suppressed).
-    import gen_client_email as gce
-    assert gce._lane_resolved(r) is True
+    # The applier also creates the 51 backfilled wins, so the assertion is
+    # about THIS row, not about an empty list.
+    assert not [r for r in rows if r.get("request_id") == "stand_260905"], (
+        "a booking OL's own book does not list is still a win")
 
 
 def test_stand_260905_correction_present_in_tracked_file():

@@ -52,6 +52,7 @@ if str(ROOT / "scripts") not in sys.path:
 #: Explicit rather than clever: an unmapped POD is REPORTED and skipped, so a
 #: new port can never be silently matched to the wrong lane.
 POD_TO_DESTINATION = {
+    # Linda's container report spells ports with the country attached.
     "YOKOHAMA,JAPAN": "Yokohama",
     "KOBE,JAPAN": "KOBE",
     "NAGOYA,JAPAN": "Nagoya",
@@ -65,14 +66,57 @@ POD_TO_DESTINATION = {
     "HO CHI MINH,VICT,VIETNAM": "HCMC",
     "MANILA NORTH HARBOUR": "Manila (North)",
     "BUSAN,KOREA": "Busan",
+    # OL's transaction report (2026-08-13) drops the country on most ports.
+    "YOKOHAMA": "Yokohama",
+    "SINGAPORE": "Singapore",
+    "SHANGHAI": "Shanghai",
+    "XINGANG": "Xingang",
+    "DURBAN": "Durban",
+    "CAI MEP": "HCMC (Cai Mep)",
+    "BUSAN": "Busan",
+    "SHEKOU": "Shekou",
+    "KEELUNG": "Keelung",
+    "LYTTELTON": "Lyttelton",
+    "MELBOURNE": "Melbourne",
+    "DUBLIN": "Dublin",
+    "HAMBURG": "Hamburg",
+    "KAOHSIUNG,TAIWAN": "Kaohsiung",
+    "LAEM CHABANG": "Laem Chabang",
+    "LAEM CHABANG,THAILAND": "Laem Chabang",
+    "PASIR GUDANG,MALAYSIA": "Pasir Gudang",
+    "PORT KLANG (PELABUHAN KLANG)": "Port Klang",
+    # DELIBERATELY ABSENT: bare "MANILA". Manila North and Manila South are
+    # different terminals and core.same_port treats them as different ports,
+    # which is the rule that stops a booking landing on the wrong lane. An
+    # unqualified "MANILA" cannot be resolved to either, so it is reported.
 }
 
 
 def destination_for(pod: str) -> str | None:
-    """Tracker destination for an OL POD spelling, or None if unmapped."""
+    """Tracker destination for an OL POD spelling, or None if unmapped.
+
+    STRICT on purpose: this feeds MATCHING, where a wrong guess puts a real
+    booking onto someone else's request. Unmapped is reported, never guessed.
+    """
     if not pod:
         return None
     return POD_TO_DESTINATION.get(pod.strip().upper())
+
+
+def label_for(pod: str) -> str:
+    """A display name for a port on a CREATED row.
+
+    Different job from destination_for and deliberately lenient: nothing is
+    being matched here, the booking simply needs a readable lane so its TEU
+    lands on the right line of the lane rollup. An unmapped port keeps OL's
+    own spelling rather than becoming "Unknown", which would collapse
+    several real lanes into one meaningless bucket.
+    """
+    mapped = destination_for(pod)
+    if mapped:
+        return mapped
+    clean = (pod or "").split(",")[0].strip()
+    return clean.title() if clean else "Unknown"
 
 
 def _rule(title: str) -> None:
@@ -133,15 +177,124 @@ def propose(bookings, requests, since, max_age_days, core):
     return matches, unmatched, skipped
 
 
+def _teu(b) -> int:
+    """TEU as an int, or 0. The export writes it as a float string."""
+    try:
+        return int(float(b.get("teu") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_evidence_of_a_booking(b: dict) -> bool:
+    """Does this export row actually describe a shipment?
+
+    Michael, 2026-08-13: "260905 260192 260963 were bookings hilmar
+    cancelled." MDOLX260192 is IN OL's export and carries no port, no
+    carrier, no booking number and no TEU — and it was cancelled. So was
+    MDOLX261071, whose row in Linda's container report was blank in exactly
+    the same way, and which I had already turned into a win.
+
+    Twice now an empty row has become a win, so the rule is code rather than
+    vigilance: a row with neither a discharge port nor a carrier is not
+    evidence that anything shipped. It is REPORTED and left for a human,
+    which is what should have happened both times.
+
+    Deliberately an OR, not an AND: a real booking can be missing one field
+    (261071's sibling rows show carrier-less entries that did sail), but a
+    row missing BOTH has nothing in it to describe a shipment at all.
+    """
+    return bool((b.get("pod") or "").strip() or (b.get("carrier") or "").strip())
+
+
+def creation(ref: str, b: dict) -> dict:
+    """A create:true correction for a booking with no request behind it.
+
+    Michael 2026-08-13: "if it's a booking it's a win and yes the 54 that
+    predate the tracker should be entered so we can see complete and total
+    volumes booked on lanes so better."
+
+    46 of those bookings sailed before this pipeline read any mail, so no
+    request exists to amend and none ever will. The evidence is OL's own
+    transaction report, and the row says so.
+
+    THE DATE IS A SAILING DATE, NOT A BOOKING DATE — Michael was explicit
+    about that. Every date on the created row is therefore the sailing date,
+    labelled as one in the note, and the row carries no turnaround figure at
+    all: inventing "request to quote" hours from a sail date is exactly the
+    fabricated timing the 2026-08-13 clock reset exists to stop.
+
+    The duplicate guard lives in ingest.apply_operator_corrections: a
+    created row stands down the moment any row carries the same MDOLX, so a
+    confirmation arriving later takes over rather than double-counting.
+    """
+    sail = b.get("sheet_date") or ""
+    dest = label_for(b.get("pod") or "")
+    origin = (b.get("pol") or "").split(",")[0].strip().title() or "Oakland"
+    teu = _teu(b)
+    setter = {
+        "status": "WIN",
+        "mdolx_ref": ref,
+        "destination": dest,
+        "lane": f"{origin} → {dest}",
+        "origin": origin,
+        "teu_requested": teu,
+        "teu_won": teu,
+    }
+    if b.get("carrier"):
+        setter["carrier_won"] = b["carrier"]
+        setter["carrier_quoted"] = b["carrier"]
+    if sail:
+        # booking_timestamp is what ingest's create branch stamps the WIN
+        # transition with. Without it the stamp defaults to NOW, and
+        # core.win_event_date would report all 54 of these as won TODAY —
+        # 54 phantom wins on one morning's report. This is the single most
+        # important field on the correction.
+        setter["booking_timestamp"] = f"{sail}T12:00:00+00:00"
+        setter["request_timestamp"] = f"{sail}T12:00:00+00:00"
+        setter["request_date"] = sail
+    inland = b.get("final_destination")
+    return {
+        "request_id": f"ol_{ref}",
+        "create": True,
+        "set": setter,
+        "note": (
+            f"MDOLX{ref} booked ({b.get('carrier') or 'carrier n/a'}, "
+            f"{origin} → {dest}"
+            + (f", inland {inland}" if inland else "")
+            + f", {teu} TEU). Source: OL transaction report pulled 2026-08-13 "
+              "covering all 2026 Hilmar sailings. Michael: \"if it's a "
+              "booking it's a win and yes the 54 that predate the tracker "
+              "should be entered so we can see complete and total volumes "
+              "booked on lanes\". No request row exists to amend — this "
+              f"booking sailed {sail or 'date n/a'}, before or outside the "
+              "window in which this pipeline read mail. DATE IS A SAILING "
+              "DATE, not the date booked, so no turnaround is recorded for "
+              "this row."),
+        "source": "ol-transaction-report-2026",
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
+    # Default is OL's TRANSACTION report, not Linda's container report.
+    # Michael 2026-08-13: "ahhh my transaction report is better" — it is the
+    # full year, carries TEU and a cancelled flag, and is OL's own book
+    # rather than a filtered view of it.
     ap.add_argument("--recap", default=str(ROOT / "data" /
-                                           "ol-booking-recap-2026-06-01_2026-08-12.json"))
-    ap.add_argument("--since", default="2026-07-01",
-                    help="Ignore Lonny requests before this date (Michael: "
-                         "'match to the lonny requests since july 1')")
-    ap.add_argument("--max-age", type=int, default=60,
-                    help="Most days a request may predate its booking")
+                                           "ol-transaction-report-2026.json"))
+    ap.add_argument("--since", default="2026-01-01",
+                    help="Ignore Lonny requests before this date")
+    ap.add_argument("--max-age", type=int, default=120,
+                    help="Most days a request may predate its booking. The "
+                         "transaction report dates are SAILING dates "
+                         "(Michael 2026-08-13), not booking dates, so the "
+                         "gap between an ask and its sailing is wider than "
+                         "the container report's 60 allowed for.")
+    ap.add_argument("--create-missing", action="store_true",
+                    help="Also record a booking that matches NO request as a "
+                         "standalone win (Michael: 'if it's a booking it's a "
+                         "win ... the 54 that predate the tracker should be "
+                         "entered so we can see complete and total volumes').")
     ap.add_argument("--apply", action="store_true",
                     help="Write the corrections. Without this, report only.")
     args = ap.parse_args()
@@ -175,13 +328,23 @@ def main() -> int:
         print(f"      → {r.get('request_id')}  {r.get('lane') or r.get('destination')}"
               f"  asked {str(r.get('request_timestamp'))[:10]}  status now {r.get('status')}")
 
-    _rule(f"NOT matched — need a human decision ({len(unmatched)})")
+    label = ("no request matched — recorded as standalone wins"
+             if args.create_missing else "NOT matched — need a human decision")
+    _rule(f"{label} ({len(unmatched)})")
     for ref, b, why in unmatched:
         print(f"  MDOLX{ref}  {b.get('pol')} → {b.get('pod')}  ({b.get('sheet_date')}): {why}")
-    if unmatched:
+    if unmatched and not args.create_missing:
         print("\n  Operator corrections can only amend an EXISTING request row, so a "
               "booking with no Lonny request cannot be added this way. These are "
-              "reported rather than invented.")
+              "reported rather than invented. Pass --create-missing to record "
+              "them as standalone wins instead.")
+    if unmatched and args.create_missing:
+        teu = sum(_teu(b) for _, b, _ in unmatched)
+        print(f"\n  --create-missing: each becomes a standalone WIN row carrying "
+              f"its lane, carrier and TEU ({teu} TEU across {len(unmatched)}). "
+              "Dates on these rows are SAILING dates and no turnaround is "
+              "recorded for them. Each stands down automatically if a real "
+              "confirmation for the same MDOLX ever arrives.")
 
     if not args.apply:
         print("\nDRY RUN — nothing written. Re-run with --apply to record these "
@@ -215,8 +378,27 @@ def main() -> int:
             "source": "ol-booking-recap-2026-08-12",
         })
         added += 1
+
+    created = 0
+    if args.create_missing:
+        for ref, b, _why in unmatched:
+            rid = f"ol_{ref}"
+            if rid in existing:
+                print(f"  SKIP {rid} — already has a correction; not "
+                      "overwriting a human verdict")
+                continue
+            if not is_evidence_of_a_booking(b):
+                print(f"  REFUSED MDOLX{ref} — the export row has no "
+                      "discharge port and no carrier. That is not evidence "
+                      "a shipment happened; MDOLX260192 looked exactly like "
+                      "this and was cancelled. Decide it by hand.")
+                continue
+            doc.setdefault("corrections", []).append(creation(ref, b))
+            created += 1
+
     path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"\nWROTE {added} correction(s) to {path}")
+    print(f"\nWROTE {added} match correction(s) and {created} created win(s) "
+          f"to {path}")
     print("Review the diff, then commit. The next fire applies them and they "
           "survive every rebuild after that.")
     return 0

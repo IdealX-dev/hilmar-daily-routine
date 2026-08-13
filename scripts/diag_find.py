@@ -143,9 +143,16 @@ def main() -> int:
                      if ref in " ".join(str(x) for x in
                                         [r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or []))]
             if found:
-                r0 = found[0]
-                print(f"  {ref}: {len(found)} row(s) — status={r0.get('status')} "
-                      f"lane={_short(r0.get('lane') or r0.get('destination'), 34)}")
+                # request_id is printed because it is the ONLY handle an
+                # operator correction has: excluding a row that is not a
+                # Hilmar-client move, or amending one, is keyed on this id
+                # and nothing else. Reporting a bad row without it means a
+                # second run just to look the id up.
+                for r0 in found:
+                    print(f"  {ref}: {len(found)} row(s) — "
+                          f"status={r0.get('status')} "
+                          f"lane={_short(r0.get('lane') or r0.get('destination'), 34)} "
+                          f"id={r0.get('request_id')}")
             else:
                 print(f"  {ref}: NO tracking row carries this ref")
 

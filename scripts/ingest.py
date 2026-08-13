@@ -244,6 +244,14 @@ def title_case_destination(destination: str | None) -> str:
 _OPERATIONAL_SUBJECT_HINTS = (
     "FREE-TIME ISSUE", "FREE TIME ISSUE",
     "NEED TO SCHEDULE LOADING APPT", "LOADING APPT",
+    # "LOAD APPT" is a SEPARATE string, not covered by "LOADING APPT" —
+    # "LOADING" is not a prefix of "LOAD ". OL writes both, and the gap let
+    # MDOLX260928 through as a WIN: "MDOLX260928_LOAD APPTS // 00+080435//
+    # 2X40'RF HILMAR -> OAKLAND". Michael, 2026-08-13: "MDOLX260928 IS NOT ON
+    # THE TRANSACTION REPORT I SENT YOU FOR HILMAR" — it is a NUMIDIA booking
+    # (customer NUMIDIA BV-LZ, Oakland to Penang), and the "HILMAR" in it is
+    # the town the boxes were trucked from.
+    "LOAD APPT",
     "DEMURRAGE CHARGES MOUNTING",
     "BOOKING SCHEDULE INCONSISTENCY",
     "DISPUTE EBKG", "DISPUTE NAM",

@@ -14,9 +14,14 @@ name: Reconcile against OL's booking recap
 on:
   workflow_dispatch:
     inputs:
+      recap:
+        description: "Committed OL export to reconcile against (repo path)"
+        required: false
+        default: "data/ol-transaction-report-2026.json"
       mdolx:
-        description: "MDOLX refs from OL's recap (comma/space separated)"
-        required: true
+        description: "Or paste MDOLX refs directly (ignored if recap is set)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -48,5 +53,6 @@ jobs:
 
       - name: Reconcile
         env:
+          DIAG_RECAP: ${{ inputs.recap }}
           DIAG_MDOLX: ${{ inputs.mdolx }}
         run: python3 scripts/diag_reconcile.py

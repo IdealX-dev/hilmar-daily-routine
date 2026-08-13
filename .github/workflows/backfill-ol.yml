@@ -13,14 +13,22 @@ name: Backfill wins from OL's booking recap
 on:
   workflow_dispatch:
     inputs:
+      recap:
+        description: "Committed OL export to backfill from (repo path)"
+        required: false
+        default: "data/ol-transaction-report-2026.json"
       since:
         description: "Ignore Lonny requests before this date"
         required: false
-        default: "2026-07-01"
+        default: "2026-01-01"
       max_age:
-        description: "Most days a request may predate its booking"
+        description: "Most days a request may predate its booking (dates in the transaction report are SAILING dates)"
         required: false
-        default: "60"
+        default: "120"
+      create_missing:
+        description: "Record bookings that match no request as standalone wins"
+        required: false
+        default: "false"
       apply:
         description: "Write the corrections (false = report only)"
         required: false
@@ -53,7 +61,9 @@ jobs:
         run: |
           EXTRA=""
           if [ "${{ inputs.apply }}" = "true" ]; then EXTRA="--apply"; fi
+          if [ "${{ inputs.create_missing }}" = "true" ]; then EXTRA="$EXTRA --create-missing"; fi
           python3 scripts/backfill_ol_bookings.py \
+            --recap "${{ inputs.recap }}" \
             --since "${{ inputs.since }}" \
             --max-age "${{ inputs.max_age }}" $EXTRA
       - name: Show the correction diff

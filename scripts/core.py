@@ -81,6 +81,53 @@ PENDING_OL_LOSS_HOURS_FRIDAY = 72
 #: "lost", which is the 2026-07-24 defect this whole area exists to prevent.
 PENDING_OL_SLA_BIZ_HOURS = 3
 
+#: TIMING RESET. Michael 2026-08-13: "WHEN RUNNING KPI'S JUST INDICATE THE
+#: TURN AROUND CLOCK AND SUCH IS OFF AND START RUNNING IT AGAIN STARTING
+#: TODAY AND INDICATE THAT ON THE REPORTS".
+#:
+#: Every clock in this file measures from Lonny's request to OL's reply. Both
+#: ends have to be in the mailbox for that to mean anything, and for roughly
+#: Jul 1 - Aug 12 OL's side was not: booking confirmations and quote replies
+#: went To: Lonny, Cc: the group, and never reached the mailbox this pipeline
+#: reads (forwarding was fixed 2026-08-12). A turnaround average over that
+#: period is not "slow OL", it is a clock started and never stopped —
+#: measured against whatever fraction of replies happened to arrive. Publishing
+#: it as a performance number would be inventing a fact, which is the one
+#: thing this project does not do.
+#:
+#: So the clock RESTARTS. Samples dated before this floor are excluded from
+#: every turnaround aggregate and the exclusion is stated on the reports
+#: rather than quietly applied. Wins, losses and volumes are NOT affected —
+#: those are reconciled against OL's own booking export and stand on their
+#: own evidence.
+#:
+#: Retiring this is a one-line change once enough post-fix history exists to
+#: trust: delete the constant and the branches that read it.
+TIMING_VALID_FROM = "2026-08-13"
+
+
+def timing_is_valid(when) -> bool:
+    """Is a timestamp inside the window where turnaround means anything?"""
+    if not TIMING_VALID_FROM:
+        return True
+    s = when.isoformat() if hasattr(when, "isoformat") else str(when or "")
+    return bool(s) and s[:10] >= TIMING_VALID_FROM
+
+
+def timing_reset_note(short: bool = False) -> str:
+    """The one sentence every surface showing a turnaround number prints."""
+    if not TIMING_VALID_FROM:
+        return ""
+    if short:
+        return f"Response clock restarted {TIMING_VALID_FROM}"
+    return (
+        f"Response-time metrics restarted {TIMING_VALID_FROM}. OL's replies "
+        "were not reaching this mailbox before then (they went To: Lonny, "
+        "Cc: the group), so any turnaround measured over that period would "
+        "be a clock started and never stopped. Win, loss and volume figures "
+        "are unaffected — those are reconciled against OL's booking export."
+    )
+
 #: PER-ROW TEU SANITY CEILING. On 2026-07-26 a reference number in a subject
 #: line ("PO 4451440") parsed as 44,514 x 40' = 89,028 TEU from ONE row and
 #: poisoned every volume figure in the day's email, dashboard, PDF and lane
@@ -423,6 +470,20 @@ CARRIER_ALIASES: dict[str, str] = {
     # Wan Hai
     "WAN HAI":   "Wan Hai",
     "WHL":       "Wan Hai",
+    # OL's own operational spellings, from the 2026 customer transaction
+    # report (2026-08-13). Added because the report is now the authority on
+    # what Hilmar booked, and its names are the LEGAL entities rather than
+    # the trade names this file already canonicalises: without these, ONE
+    # appears twice (38 bookings as "ONE", 19 backfilled as "OCEAN NETWORK
+    # EXPRESS PTE, LTD") and every carrier rollup splits one carrier in two.
+    "OCEAN NETWORK EXPRESS PTE, LTD": "ONE",
+    "OCEAN NETWORK EXPRESS PTE LTD":  "ONE",
+    "OCEAN NETWORK EXPRESS, ONE":     "ONE",
+    "CMA CGM SA":                     "CMA CGM",
+    "MEDITERRANEAN SHIPPING LINES":   "MSC",
+    "HAPAG-LLOYD AMERICA":            "Hapag-Lloyd",
+    "EVERGREEN SHIPPING AGENCY (AMERICA)": "Evergreen",
+    "HYUNDAI MERCHANT MARINE INC.":   "HMM",
 }
 
 
@@ -1922,13 +1983,22 @@ def aggregate_summary(requests: list[dict]) -> dict:
     total = len(requests)
     total_quoted = len(wins) + len(ql) + len(pending)
 
-    ta_entries = [r for r in requests if (r.get("turnaround_biz_hours") or 0) > 0]
-    avg_biz = round(sum(r["turnaround_biz_hours"] for r in ta_entries) / len(ta_entries), 2) if ta_entries else 0.0
-    avg_clock = round(
-        sum(r["turnaround_hours"] for r in requests if (r.get("turnaround_hours") or 0) > 0)
-        / max(1, sum(1 for r in requests if (r.get("turnaround_hours") or 0) > 0)),
-        2,
-    ) if any((r.get("turnaround_hours") or 0) > 0 for r in requests) else 0.0
+    # TIMING RESET (Michael 2026-08-13, see TIMING_VALID_FROM). A sample from
+    # before the floor measures a clock that was started and never stopped,
+    # because OL's replies were not reaching this mailbox. Excluded from the
+    # aggregate and COUNTED, so the report can say how many rather than
+    # silently shrinking the sample.
+    _measurable = [r for r in requests if (r.get("turnaround_biz_hours") or 0) > 0]
+    ta_entries = [r for r in _measurable
+                  if timing_is_valid(r.get("request_timestamp"))]
+    ta_excluded = len(_measurable) - len(ta_entries)
+    avg_biz = (round(sum(r["turnaround_biz_hours"] for r in ta_entries)
+                     / len(ta_entries), 2) if ta_entries else None)
+
+    _clock = [r for r in requests if (r.get("turnaround_hours") or 0) > 0
+              and timing_is_valid(r.get("request_timestamp"))]
+    avg_clock = (round(sum(r["turnaround_hours"] for r in _clock)
+                       / len(_clock), 2) if _clock else None)
 
     return {
         "total_entries": total,
@@ -1946,6 +2016,10 @@ def aggregate_summary(requests: list[dict]) -> dict:
         "turnaround_entries": len(ta_entries),
         "turnaround_avg_biz_hours": avg_biz,
         "turnaround_avg_clock_hours": avg_clock,
+        # None rather than 0.0 when nothing is measurable yet: "0h" reads as
+        # an instant reply, which is a lie in the flattering direction.
+        "turnaround_valid_from": TIMING_VALID_FROM,
+        "turnaround_excluded": ta_excluded,
     }
 
 
@@ -2137,7 +2211,11 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
             cm["quotes"] += 1
             cm["_lanes"].add(r.get("destination", "Unknown"))
 
-            if r.get("turnaround_biz_hours") and r["turnaround_biz_hours"] > 0:
+            # Same timing reset as summarize(): a per-carrier average built
+            # from pre-floor samples would rank carriers on a clock that was
+            # never stopped.
+            if (r.get("turnaround_biz_hours") and r["turnaround_biz_hours"] > 0
+                    and timing_is_valid(r.get("request_timestamp"))):
                 cm["_turnaround_samples"].append(r["turnaround_biz_hours"])
             if r.get("etd_fit_days") is not None:
                 cm["_etd_fit_samples"].append(r["etd_fit_days"])

@@ -166,7 +166,7 @@ def render(cfg: dict, data: dict) -> str:
     pending = [r for r in requests if core.is_pending(r)]
     win_rate = summary["win_rate"]
     quote_rate = summary["quote_rate"]
-    avg_biz = summary.get("turnaround_avg_biz_hours", 0)
+    _avg_biz = summary.get("turnaround_avg_biz_hours")
     teu_won = summary["teu_won"]
     teu_ql = summary.get("teu_quoted_lost", 0)
     teu_nq = summary.get("teu_not_quoted", 0)
@@ -181,6 +181,21 @@ def render(cfg: dict, data: dict) -> str:
 
     now_et = datetime.now(core.ET).strftime("%b %d, %Y %I:%M %p ET")
     after_hours_count = sum(1 for r in requests if r.get("after_hours_request"))
+
+    # TIMING RESET (Michael 2026-08-13, core.TIMING_VALID_FROM). summarize
+    # returns None while no post-floor sample exists; "0h" on the tile would
+    # read as an instant reply, so it reads OFF and the turnaround tab
+    # carries the explanation.
+    avg_biz_tile = f"{_avg_biz}h" if _avg_biz is not None else "OFF"
+    avg_biz_sub = (f"{after_hours_count} after-hrs req" if _avg_biz is not None
+                   else f"restarted {core.TIMING_VALID_FROM}")
+    ta_excluded = summary.get("turnaround_excluded", 0) or 0
+    timing_banner = ("" if not core.TIMING_VALID_FROM else
+                     f'<div class="callout amber"><strong>⏱ Turnaround clock '
+                     f'reset.</strong> {_esc(core.timing_reset_note())}'
+                     + (f" {ta_excluded} earlier sample"
+                        f"{'' if ta_excluded == 1 else 's'} excluded."
+                        if ta_excluded else "") + "</div>")
 
     # 2026-05-19 Task #4 — "What happened since last run" needs the actual
     # previous-run timestamp visible. Use `last_updated` from the tracking
@@ -518,7 +533,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
   <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
   <a class="kpi green" href="#tab-carriers" data-tab="tb-carriers" data-target="sec-carriers" data-filter="all" data-filter-label="Per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">click → Carriers tab</div></a>
   <a class="kpi teal" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="quoted" data-filter-label="Quote Rate detail — {quote_rate}% of all RFQs got a quote"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">click → quoted rows</div></a>
-  <a class="kpi slate" href="#tab-turnaround" data-tab="tb-turnaround" data-target="sec-turnaround" data-filter="all" data-filter-label="Turnaround analysis"><div class="value">{avg_biz}h</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{after_hours_count} after-hrs req</div><div class="kpi-hint">click → Turnaround tab</div></a>
+  <a class="kpi slate" href="#tab-turnaround" data-tab="tb-turnaround" data-target="sec-turnaround" data-filter="all" data-filter-label="Turnaround analysis"><div class="value">{avg_biz_tile}</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{avg_biz_sub}</div><div class="kpi-hint">click → Turnaround tab</div></a>
 </div>
 
 <input type="radio" name="tabs" id="tb-summary" checked>
@@ -819,6 +834,10 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
 
     # ── TAB: TURNAROUND ──
     html += '<div id="tab-turnaround" class="tab-content">\n'
+    # The reset notice goes FIRST in this tab: the timeline below still lists
+    # every row's measured hours, and a reader who scrolls past the numbers
+    # before reaching the caveat has already believed them.
+    html += timing_banner + "\n" if timing_banner else ""
     html += '<div class="callout"><p>⏰ <strong>Biz-hours window:</strong> 8:30 AM – 5:30 PM ET weekdays. Lonny (PT) often emails after OL hours — that time is excluded from biz-hours turnaround (raw clock hours shown separately).</p></div>\n'
     html += '<div class="section"><h2>⏱️ Response Timeline</h2>\n'
     html += '<table><tr><th>Date</th><th>Lane</th><th>Lonny Sent (PT)</th><th>OL Response (ET)</th><th>Clock Hrs</th><th>Biz Hrs</th><th>Status</th><th>Context</th></tr>\n'

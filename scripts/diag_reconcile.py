@@ -52,9 +52,24 @@ def row_refs(r: dict) -> set[str]:
 def main() -> int:
     import core as C  # noqa: F401  (kept: parity with the other diags' imports)
 
-    refs = parse_refs(os.environ.get("DIAG_MDOLX", ""))
+    # A committed export beats a pasted list: 134 refs do not belong in a
+    # dispatch box, and the file records exactly what was compared.
+    recap_path = os.environ.get("DIAG_RECAP", "").strip()
+    lanes: dict[str, dict] = {}
+    if recap_path:
+        p = ROOT / recap_path if not recap_path.startswith("/") else Path(recap_path)
+        try:
+            rows = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"::error::cannot read DIAG_RECAP {p}: {type(e).__name__}: {e}")
+            return 2
+        refs = [str(r.get("mdolx") or "").lstrip("0") for r in rows if r.get("mdolx")]
+        lanes = {str(r.get("mdolx") or "").lstrip("0"): r for r in rows}
+        print(f"OL export: {p.name}, {len(refs)} booking(s)")
+    else:
+        refs = parse_refs(os.environ.get("DIAG_MDOLX", ""))
     if not refs:
-        print("::error::DIAG_MDOLX is empty — pass the MDOLX refs from OL's recap")
+        print("::error::pass DIAG_RECAP (a committed export) or DIAG_MDOLX (refs)")
         return 2
     wanted = list(dict.fromkeys(refs))          # de-dup, keep order
     print(f"OL recap refs supplied: {len(wanted)}")
@@ -86,7 +101,12 @@ def main() -> int:
         if not rows:
             verdicts["ABSENT"] += 1
             missing.append(ref)
-            print(f"  MDOLX{ref}  ABSENT — no row in the tracker carries this ref")
+            b = lanes.get(ref) or {}
+            detail = (f"  {b.get('pol') or '?'} → {b.get('pod') or '?'}"
+                      f"  sails {b.get('sheet_date') or '?'}"
+                      f"  {b.get('carrier') or '?'}") if b else ""
+            print(f"  MDOLX{ref}  ABSENT — no row in the tracker carries this "
+                  f"ref{detail}")
             continue
         statuses = {(x.get("status") or "?").upper() for x in rows}
         if "WIN" in statuses:
@@ -108,20 +128,32 @@ def main() -> int:
               "mail that never reached the mailbox this pipeline reads — not a "
               "parser or matcher fault.")
 
-    # Reverse direction: wins we claim that OL's recap does not list. Scoped to
-    # the recap's own ref range so bookings outside its period are not called
-    # phantoms — the recap covers Jun 1 - Aug 12 only.
-    _rule("tracker WINs inside the recap's ref range that OL does not list")
+    # Reverse direction: wins we claim that OL's export does not list. Scoped
+    # to the export's own ref range so bookings outside its period are not
+    # called phantoms.
+    #
+    # THE RANGE HAS TWO BLIND SPOTS AND THEY ARE REPORTED, NOT HIDDEN. On
+    # 2026-08-13 this said "10 win(s) the recap does not contain" while
+    # MDOLX261071 and 261072 sat one and two above the export's highest ref
+    # (261070) and were never examined. Michael found 261071 by hand. A ref
+    # just past the end of the range is the MOST likely place for a
+    # disagreement to hide — a booking made after the export was pulled — so
+    # silence there is the opposite of reassurance.
+    _rule("tracker WINs inside the export's ref range that OL does not list")
     lo, hi = min(wanted), max(wanted)
     supplied = set(wanted)
-    extra = []
+    extra, outside = [], []
     for r in requests:
         if (r.get("status") or "").upper() != "WIN":
             continue
         for ref in row_refs(r):
-            if ref.isdigit() and lo <= ref <= hi and ref not in supplied:
+            if not ref.isdigit() or ref in supplied:
+                continue
+            if lo <= ref <= hi:
                 extra.append((ref, r))
-                break
+            else:
+                outside.append((ref, r))
+            break
     if extra:
         for ref, r in sorted(extra, key=lambda t: t[0]):
             print(f"  MDOLX{ref}  tracker says WIN — "
@@ -131,6 +163,21 @@ def main() -> int:
               "a booking outside its scope or one this pipeline invented.")
     else:
         print("  none — every tracker win in that range is in OL's list.")
+
+    _rule(f"tracker WINs OUTSIDE the export's range {lo}-{hi} ({len(outside)})")
+    if outside:
+        for ref, r in sorted(outside, key=lambda t: t[0]):
+            where = "above" if ref > hi else "below"
+            print(f"  MDOLX{ref}  tracker says WIN, {where} the export's range"
+                  f" — {r.get('lane') or r.get('destination') or '?'} "
+                  f"won={C.win_event_date(r)}")
+        print("\n  These were NOT checked against OL's list because the export "
+              "does not cover them. A ref just ABOVE the range is the most "
+              "likely place a real disagreement hides — a booking made after "
+              "the export was pulled — so read this section, do not skim it. "
+              "MDOLX261071 lived here on 2026-08-13 and was missed.")
+    else:
+        print("  none — every tracker win falls inside the export's range.")
 
     print("\nNOTHING WAS WRITTEN. The stored tracking data is untouched.")
     return 0
