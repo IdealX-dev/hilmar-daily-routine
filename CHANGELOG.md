@@ -3,6 +3,72 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (7) — Shared mailbox live, turnaround clock back on, and
+### what the 49 standalone bookings turned out to be
+
+SHARED MAILBOX. OL granted admin consent for Microsoft Graph Command Line
+Tools (= outlook_send.CLIENT_ID 14d82eec-...). A re-auth with --shared minted
+a token carrying Mail.Read.Shared and refresh_stage now reads two mailboxes:
+
+    will read: MBD_OceanExportBookingShared@ol-usa.com
+    will read: me
+
+The constraint recorded since 2026-06-10 is retired. The read path needed no
+edit, exactly as refresh_stage.SHARED_MAILBOX predicted.
+
+CORRECTION, ON THE RECORD. I told Michael reading that mailbox was "the root
+fix" for the 13 undated quotes. IT WAS NOT. Measured on the 60-day sweep:
+
+    NEW staged records: 4        already-staged: 3,636
+
+3,636 messages came back with imids we ALREADY had — the shared mailbox is
+largely a duplicate of Michael's own, which is what he said weeks ago and
+what the code already recorded ("i'm already included in the group emails
+from ops, nothing has changed"). The Jun-Aug gap was never an access problem:
+where OL replied to Lonny without copying the group, NEITHER mailbox has the
+message and no access recovers it. Of the 13, the shared mailbox dated 6; the
+booking-derived-carrier fix handled the other 9. Access is still worth having
+— it is the authoritative copy and catches anything OL sends only to the
+group from here — but it is not a historical trove.
+
+QC-077: 22 -> 7, and pre-patch is clean ("every quoted row has a
+response_timestamp"). The 7 survivors appear only AFTER carrier enrichment.
+NOT diagnosed — do not read 7 as finished.
+
+TURNAROUND CLOCK BACK ON. core.TIMING_VALID_FROM = "" in both trees. Measured
+first (diag-blob 31736160870, 288 rows with both timestamps): ZERO responses
+predate their own ask, 8 (2.8%) exceed 30 days, and those 8 are April asks
+paired to June/July replies that QC-021 already clears at >40 biz-hours. The
+fire confirmed it — 10 implausible turnarounds cleared, not averaged.
+
+THE 49 CANNOT BE CLOSED FROM EMAIL, and the reason is not a weak matcher.
+diag_match_standalones over 51 standalone rows: 1 CONFIDENT, 0 POSSIBLE, 50
+ORPHANS, every orphan "no same-lane RFQ inside the window". They are
+ol_2520xx / ol_2600xx — bookings for Jan-Mar sailings, quoted in late 2025 /
+early 2026. The tracker's RFQ history starts in April, so the asks do not
+exist in the data at all, and they are far past Graph's ~90-day body
+retention. Michael's transaction report is the only evidence for them and it
+is already in. The single CONFIDENT match is AMBIGUOUS and was left alone:
+stand_260842 (Oakland -> Yokohama, PRESIDENT LB JOHNSON) has THREE candidate
+RFQs, all CMA CGM at $3,076, asks 6-8 days apart.
+
+OPEN, FRAGILE, NOT FIXED — ol_260192 is CREATED then EXCLUDED on every fire.
+Both entries are mine: created while reconciling the transaction report, then
+excluded when Michael said it was cancelled. Net result is correct (133 wins,
+matching OL's book) but ONLY because the exclude runs after the create in the
+same pass. If that ordering ever shifts, a cancelled booking becomes a
+phantom win. Recommended fix: delete the create, keep the exclude (it carries
+the reason). NOT applied — operator_corrections.json is authoritative human
+state and the numbers are right today, so it is Michael's call.
+
+DISTRIBUTION UNCHANGED. Michael was asked directly whether to go full and
+answered "me only". HILMAR_REPORTS_PAUSED stays "verify_only": crons run, mail
+is scanned, every send goes to michael.deitchman@idealx.us alone. Lonny and
+the 9-recipient staff list receive nothing. Do not flip this without an
+explicit, unambiguous go — "great send" was read as approval and was not.
+
+Suite 3129 passed / 1 skipped, ruff clean.
+
 ### 2026-08-13 (6) — STATUS CHANGES holds only what happened; the shared
 ### mailbox becomes reachable, and the QC-077 banner is measured not guessed
 
