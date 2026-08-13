@@ -1060,6 +1060,19 @@ _CARRIER_BOILERPLATE_RXES = (
 )
 
 
+#: Words allowed to accompany a field word in a header without changing what
+#: the column IS: "RATE (USD)" is still the rate, "ETD (POL)" still the ETD.
+#: Anything NOT here and not a field alias disqualifies the header — see
+#: _header_key. Deliberately short: every addition widens what the parser
+#: will claim to understand.
+_HEADER_QUALIFIERS = frozenset({
+    "usd", "us", "usd$", "ocean", "est", "estimated", "actual",
+    "date", "dates", "time", "no", "number", "num", "ref", "id",
+    "of", "the", "at", "in", "on", "per", "container", "cntr", "box",
+    "from", "to", "amt", "amount", "total",
+})
+
+
 def _norm_header(h: str) -> str:
     """Header cell -> comparable key: 'Ocean Carrier' -> 'ocean_carrier'."""
     return re.sub(r"[^a-z0-9]+", "_", (h or "").lower()).strip("_")
@@ -1084,9 +1097,29 @@ def _header_key(cell: str):
     norm = _norm_header(cell)
     if norm in _TABLE_CELL_ALIASES:
         return _TABLE_CELL_ALIASES[norm]
-    keys = {_TABLE_CELL_ALIASES[tok] for tok in norm.split("_")
-            if tok in _TABLE_CELL_ALIASES}
-    return keys.pop() if len(keys) == 1 else None
+    # TOKEN FALLBACK, AND IT REFUSES ON ANY WORD IT DOES NOT KNOW.
+    #
+    # An earlier form of this mapped a header if ANY of its tokens matched,
+    # which is how "Terminal Operator" became the carrier column: `operator`
+    # is a carrier alias, the decoy sat left of the real CARRIER column, and
+    # first-mapped-wins handed carrier_quoted the value "SSA MARINE".
+    # "Service Line" did the same via `line`. Measured, not theorised — an
+    # adversarial review produced both, 2026-08-13.
+    #
+    # So an unrecognised word now DISQUALIFIES the cell. A header we only
+    # half-understand is a header we do not understand, and the cost of
+    # guessing is a wrong carrier or a wrong rate on a client report. Known
+    # qualifiers ("RATE (USD)", "ETD (POL)") are the only words allowed to
+    # ride along.
+    tokens = [t for t in norm.split("_") if t]
+    keys, seen_field = set(), False
+    for tok in tokens:
+        if tok in _TABLE_CELL_ALIASES:
+            keys.add(_TABLE_CELL_ALIASES[tok])
+            seen_field = True
+        elif tok not in _HEADER_QUALIFIERS:
+            return None
+    return keys.pop() if (seen_field and len(keys) == 1) else None
 
 
 def _split_pipe_cells(line: str) -> list:

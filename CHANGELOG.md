@@ -52,9 +52,18 @@ DECISIONS
   can never identify THE quoted carrier, which is exactly what the Dummy-SI
   line is.
 
-  No sanity gate on the RATE cell. The value comes from the column OL headed
-  RATE and alignment already rules out a stray date landing there; the old
-  `500 <= val` gate is what threw away HCMC's real $475.00.
+  No sanity gate on the RATE cell. The old `500 <= val` gate is what threw
+  away HCMC's real $475.00, so a numeric floor cannot be the defence.
+
+  CORRECTED 2026-08-13, same day: the original wording here claimed
+  "alignment already rules out a stray date landing there". An adversarial
+  review DISPROVED that in the same commit — the token header fallback
+  shipped alongside it mapped an "Inland Rate" decoy column to `rate`, and
+  31 landed in ol_rate. The claim was false when written. The real defence
+  is the HEADER: a header carrying any word the parser does not recognise
+  now maps to nothing at all (see _HEADER_QUALIFIERS), so a decoy column
+  cannot supply a rate or a carrier. tests/test_decoy_columns.py pins it in
+  both trees.
 
   `parse_vessel` was hardened too. Its blanket `re.IGNORECASE` defeated the
   `[A-Z]` doing the work and its lazy `{3,40}?` stopped at the 4-char minimum
