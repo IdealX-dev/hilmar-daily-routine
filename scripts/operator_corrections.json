@@ -1306,19 +1306,25 @@
     {
       "request_id": "req_7144836d5bf4873e",
       "exclude": true,
-      "note": "MDOLX260963 (Oakland → HCMC (Cat Lai)) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Absent from OL's 2026 transaction report, though the mailbox holds \"MDOLX260963_NEW BOOKING CONFIRMATION// HILMAR 2X20'DV Oakland to HCMC (Cat Lai)// ONE\" — the .eml Michael forwarded on 2026-08-12. This is the one most worth querying with OL: a HILMAR-tagged confirmation for a booking their own book does not carry. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\".",
+      "note": "MDOLX260963 (Oakland → HCMC (Cat Lai)) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Absent from OL's 2026 transaction report, though the mailbox holds \"MDOLX260963_NEW BOOKING CONFIRMATION// HILMAR 2X20'DV Oakland to HCMC (Cat Lai)// ONE\" — the .eml Michael forwarded on 2026-08-12. This is the one most worth querying with OL: a HILMAR-tagged confirmation for a booking their own book does not carry. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\". ANSWERED 2026-08-13: Michael 2026-08-13: \"260905 260192 260963 were bookings hilmar cancelled.\" A cancelled booking is not a win. This also explains the export: OL DROPS cancelled bookings from it entirely rather than flagging them, which is why its cancelled column reads No on all 134 rows — absence from the export is the cancellation signal.",
       "source": "ol-transaction-report-2026"
     },
     {
       "request_id": "stand_260905",
       "exclude": true,
-      "note": "MDOLX260905 (Oakland → Tokyo) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Its only staged message is \"MDOLX260905_ *PLEASE UPDATE BKG # 2329180920 - OOCL Booking Acknowledgement SLC // HILMAR\" — an ops update, not a booking confirmation, and it became a standalone WIN. Worth querying with OL. This does NOT overwrite Michael's 2026-07-14 lane correction above, which is a separate claim (what the lane IS, not whether the booking belongs to Hilmar); that correction stays in the file and applies first. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\".",
+      "note": "MDOLX260905 (Oakland → Tokyo) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Its only staged message is \"MDOLX260905_ *PLEASE UPDATE BKG # 2329180920 - OOCL Booking Acknowledgement SLC // HILMAR\" — an ops update, not a booking confirmation, and it became a standalone WIN. Worth querying with OL. This does NOT overwrite Michael's 2026-07-14 lane correction above, which is a separate claim (what the lane IS, not whether the booking belongs to Hilmar); that correction stays in the file and applies first. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\". ANSWERED 2026-08-13: Michael 2026-08-13: \"260905 260192 260963 were bookings hilmar cancelled.\" A cancelled booking is not a win. This also explains the export: OL DROPS cancelled bookings from it entirely rather than flagging them, which is why its cancelled column reads No on all 134 rows — absence from the export is the cancellation signal.",
       "source": "ol-transaction-report-2026"
     },
     {
       "request_id": "ol_261071",
       "exclude": true,
       "note": "MDOLX261071 is not Hilmar — Michael, 2026-08-13. Withdrawing a win I manufactured on 2026-08-12. Its source row in Linda Echevarria's container report is EMPTY: carrier null, pol \"\", pod \"\", booking_no \"\" — a number and a date, nothing else. No email carries the ref either (source_imids was []). It rendered as WIN / \"Lane unresolved\" / Unknown / 0 TEU. The standing instruction it was created under, \"everything she sent as a booking is a win\", presumes the row IS a booking; a row with no port, carrier or booking number is not evidence of one and should have been reported as unresolvable instead of counted. It is also absent from OL's 2026 transaction report, which tops out at 261070.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260192",
+      "exclude": true,
+      "note": "MDOLX260192 was cancelled. Michael 2026-08-13: \"260905 260192 260963 were bookings hilmar cancelled.\" A cancelled booking is not a win. This also explains the export: OL DROPS cancelled bookings from it entirely rather than flagging them, which is why its cancelled column reads No on all 134 rows — absence from the export is the cancellation signal. It is IN the export, but its row there is blank — no port, no carrier, no booking number, no TEU — and backfill_ol_bookings created a win from it on 2026-08-13 anyway. That is the second time an empty row became a win (MDOLX261071 was the first), so is_evidence_of_a_booking now REFUSES to create one from a row with neither a discharge port nor a carrier.",
       "source": "ol-transaction-report-2026"
     }
   ]

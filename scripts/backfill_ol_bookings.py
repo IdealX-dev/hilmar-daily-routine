@@ -185,6 +185,27 @@ def _teu(b) -> int:
         return 0
 
 
+def is_evidence_of_a_booking(b: dict) -> bool:
+    """Does this export row actually describe a shipment?
+
+    Michael, 2026-08-13: "260905 260192 260963 were bookings hilmar
+    cancelled." MDOLX260192 is IN OL's export and carries no port, no
+    carrier, no booking number and no TEU — and it was cancelled. So was
+    MDOLX261071, whose row in Linda's container report was blank in exactly
+    the same way, and which I had already turned into a win.
+
+    Twice now an empty row has become a win, so the rule is code rather than
+    vigilance: a row with neither a discharge port nor a carrier is not
+    evidence that anything shipped. It is REPORTED and left for a human,
+    which is what should have happened both times.
+
+    Deliberately an OR, not an AND: a real booking can be missing one field
+    (261071's sibling rows show carrier-less entries that did sail), but a
+    row missing BOTH has nothing in it to describe a shipment at all.
+    """
+    return bool((b.get("pod") or "").strip() or (b.get("carrier") or "").strip())
+
+
 def creation(ref: str, b: dict) -> dict:
     """A create:true correction for a booking with no request behind it.
 
@@ -365,6 +386,12 @@ def main() -> int:
             if rid in existing:
                 print(f"  SKIP {rid} — already has a correction; not "
                       "overwriting a human verdict")
+                continue
+            if not is_evidence_of_a_booking(b):
+                print(f"  REFUSED MDOLX{ref} — the export row has no "
+                      "discharge port and no carrier. That is not evidence "
+                      "a shipment happened; MDOLX260192 looked exactly like "
+                      "this and was cancelled. Decide it by hand.")
                 continue
             doc.setdefault("corrections", []).append(creation(ref, b))
             created += 1

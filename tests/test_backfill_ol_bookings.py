@@ -276,3 +276,65 @@ def test_the_recap_file_is_stored_and_parseable():
     rows = json.loads(p.read_text(encoding="utf-8"))
     assert len(rows) == 35
     assert all("mdolx" in r for r in rows)
+
+
+# ── an empty export row is not a booking ─────────────────────────────────
+
+def test_a_row_with_no_port_and_no_carrier_is_not_evidence():
+    """Michael 2026-08-13: "260905 260192 260963 were bookings hilmar
+    cancelled." MDOLX260192 is IN OL's export with no port, no carrier, no
+    booking number and no TEU — and it was cancelled. MDOLX261071's row in
+    Linda's report was blank the same way, and it too was not a booking.
+
+    Twice an empty row became a win, so the rule is code now."""
+    assert not B.is_evidence_of_a_booking(
+        {"mdolx": "260192", "pod": "", "carrier": "", "booking_no": ""})
+    assert not B.is_evidence_of_a_booking({"mdolx": "261071"})
+
+
+def test_one_missing_field_is_still_a_booking():
+    """An OR, not an AND, on purpose: real bookings in this export are
+    missing a carrier or a POD individually. Only a row missing BOTH has
+    nothing left in it that describes a shipment."""
+    assert B.is_evidence_of_a_booking({"pod": "YOKOHAMA", "carrier": ""})
+    assert B.is_evidence_of_a_booking({"pod": "", "carrier": "CMA CGM SA"})
+
+
+def test_the_backfill_refuses_to_create_a_win_from_an_empty_row():
+    src = (ROOT / "scripts" / "backfill_ol_bookings.py").read_text(encoding="utf-8")
+    i_guard = src.find("if not is_evidence_of_a_booking(b):")
+    i_make = src.find("append(creation(ref, b))")
+    assert 0 < i_guard < i_make, "a win is created before the evidence check"
+    assert "REFUSED" in src
+
+
+def test_both_blank_rows_in_the_export_are_known():
+    """260192 is confirmed cancelled. 260426 has the identical signature and
+    is still counted as a win — this test names it so it cannot be
+    forgotten, and fails if a third blank row appears unexamined."""
+    import json
+    rows = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
+                       ).read_text(encoding="utf-8"))
+    blank = {r["mdolx"] for r in rows
+             if not (r.get("pod") or "").strip()
+             and not (r.get("carrier") or "").strip()}
+    assert blank == {"260192", "260426"}, (
+        f"a blank export row nobody has ruled on: {sorted(blank)}")
+
+
+def test_mdolx261072_stays_a_win():
+    """Confirmed from OL MOVE, screenshot 2026-08-13: customer HILMAR CHEESE
+    COMPANY-HILMAR,CA, contact LONNY UPFOLD, Oakland → Cai Mep, ONE, booking
+    RICGBS913900, sailing 2026-09-01. It is absent from the transaction
+    report only because the pull cut off at 261070 — absence above the range
+    is not evidence, which is the blind spot diag_reconcile now reports."""
+    import json
+    doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
+                      ).read_text(encoding="utf-8"))
+    wins = [c for c in doc["corrections"]
+            if not c.get("exclude")
+            and str(c.get("set", {}).get("mdolx_ref") or "") == "261072"]
+    assert wins, "MDOLX261072 lost its win"
+    excluded_notes = " ".join(c.get("note") or "" for c in doc["corrections"]
+                              if c.get("exclude"))
+    assert "MDOLX261072" not in excluded_notes
