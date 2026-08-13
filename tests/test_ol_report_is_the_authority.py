@@ -219,3 +219,44 @@ def test_the_destination_agent_is_not_recorded_as_a_place():
               if "LOGISTICS" in (r.get("final_destination") or "").upper()
               or "QUANTERM" in (r.get("final_destination") or "").upper()]
     assert not agenty, f"an agent office became a destination: {agenty}"
+
+
+# ── what a backfilled win can and cannot be graded on ────────────────────
+
+def test_a_backfilled_win_is_treated_as_having_no_rate_chain():
+    """QC-039 blocked the 2026-08-13 fire at 92.3%. Cause: _is_standalone
+    matched only the 'stand_' prefix, so the 49 rows recovered from OL's
+    export — which have NO email at all — were graded as missing ol_rate,
+    etd_offered, eta_offered, dest_free_time, product and lonny_notes.
+    Every one of those requires a message the row does not have.
+
+    This is not a way to excuse a parser miss: the row qualifies only
+    because there is nothing to parse."""
+    from hilmar import parser_accuracy as PA
+    row = {"request_id": "ol_252071", "status": "WIN", "quoted": True}
+    assert PA._is_standalone(row) is True
+    assert PA._is_chain_quoted(row) is False
+    assert PA.FIELD_REQUIREMENTS["ol_rate"](row) is False
+    assert PA.FIELD_REQUIREMENTS["product"](row) is False
+
+
+def test_the_stand_prefix_still_qualifies():
+    from hilmar import parser_accuracy as PA
+    assert PA._is_standalone({"request_id": "stand_260905"}) is True
+
+
+def test_an_ordinary_request_is_still_graded_on_its_rate():
+    """The exemption must not widen to rows that DO have a chain — those
+    are where a real parser miss shows up."""
+    from hilmar import parser_accuracy as PA
+    row = {"request_id": "req_abc123", "status": "LOSS", "quoted": True}
+    assert PA._is_standalone(row) is False
+    assert PA.FIELD_REQUIREMENTS["ol_rate"](row) is True
+
+
+def test_container_count_is_graded_on_every_row_including_backfills():
+    """It is NOT exempted — it is populated from OL's equipment column.
+    Exempting it would have hidden real missing volume data."""
+    from hilmar import parser_accuracy as PA
+    assert PA.FIELD_REQUIREMENTS["container_count"](
+        {"request_id": "ol_252071", "status": "WIN"}) is True

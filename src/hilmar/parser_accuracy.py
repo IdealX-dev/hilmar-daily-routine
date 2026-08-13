@@ -119,14 +119,30 @@ def _is_quoted(r: dict) -> bool:
     return bool(r.get("quoted"))
 
 
+#: request_id prefixes for rows with no Lonny→OL RFQ chain behind them.
+#:   stand_  a booking confirmation arrived with no matching RFQ.
+#:   ol_     the booking was recovered from OL's operational export and no
+#:           email exists AT ALL — added 2026-08-13 when the 2026 backfill
+#:           put 49 such rows into the data. Without this prefix they were
+#:           graded as missing on ol_rate, etd_offered, eta_offered,
+#:           dest_free_time, product and lonny_notes, every one of which
+#:           requires a message this row does not have, and QC-039 blocked
+#:           the fire at 92.3% on data that was never parseable.
+_NO_CHAIN_PREFIXES = ("stand_", "ol_")
+
+
 def _is_standalone(r: dict) -> bool:
-    """True for WIN rows ingested from a booking confirmation WITHOUT a
-    matching Lonny RFQ chain. These have request_id like 'stand_NNNN'
-    and lack the rate-response email that carries rate/ETD/transit info.
-    Excluded from rate/ETD accuracy measurement — the data is correctly
-    absent, not a parser failure."""
+    """True for WIN rows recorded from a booking WITHOUT a matching Lonny
+    RFQ chain, so the rate-response email that carries rate/ETD/transit
+    info does not exist. Excluded from rate/ETD accuracy measurement — the
+    data is correctly absent, not a parser failure.
+
+    This is NOT a way to excuse a parser miss: a row only qualifies when
+    there is no source message to parse in the first place. A booking
+    recovered from OL's export has none by construction.
+    """
     rid = (r.get("request_id") or "")
-    return rid.startswith("stand_")
+    return rid.startswith(_NO_CHAIN_PREFIXES)
 
 
 def _is_chain_quoted(r: dict) -> bool:

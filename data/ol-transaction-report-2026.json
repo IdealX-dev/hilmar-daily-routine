@@ -12,7 +12,8 @@
     "shipper": "Hilmar Cheese Company\r\n8901 North Lander Avenue\r\nHilmar, California 95324 USA",
     "vessel": "WAN HAI A01",
     "bl_no": "ONEYRICFNV892400",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "20' DV (GCXU 224 376-4)"
   },
   {
     "mdolx": "252076",
@@ -27,7 +28,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "NYK RIGEL",
     "bl_no": "ONEYRICFPQ987800",
-    "pod_country": "Germany"
+    "pod_country": "Germany",
+    "equipment": "4 × 40' HC (TCNU 303 414-4)"
   },
   {
     "mdolx": "252078",
@@ -42,7 +44,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8192689",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (TEMU 905 080-0)"
   },
   {
     "mdolx": "252082",
@@ -57,7 +60,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "NYK METEOR",
     "bl_no": "ONEYRICFPP147900",
-    "pod_country": "Germany"
+    "pod_country": "Germany",
+    "equipment": "4 × 40' HC (NYKU 529 055-5)"
   },
   {
     "mdolx": "252091",
@@ -72,7 +76,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE HUMEN",
     "bl_no": "ONEYRICFPC533400",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "20' DV (ONEU 235 764-7)"
   },
   {
     "mdolx": "252101",
@@ -87,7 +92,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "YM MILESTONE",
     "bl_no": "ONEYRICFPX456400",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (TGBU 972 500-9)"
   },
   {
     "mdolx": "252109",
@@ -102,7 +108,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA\r\nPhone: 209-656-3291\r\ngrodriguezni@hilmarcheese.com",
     "vessel": "ONE HANGZHOU BAY",
     "bl_no": "ONEYRICFNB612600",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "20' DV (FCIU 469 227-3)"
   },
   {
     "mdolx": "252110",
@@ -117,7 +124,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "MSC IVANA",
     "bl_no": "MEDUWJ311499",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (MEDU 905 156-8)"
   },
   {
     "mdolx": "252112",
@@ -132,7 +140,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "WAN HAI A05",
     "bl_no": "ONEYRICFMA718400",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (MOAU 144 304-3)"
   },
   {
     "mdolx": "252113",
@@ -147,7 +156,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "MSC MARIACRISTINA",
     "bl_no": "MEDUWJ133562",
-    "pod_country": "Malaysia"
+    "pod_country": "Malaysia",
+    "equipment": "20' DV (MEDU 225 046-5)"
   },
   {
     "mdolx": "252130",
@@ -162,7 +172,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE HILMAR, \r\nCALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "MSC IVANA",
     "bl_no": "MEDUOQ805493",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (CXRU 146 561-0)"
   },
   {
     "mdolx": "260006",
@@ -177,7 +188,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTEL: 209-667-6076",
     "vessel": "HMM GARNET",
     "bl_no": "ONEYRICFNJ100400",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (ONEU 006 089-7)"
   },
   {
     "mdolx": "260007",
@@ -192,7 +204,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "EVER LASTING",
     "bl_no": "NAM8138410",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "4 × 20' DV (GESU 113 082-6)"
   },
   {
     "mdolx": "260015",
@@ -207,7 +220,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "GUSTAV MAERSK",
     "bl_no": "HLCUBSC260118520",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "3 × 20' DV (UETU 271 965-4)"
   },
   {
     "mdolx": "260027",
@@ -222,7 +236,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8227290",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (TTNU 865 091-0)"
   },
   {
     "mdolx": "260028",
@@ -237,7 +252,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE HUMEN",
     "bl_no": "NAM8053621",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (TCLU 127 220-7)"
   },
   {
     "mdolx": "260029",
@@ -252,7 +268,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8245159",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (SZLU 509 232-1)"
   },
   {
     "mdolx": "260040",
@@ -267,7 +284,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "NYK OCEANUS",
     "bl_no": "NAM8247147",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "9 × 40' REEFER (RJCU 201 802-2)"
   },
   {
     "mdolx": "260044",
@@ -282,7 +300,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "NYK OCEANUS",
     "bl_no": "EGLV404541475851",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' HC REEFER (EMCU 575 054-0)"
   },
   {
     "mdolx": "260062",
@@ -295,7 +314,8 @@
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "MSC ROSA M",
     "bl_no": "MEDUOQ544514",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "40' HC REEFER (SEGU 962 229-9)"
   },
   {
     "mdolx": "260070",
@@ -310,7 +330,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "YM WORTH",
     "bl_no": "ONEYRICG20075500",
-    "pod_country": "KOREA, REPUBLIC OF"
+    "pod_country": "KOREA, REPUBLIC OF",
+    "equipment": "20' DV (FTAU 160 033-4)"
   },
   {
     "mdolx": "260077",
@@ -325,7 +346,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324, USA",
     "vessel": "EVER MILD",
     "bl_no": "NAM8260361",
-    "pod_country": "Taiwan, Province of China"
+    "pod_country": "Taiwan, Province of China",
+    "equipment": "40' REEFER (FBIU 520 865-4)"
   },
   {
     "mdolx": "260078",
@@ -340,7 +362,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324, USA",
     "vessel": "EVER MILD",
     "bl_no": "NAM8260363",
-    "pod_country": "Taiwan, Province of China"
+    "pod_country": "Taiwan, Province of China",
+    "equipment": "40' REEFER (CGMU 566 646-1)"
   },
   {
     "mdolx": "260096",
@@ -355,7 +378,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8217611",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (CGMU 658 193-9)"
   },
   {
     "mdolx": "260108",
@@ -370,7 +394,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "CMDUNAM8234148",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (SZLU 990 987-3)"
   },
   {
     "mdolx": "260116",
@@ -385,7 +410,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "MSC LUCIANA",
     "bl_no": "MEDUWJ361080",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (CXRU 145 012-1)"
   },
   {
     "mdolx": "260117",
@@ -400,7 +426,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE HANNOVER",
     "bl_no": "NAM8229809",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 574 079-0)"
   },
   {
     "mdolx": "260131",
@@ -415,7 +442,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 \r\nUSA Tel: 209-667-6076",
     "vessel": "PRESIDENT LB JOHNSON",
     "bl_no": "NAM8275442",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "8 × 40' REEFER (CGMU 575 522-9)"
   },
   {
     "mdolx": "260134",
@@ -430,7 +458,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE HANNOVER",
     "bl_no": "NAM8285249",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CAIU 553 533-1)"
   },
   {
     "mdolx": "260138",
@@ -445,7 +474,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT LB JOHNSON",
     "bl_no": "NAM8285268",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (SEKU 943 919-5)"
   },
   {
     "mdolx": "260140",
@@ -460,7 +490,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "CMA CGM SEATTLE",
     "bl_no": "OCE0344648",
-    "pod_country": "New Zealand"
+    "pod_country": "New Zealand",
+    "equipment": "15 × 20' DV (FTAU 188 560-1)"
   },
   {
     "mdolx": "260142",
@@ -475,7 +506,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "CONTI CONQUEST",
     "bl_no": "ONEYRICG08978900",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (TCNU 592 052-1)"
   },
   {
     "mdolx": "260146",
@@ -490,7 +522,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "YM UNIFORM",
     "bl_no": "ONEYRICG46637300",
-    "pod_country": "Taiwan, Province of China"
+    "pod_country": "Taiwan, Province of China",
+    "equipment": "40' HC (FFAU 661 586-0)"
   },
   {
     "mdolx": "260160",
@@ -505,7 +538,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "EVER FORWARD",
     "bl_no": "NAM8295332",
-    "pod_country": "KOREA, REPUBLIC OF"
+    "pod_country": "KOREA, REPUBLIC OF",
+    "equipment": "2 × 40' HC (CMAU 779 734-9)"
   },
   {
     "mdolx": "260183",
@@ -520,7 +554,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA\r\nTEL:(209)667-6076,FAX:(209)656-2557",
     "vessel": "WAN HAI A01",
     "bl_no": "ONEYRICG16179800",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (NYKU 385 479-0)"
   },
   {
     "mdolx": "260190",
@@ -535,7 +570,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8181451",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "20' DV (FCGU 224 714-2)"
   },
   {
     "mdolx": "260191",
@@ -550,7 +586,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "YM UNANIMITY",
     "bl_no": "ONEYRICG60605800",
-    "pod_country": "Malaysia"
+    "pod_country": "Malaysia",
+    "equipment": "20' DV (GCXU 225 603-6)"
   },
   {
     "mdolx": "260192",
@@ -575,7 +612,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8297583",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 532 101-1)"
   },
   {
     "mdolx": "260159",
@@ -590,7 +628,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "NYK VIRGO",
     "bl_no": "ONEYRICFQD410700",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 20' DV (ONEU 226 837-0)"
   },
   {
     "mdolx": "260176",
@@ -605,7 +644,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "CONTI CRYSTAL",
     "bl_no": "ONEYRICG06389300",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "3 × 20' DV (ONEU 237 714-0)"
   },
   {
     "mdolx": "260209",
@@ -620,7 +660,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT CARTER",
     "bl_no": "NAM8324452",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (AMCU 941 948-0)"
   },
   {
     "mdolx": "260215",
@@ -635,7 +676,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE ALTAIR",
     "bl_no": "ONEYRICG02549400",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 20' DV (ONEU 327 008-0)"
   },
   {
     "mdolx": "260250",
@@ -650,7 +692,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "GEORG MAERSK",
     "bl_no": "HLCUBSC260159065",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "4 × 20' DV (HLBU 410 743-4)"
   },
   {
     "mdolx": "260268",
@@ -665,7 +708,8 @@
     "shipper": "Hilmar Cheese Company, Inc.\r\n8901 North Lander Avenue\r\nHilmar, California 95324 USA",
     "vessel": "WAN HAI A12",
     "bl_no": "ONEYRICG09000700",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (ONEU 216 186-5)"
   },
   {
     "mdolx": "260276",
@@ -680,7 +724,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "CMA CGM ARGENTINA",
     "bl_no": "NAM8192158",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "40' REEFER (SEGU 930 147-3)"
   },
   {
     "mdolx": "260291",
@@ -695,7 +740,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES\r\nTEL: 209-667-6076",
     "vessel": "WAN HAI A05",
     "bl_no": "ONEYRICG98939800",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "20' DV (ONEU 221 323-3)"
   },
   {
     "mdolx": "260311",
@@ -710,7 +756,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "CMA CGM BLUE WHALE",
     "bl_no": "DALE56902400",
-    "pod_country": "Germany"
+    "pod_country": "Germany",
+    "equipment": "2 × 40' HC (HMMU 410 259-3)"
   },
   {
     "mdolx": "260317",
@@ -725,7 +772,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "NYK VESTA",
     "bl_no": "ONEYRICG10720800",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (ONEU 558 104-9)"
   },
   {
     "mdolx": "260320",
@@ -740,7 +788,8 @@
     "shipper": "Hilmar Cheese Company, Inc.\r\n8901 North Lander Avenue\r\nHilmar, California 95324 USA",
     "vessel": "HYUNDAI NEPTUNE",
     "bl_no": "ONEYRICGA6964300",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "6 × 20' DV (NYKU 390 677-0)"
   },
   {
     "mdolx": "260358",
@@ -755,7 +804,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "ONE HONG KONG",
     "bl_no": "NAM8325072",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 570 127-0)"
   },
   {
     "mdolx": "260364",
@@ -770,7 +820,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "ONE HONG KONG",
     "bl_no": "NAM8306146",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "6 × 40' REEFER (CGMU 508 740-7)"
   },
   {
     "mdolx": "260365",
@@ -785,7 +836,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324, USA",
     "vessel": "EVER MEMO",
     "bl_no": "NAM8334371",
-    "pod_country": "Taiwan, Province of China"
+    "pod_country": "Taiwan, Province of China",
+    "equipment": "40' REEFER (CGMU 511 760-4)"
   },
   {
     "mdolx": "260366",
@@ -800,7 +852,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324, USA",
     "vessel": "EVER MEMO",
     "bl_no": "NAM8401174",
-    "pod_country": "Taiwan, Province of China"
+    "pod_country": "Taiwan, Province of China",
+    "equipment": "2 × 40' REEFER (CGMU 929 432-0)"
   },
   {
     "mdolx": "260370",
@@ -815,7 +868,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT BUSH",
     "bl_no": "NAM8213093",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (CGMU 565 735-1)"
   },
   {
     "mdolx": "260398",
@@ -830,7 +884,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "YM MATURITY",
     "bl_no": "ONEYRICGE0580900",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (ONEU 622 862-7)"
   },
   {
     "mdolx": "260420",
@@ -845,7 +900,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "ONE HARBOUR",
     "bl_no": "ONEYRICGE7217600",
-    "pod_country": "Thailand"
+    "pod_country": "Thailand",
+    "equipment": "20' DV (ONEU 244 438-2)"
   },
   {
     "mdolx": "260426",
@@ -870,7 +926,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT BUSH",
     "bl_no": "NAM8353265",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (SZLU 508 815-2)"
   },
   {
     "mdolx": "260460",
@@ -885,7 +942,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8400958",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (CGMU 935 176-0)"
   },
   {
     "mdolx": "260469",
@@ -900,7 +958,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA\r\nTEL:(209)667-6076,FAX:(209)656-2557",
     "vessel": "WAN HAI A01",
     "bl_no": "ONEYRICGB7206800",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (ONEU 321 833-2)"
   },
   {
     "mdolx": "260512",
@@ -915,7 +974,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "CMA CGM SEATTLE",
     "bl_no": "OCE0351312",
-    "pod_country": "Australia"
+    "pod_country": "Australia",
+    "equipment": "20' DV (CMAU 232 792-8)"
   },
   {
     "mdolx": "260432",
@@ -930,7 +990,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8432292",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (CAIU 550 982-0)"
   },
   {
     "mdolx": "260433",
@@ -945,7 +1006,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "ONE ORPHEUS",
     "bl_no": "NAM8433582",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (CGMU 540 382-4)"
   },
   {
     "mdolx": "260504",
@@ -960,7 +1022,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "WAN HAI A05",
     "bl_no": "ONEYRICGH0190900",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "5 × 20' DV (ONEU 201 763-1)"
   },
   {
     "mdolx": "260506",
@@ -975,7 +1038,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL 209 667 6076 FAX 209 656 2557",
     "vessel": "WAN HAI A05",
     "bl_no": "ONEYRICGJ5650800",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "20' DV (ONEU 210 164-0)"
   },
   {
     "mdolx": "260527",
@@ -990,7 +1054,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "HYUNDAI NEPTUNE",
     "bl_no": "ONEYRICGJ7694400",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "5 × 20' DV (FTAU 250 151-0)"
   },
   {
     "mdolx": "260537",
@@ -1005,7 +1070,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "HMM AQUAMARINE",
     "bl_no": "ONEYRICGK5569400",
-    "pod_country": "Philippines"
+    "pod_country": "Philippines",
+    "equipment": "2 × 20' DV (TCLU 326 895-2)"
   },
   {
     "mdolx": "260546",
@@ -1020,7 +1086,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES\r\nTel: 209-667-6076",
     "vessel": "EVER LASTING",
     "bl_no": "NAM8417036",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "3 × 20' DV (TLLU 208 265-8)"
   },
   {
     "mdolx": "260560",
@@ -1035,7 +1102,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA\r\nTEL:(209)667-6076,FAX:(209)656-2557",
     "vessel": "HYUNDAI NEPTUNE",
     "bl_no": "ONEYRICGJ9649600",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (FTAU 244 188-0)"
   },
   {
     "mdolx": "260572",
@@ -1050,7 +1118,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "EVER MATCH",
     "bl_no": "NAM8492458",
-    "pod_country": "Thailand"
+    "pod_country": "Thailand",
+    "equipment": "20' DV (ECMU 284 067-7)"
   },
   {
     "mdolx": "260573",
@@ -1065,7 +1134,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "HYUNDAI NEPTUNE",
     "bl_no": "ONEYRICGK7195800",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "20' DV (FTAU 244 531-4)"
   },
   {
     "mdolx": "260587",
@@ -1080,7 +1150,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "EVER MAGIC",
     "bl_no": "EGLV404640394816",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "2 × 40' REEFER (TLLU 118 975-0)"
   },
   {
     "mdolx": "260589",
@@ -1095,7 +1166,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "HYUNDAI NEPTUNE",
     "bl_no": "ONEYRICGL8543700",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "20' DV (ONEU 255 493-9)"
   },
   {
     "mdolx": "260595",
@@ -1110,7 +1182,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "NYK DEMETER",
     "bl_no": "ONEYRICGL8189600",
-    "pod_country": "Germany"
+    "pod_country": "Germany",
+    "equipment": "40' HC (ONEU 135 025-2)"
   },
   {
     "mdolx": "260620",
@@ -1125,7 +1198,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTel: 209-667-6076",
     "vessel": "EVER LEGACY",
     "bl_no": "NAM8513167",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (ECMU 722 222-3)"
   },
   {
     "mdolx": "260621",
@@ -1140,7 +1214,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTel: 209-667-6076",
     "vessel": "EVER LEGACY",
     "bl_no": "NAM8513341",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (ECMU 707 192-9)"
   },
   {
     "mdolx": "260622",
@@ -1155,7 +1230,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "NYK DEMETER",
     "bl_no": "YMJAT160451930",
-    "pod_country": "Germany"
+    "pod_country": "Germany",
+    "equipment": "40' HC (YMMU 633 022-3)"
   },
   {
     "mdolx": "260626",
@@ -1170,7 +1246,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTel: 209-667-6076",
     "vessel": "GUNHILDE MAERSK",
     "bl_no": "HLCUBSC2604CSTE5",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (FANU 302 218-6)"
   },
   {
     "mdolx": "260576",
@@ -1185,7 +1262,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "EVER LAUREL",
     "bl_no": "NAM8289020",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (TRHU 413 812-6)"
   },
   {
     "mdolx": "260612",
@@ -1200,7 +1278,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT BUSH",
     "bl_no": "NAM8447549",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "5 × 40' REEFER (SEGU 953 433-0)"
   },
   {
     "mdolx": "260629",
@@ -1215,7 +1294,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT BUSH",
     "bl_no": "NAM8463354",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "5 × 40' REEFER (SEKU 904 630-4)"
   },
   {
     "mdolx": "260635",
@@ -1230,7 +1310,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8518103",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (AMCU 937 236-2)"
   },
   {
     "mdolx": "260649",
@@ -1245,7 +1326,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "EVER LAUREL",
     "bl_no": "NAM8500823",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "5 × 20' DV (FTAU 222 427-3)"
   },
   {
     "mdolx": "260666",
@@ -1260,7 +1342,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "ONE SINGAPORE",
     "bl_no": "ONEYRICGM3289300",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV (ONEU 268 427-5)"
   },
   {
     "mdolx": "260667",
@@ -1275,7 +1358,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "ONE FANTASTIC",
     "bl_no": "ONEYRICGL0123700",
-    "pod_country": "Philippines"
+    "pod_country": "Philippines",
+    "equipment": "2 × 20' DV (KKTU 796 012-0)"
   },
   {
     "mdolx": "260668",
@@ -1290,7 +1374,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "CMA CGM BLUE WHALE",
     "bl_no": "ONEYRICGQ6277700",
-    "pod_country": "IRELAND"
+    "pod_country": "IRELAND",
+    "equipment": "20' DV (FTAU 250 205-5)"
   },
   {
     "mdolx": "260671",
@@ -1304,7 +1389,8 @@
     "consignee": "Gan Teck Kar Investments Pte Ltd , 21 Tuas West Drive,#05-01 , Singapore 638411 , Tax ID: M2-00931424 , Attention: Abigail / Kitty *",
     "vessel": "CMA CGM T. JEFFERSON",
     "bl_no": "NAM8321332",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "6 × 40' HC REEFER (TEMU 988 142-3)"
   },
   {
     "mdolx": "260685",
@@ -1319,7 +1405,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8522254",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (CGMU 568 243-6)"
   },
   {
     "mdolx": "260686",
@@ -1334,7 +1421,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8496717",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (SZLU 703 473-0)"
   },
   {
     "mdolx": "260701",
@@ -1349,7 +1437,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTel: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8499994",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "12 × 40' REEFER (SEGU 917 358-3)"
   },
   {
     "mdolx": "260712",
@@ -1364,7 +1453,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 North Lander Avenue\r\nHilmar, California 95324 USA",
     "vessel": "WAN HAI",
     "bl_no": "ONEYRICGL8566500",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "3 × 40' HC (ONEU 651 105-1)"
   },
   {
     "mdolx": "260716",
@@ -1379,7 +1469,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTel: 209-667-6076",
     "vessel": "GEORG MAERSK",
     "bl_no": "HLCUBSC2605BQQQ7",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (HAMU 289 950-1)"
   },
   {
     "mdolx": "260720",
@@ -1394,7 +1485,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8560857",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 578 873-1)"
   },
   {
     "mdolx": "260721",
@@ -1409,7 +1501,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8560776",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (SZLU 510 370-3)"
   },
   {
     "mdolx": "260722",
@@ -1424,7 +1517,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8561134",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (SZLU 701 555-6)"
   },
   {
     "mdolx": "260723",
@@ -1439,7 +1533,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT GRANT",
     "bl_no": "NAM8561131",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (TEMU 989 407-7)"
   },
   {
     "mdolx": "260740",
@@ -1454,7 +1549,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "EVER LOGIC",
     "bl_no": "NAM8505031",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (GESU 643 697-4)"
   },
   {
     "mdolx": "260802",
@@ -1467,7 +1563,8 @@
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "APL DANUBE",
     "bl_no": "NAM8584639",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "6 × 40' REEFER (CGMU 553 047-5)"
   },
   {
     "mdolx": "260718",
@@ -1482,7 +1579,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "NAM8522457",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' HC REEFER (SZLU 507 146-3)"
   },
   {
     "mdolx": "260719",
@@ -1497,7 +1595,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "NAM8547434",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' HC REEFER (CGMU 537 580-4)"
   },
   {
     "mdolx": "260748",
@@ -1512,7 +1611,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT CARTER",
     "bl_no": "NAM8522437",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "5 × 40' HC REEFER (CGMU 571 919-7)"
   },
   {
     "mdolx": "260761",
@@ -1527,7 +1627,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 North Lander Avenue\r\nHilmar, California 95324 USA",
     "vessel": "WAN HAI A05",
     "bl_no": "ONEYRICGU0845400",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "4 × 40' HC (ONEU 599 495-2)"
   },
   {
     "mdolx": "260769",
@@ -1542,7 +1643,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "NAM8482648",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (AMCU 937 071-3)"
   },
   {
     "mdolx": "260770",
@@ -1557,7 +1659,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT CARTER",
     "bl_no": "NAM8572720",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 516 245-5)"
   },
   {
     "mdolx": "260771",
@@ -1572,7 +1675,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "NAM8575522",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 662 534-3)"
   },
   {
     "mdolx": "260781",
@@ -1587,7 +1691,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA, 95324 USA",
     "vessel": "EVER LEGACY",
     "bl_no": "NAM8578242",
-    "pod_country": "South Africa"
+    "pod_country": "South Africa",
+    "equipment": "40' HC (BMOU 639 605-6)"
   },
   {
     "mdolx": "260797",
@@ -1602,7 +1707,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT MONROE",
     "bl_no": "NAM8526263",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (CGMU 534 763-3)"
   },
   {
     "mdolx": "260809",
@@ -1617,7 +1723,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT CARTER",
     "bl_no": "NAM8578849",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "11 × 40' REEFER (CGMU 773 993-1)"
   },
   {
     "mdolx": "260811",
@@ -1632,7 +1739,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTel: 209-667-6076",
     "vessel": "PRESIDENT LB JOHNSON",
     "bl_no": "NAM8565266",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (BMOU 989 653-8)"
   },
   {
     "mdolx": "260833",
@@ -1647,7 +1755,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT LB JOHNSON",
     "bl_no": "NAM8571822",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 582 672-3)"
   },
   {
     "mdolx": "260842",
@@ -1662,7 +1771,8 @@
     "shipper": "HILMAR CHEESE COMPANY \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT LB JOHNSON",
     "bl_no": "NAM8595854",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (CGMU 656 493-1)"
   },
   {
     "mdolx": "260845",
@@ -1677,7 +1787,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTEL: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8595929",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "3 × 40' REEFER (CGMU 800 771-9)"
   },
   {
     "mdolx": "260880",
@@ -1692,7 +1803,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: GRACIE NILES \r\nTEL: 209-667-6076",
     "vessel": "EVER LAUREL",
     "bl_no": "NAM8588359",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "6 × 20' DV (ECMU 276 480-7)"
   },
   {
     "mdolx": "260891",
@@ -1707,7 +1819,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8578515",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (AMCU 942 010-0)"
   },
   {
     "mdolx": "260892",
@@ -1722,7 +1835,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT REAGAN",
     "bl_no": "NAM8616593",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (CGMU 581 831-1)"
   },
   {
     "mdolx": "260896",
@@ -1737,7 +1851,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC. \r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "PRESIDENT BUSH",
     "bl_no": "NAM8587720",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER (SEGU 949 745-3)"
   },
   {
     "mdolx": "260949",
@@ -1752,7 +1867,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n9001 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nCONTACT: DOLORES ALFARO\r\nTel: 209-667-6076",
     "vessel": "GERNER MAERSK",
     "bl_no": "HLCUBSC2606CWMF8",
-    "pod_country": "CHINA"
+    "pod_country": "CHINA",
+    "equipment": "40' HC (HLBU 223 692-0)"
   },
   {
     "mdolx": "260942",
@@ -1767,7 +1883,8 @@
     "shipper": "HILMAR CHEESE COMPANY\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTel: 209-667-6076",
     "vessel": "PRESIDENT JQ ADAMS",
     "bl_no": "NAM8632435",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "4 × 40' REEFER (SEGU 953 519-4)"
   },
   {
     "mdolx": "260979",
@@ -1782,7 +1899,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE\r\nHILMAR, CALIFORNIA 95324 USA\r\nTel: 209-667-6076",
     "vessel": "CMA CGM AMAZON",
     "bl_no": "NAM8640109",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "40' REEFER (SEKU 913 252-6)"
   },
   {
     "mdolx": "260980",
@@ -1797,7 +1915,8 @@
     "shipper": "HILMAR CHEESE COMPANY, INC.\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA \r\nTel: 209-667-6076",
     "vessel": "CMA CGM AMAZON",
     "bl_no": "NAM8616924",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "40' REEFER (CGMU 553 112-6)"
   },
   {
     "mdolx": "261025",
@@ -1809,7 +1928,8 @@
     "teu": "12.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "CMA CGM JEAN GABRIEL",
-    "pod_country": "Singapore"
+    "pod_country": "Singapore",
+    "equipment": "6 × 40' REEFER"
   },
   {
     "mdolx": "261026",
@@ -1821,7 +1941,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261027",
@@ -1833,7 +1954,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261028",
@@ -1845,7 +1967,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261029",
@@ -1857,7 +1980,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261030",
@@ -1869,7 +1993,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261031",
@@ -1881,7 +2006,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261032",
@@ -1893,7 +2019,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261033",
@@ -1905,7 +2032,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261046",
@@ -1917,7 +2045,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261047",
@@ -1929,7 +2058,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "PRESIDENT CARTER",
-    "pod_country": "Japan"
+    "pod_country": "Japan",
+    "equipment": "40' REEFER"
   },
   {
     "mdolx": "261068",
@@ -1941,7 +2071,8 @@
     "teu": "2.0",
     "customer": "HILMAR CHEESE COMPANY",
     "vessel": "WAN HAI A01",
-    "pod_country": "VIETNAM"
+    "pod_country": "VIETNAM",
+    "equipment": "2 × 20' DV"
   },
   {
     "mdolx": "261070",
@@ -1955,6 +2086,7 @@
     "consignee": "CTC Far East Philippines Inc. , Unit FCC 3A-2 3rd Floor Facilities Centre Bldg., 548 Shaw Blvd., , Mandaluyong City 1550 Philippines",
     "shipper": "HILMAR INGREDIENTS\r\n8901 NORTH LANDER AVENUE \r\nHILMAR, CALIFORNIA 95324 USA",
     "vessel": "ONE FORTUNE",
-    "pod_country": "Philippines"
+    "pod_country": "Philippines",
+    "equipment": "20' DV"
   }
 ]

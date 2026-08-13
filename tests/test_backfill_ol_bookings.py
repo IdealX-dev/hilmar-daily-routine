@@ -341,3 +341,74 @@ def test_mdolx261072_stays_a_win():
     excluded_notes = " ".join(c.get("note") or "" for c in doc["corrections"]
                               if c.get("exclude"))
     assert "MDOLX261072" not in excluded_notes
+
+
+# ── the fire that QC-039 blocked ─────────────────────────────────────────
+
+def test_a_single_container_keeps_its_count():
+    """OL omits the quantity in the singular: "20' DV (GCXU 224 376-4)" is
+    ONE box. core.parse_teu requires an explicit quantity and returns
+    (0, 0) for the bare form, so without normalising, every single-container
+    booking lands with container_count 0 — which is what blocked the
+    2026-08-13 fire at 87.1% on that field."""
+    import core
+    assert B.equipment_to_containers("20' DV (GCXU 224 376-4)") == "1 × 20' DV"
+    assert core.parse_teu(B.equipment_to_containers("20' DV (X)")) == (1, 1)
+
+
+def test_a_multi_container_string_is_left_alone():
+    assert B.equipment_to_containers("4 × 40' HC (TCNU 303 414-4)") == "4 × 40' HC"
+    assert B.equipment_to_containers("3 × 40' REEFER (C)") == "3 × 40' REEFER"
+
+
+def test_the_container_id_is_not_mistaken_for_equipment():
+    """The parenthetical is the box's serial number. Left in, its digits are
+    live input to a quantity/size parser."""
+    assert "(" not in B.equipment_to_containers("2 × 20' DV (MOAU 144 304-3)")
+
+
+def test_empty_equipment_yields_nothing_not_one_phantom_box():
+    assert B.equipment_to_containers("") == ""
+    assert B.equipment_to_containers(None) == ""
+
+
+def test_every_created_win_carries_a_container_count():
+    """The whole point: QC-039 grades container_count on EVERY row."""
+    import json
+    bk = {b["mdolx"]: b for b in json.loads(
+        (ROOT / "data" / "ol-transaction-report-2026.json").read_text(encoding="utf-8"))}
+    doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
+                      ).read_text(encoding="utf-8"))
+    missing = []
+    for c in doc["corrections"]:
+        if not c.get("create"):
+            continue
+        ref = str(c.get("set", {}).get("mdolx_ref") or "")
+        if ref not in bk:
+            continue                      # ol_261071 — not in this export
+        if ref in ("260192", "260426"):
+            continue                      # cancelled, excluded
+        if not c["set"].get("container_count"):
+            missing.append(ref)
+    assert not missing, f"created wins with no container count: {missing}"
+
+
+def test_ols_two_container_readings_agree():
+    """The export states TEU in its own column AND implies it from the
+    equipment string. They are independent readings of the same fact, so a
+    disagreement means one is wrong and must not be silently averaged."""
+    import json
+
+    import core
+    rows = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
+                       ).read_text(encoding="utf-8"))
+    bad = []
+    for b in rows:
+        containers = B.equipment_to_containers(b.get("equipment") or "")
+        if not containers:
+            continue
+        _, derived = core.parse_teu(containers)
+        stated = B._teu(b)
+        if derived and stated and derived != stated:
+            bad.append((b["mdolx"], stated, derived, containers))
+    assert not bad, f"TEU column disagrees with equipment: {bad[:5]}"

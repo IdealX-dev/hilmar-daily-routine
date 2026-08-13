@@ -73,6 +73,10 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "consignee": ["consignee"],
     "shipper": ["shipper"],
     "vessel": ["vessel", "ocean vessel"],
+    # "4 × 40' HC (TCNU 303 414-4)". The container COUNT lives here and
+    # nowhere else in the export, and QC-039 grades container_count on
+    # every row.
+    "equipment": ["equipment", "container", "containers", "equipment type"],
     "bl_no": ["carrier bl number", "bl number", "master bl", "mbl"],
     "pod_country": ["pod country", "discharge country", "country"],
     "sheet_date": ["etd", "sail date", "sailing date", "departure date",
@@ -385,7 +389,7 @@ def extract(rows, customer_filter=None):
         # the plain transaction report does not, and a key present with an
         # empty value reads as "we looked and there is none".
         for extra in ("teu", "customer", "consignee", "shipper", "vessel",
-                      "bl_no", "pod_country"):
+                      "bl_no", "pod_country", "equipment"):
             if extra in bound and cell(row, extra):
                 rec[extra] = cell(row, extra)
         records.append(rec)
