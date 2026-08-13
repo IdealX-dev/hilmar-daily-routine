@@ -57,15 +57,25 @@ on:
   # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
   # the one matching the current ET offset, so DST never doubles or skips.
   #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
-  # PAUSED 2026-08-12 (Michael: "turn off all reports going out until you
-  # finally figure out where you made system changes in the last month that
-  # the report is all wrong still"). BOTH halves of the stop, per the
-  # 2026-08-03 lesson below: triggers out AND HILMAR_REPORTS_PAUSED=true.
-  # To resume: restore the two cron lines AND flip the flag back to "false"
-  # (here, weekly.yml, liveness.yml — tests enforce the pairing).
-  # schedule:
-  #   - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-  #   - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+  # RESUMED 2026-08-13 (Michael: "ol usa reponses you won't see for most for
+  # lat two months.. you'll see them going forward so set your chrons back up
+  # to work as of now"). BOTH halves restored together, per the 2026-08-03
+  # lesson: the cron lines below AND HILMAR_REPORTS_PAUSED="false".
+  #
+  # The pause it ends began 2026-08-12: "turn off all reports going out until
+  # you finally figure out where you made system changes in the last month
+  # that the report is all wrong still". What was found and fixed in between
+  # is in CHANGELOG 2026-08-13 (1)(2) — the win set now reconciles to OL's
+  # own 2026 book (133 wins), 12 phantom wins are out, and the turnaround
+  # clock is off and says so on the report.
+  #
+  # KNOWN AND ACCEPTED, not a defect to chase: OL-USA RESPONSES will be
+  # sparse for roughly Jun-Aug. OL's replies went To: Lonny, Cc: the group
+  # and never reached this mailbox; forwarding was fixed 2026-08-12, so the
+  # section fills from here forward. Michael, above.
+  schedule:
+    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
+    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -137,14 +147,11 @@ concurrency:
 # pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  # verify_only (2026-08-12, Michael "go" on the resume plan): a third state
-  # between hard-stopped and live. Scheduled fires and ANY send_to=full stay
-  # blocked exactly as under "true"; the ONLY thing that may run is a manual
-  # dispatch with send_to=test (Michael alone), so the fixed pipeline can be
-  # verified without a single client-facing send. Crons stay out — the
-  # pairing tests treat verify_only like a pause. Resume = flag "false" +
-  # crons restored, in one PR, after Michael approves the verification email.
-  HILMAR_REPORTS_PAUSED: "verify_only"
+  # LIVE since 2026-08-13 (Michael: "set your chrons back up to work as of
+  # now"). The verify_only state it replaces is kept in the code above and
+  # is the right setting for the next investigation: it allows a manual
+  # send_to=test dispatch and nothing else.
+  HILMAR_REPORTS_PAUSED: "false"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
