@@ -59,8 +59,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # LIVE since 2026-08-13, mirroring daily.yml. Tests assert the two agree.
-  HILMAR_REPORTS_PAUSED: "false"
+  # verify_only WITH crons live, mirroring daily.yml (Michael 2026-08-13:
+  # "just resume running the report and only to myself until i approve it").
+  # Tests assert the two files agree.
+  HILMAR_REPORTS_PAUSED: "verify_only"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 

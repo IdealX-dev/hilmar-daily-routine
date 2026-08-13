@@ -147,11 +147,12 @@ concurrency:
 # pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  # LIVE since 2026-08-13 (Michael: "set your chrons back up to work as of
-  # now"). The verify_only state it replaces is kept in the code above and
-  # is the right setting for the next investigation: it allows a manual
-  # send_to=test dispatch and nothing else.
-  HILMAR_REPORTS_PAUSED: "false"
+  # verify_only, WITH the crons live (Michael 2026-08-13: "just resume
+  # running the report and only to myself until i approve it.. but you
+  # should be checking and scanning emails is what i meant"). The daily
+  # sweep runs and OL's mail keeps entering the tracker; every send goes to
+  # Michael alone. Flip to "false" only when he approves the content.
+  HILMAR_REPORTS_PAUSED: "verify_only"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
@@ -189,20 +190,33 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # VERIFY-ONLY (2026-08-12): schedule and send_to=full stay blocked
-          # exactly as under the hard stop; the ONLY opening is a manual
-          # dispatch to the test recipient (Michael alone), so the fixed
-          # pipeline can prove itself before anything client-facing resumes.
+          # VERIFY-ONLY. REDEFINED 2026-08-13 by Michael: "just resume running
+          # the report and only to myself until i approve it.. but you should
+          # be checking and scanning emails is what i meant."
+          #
+          # It used to block the schedule outright, which also stopped the
+          # DAILY MAIL SCAN — and the scan is the thing that must not stop,
+          # because OL's replies only enter the tracker if the sweep runs the
+          # day they arrive. So verify_only now means: RUN on the normal
+          # schedule, scan mail, build everything — and send ONLY to Michael.
+          # send_to=full is refused from any trigger, and the SEND_TO export
+          # further down forces "test" regardless of what the trigger asked
+          # for, so a client-facing send is unreachable in this state, not
+          # merely discouraged.
+          #
+          # The hard stop above is unchanged and is still the way to stop
+          # everything including the scan.
+          #
           # Checked BEFORE the open-dispatch branch below, same reason the
           # hard stop is — an opening checked too late is not a gate.
-          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
-               [ "${{ github.event.inputs.send_to }}" != "full" ]; then
-              echo "verify_only — manual test dispatch allowed (send_to=test, Michael only)."
-              echo "proceed=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::warning::verify_only — blocked. Only a manual dispatch with send_to=test may run; schedule and full sends stay off until the flag is 'false' and the crons are restored."
+          # It REFUSES send_to=full and then FALLS THROUGH — it must not
+          # short-circuit proceed=true on a schedule, because the DST
+          # cron-matching below is what picks exactly one of the two cron
+          # encodings. Returning early here would fire the pipeline twice
+          # every day, once per encoding.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ] \
+             && [ "${{ github.event.inputs.send_to }}" = "full" ]; then
+            echo "::warning::verify_only — send_to=full refused. Only Michael receives anything in this state."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -520,6 +534,16 @@ jobs:
             echo "::warning::gen_combined_pdf failed — falling back to the 3-email model this run"
             MAIN_PDF="reports/hilmar-report.pdf"
           fi
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$SEND_TO" = "full" ]; then
             # FORCE_RESEND=true (manual dispatch only) overrides the per-day
             # already-sent flag. We use --force (NOT --no-flag) so the send is
@@ -579,6 +603,16 @@ jobs:
             echo "Client-facing email artifacts missing (best-effort build step failed?) — skipping."
             exit 0
           fi
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$ENABLED" = "true" ] && [ "$SEND_TO" = "full" ] && [ -n "$CLIENT_TO" ]; then
             echo "CLIENT send — client_report.enabled=true and send_to=full → TO=$CLIENT_TO CC=$CLIENT_CC"
             python3 scripts/outlook_send.py daily --to $CLIENT_TO --cc $CLIENT_CC \
@@ -618,6 +652,16 @@ jobs:
         id: integrity
         if: always() && steps.pipeline.conclusion != 'skipped'
         run: |
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$SEND_TO" = "full" ]; then
             python3 deploy/assert_fire_integrity.py --pipeline-rc "${{ steps.pipeline.outputs.rc }}"
           else

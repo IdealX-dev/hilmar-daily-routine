@@ -865,7 +865,15 @@ def test_pausing_removes_the_cron_triggers_not_just_the_flag():
     """
     for name in ("daily", "weekly"):
         on = _wf(name).get(True) or _wf(name).get("on")
-        if _paused(name) in ("true", "verify_only"):
+        # verify_only NO LONGER implies "no triggers". Michael 2026-08-13:
+        # "just resume running the report and only to myself until i approve
+        # it.. but you should be checking and scanning emails is what i
+        # meant." Blocking the schedule also blocked the DAILY MAIL SCAN, and
+        # the scan is the part that must not stop — OL's replies only enter
+        # the tracker if the sweep runs the day they arrive. So verify_only
+        # now RUNS on schedule and forces every send to Michael. Only "true"
+        # is the no-triggers hard stop.
+        if _paused(name) == "true":
             assert "schedule" not in on, (
                 f"{name}.yml is flagged {_paused(name)} but still has a cron "
                 "trigger — a run can spawn from the pre-pause SHA and never "
@@ -876,12 +884,38 @@ def test_pausing_removes_the_cron_triggers_not_just_the_flag():
                 "only ever run by hand, which is a silent outage")
 
 
-def test_verify_only_opens_test_dispatch_and_nothing_else():
-    """The 2026-08-12 resume path: after the phantom-quote hard stop, the
-    fixed pipeline must PROVE itself with a send_to=test fire before any
-    client-facing send resumes. verify_only is that state: the gate opens
-    ONLY for a manual dispatch that is not send_to=full — schedule ticks and
-    full sends fall through to proceed=false, exactly as under the stop."""
+def _verify_only_block(gate: str) -> str:
+    """Just the verify_only if...fi, not the branches after it.
+
+    A fixed-size window ran past the closing fi into the manual-dispatch
+    branch, whose proceed=true then read as the verify_only branch's own —
+    the assertion below is about which branch says it, so the boundary has
+    to be real.
+    """
+    i = gate.find('if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]')
+    if i < 0:
+        return ""
+    end = gate.find("\nfi\n", i)
+    return gate[i:end] if end > 0 else gate[i:]
+
+
+def test_verify_only_runs_the_scan_but_can_only_send_to_michael():
+    """verify_only, REDEFINED 2026-08-13 by Michael: "just resume running the
+    report and only to myself until i approve it.. but you should be checking
+    and scanning emails is what i meant."
+
+    It used to block the schedule outright. That also stopped the DAILY MAIL
+    SCAN, and the scan is the part that must not stop — OL's replies only
+    enter the tracker if the sweep runs the day they arrive. So the contract
+    is now: RUN on the normal schedule, scan mail, build everything, and send
+    ONLY to Michael. "true" remains the hard stop that halts even the scan.
+
+    Two independent locks, because one is a single edit away from gone:
+      1. the gate refuses an explicit send_to=full;
+      2. the send steps rewrite SEND_TO to "test" in SHELL — a scheduled
+         fire passes no send_to at all, so the workflow expression resolves
+         it to "full" and only the shell lock catches that.
+    """
     for name in ("daily", "weekly"):
         gate = _gate_code(name)
         i = gate.find('if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]')
@@ -891,19 +925,48 @@ def test_verify_only_opens_test_dispatch_and_nothing_else():
                 "verify_only branch — the flag would fall through to the "
                 "open-dispatch branch and behave as fully LIVE")
             continue
-        window = gate[i:i + 700]
-        assert '= "workflow_dispatch"' in window and '!= "full"' in window, (
-            f"{name}.yml's verify_only branch does not restrict to non-full "
-            "manual dispatches")
-        assert "proceed=false" in window, (
-            f"{name}.yml's verify_only branch never blocks — schedule/full "
-            "would proceed")
-        # Ordering: like the hard stop, verify_only must be decided BEFORE
-        # the unconditional manual-dispatch opening.
+        window = _verify_only_block(gate)
+        assert '= "full"' in window and "proceed=false" in window, (
+            f"{name}.yml's verify_only branch does not refuse send_to=full")
+        # Ordering: like the hard stop, verify_only is decided BEFORE the
+        # unconditional manual-dispatch opening.
         open_dispatch = gate.find('event_name }}" != "schedule"')
         assert open_dispatch == -1 or i < open_dispatch, (
             f"{name}.yml checks the open-dispatch branch before verify_only — "
             "a full-distribution dispatch would slip through")
+
+
+def test_verify_only_does_not_short_circuit_the_dst_cron_gate():
+    """The trap this nearly shipped with. daily.yml carries TWO cron lines,
+    one per DST encoding, and the offset check below the flag picks exactly
+    one. A verify_only branch that returned proceed=true on a schedule would
+    skip that check and fire the pipeline TWICE every day."""
+    gate = _gate_code("daily")
+    window = _verify_only_block(gate)
+    if not window:
+        return
+    assert "proceed=true" not in window, (
+        "the verify_only branch returns proceed=true — on a schedule tick "
+        "that bypasses the DST cron match and both cron encodings fire")
+    assert 'cron_hour' in gate and 'offset' in gate, (
+        "the DST gate it must fall through to is gone")
+
+
+def test_the_send_steps_force_test_under_verify_only():
+    """The second lock, and the one that actually stops a SCHEDULED fire
+    reaching Lonny: the workflow expression resolves SEND_TO to "full" on a
+    schedule because no send_to input exists there."""
+    wf = (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
+    forced = wf.count('SEND_TO=test')
+    assert forced >= 3, (
+        f"only {forced} shell branch(es) force SEND_TO=test under "
+        "verify_only; the staff send, the client send and the flag branch "
+        "each need it")
+    # Each forcing must be guarded by the flag, never unconditional.
+    for chunk in wf.split("SEND_TO=test")[:-1]:
+        assert 'HILMAR_REPORTS_PAUSED" = "verify_only"' in chunk[-400:], (
+            "a SEND_TO=test forcing is not guarded by the verify_only flag — "
+            "it would gag a genuinely live fire")
 
 
 def test_liveness_stands_down_under_verify_only_too():

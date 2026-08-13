@@ -91,7 +91,7 @@ jobs:
           # PAUSED 2026-08-12 — Michael: "turn off all reports going out";
           # verify_only same day (Michael "go"): manual test fires allowed,
           # schedule still off, so liveness keeps standing down.
-          HILMAR_REPORTS_PAUSED: "false"
+          HILMAR_REPORTS_PAUSED: "verify_only"
         run: |
           set -e
           # PAUSE gate. The fire is intentionally suppressed, so its silence
