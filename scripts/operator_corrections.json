@@ -204,6 +204,1056 @@
       },
       "note": "MDOLX261071 booked 2026-08-12. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12. Michael: 'everything she sent as a booking is a win... assume that each win was a quote request so just use the wins if you cannot find the emails from lonny'. No confirmation email for this MDOLX exists in the tracked mailbox (diag_find, 2026-08-12) and OL's own row carries NO POD, carrier or booking number — so the lane is left unresolved rather than guessed. Supply the lane and this row gains it; if the real confirmation ever arrives, ingest's own row takes precedence and this one stands down automatically.",
       "source": "ol-booking-recap-2026-08-12"
+    },
+    {
+      "request_id": "req_c499ccd17e8763ff",
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260358",
+        "teu_won": 2,
+        "teu_requested": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA"
+      },
+      "note": "MDOLX260358 booked (CMA CGM SA, OAKLAND → TOKYO,JAPAN, 2 TEU, sailed 2026-04-04). Source: OL transaction report pulled 2026-08-13. Matched to this request by backfill_ol_bookings (run 31702992685): same lane via core.same_port, request precedes the sailing, no other booking claimed it. The row was recorded LOSS — OL booked cargo the tracker had written off. The report date is a SAILING date, not the date booked.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_14414a01bd9288cd",
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260370",
+        "teu_won": 4,
+        "teu_requested": 4,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA"
+      },
+      "note": "MDOLX260370 booked (CMA CGM SA, OAKLAND → YOKOHAMA, 4 TEU, sailed 2026-04-11). Source: OL transaction report pulled 2026-08-13. Matched to this request by backfill_ol_bookings (run 31702992685): same lane via core.same_port, request precedes the sailing, no other booking claimed it. The row was recorded LOSS — OL booked cargo the tracker had written off. The report date is a SAILING date, not the date booked.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_c7b2c69fe7c52d5c",
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260433",
+        "teu_won": 6,
+        "teu_requested": 6,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA"
+      },
+      "note": "MDOLX260433 booked (CMA CGM SA, OAKLAND → TOKYO,JAPAN, 6 TEU, sailed 2026-05-03). Source: OL transaction report pulled 2026-08-13. Matched to this request by backfill_ol_bookings (run 31702992685): same lane via core.same_port, request precedes the sailing, no other booking claimed it. The row was recorded LOSS — OL booked cargo the tracker had written off. The report date is a SAILING date, not the date booked.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "req_0347558149c9f19a",
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260469",
+        "teu_won": 2,
+        "teu_requested": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD"
+      },
+      "note": "MDOLX260469 booked (OCEAN NETWORK EXPRESS PTE, LTD, OAKLAND → CAI MEP, 2 TEU, sailed 2026-04-30). Source: OL transaction report pulled 2026-08-13. Matched to this request by backfill_ol_bookings (run 31702992685): same lane via core.same_port, request precedes the sailing, no other booking claimed it. The row was recorded LOSS — OL booked cargo the tracker had written off. The report date is a SAILING date, not the date booked.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252071",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252071",
+        "destination": "HCMC (Cai Mep)",
+        "lane": "Oakland → HCMC (Cai Mep)",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-03T12:00:00+00:00",
+        "request_timestamp": "2026-01-03T12:00:00+00:00",
+        "request_date": "2026-01-03"
+      },
+      "note": "MDOLX252071 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → HCMC (Cai Mep), inland HO CHI MINH CITY, VIETNAM, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-03, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252076",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252076",
+        "destination": "Hamburg",
+        "lane": "Oakland → Hamburg",
+        "origin": "Oakland",
+        "teu_requested": 8,
+        "teu_won": 8,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-03T12:00:00+00:00",
+        "request_timestamp": "2026-01-03T12:00:00+00:00",
+        "request_date": "2026-01-03"
+      },
+      "note": "MDOLX252076 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Hamburg, 8 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-03, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252078",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252078",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-08T12:00:00+00:00",
+        "request_timestamp": "2026-01-08T12:00:00+00:00",
+        "request_date": "2026-01-08"
+      },
+      "note": "MDOLX252078 booked (CMA CGM SA, Oakland → Yokohama, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-08, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252082",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252082",
+        "destination": "Hamburg",
+        "lane": "Los Angeles → Hamburg",
+        "origin": "Los Angeles",
+        "teu_requested": 8,
+        "teu_won": 8,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-30T12:00:00+00:00",
+        "request_timestamp": "2026-01-30T12:00:00+00:00",
+        "request_date": "2026-01-30"
+      },
+      "note": "MDOLX252082 booked (OCEAN NETWORK EXPRESS PTE, LTD, Los Angeles → Hamburg, 8 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-30, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252091",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252091",
+        "destination": "Tokyo",
+        "lane": "Oakland → Tokyo",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-17T12:00:00+00:00",
+        "request_timestamp": "2026-01-17T12:00:00+00:00",
+        "request_date": "2026-01-17"
+      },
+      "note": "MDOLX252091 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Tokyo, inland YOKOHAMA, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-17, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252101",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252101",
+        "destination": "Durban",
+        "lane": "Oakland → Durban",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-08T12:00:00+00:00",
+        "request_timestamp": "2026-01-08T12:00:00+00:00",
+        "request_date": "2026-01-08"
+      },
+      "note": "MDOLX252101 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Durban, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-08, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252109",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252109",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-06T12:00:00+00:00",
+        "request_timestamp": "2026-01-06T12:00:00+00:00",
+        "request_date": "2026-01-06"
+      },
+      "note": "MDOLX252109 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → KOBE, inland OSAKA,JAPAN, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-06, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252110",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252110",
+        "destination": "Osaka",
+        "lane": "Oakland → Osaka",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "MEDITERRANEAN SHIPPING LINES",
+        "carrier_quoted": "MEDITERRANEAN SHIPPING LINES",
+        "booking_timestamp": "2026-01-15T12:00:00+00:00",
+        "request_timestamp": "2026-01-15T12:00:00+00:00",
+        "request_date": "2026-01-15"
+      },
+      "note": "MDOLX252110 booked (MEDITERRANEAN SHIPPING LINES, Oakland → Osaka, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-15, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252112",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252112",
+        "destination": "HCMC (Cai Mep)",
+        "lane": "Oakland → HCMC (Cai Mep)",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-13T12:00:00+00:00",
+        "request_timestamp": "2026-01-13T12:00:00+00:00",
+        "request_date": "2026-01-13"
+      },
+      "note": "MDOLX252112 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → HCMC (Cai Mep), inland HO CHI MINH CITY, VIETNAM, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-13, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252113",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252113",
+        "destination": "Port Klang",
+        "lane": "Oakland → Port Klang",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "MEDITERRANEAN SHIPPING LINES",
+        "carrier_quoted": "MEDITERRANEAN SHIPPING LINES",
+        "booking_timestamp": "2026-01-10T12:00:00+00:00",
+        "request_timestamp": "2026-01-10T12:00:00+00:00",
+        "request_date": "2026-01-10"
+      },
+      "note": "MDOLX252113 booked (MEDITERRANEAN SHIPPING LINES, Oakland → Port Klang, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-10, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_252130",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "252130",
+        "destination": "Osaka",
+        "lane": "Oakland → Osaka",
+        "origin": "Oakland",
+        "teu_requested": 6,
+        "teu_won": 6,
+        "carrier_won": "MEDITERRANEAN SHIPPING LINES",
+        "carrier_quoted": "MEDITERRANEAN SHIPPING LINES",
+        "booking_timestamp": "2026-01-15T12:00:00+00:00",
+        "request_timestamp": "2026-01-15T12:00:00+00:00",
+        "request_date": "2026-01-15"
+      },
+      "note": "MDOLX252130 booked (MEDITERRANEAN SHIPPING LINES, Oakland → Osaka, 6 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-15, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260006",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260006",
+        "destination": "Xingang",
+        "lane": "Oakland → Xingang",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-18T12:00:00+00:00",
+        "request_timestamp": "2026-01-18T12:00:00+00:00",
+        "request_date": "2026-01-18"
+      },
+      "note": "MDOLX260006 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Xingang, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-18, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260007",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260007",
+        "destination": "Shanghai",
+        "lane": "Oakland → Shanghai",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-18T12:00:00+00:00",
+        "request_timestamp": "2026-01-18T12:00:00+00:00",
+        "request_date": "2026-01-18"
+      },
+      "note": "MDOLX260007 booked (CMA CGM SA, Oakland → Shanghai, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-18, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260015",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260015",
+        "destination": "Xingang",
+        "lane": "Oakland → Xingang",
+        "origin": "Oakland",
+        "teu_requested": 3,
+        "teu_won": 3,
+        "carrier_won": "HAPAG-LLOYD AMERICA",
+        "carrier_quoted": "HAPAG-LLOYD AMERICA",
+        "booking_timestamp": "2026-01-19T12:00:00+00:00",
+        "request_timestamp": "2026-01-19T12:00:00+00:00",
+        "request_date": "2026-01-19"
+      },
+      "note": "MDOLX260015 booked (HAPAG-LLOYD AMERICA, Oakland → Xingang, 3 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-19, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260027",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260027",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-21T12:00:00+00:00",
+        "request_timestamp": "2026-01-21T12:00:00+00:00",
+        "request_date": "2026-01-21"
+      },
+      "note": "MDOLX260027 booked (CMA CGM SA, Oakland → Yokohama, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-21, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260028",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260028",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-17T12:00:00+00:00",
+        "request_timestamp": "2026-01-17T12:00:00+00:00",
+        "request_date": "2026-01-17"
+      },
+      "note": "MDOLX260028 booked (CMA CGM SA, Oakland → KOBE, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-17, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260029",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260029",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 6,
+        "teu_won": 6,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-21T12:00:00+00:00",
+        "request_timestamp": "2026-01-21T12:00:00+00:00",
+        "request_date": "2026-01-21"
+      },
+      "note": "MDOLX260029 booked (CMA CGM SA, Oakland → Yokohama, 6 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-21, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260040",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260040",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 18,
+        "teu_won": 18,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-30T12:00:00+00:00",
+        "request_timestamp": "2026-01-30T12:00:00+00:00",
+        "request_date": "2026-01-30"
+      },
+      "note": "MDOLX260040 booked (CMA CGM SA, Oakland → KOBE, inland OSAKA,JAPAN, 18 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-30, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260044",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260044",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "EVERGREEN SHIPPING AGENCY (AMERICA)",
+        "carrier_quoted": "EVERGREEN SHIPPING AGENCY (AMERICA)",
+        "booking_timestamp": "2026-01-29T12:00:00+00:00",
+        "request_timestamp": "2026-01-29T12:00:00+00:00",
+        "request_date": "2026-01-29"
+      },
+      "note": "MDOLX260044 booked (EVERGREEN SHIPPING AGENCY (AMERICA), Oakland → KOBE, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-29, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260062",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260062",
+        "destination": "Singapore",
+        "lane": "Oakland → Singapore",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "MEDITERRANEAN SHIPPING LINES",
+        "carrier_quoted": "MEDITERRANEAN SHIPPING LINES",
+        "booking_timestamp": "2026-01-26T12:00:00+00:00",
+        "request_timestamp": "2026-01-26T12:00:00+00:00",
+        "request_date": "2026-01-26"
+      },
+      "note": "MDOLX260062 booked (MEDITERRANEAN SHIPPING LINES, Oakland → Singapore, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-26, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260070",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260070",
+        "destination": "Busan",
+        "lane": "Oakland → Busan",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-01-25T12:00:00+00:00",
+        "request_timestamp": "2026-01-25T12:00:00+00:00",
+        "request_date": "2026-01-25"
+      },
+      "note": "MDOLX260070 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Busan, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260077",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260077",
+        "destination": "Kaohsiung",
+        "lane": "Oakland → Kaohsiung",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_date": "2026-01-28"
+      },
+      "note": "MDOLX260077 booked (CMA CGM SA, Oakland → Kaohsiung, inland TAICHUNG, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-28, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260078",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260078",
+        "destination": "Kaohsiung",
+        "lane": "Oakland → Kaohsiung",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_date": "2026-01-28"
+      },
+      "note": "MDOLX260078 booked (CMA CGM SA, Oakland → Kaohsiung, inland TAICHUNG, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-28, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260096",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260096",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_timestamp": "2026-01-28T12:00:00+00:00",
+        "request_date": "2026-01-28"
+      },
+      "note": "MDOLX260096 booked (CMA CGM SA, Oakland → Yokohama, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-01-28, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260108",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260108",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-04T12:00:00+00:00",
+        "request_timestamp": "2026-02-04T12:00:00+00:00",
+        "request_date": "2026-02-04"
+      },
+      "note": "MDOLX260108 booked (CMA CGM SA, Oakland → Yokohama, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-04, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260116",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260116",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "MEDITERRANEAN SHIPPING LINES",
+        "carrier_quoted": "MEDITERRANEAN SHIPPING LINES",
+        "booking_timestamp": "2026-02-01T12:00:00+00:00",
+        "request_timestamp": "2026-02-01T12:00:00+00:00",
+        "request_date": "2026-02-01"
+      },
+      "note": "MDOLX260116 booked (MEDITERRANEAN SHIPPING LINES, Oakland → Yokohama, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-01, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260117",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260117",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-05T12:00:00+00:00",
+        "request_timestamp": "2026-02-05T12:00:00+00:00",
+        "request_date": "2026-02-05"
+      },
+      "note": "MDOLX260117 booked (CMA CGM SA, Oakland → KOBE, inland OSAKA,JAPAN, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-05, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260131",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260131",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 16,
+        "teu_won": 16,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_date": "2026-02-12"
+      },
+      "note": "MDOLX260131 booked (CMA CGM SA, Oakland → Yokohama, 16 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-12, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260134",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260134",
+        "destination": "KOBE",
+        "lane": "Oakland → KOBE",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-05T12:00:00+00:00",
+        "request_timestamp": "2026-02-05T12:00:00+00:00",
+        "request_date": "2026-02-05"
+      },
+      "note": "MDOLX260134 booked (CMA CGM SA, Oakland → KOBE, inland OSAKA,JAPAN, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-05, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260138",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260138",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_date": "2026-02-12"
+      },
+      "note": "MDOLX260138 booked (CMA CGM SA, Oakland → Yokohama, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-12, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260140",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260140",
+        "destination": "Lyttelton",
+        "lane": "Oakland → Lyttelton",
+        "origin": "Oakland",
+        "teu_requested": 15,
+        "teu_won": 15,
+        "carrier_won": "ANL",
+        "carrier_quoted": "ANL",
+        "booking_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_timestamp": "2026-02-12T12:00:00+00:00",
+        "request_date": "2026-02-12"
+      },
+      "note": "MDOLX260140 booked (ANL, Oakland → Lyttelton, 15 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-12, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260142",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260142",
+        "destination": "Durban",
+        "lane": "Oakland → Durban",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-02-21T12:00:00+00:00",
+        "request_timestamp": "2026-02-21T12:00:00+00:00",
+        "request_date": "2026-02-21"
+      },
+      "note": "MDOLX260142 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Durban, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-21, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260146",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260146",
+        "destination": "Keelung",
+        "lane": "Oakland → Keelung",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-02-17T12:00:00+00:00",
+        "request_timestamp": "2026-02-17T12:00:00+00:00",
+        "request_date": "2026-02-17"
+      },
+      "note": "MDOLX260146 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Keelung, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-17, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260159",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260159",
+        "destination": "Tokyo",
+        "lane": "Oakland → Tokyo",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-01T12:00:00+00:00",
+        "request_timestamp": "2026-03-01T12:00:00+00:00",
+        "request_date": "2026-03-01"
+      },
+      "note": "MDOLX260159 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Tokyo, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-01, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260160",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260160",
+        "destination": "Busan",
+        "lane": "Oakland → Busan",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_date": "2026-02-25"
+      },
+      "note": "MDOLX260160 booked (CMA CGM SA, Oakland → Busan, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260176",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260176",
+        "destination": "Shanghai",
+        "lane": "Oakland → Shanghai",
+        "origin": "Oakland",
+        "teu_requested": 3,
+        "teu_won": 3,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-05T12:00:00+00:00",
+        "request_timestamp": "2026-03-05T12:00:00+00:00",
+        "request_date": "2026-03-05"
+      },
+      "note": "MDOLX260176 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Shanghai, 3 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-05, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260183",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260183",
+        "destination": "HCMC (Cai Mep)",
+        "lane": "Oakland → HCMC (Cai Mep)",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-02-28T12:00:00+00:00",
+        "request_timestamp": "2026-02-28T12:00:00+00:00",
+        "request_date": "2026-02-28"
+      },
+      "note": "MDOLX260183 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → HCMC (Cai Mep), inland HO CHI MINH CITY, VIETNAM, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-28, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260190",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260190",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-27T12:00:00+00:00",
+        "request_timestamp": "2026-02-27T12:00:00+00:00",
+        "request_date": "2026-02-27"
+      },
+      "note": "MDOLX260190 booked (CMA CGM SA, Oakland → Yokohama, inland KOBE,JAPAN, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-27, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260191",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260191",
+        "destination": "Pasir Gudang",
+        "lane": "Oakland → Pasir Gudang",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_date": "2026-02-25"
+      },
+      "note": "MDOLX260191 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Pasir Gudang, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260192",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260192",
+        "destination": "Unknown",
+        "lane": "Oakland → Unknown",
+        "origin": "Oakland",
+        "teu_requested": 0,
+        "teu_won": 0,
+        "booking_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_timestamp": "2026-02-25T12:00:00+00:00",
+        "request_date": "2026-02-25"
+      },
+      "note": "MDOLX260192 booked (carrier n/a, Oakland → Unknown, 0 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260209",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260209",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-03-25T12:00:00+00:00",
+        "request_timestamp": "2026-03-25T12:00:00+00:00",
+        "request_date": "2026-03-25"
+      },
+      "note": "MDOLX260209 booked (CMA CGM SA, Oakland → Yokohama, inland TOKYO, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260214",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260214",
+        "destination": "Yokohama",
+        "lane": "Oakland → Yokohama",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-02-27T12:00:00+00:00",
+        "request_timestamp": "2026-02-27T12:00:00+00:00",
+        "request_date": "2026-02-27"
+      },
+      "note": "MDOLX260214 booked (CMA CGM SA, Oakland → Yokohama, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-27, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260215",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260215",
+        "destination": "Tokyo",
+        "lane": "Oakland → Tokyo",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-06T12:00:00+00:00",
+        "request_timestamp": "2026-03-06T12:00:00+00:00",
+        "request_date": "2026-03-06"
+      },
+      "note": "MDOLX260215 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Tokyo, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-06, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260250",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260250",
+        "destination": "Xingang",
+        "lane": "Oakland → Xingang",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "HAPAG-LLOYD AMERICA",
+        "carrier_quoted": "HAPAG-LLOYD AMERICA",
+        "booking_timestamp": "2026-03-01T12:00:00+00:00",
+        "request_timestamp": "2026-03-01T12:00:00+00:00",
+        "request_date": "2026-03-01"
+      },
+      "note": "MDOLX260250 booked (HAPAG-LLOYD AMERICA, Oakland → Xingang, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-01, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260268",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260268",
+        "destination": "HCMC (Cai Mep)",
+        "lane": "Oakland → HCMC (Cai Mep)",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-19T12:00:00+00:00",
+        "request_timestamp": "2026-03-19T12:00:00+00:00",
+        "request_date": "2026-03-19"
+      },
+      "note": "MDOLX260268 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → HCMC (Cai Mep), inland HO CHI MINH CITY, VIETNAM, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-19, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260276",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260276",
+        "destination": "Singapore",
+        "lane": "Oakland → Singapore",
+        "origin": "Oakland",
+        "teu_requested": 2,
+        "teu_won": 2,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-03-10T12:00:00+00:00",
+        "request_timestamp": "2026-03-10T12:00:00+00:00",
+        "request_date": "2026-03-10"
+      },
+      "note": "MDOLX260276 booked (CMA CGM SA, Oakland → Singapore, 2 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-10, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260291",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260291",
+        "destination": "Shekou",
+        "lane": "Oakland → Shekou",
+        "origin": "Oakland",
+        "teu_requested": 1,
+        "teu_won": 1,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-13T12:00:00+00:00",
+        "request_timestamp": "2026-03-13T12:00:00+00:00",
+        "request_date": "2026-03-13"
+      },
+      "note": "MDOLX260291 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → Shekou, inland HUANGPU, 1 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-13, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260311",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260311",
+        "destination": "Hamburg",
+        "lane": "Oakland → Hamburg",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "HYUNDAI MERCHANT MARINE INC.",
+        "carrier_quoted": "HYUNDAI MERCHANT MARINE INC.",
+        "booking_timestamp": "2026-03-31T12:00:00+00:00",
+        "request_timestamp": "2026-03-31T12:00:00+00:00",
+        "request_date": "2026-03-31"
+      },
+      "note": "MDOLX260311 booked (HYUNDAI MERCHANT MARINE INC., Oakland → Hamburg, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-31, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260320",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260320",
+        "destination": "HCMC (Cai Mep)",
+        "lane": "Oakland → HCMC (Cai Mep)",
+        "origin": "Oakland",
+        "teu_requested": 6,
+        "teu_won": 6,
+        "carrier_won": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "carrier_quoted": "OCEAN NETWORK EXPRESS PTE, LTD",
+        "booking_timestamp": "2026-03-23T12:00:00+00:00",
+        "request_timestamp": "2026-03-23T12:00:00+00:00",
+        "request_date": "2026-03-23"
+      },
+      "note": "MDOLX260320 booked (OCEAN NETWORK EXPRESS PTE, LTD, Oakland → HCMC (Cai Mep), inland HO CHI MINH CITY, VIETNAM, 6 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-03-23, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_260366",
+      "create": true,
+      "set": {
+        "status": "WIN",
+        "mdolx_ref": "260366",
+        "destination": "Kaohsiung",
+        "lane": "Oakland → Kaohsiung",
+        "origin": "Oakland",
+        "teu_requested": 4,
+        "teu_won": 4,
+        "carrier_won": "CMA CGM SA",
+        "carrier_quoted": "CMA CGM SA",
+        "booking_timestamp": "2026-04-02T12:00:00+00:00",
+        "request_timestamp": "2026-04-02T12:00:00+00:00",
+        "request_date": "2026-04-02"
+      },
+      "note": "MDOLX260366 booked (CMA CGM SA, Oakland → Kaohsiung, inland TAICHUNG, 4 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-04-02, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
+      "source": "ol-transaction-report-2026"
     }
   ]
 }

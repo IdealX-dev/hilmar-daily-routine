@@ -227,6 +227,40 @@ def test_the_2026_export_is_the_default_recap():
     assert "ol-transaction-report-2026.json" in src
 
 
+def test_the_committed_corrections_cannot_double_count_a_booking():
+    """operator_corrections.json is now 73 entries, 51 of them created wins.
+    One MDOLX appearing under two request_ids is two wins for one booking —
+    the failure that would quietly inflate the win rate and every lane
+    volume, and it cannot be seen by reading the file."""
+    import json
+    from collections import Counter
+    doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
+                      ).read_text(encoding="utf-8"))
+    cs = doc["corrections"]
+    ids = Counter(c["request_id"] for c in cs)
+    assert [k for k, v in ids.items() if v > 1] == []
+    refs = Counter(str(c.get("set", {}).get("mdolx_ref") or "") for c in cs)
+    refs.pop("", None)
+    assert [k for k, v in refs.items() if v > 1] == [], "one booking, two wins"
+
+
+def test_every_created_win_is_dated_to_its_sailing_not_to_today():
+    """Without booking_timestamp, ingest stamps the WIN transition with NOW
+    and core.win_event_date reports the whole backfill as won today."""
+    import json
+    doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
+                      ).read_text(encoding="utf-8"))
+    created = [c for c in doc["corrections"] if c.get("create")]
+    assert len(created) >= 50
+    undated = [c["request_id"] for c in created
+               if not c["set"].get("booking_timestamp")
+               and c["request_id"] != "ol_261071"]
+    assert undated == [], f"these would report as won today: {undated}"
+    future = [c["request_id"] for c in created
+              if (c["set"].get("booking_timestamp") or "") > "2026-08-13"]
+    assert future == [], f"a win dated in the future: {future}"
+
+
 def test_the_recap_file_is_stored_and_parseable():
     """The evidence behind these wins must live in the repo, not in a chat
     message — every correction's note points at it."""
