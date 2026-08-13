@@ -248,6 +248,62 @@ def main() -> int:
                   f"mdolx={r.get('mdolx_ref')!r} "
                   f"corrected={'Operator correction' in reasons}")
 
+    # ── IS THE TURNAROUND CLOCK TRUSTWORTHY YET? ─────────────────────
+    # Michael 2026-08-13, after the shared mailbox came online: "turnaround
+    # clock should be fine now that you see the shard box yourself".
+    # core.TIMING_VALID_FROM exists because fabricated timing shipped from
+    # this repo once, so the flag comes off on EVIDENCE, not on expectation.
+    #
+    # The question is not "do we have timestamps" but "are they OL's real send
+    # times". Two things would say no: a response BEFORE the ask (mis-paired,
+    # the shape QC clears at >40 biz-hrs), and a turnaround so large it can
+    # only be a wrong pairing. Printed as a distribution so the decision is
+    # read off the data.
+    print(f"\n{'=' * 78}\nTURNAROUND PLAUSIBILITY\n{'=' * 78}")
+    dated = [r for r in rows if r.get("response_timestamp")
+             and r.get("request_timestamp")]
+    print(f"  rows with BOTH a request and a response time: {len(dated)} "
+          f"of {len(rows)}")
+    if C is not None and dated:
+        buckets = {"NEGATIVE (response before ask)": 0, "0-4h": 0, "4-24h": 0,
+                   "24-48h": 0, "48h-7d": 0, "7-30d": 0, ">30d": 0}
+        worst = []
+        for r in dated:
+            a = C.parse_iso(r.get("request_timestamp"))
+            b = C.parse_iso(r.get("response_timestamp"))
+            if not (a and b):
+                continue
+            h = (b - a).total_seconds() / 3600.0
+            worst.append((h, r))
+            if h < 0:
+                buckets["NEGATIVE (response before ask)"] += 1
+            elif h <= 4:
+                buckets["0-4h"] += 1
+            elif h <= 24:
+                buckets["4-24h"] += 1
+            elif h <= 48:
+                buckets["24-48h"] += 1
+            elif h <= 168:
+                buckets["48h-7d"] += 1
+            elif h <= 720:
+                buckets["7-30d"] += 1
+            else:
+                buckets[">30d"] += 1
+        for k, n in buckets.items():
+            print(f"    {n:5d}  {k}")
+        worst.sort(key=lambda t: -abs(t[0]))
+        print("\n  the 12 least plausible (largest |gap|):")
+        for h, r in worst[:12]:
+            print(f"    {h:10.1f}h  {r.get('request_id')}  {r.get('lane')}  "
+                  f"req={r.get('request_timestamp')} resp={r.get('response_timestamp')}")
+        # The verdict the flag turns on. Anything negative is a mis-pairing;
+        # anything past 30d is not a quote turnaround by any reading.
+        bad = buckets["NEGATIVE (response before ask)"] + buckets[">30d"]
+        print(f"\n  IMPLAUSIBLE (negative or >30d): {bad} of {len(worst)} "
+              f"({100.0 * bad / max(1, len(worst)):.1f}%)")
+        print("  TIMING_VALID_FROM currently: "
+              f"{C.TIMING_VALID_FROM!r}")
+
     # ── STATUS CHANGES, by day and by reason ─────────────────────────
     # Michael 2026-08-13: "clean up the massive status changes asap to just
     # what's current last two days.. we don't need to see all that you fixed".

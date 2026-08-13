@@ -1,0 +1,54 @@
+name: Match the standalone bookings to their RFQs
+
+# MANUAL ONLY. Runs scripts/diag_match_standalones.py, which needs the blob
+# connection string — the runner is the only place it exists.
+#
+# Michael 2026-08-13: "the 49 you should be able to match up the vessel,
+# container quantities and lanes by the emails from lonny and the team
+# suggestions.. you should be able to close it out and match up so you have
+# extra proof."
+#
+# The standalone rows came from OL's 2026 transaction report and carry a
+# booking and a lane and nothing else — no RFQ chain, no source message, so
+# every quote-side check skips them. Tying each to its real ask turns a volume
+# number into a defensible win and retires 49 rows of permanent blanks.
+#
+# READ-ONLY, deliberately. It prints candidates and the evidence behind each
+# and writes nothing. Linking a booking to the WRONG RFQ manufactures a win
+# against a request that was really lost, and this repo has already shipped a
+# phantom-Q&L chain built that way (2026-08-11). Links get applied in a
+# separate, reviewed step.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  match:
+    name: Propose links, write nothing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # Mirrors diag-blob.yml: azure-storage-blob is deliberately absent from
+        # requirements.txt and named by every workflow that pulls state.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Propose the links
+        run: python3 scripts/diag_match_standalones.py
