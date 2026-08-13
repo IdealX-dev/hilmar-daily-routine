@@ -1314,6 +1314,12 @@
       "exclude": true,
       "note": "MDOLX260905 (Oakland → Tokyo) is NOT in OL's 2026 transaction report (data/ol-transaction-report-2026.json, 134 Hilmar bookings pulled 2026-08-13). Its only staged message is \"MDOLX260905_ *PLEASE UPDATE BKG # 2329180920 - OOCL Booking Acknowledgement SLC // HILMAR\" — an ops update, not a booking confirmation, and it became a standalone WIN. Worth querying with OL. This does NOT overwrite Michael's 2026-07-14 lane correction above, which is a separate claim (what the lane IS, not whether the booking belongs to Hilmar); that correction stays in the file and applies first. Excluded per Michael 2026-08-13: \"THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY AND USE\".",
       "source": "ol-transaction-report-2026"
+    },
+    {
+      "request_id": "ol_261071",
+      "exclude": true,
+      "note": "MDOLX261071 is not Hilmar — Michael, 2026-08-13. Withdrawing a win I manufactured on 2026-08-12. Its source row in Linda Echevarria's container report is EMPTY: carrier null, pol \"\", pod \"\", booking_no \"\" — a number and a date, nothing else. No email carries the ref either (source_imids was []). It rendered as WIN / \"Lane unresolved\" / Unknown / 0 TEU. The standing instruction it was created under, \"everything she sent as a booking is a win\", presumes the row IS a booking; a row with no port, carrier or booking number is not evidence of one and should have been reported as unresolvable instead of counted. It is also absent from OL's 2026 transaction report, which tops out at 261070.",
+      "source": "ol-transaction-report-2026"
     }
   ]
 }

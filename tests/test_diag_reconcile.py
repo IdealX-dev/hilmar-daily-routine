@@ -96,3 +96,35 @@ def test_the_workflow_is_manual_and_takes_the_refs_as_input():
     assert "contents: read" in wf
     assert "azure-storage-blob" in wf
     assert "DIAG_MDOLX" in wf
+
+
+def test_a_win_above_the_exports_range_is_reported_not_silently_skipped():
+    """MDOLX261071 sat one above the export's highest ref (261070) and the
+    reverse check never examined it — it reported "10 wins the recap does
+    not contain" while the true number was 12. Michael found it by hand on
+    2026-08-13.
+
+    A ref just past the end of the range is the MOST likely place for a real
+    disagreement to hide: a booking made after the export was pulled. So the
+    out-of-range set has to be printed, not filtered away.
+    """
+    src = (ROOT / "scripts" / "diag_reconcile.py").read_text(encoding="utf-8")
+    assert "outside" in src, "the out-of-range set is not collected"
+    assert "OUTSIDE the export's range" in src, (
+        "wins outside the range are not reported to the reader")
+    i_extra = src.find("extra.append")
+    i_outside = src.find("outside.append")
+    assert i_outside > 0 and abs(i_outside - i_extra) < 400, (
+        "in-range and out-of-range must be decided in the same branch, or "
+        "one of them silently drops rows again")
+
+
+def test_the_range_branch_has_no_way_to_drop_a_win():
+    """Every WIN ref must land in exactly one bucket. The original bug was a
+    single `if lo <= ref <= hi and ...` with no else — anything outside the
+    window fell through to nothing at all."""
+    lo, hi = "260000", "261070"
+    for ref, want in [("259999", "outside"), ("260000", "in"),
+                      ("261070", "in"), ("261071", "outside")]:
+        got = "in" if lo <= ref <= hi else "outside"
+        assert got == want, f"{ref} classified {got}"
