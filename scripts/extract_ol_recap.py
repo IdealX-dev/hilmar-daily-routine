@@ -59,17 +59,30 @@ FIELD_ALIASES: dict[str, list[str]] = {
                 "ocean carrier", "line"],
     "pol": ["pol", "port of load", "port of loading", "load port",
             "origin port", "origin"],
-    "pod": ["pod", "port of discharge", "port of destination",
-            "discharge port", "destination port", "destination"],
+    # "discharge port" before "destination": OL's transaction report carries
+    # BOTH, and they are different places — discharge is where the vessel
+    # drops the box, destination is the inland move after it (Cai Mep vs Ho
+    # Chi Minh City, Kobe vs Osaka). The lane a rate was quoted on is the
+    # discharge port.
+    "pod": ["pod", "port of discharge", "discharge port", "discharge",
+            "port of destination", "destination port", "destination"],
+    "final_destination": ["destination", "final destination", "place of delivery"],
     "sheet_date": ["etd", "sail date", "sailing date", "departure date",
                    "vessel etd", "on board date", "booking date", "date"],
     "teu": ["teu", "total teu", "teus"],
     "customer": ["customer", "customer name", "shipper", "consignee",
                  "account", "client"],
+    # Michael has never asked for a cancelled booking to count as a win, and
+    # a cancelled row reaching the tracker would be exactly that.
+    "cancelled": ["cancelled", "canceled", "void", "status"],
 }
 
 #: Without an MDOLX a row cannot be reconciled against anything.
 REQUIRED = ("mdolx",)
+
+#: Cell values in a cancelled column that mean "this booking did not happen".
+CANCELLED_TRUE = {"y", "yes", "true", "1", "cancelled", "canceled", "void",
+                  "x"}
 
 #: Excel's serial-date origin. 1900-01-00 in Excel's own terms; the
 #: off-by-one comes from its deliberate 1900-leap-year bug, which is why
@@ -151,9 +164,17 @@ def find_header(rows: list[list[str]], scan: int = 25) -> int:
 
     The header is the row that binds the most fields, not simply the first
     non-empty one; ties go to the earliest row.
+
+    A row holding an actual MDOLX value is DATA and cannot be the header, no
+    matter how many aliases its other cells happen to hit. Without that rule
+    a first data row can outscore a sparse header — "LINE-1" binds carrier,
+    "MDOLX260001" binds mdolx, two fields against a two-column header's one —
+    and the real first booking is then eaten as the header.
     """
     best, best_score = -1, 0
     for i, row in enumerate(rows[:scan]):
+        if any(parse_mdolx(c) for c in row):
+            continue
         score = len(bind_headers(row)[0])
         if score > best_score:
             best, best_score = i, score
@@ -168,19 +189,31 @@ def bind_headers(header: list[str]) -> tuple[dict[str, int], dict[str, str]]:
     two fields.
     """
     norm = [normalize(h) for h in header]
+    # OL's transaction report writes headers with no separator at all —
+    # "dischargeport", "loadport", "customerreference" — while Linda's
+    # container report spaces them. Comparing both forms means one alias
+    # list covers both exports instead of two.
+    squashed = [h.replace(" ", "") for h in norm]
     bound: dict[str, int] = {}
     labels: dict[str, str] = {}
     taken: set[int] = set()
     for field, aliases in FIELD_ALIASES.items():
         for alias in aliases:
+            flat = alias.replace(" ", "")
             hit = next((i for i, h in enumerate(norm)
                         if h == alias and i not in taken), None)
+            if hit is None:
+                hit = next((i for i, h in enumerate(squashed)
+                            if h == flat and i not in taken), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(norm)
                             if h and alias in h.split() and i not in taken), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(norm)
                             if h and alias in h and i not in taken), None)
+            if hit is None:
+                hit = next((i for i, h in enumerate(squashed)
+                            if h and flat in h and i not in taken), None)
             if hit is not None:
                 bound[field] = hit
                 labels[field] = header[hit]
@@ -223,12 +256,59 @@ def parse_date(value) -> str:
     return ""
 
 
+def mdolx_column(rows, header_i: int, bound: dict) -> tuple[int | None, str]:
+    """The column that actually holds MDOLX references, and why.
+
+    Header names are the fragile part: Linda's container report calls it
+    "MDOLX #", OL's transaction report calls it "number", and "number" is a
+    word that also appears in "Booking Number". The VALUES are not fragile —
+    an MDOLX is a 6-digit reference and nothing else in these exports looks
+    like one. So the header binding is a proposal and this is the check:
+    whichever column parses as MDOLX on most rows wins, and a rebinding is
+    reported rather than done quietly.
+    """
+    body = rows[header_i + 1:]
+    if not body:
+        return bound.get("mdolx"), "no data rows to verify against"
+    width = max((len(r) for r in body), default=0)
+    scores = []
+    for i in range(width):
+        hits = sum(1 for r in body if i < len(r) and parse_mdolx(r[i]))
+        scores.append(hits / len(body))
+
+    proposed = bound.get("mdolx")
+    if proposed is not None and proposed < len(scores) and scores[proposed] >= 0.5:
+        return proposed, ""
+    best = max(range(len(scores)), key=lambda i: scores[i]) if scores else None
+    if best is None or scores[best] < 0.5:
+        return None, "no column parses as an MDOLX on most rows"
+    if proposed is None:
+        return best, (f"no MDOLX header matched; bound by content to column "
+                      f"{best} ({rows[header_i][best]!r} if labelled)")
+    return best, (f"header bound column {proposed} "
+                  f"({rows[header_i][proposed]!r}) but only "
+                  f"{scores[proposed]:.0%} of its values parse as an MDOLX; "
+                  f"rebound by content to column {best} "
+                  f"({rows[header_i][best]!r})")
+
+
 def extract(rows, customer_filter=None):
     """(records, dropped, labels) — pure, so the tests drive it directly."""
     hdr_i = find_header(rows)
     if hdr_i < 0:
         return [], [("-", "no header row bound any known column")], {}
     bound, labels = bind_headers(rows[hdr_i])
+
+    col, why = mdolx_column(rows, hdr_i, bound)
+    if col is None:
+        raise LookupError(
+            "no MDOLX column found, by header or by content. Headers seen: "
+            + ", ".join(repr(h) for h in rows[hdr_i] if h))
+    if col != bound.get("mdolx"):
+        bound["mdolx"] = col
+        labels["mdolx"] = rows[hdr_i][col] if col < len(rows[hdr_i]) else f"col {col}"
+    rebind_note = why
+
     missing = [f for f in REQUIRED if f not in bound]
     if missing:
         raise LookupError(
@@ -256,6 +336,9 @@ def extract(rows, customer_filter=None):
                 dropped.append((ref, f"customer {cell(row, 'customer')!r} "
                                      f"does not contain {customer_filter!r}"))
                 continue
+        if normalize(cell(row, "cancelled")) in CANCELLED_TRUE:
+            dropped.append((ref, f"cancelled ({cell(row, 'cancelled')!r})"))
+            continue
         rec = {
             "mdolx": ref,
             "carrier": cell(row, "carrier"),
@@ -264,6 +347,13 @@ def extract(rows, customer_filter=None):
             "booking_no": cell(row, "booking_no"),
             "sheet_date": parse_date(cell(row, "sheet_date")),
         }
+        # The inland leg after discharge (Cai Mep -> Ho Chi Minh City). Kept
+        # only when it differs, because a request quoted to the inland name
+        # will not match the discharge port and the matcher needs both to
+        # try.
+        final = cell(row, "final_destination")
+        if final and final.upper() != rec["pod"].upper():
+            rec["final_destination"] = final
         if "teu" in bound and cell(row, "teu"):
             rec["teu"] = cell(row, "teu")
         if "customer" in bound and cell(row, "customer"):
@@ -279,7 +369,49 @@ def extract(rows, customer_filter=None):
             dropped.append((r["mdolx"], "duplicate row for this MDOLX (kept the first)"))
             continue
         seen[r["mdolx"]] = r
+    if rebind_note:
+        dropped.insert(0, ("(binding)", rebind_note))
     return list(seen.values()), dropped, labels
+
+
+def read_xls(path: Path, sheet: int = 0) -> list[list[str]]:
+    """Legacy BIFF .xls — OL's transaction report is exported in this format.
+
+    xlrd is imported here rather than at module scope so the .xlsx path
+    keeps working with no third-party dependency at all; only someone
+    handing this an .xls pays for it, and they get a usable message instead
+    of an ImportError traceback.
+    """
+    try:
+        import xlrd
+    except ImportError as e:
+        raise LookupError(
+            f"{path.name} is a legacy .xls (OLE/BIFF), which needs xlrd: "
+            "pip install xlrd. Re-saving it as .xlsx also works.") from e
+    book = xlrd.open_workbook(str(path))
+    if sheet >= book.nsheets:
+        raise LookupError(f"--sheet {sheet} but the file has {book.nsheets}")
+    sh = book.sheet_by_index(sheet)
+    return [[sh.cell_value(r, c) for c in range(sh.ncols)]
+            for r in range(sh.nrows)]
+
+
+def read_any(path: Path, sheet: int = 0) -> list[list[str]]:
+    """Either spreadsheet format, chosen by what the file actually is.
+
+    Not by extension: OL's export is named .xls and IS one, but exports that
+    are really HTML or CSV under an .xls name are common enough that the
+    magic bytes are the honest test.
+    """
+    head = path.read_bytes()[:8]
+    if head[:4] == b"PK\x03\x04":
+        return read_xlsx(path, sheet)
+    if head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return read_xls(path, sheet)
+    raise LookupError(
+        f"{path.name} is neither a .xlsx (zip) nor a legacy .xls (OLE) — "
+        f"first bytes {head!r}. If it is really HTML or CSV renamed to .xls, "
+        "open it and re-save as .xlsx.")
 
 
 def read_xlsx(path: Path, sheet: int = 0) -> list[list[str]]:
@@ -296,7 +428,7 @@ def read_xlsx(path: Path, sheet: int = 0) -> list[list[str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("xlsx", help="Linda's export, as received")
+    ap.add_argument("xlsx", help="OL's export, as received (.xlsx or .xls)")
     ap.add_argument("-o", "--out", help="Write JSON here (default: stdout only)")
     ap.add_argument("--sheet", type=int, default=0)
     ap.add_argument("--customer", default=None,
@@ -305,7 +437,7 @@ def main() -> int:
                          "Hilmar-only, as the Jun-Aug one was.")
     args = ap.parse_args()
 
-    rows = read_xlsx(Path(args.xlsx), args.sheet)
+    rows = read_any(Path(args.xlsx), args.sheet)
     print(f"{args.xlsx}: {len(rows)} row(s) in sheet {args.sheet}")
     try:
         records, dropped, labels = extract(rows, args.customer)

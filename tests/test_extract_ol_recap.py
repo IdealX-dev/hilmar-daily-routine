@@ -269,6 +269,153 @@ def test_it_reproduces_the_hand_transcribed_recap():
         assert (got["carrier"] or None) == (want["carrier"] or None)
 
 
+# ── OL's transaction report: a second export with none of the same headers ──
+
+TXN_HEAD = ["module", "number", "date", "customer", "office", "officetiny",
+            "customerreference", "equipment", "origin", "loadport",
+            "transshipmentport", "dischargeport", "destination", "carrier",
+            "vessel", "voyage", "groupfield", "sortfield", "cancelled", "teu",
+            "profit"]
+
+
+def _txn(num="MDOLX260716", pod="YOKOHAMA", dest="", cancelled="No", teu=2.0,
+         date=46261.0, cust="HILMAR CHEESE COMPANY"):
+    return ["Sea", num, date, cust, "OL MANHATTAN - MBD", "OLWBMBD", "",
+            "20' DV", "", "OAKLAND", "OAKLAND", pod, dest, "CMA CGM SA",
+            "VSL", "V1", "", "", cancelled, teu, 275.0]
+
+
+def test_the_transaction_report_binds_every_column_it_needs():
+    """Michael, 2026-08-13, sent transactionreport_20260813083250.xls — the
+    COMPLETE 2026 book. It shares not one header spelling with Linda's
+    container report: number/date/loadport/dischargeport against
+    MDOLX #/ETD/POL/POD."""
+    recs, dropped, labels = X.extract([TXN_HEAD, _txn()])
+    assert labels["mdolx"] == "number"
+    assert labels["pol"] == "loadport" and labels["pod"] == "dischargeport"
+    assert labels["sheet_date"] == "date" and labels["teu"] == "teu"
+    assert recs[0]["mdolx"] == "260716" and recs[0]["pod"] == "YOKOHAMA"
+
+
+def test_the_mdolx_column_is_confirmed_by_its_VALUES():
+    """'number' is not in any alias list and could not be added safely — it
+    is a word inside 'Booking Number' too. The values are what identify the
+    column, and the rebinding is reported, not silent."""
+    recs, dropped, _ = X.extract([TXN_HEAD, _txn(), _txn("MDOLX260718")])
+    assert [r["mdolx"] for r in recs] == ["260716", "260718"]
+    assert any(ref == "(binding)" and "bound by content" in why
+               for ref, why in dropped)
+
+
+def test_a_header_bound_column_that_holds_no_mdolx_is_rebound():
+    """The dangerous case: a sheet whose 'File No' column holds something
+    else entirely. Trusting the header would emit 134 wrong references."""
+    head = ["File No", "Ref"]
+    rows = [head] + [[f"LINE-{i}", f"MDOLX26{i:04d}"] for i in range(1, 9)]
+    recs, dropped, labels = X.extract(rows)
+    assert [r["mdolx"] for r in recs] == [f"26{i:04d}" for i in range(1, 9)]
+    assert any("rebound by content" in why for _, why in dropped)
+
+
+def test_discharge_port_wins_over_the_inland_destination():
+    """Cai Mep is the discharge port; Ho Chi Minh City is the inland move
+    after it. The rate was quoted on the discharge port, so binding
+    'destination' to POD would put every Vietnam booking on the wrong lane."""
+    recs, _, _ = X.extract([TXN_HEAD, _txn(pod="CAI MEP",
+                                           dest="HO CHI MINH CITY, VIETNAM")])
+    assert recs[0]["pod"] == "CAI MEP"
+    assert recs[0]["final_destination"] == "HO CHI MINH CITY, VIETNAM"
+
+
+def test_an_inland_leg_equal_to_the_port_is_not_repeated():
+    recs, _, _ = X.extract([TXN_HEAD, _txn(pod="YOKOHAMA", dest="YOKOHAMA")])
+    assert "final_destination" not in recs[0]
+
+
+def test_a_cancelled_booking_never_becomes_a_win():
+    """Every row in the 2026 export reads cancelled=No, which means the
+    column exists and can read Yes. A cancelled booking counted as a win is
+    a win that did not happen."""
+    recs, dropped, _ = X.extract([TXN_HEAD, _txn(), _txn("MDOLX260718",
+                                                        cancelled="Yes")])
+    assert [r["mdolx"] for r in recs] == ["260716"]
+    assert any("cancelled" in why for _, why in dropped)
+
+
+def test_profit_is_not_extracted():
+    """The export carries OL's margin per shipment. It is not needed to
+    reconcile a booking and it is not going into a file in this repo."""
+    recs, _, _ = X.extract([TXN_HEAD, _txn()])
+    assert "profit" not in recs[0]
+    stored = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
+                         ).read_text(encoding="utf-8"))
+    assert not any("profit" in r for r in stored), (
+        "OL's margin was committed to the repo")
+
+
+def test_the_stored_2026_export_is_what_michael_sent():
+    """134 Hilmar bookings, 2026 sailings, none cancelled — the file the
+    reconciliation is run against, pinned so a re-extract that changes it
+    fails here rather than silently moving the win count."""
+    rows = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
+                       ).read_text(encoding="utf-8"))
+    assert len(rows) == 134
+    assert all(r["customer"] == "HILMAR CHEESE COMPANY" for r in rows)
+    dates = sorted(r["sheet_date"] for r in rows if r["sheet_date"])
+    assert dates[0] == "2026-01-03" and dates[-1] == "2026-09-05"
+    refs = {r["mdolx"] for r in rows}
+    # The 13 of Linda's 15 "missing" wins this export confirms are real.
+    for ref in ("260716", "260718", "260719", "260720", "260721", "260722",
+                "260723", "260748", "260770", "260809", "260811", "260833",
+                "260842"):
+        assert ref in refs, f"{ref} vanished from the export"
+
+
+def test_it_routes_a_legacy_xls_to_the_biff_reader(tmp_path, monkeypatch):
+    """OL's export is a real OLE/BIFF .xls, not a renamed zip. Routing is on
+    the magic bytes rather than the extension, because an export named .xls
+    that is really HTML is a common enough trap to be worth not falling in."""
+    p = tmp_path / "report.xls"
+    p.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64)
+    monkeypatch.setattr(X, "read_xls", lambda path, sheet=0: [["routed"]])
+    assert X.read_any(p) == [["routed"]]
+
+
+def test_the_xls_branch_says_what_to_install_when_xlrd_is_absent(tmp_path,
+                                                                monkeypatch):
+    """The runner has no xlrd. An ImportError traceback would read as a bug
+    in this script rather than a missing package."""
+    p = tmp_path / "report.xls"
+    p.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64)
+    import builtins
+    real = builtins.__import__
+
+    def no_xlrd(name, *a, **kw):
+        if name == "xlrd":
+            raise ImportError("no xlrd")
+        return real(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_xlrd)
+    with pytest.raises(LookupError) as e:
+        X.read_xls(p)
+    assert "pip install xlrd" in str(e.value)
+
+
+def test_an_unknown_container_says_what_it_saw(tmp_path):
+    p = tmp_path / "report.xls"
+    p.write_bytes(b"<html><table>")
+    with pytest.raises(LookupError) as e:
+        X.read_any(p)
+    assert "neither" in str(e.value)
+
+
+def test_a_zip_is_routed_to_the_xlsx_reader(tmp_path):
+    p = tmp_path / "export.xlsx"
+    p.write_bytes(_xlsx([HEAD, _row()]).getvalue())
+    recs, _, _ = X.extract(X.read_any(p))
+    assert recs[0]["mdolx"] == "261046"
+
+
 def test_it_writes_nothing_without_out(tmp_path):
     src = (ROOT / "scripts" / "extract_ol_recap.py").read_text(encoding="utf-8")
     assert "if args.out:" in src

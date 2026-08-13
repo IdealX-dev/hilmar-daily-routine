@@ -52,9 +52,24 @@ def row_refs(r: dict) -> set[str]:
 def main() -> int:
     import core as C  # noqa: F401  (kept: parity with the other diags' imports)
 
-    refs = parse_refs(os.environ.get("DIAG_MDOLX", ""))
+    # A committed export beats a pasted list: 134 refs do not belong in a
+    # dispatch box, and the file records exactly what was compared.
+    recap_path = os.environ.get("DIAG_RECAP", "").strip()
+    lanes: dict[str, dict] = {}
+    if recap_path:
+        p = ROOT / recap_path if not recap_path.startswith("/") else Path(recap_path)
+        try:
+            rows = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"::error::cannot read DIAG_RECAP {p}: {type(e).__name__}: {e}")
+            return 2
+        refs = [str(r.get("mdolx") or "").lstrip("0") for r in rows if r.get("mdolx")]
+        lanes = {str(r.get("mdolx") or "").lstrip("0"): r for r in rows}
+        print(f"OL export: {p.name}, {len(refs)} booking(s)")
+    else:
+        refs = parse_refs(os.environ.get("DIAG_MDOLX", ""))
     if not refs:
-        print("::error::DIAG_MDOLX is empty — pass the MDOLX refs from OL's recap")
+        print("::error::pass DIAG_RECAP (a committed export) or DIAG_MDOLX (refs)")
         return 2
     wanted = list(dict.fromkeys(refs))          # de-dup, keep order
     print(f"OL recap refs supplied: {len(wanted)}")
@@ -86,7 +101,12 @@ def main() -> int:
         if not rows:
             verdicts["ABSENT"] += 1
             missing.append(ref)
-            print(f"  MDOLX{ref}  ABSENT — no row in the tracker carries this ref")
+            b = lanes.get(ref) or {}
+            detail = (f"  {b.get('pol') or '?'} → {b.get('pod') or '?'}"
+                      f"  sails {b.get('sheet_date') or '?'}"
+                      f"  {b.get('carrier') or '?'}") if b else ""
+            print(f"  MDOLX{ref}  ABSENT — no row in the tracker carries this "
+                  f"ref{detail}")
             continue
         statuses = {(x.get("status") or "?").upper() for x in rows}
         if "WIN" in statuses:
