@@ -75,9 +75,12 @@ def main() -> int:
     data = json.loads(data_path.read_text(encoding="utf-8"))
     rows = data.get("requests", [])
     print(f"tracking-data-v2.json: {len(rows)} requests")
-    print("NOTE: this is the STORED state. Writes have failed since "
-          "2026-07-27 18:29 UTC, so it is FROZEN at that point and does NOT "
-          "contain anything the last three runs ingested.\n")
+    # The "state is FROZEN, writes have failed since 2026-07-27" warning that
+    # used to print here was true when this script was written and is false
+    # now — blob writes were restored and daily.yml's "Push pipeline state
+    # back to blob store" step has run green since. Leaving it would have had
+    # this diagnostic tell its reader to distrust the very numbers it prints.
+    print("NOTE: this is the STORED state as of the last successful push.\n")
 
     if not window:
         # Default to the most recent request_date present.
@@ -138,6 +141,106 @@ def main() -> int:
     print("\n  response_timestamp ET-date histogram (last 10 dates present):")
     for d in sorted(resp_dates)[-10:]:
         print(f"    {d}  {resp_dates[d]:4d}")
+
+    # ── WHY each undated row could not be dated ──────────────────────
+    # 2026-08-13, Michael on the banner: "still shouldn't exist". QC-077
+    # reports these as "link to a cached message that carries no send time or
+    # could not be classified", which is two very different problems collapsed
+    # into one bucket. Print the actual linkage so the fix is chosen from data:
+    # a row linked ONLY to Lonny's own ask cannot be dated without fabricating
+    # turnaround (quote_evidence_ok refuses it, correctly), whereas a row
+    # linked to an OL message that simply lost its send time is recoverable.
+    print(f"\n{'=' * 78}\nWHY THE UNDATED ROWS ARE UNDATED\n{'=' * 78}")
+    bodies: dict = {}
+    for name in ("stage_emails_bodies.txt", "stage_emails_bodies.jsonl"):
+        bpath = tmp / name
+        if not bpath.exists():
+            bpath = tmp / "scripts" / name
+        if bpath.exists():
+            with open(bpath, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if rec.get("imid"):
+                        bodies[rec["imid"]] = rec
+            break
+    print(f"  body cache: {len(bodies)} message(s)")
+    try:
+        import core as C
+    except Exception as e:  # pragma: no cover - diagnostic only
+        print(f"  core import failed: {e}")
+        C = None
+    tally: dict[str, int] = {}
+    for r in quoted_no_ts:
+        imids = r.get("source_imids") or []
+        if not imids:
+            label = "no source_imids at all"
+        else:
+            recs = [(i, bodies.get(i)) for i in imids]
+            if not any(rec for _, rec in recs):
+                label = "linked message(s) not in the body cache"
+            else:
+                senders, sends, refused = [], 0, 0
+                for _i, rec in recs:
+                    if not rec:
+                        continue
+                    snd = (rec.get("sender_email") or "?").lower()
+                    senders.append(snd)
+                    st = C.body_send_time(rec) if C else None
+                    if st:
+                        sends += 1
+                        if C and not C.quote_evidence_ok(
+                                rec.get("sender_email"), st,
+                                r.get("request_timestamp")):
+                            refused += 1
+                if not sends:
+                    label = "linked message(s) cached but carry NO send time"
+                elif refused >= sends:
+                    ol = any(s.endswith("@ol-usa.com") for s in senders)
+                    label = ("send time REFUSED — linked only to non-OL mail "
+                             "(Lonny's own ask)" if not ol else
+                             "send time REFUSED — OL mail, but not after the ask")
+                else:
+                    label = "should have been datable — unexplained"
+        tally[label] = tally.get(label, 0) + 1
+    for label, n in sorted(tally.items(), key=lambda kv: -kv[1]):
+        print(f"    {n:4d}  {label}")
+
+    # ── STATUS CHANGES, by day and by reason ─────────────────────────
+    # Michael 2026-08-13: "clean up the massive status changes asap to just
+    # what's current last two days.. we don't need to see all that you fixed".
+    # gen_email windows this section on the report day already, so the question
+    # is WHICH transitions land on that day and which of them are real business
+    # events rather than the tracker correcting its own past. Printed with the
+    # reason text because that is the only field that tells them apart.
+    print(f"\n{'=' * 78}\nSTATUS-HISTORY TRANSITIONS BY ET DAY (last 6 days present)\n{'=' * 78}")
+    by_day: dict[str, list] = {}
+    for r in rows:
+        for h in (r.get("status_history") or []):
+            at = h.get("at")
+            if not (at and h.get("from") and h.get("to")
+                    and h["from"] != h["to"]):
+                continue
+            d = str(_et_date(at) or "")
+            if d:
+                by_day.setdefault(d, []).append((r, h))
+    for d in sorted(by_day)[-6:]:
+        entries = by_day[d]
+        print(f"\n  {d} — {len(entries)} transition(s)")
+        reasons: dict[str, int] = {}
+        for _r, h in entries:
+            key = (h.get("reason") or "(no reason)")[:72]
+            reasons[key] = reasons.get(key, 0) + 1
+        for key, n in sorted(reasons.items(), key=lambda kv: -kv[1])[:12]:
+            print(f"      {n:3d}  {key}")
+        for _r, h in entries[:8]:
+            print(f"        {_r.get('request_id')}  {h.get('from')} -> "
+                  f"{h.get('to')}  | {(h.get('reason') or '')[:60]}")
     return 0
 
 
