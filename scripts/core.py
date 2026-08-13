@@ -1058,6 +1058,48 @@ def has_quote_evidence(r: dict) -> bool:
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
 
 
+def quote_evidence_is_booking_derived(r: dict) -> bool:
+    """True when a row's ONLY 'OL quoted' evidence is a carrier a BOOKING
+    could have written.
+
+    2026-08-13, Michael on the QC-077 banner: "still shouldn't exist". Measured
+    on stored state (diag-blob 31732181146), the banner's 22 rows split:
+
+        10  LOSS, rate present, no booking ref     <- real undated quotes
+         8  WIN, NO rate, booking ref, operator-corrected
+         3  WIN, rate present, booking ref
+         1  WIN, NO rate, booking ref
+
+    Nine of the 22 carry NO rate at all. Their only evidence is
+    `carrier_quoted`, and on those rows the carrier was written by the
+    reconciliation that folded in OL's transaction report — CMA CGM on
+    MDOLX261026-33, ONE on MDOLX261068. That is BOOKING evidence. It says a
+    shipment moved and on whose vessel; it says nothing about a quote email
+    ever arriving, and for Jun-Aug none did — OL replied to Lonny with the
+    group copied and it never reached the mailbox we read.
+
+    So has_quote_evidence's `rate OR carrier` is right for "did OL respond
+    with something" and wrong for "is there a quote here we failed to date".
+    A row like this is not an undated quote; it is a booking whose quote we
+    never received, and reporting it as a data defect sends the reader looking
+    for a message that does not exist.
+
+    NARROW BY CONSTRUCTION. A real rate always wins — a row with a rate is a
+    quote, whatever else it carries. Absent a booking reference, a bare
+    carrier still counts as a quote, because OL does occasionally quote a
+    carrier with the rate to follow (see QC-056's own note). Only the
+    intersection — no rate, a carrier, AND a booking that explains it — is
+    excluded.
+    """
+    r = r or {}
+    if is_real_rate(r.get("ol_rate")):
+        return False
+    if not r.get("carrier_quoted"):
+        return False
+    return bool(r.get("mdolx_ref") or r.get("mdolx_refs_all")
+                or r.get("booking_no") or r.get("booking_timestamp"))
+
+
 # ─────────────────────────────────────────────────────────────────────
 # The send time of a cached email body — ONE reader, both schemas.
 #

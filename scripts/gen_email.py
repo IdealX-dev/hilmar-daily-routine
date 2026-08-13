@@ -692,6 +692,12 @@ def undated_quotes(data) -> list:
         # Two numbers off one dataset, and the docstring of
         # test_undated_quotes_excludes_standalones_like_the_check_does had
         # already written down that they must agree.
+        # Booking-derived carriers are excluded for the same reason standalone
+        # bookings are, and the two exclusions have to move together with
+        # QC-077's or the note and the audit report different numbers off one
+        # dataset. See core.quote_evidence_is_booking_derived.
+        if core.quote_evidence_is_booking_derived(r):
+            continue
         if core.has_quote_evidence(r):
             out.append(r)
     return out

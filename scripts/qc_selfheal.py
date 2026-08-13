@@ -4392,6 +4392,11 @@ def phase_6_rules(log: Log, data: dict):
             if (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
             and not r.get("response_timestamp")
             and not core.has_no_rfq_chain(r)
+            # A carrier that a BOOKING wrote is not a quote we failed to date.
+            # 9 of this check's 22 rows on 2026-08-13 carried no rate at all —
+            # only a carrier put there by the transaction-report
+            # reconciliation. See core.quote_evidence_is_booking_derived.
+            and not core.quote_evidence_is_booking_derived(r)
         ]
         if _q_nots:
             _lanes = ", ".join(
