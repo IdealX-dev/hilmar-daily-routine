@@ -242,6 +242,33 @@ def test_extracted_rows_feed_the_backfill_matcher():
     assert len(m) == 1 and m[0][0] == "261046"
 
 
+def test_it_reproduces_the_hand_transcribed_recap():
+    """The Jun-Aug file was typed in by hand and then reconciled to 35/35, so
+    it is the only ground truth available — the original .xlsx is not in the
+    repo. Rendering it back to a grid and re-extracting must return the same
+    35 bookings, or the extractor and the file the corrections were built
+    from disagree about what OL booked.
+    """
+    stored = json.loads((ROOT / "data" /
+                         "ol-booking-recap-2026-06-01_2026-08-12.json"
+                         ).read_text(encoding="utf-8"))
+    head = ["MDOLX #", "Carrier", "POL", "POD", "Booking #", "ETD"]
+    grid = [head] + [[r["mdolx"], r["carrier"], r["pol"], r["pod"],
+                      r["booking_no"], r["sheet_date"]] for r in stored]
+    out, dropped, _ = X.extract(grid)
+    assert not dropped
+    assert len(out) == len(stored) == 35
+    for want, got in zip(stored, out, strict=True):
+        # MDOLX261071 is the sparse row: carrier is null there and "" here.
+        # Both are falsy and backfill_ol_bookings gates on truthiness, so the
+        # two files describe the same booking — that equivalence is the thing
+        # being pinned, not the literal type.
+        assert got["mdolx"] == want["mdolx"]
+        for k in ("pol", "pod", "booking_no", "sheet_date"):
+            assert got[k] == want[k], f"{want['mdolx']} {k}"
+        assert (got["carrier"] or None) == (want["carrier"] or None)
+
+
 def test_it_writes_nothing_without_out(tmp_path):
     src = (ROOT / "scripts" / "extract_ol_recap.py").read_text(encoding="utf-8")
     assert "if args.out:" in src

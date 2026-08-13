@@ -48,7 +48,9 @@ in that file becomes a WIN in the tracker for a booking that never happened
   - Excel's 1899-12-30 epoch is pinned by a test against a known serial; an
     off-by-one there silently changes which request a booking can match.
 
-25 tests. Suite 2845 passed, ruff clean. Reports remain hard-stopped
+26 tests, including a round-trip of the hand-transcribed Jun-Aug file: all
+35 bookings come back identical, which is the only ground truth available
+since the original .xlsx is not in the repo. Suite 2846 passed, ruff clean. Reports remain hard-stopped
 (verify_only, crons removed).
 
 ### 2026-08-12 (14) — 35/35: corrections can now record a win with no email
