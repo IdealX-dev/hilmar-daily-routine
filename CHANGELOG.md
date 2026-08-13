@@ -3,6 +3,76 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (5) — Live fire 31728462371: the forwards landed, and the
+### two checks that were only right while the bug existed
+
+VERIFIED ON REAL MAIL, not fixtures. Dispatched daily.yml at
+mode=production-fire, send_to=test, days_back=21 on f3ea2b8. Both emails went
+to michael.deitchman@idealx.us alone (verify_only forced SEND_TO=test in both
+send steps; log: "Lonny receives NOTHING").
+
+WHAT THE INTAKE FIX ACTUALLY DID
+
+  refresh_stage: Lonny thread anchors: 85 conversation(s), 529 message-id(s)
+  refresh_stage: ADMITTED by Lonny-thread linkage: 4
+      Linda.Echevarria@ol-usa.com | 'RE: Oakland to HCMC (Cat Lai)'  x2
+      Linda.Echevarria@ol-usa.com | 'FW: Oakland to Algeciras'
+      Linda.Echevarria@ol-usa.com | 'FW: Oakland to HCMC (Cat Lai)'
+
+Exactly the two lanes Michael named, and NOTHING else — Hoogwegt's 87
+messages, the 1003 from our own mailbox, and every other OL sender stayed
+dropped. Both rows reached QUOTED, at 2026-08-12T20:46:10Z and 20:57:02Z.
+mbd_rate_response over 7d went to 49. OL-USA RESPONSES is no longer (0).
+
+The aging fix also held its line: both quotes are ~21h old against a 48h
+window, so both are correctly still PENDING. A quote given yesterday did not
+become a loss. Final tally 380 entries: 133W | 220 Q&L | 25 NQ | 2 P.
+
+THEN THE FIRE FOUND TWO MORE, both the same species — a check that was only
+correct while the defect was present.
+
+  QC-072 called both new rows red errors: "status=PENDING but status_history
+  ends at QUOTED". Nothing is wrong with those rows. "QUOTED" is not a status
+  at all (VALID_STATUSES is {WIN, LOSS, PENDING}); it is the sub-state
+  ingest.py:1526 records when OL answers, with decide_status finalizing later.
+  So "we quoted it, Lonny has not decided" is spelled exactly this way BY
+  DESIGN, and QC-072 compared the two strings literally. It never fired before
+  because it needs a row that is quoted AND still pending, and until today
+  there were none. Exempted that one pair, narrowly; the history-says-WIN /
+  status-says-LOSS shape it was built for still fires
+  (test_qc072_still_catches_the_shape_it_was_built_for).
+
+  The undated-quotes banner ended "They appear under PENDING HILMAR" as a flat
+  claim. True only while an undated quote could never age — decide_status had
+  no clock on such a row, so it held PENDING at any age. Now that they age off
+  Lonny's request, most are Quoted & Lost, and the banner had become a
+  confident pointer to the wrong section: the exact failure it exists to
+  prevent, committed by the banner itself. It now READS the statuses, through
+  core.display_status so LEGACY (LOSS+quoted) and STRICT (Q&L) rows both
+  bucket correctly rather than falling into "elsewhere".
+
+  Updated test_audit_batch8.py::test_the_report_says_how_many_quotes_it_cannot
+  _show, which required the literal "PENDING HILMAR" on every note. Its
+  fixture is a Q&L row, so that assertion demanded the wrong pointer. The
+  test's INTENT — "the note must tell the reader where the quote DID go" — is
+  unchanged and now actually enforced.
+
+STILL OPEN, NOT FIXED, DO NOT READ AS DONE
+
+  QC-077 is 22 (was 21; QC-056 backfilled a carrier onto one more row). It did
+  NOT go to zero and the aging fix was never going to take it there — QC-077
+  counts rows with a rate but no response TIME, which is a data gap, not a
+  status. The split says all 22 link to a CACHED message that carries no send
+  time or could not be classified, i.e. the only linked message is Lonny's own
+  ask. Stamping the ask's send time is what manufactured the phantom same-day
+  quotes in W31/W32, so quote_evidence_ok refuses it and the row stays
+  undated. That refusal is correct; the remaining work is recovering the real
+  OL message link at ingest, not loosening the guard.
+
+  QC-057: 3 staged Lonny RFQs still silently dropped (no destination parsed).
+
+  Suite 3105 passed / 1 skipped, ruff clean.
+
 ### 2026-08-13 (4) — OL forwards enter the tracker on thread identity;
 ### an undated quote with a Send and no booking finally ages to a loss
 

@@ -16,7 +16,7 @@ import argparse
 import html
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -649,10 +649,33 @@ def _undated_quotes_note(undated) -> str:
     An empty section that is honest about being incomplete is worth far more
     than one that looks complete and isn't. QC-077 errors on the same
     condition so it gets fixed at the ingest end.
+
+    WHERE THEY SIT IS COMPUTED, NOT ASSERTED (2026-08-13). This banner used to
+    end "They appear under PENDING HILMAR" as a flat statement, which was true
+    only while an undated quote could never age: decide_status had no clock on
+    such a row, so it held PENDING at any age. Now that those rows age off
+    Lonny's request, most are Quoted & Lost and the sentence had become a
+    confident pointer to the wrong section — the failure mode this banner
+    exists to prevent, committed by the banner itself. Read the statuses.
+
+    Through core.display_status, because this repo stores status in two forms
+    (LEGACY LOSS+quoted vs STRICT Q&L) and a raw r["status"] read would bucket
+    every legacy row as "elsewhere" — a sentence that is vague in exactly the
+    case it most needs to be specific.
     """
     if not undated:
         return ""
     n = len(undated)
+    by_status = Counter(core.display_status(r) for r in undated)
+    _SECTIONS = [("PENDING", "PENDING HILMAR"), ("Q&L", "Quoted &amp; Lost"),
+                 ("WIN", "the wins"), ("NQ", "Not Quoted")]
+    parts = [f"{by_status[k]} under {label}" for k, label in _SECTIONS
+             if by_status[k]]
+    other = n - sum(by_status[k] for k, _ in _SECTIONS)
+    if other:
+        parts.append(f"{other} elsewhere")
+    where = (f'{"It appears" if n == 1 else "They appear"} '
+             + ", ".join(parts) + ". ") if parts else ""
     return (
         f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_WARN};'
         f'background:{B.DOC_WARN_BG};border-left:3px solid {B.DOC_WARN};padding:6px 9px">'
@@ -660,7 +683,7 @@ def _undated_quotes_note(undated) -> str:
         f'{"is" if n == 1 else "are"} recorded with a rate or carrier but no '
         f'response time, so {"it" if n == 1 else "they"} cannot be dated and '
         f'{"is" if n == 1 else "are"} not counted above. '
-        f'{"It appears" if n == 1 else "They appear"} under PENDING HILMAR. '
+        f'{where}'
         f'See QC-077 in the audit.</p>'
     )
 

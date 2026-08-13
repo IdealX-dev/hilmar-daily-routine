@@ -426,7 +426,12 @@ def test_the_report_says_how_many_quotes_it_cannot_show():
     assert len(undated) == 1
     note = gen_email._undated_quotes_note(undated)
     assert "cannot be dated" in note
-    assert "PENDING HILMAR" in note, (
+    # WHERE the quote went is now READ off the row rather than asserted. This
+    # line used to require the literal "PENDING HILMAR" on every note, which
+    # was right only while an undated quote could never age out of PENDING
+    # (2026-08-13). _quoted_row is a Q&L row, so PENDING HILMAR would be a
+    # confidently wrong pointer — the exact failure the banner exists to stop.
+    assert "1 under Quoted &amp; Lost" in note, (
         "the note must tell the reader where the quote DID go")
     assert gen_email._undated_quotes_note([]) == "", (
         "a clean day must not carry a scary empty warning")

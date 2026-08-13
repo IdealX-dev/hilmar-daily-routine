@@ -2006,6 +2006,22 @@ def qc072_history_contradicts_status(rows):
     Detect-only. Rewriting history is never a safe automatic act — the audit
     names the row so a human decides which record is the true one.
 
+    ONE PAIR IS NOT A CONTRADICTION: terminal QUOTED on a PENDING row.
+    "QUOTED" is not a status at all — VALID_STATUSES is {WIN, LOSS, PENDING} —
+    it is the logical sub-state ingest.py:1526 records when OL answers, with
+    decide_status finalizing WIN/LOSS later. So "we quoted it, Lonny hasn't
+    decided" is spelled exactly this way by design, and comparing the two
+    strings literally calls the intended shape an error.
+
+    It went unnoticed until 2026-08-13 only because it needs a row that is
+    quoted AND still pending, and there were none: the two that appeared that
+    day are the OL forwards admitted by refresh_stage's thread-linkage branch,
+    quoted 20:46 and 20:57 on 08-12 with Lonny yet to answer. Both were real
+    quotes correctly recorded, and both were reported as red errors.
+
+    Narrow on purpose. Any OTHER mismatch — the history-says-WIN /
+    status-says-LOSS shape this check was built for — still fires.
+
     Returns [(request_id, kind, detail), ...] where kind is
     "history-contradiction" or "stale-teu-won".
     """
@@ -2016,7 +2032,8 @@ def qc072_history_contradicts_status(rows):
         hist = r.get("status_history") or []
         if hist and isinstance(hist, list) and isinstance(hist[-1], dict):
             last_to = (hist[-1].get("to") or "").upper()
-            if last_to and status and last_to != status:
+            if last_to and status and last_to != status and not (
+                    last_to == "QUOTED" and status == "PENDING"):
                 out.append((rid, "history-contradiction",
                             f"status={status} but status_history ends at "
                             f"{last_to} (at {hist[-1].get('at')})"))

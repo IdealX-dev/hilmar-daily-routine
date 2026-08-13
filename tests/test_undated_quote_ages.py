@@ -428,3 +428,66 @@ def test_scripts_is_the_tree_production_runs():
         assert "src/hilmar/refresh_stage.py" not in text
     assert not (ROOT / "src" / "hilmar" / "refresh_stage.py").exists(), (
         "intake now exists in the mirror too — the intake fix must be mirrored")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# The two defects the 2026-08-13 live fire exposed, once quotes could
+# actually reach the tracker and actually age. Both are cases of a
+# check or a sentence that was correct only while the bug was present.
+# ─────────────────────────────────────────────────────────────────────
+
+def test_quoted_pending_is_not_a_history_contradiction():
+    """QC-072 must not call the intended quoted-and-pending shape an error.
+
+    Live fire 31728462371 raised two red errors for the two OL forwards it
+    had just admitted — both real quotes, correctly recorded, awaiting
+    Lonny. "QUOTED" is not a status (VALID_STATUSES is {WIN, LOSS,
+    PENDING}); it is the sub-state ingest records when OL answers.
+    """
+    import qc_selfheal as QS
+    row = {
+        "request_id": "req_34213cc401395756",
+        "status": "PENDING",
+        "status_history": [
+            {"at": "2026-08-12T13:05:00Z", "from": None, "to": "PENDING"},
+            {"at": "2026-08-12T20:46:10Z", "from": "PENDING", "to": "QUOTED"},
+        ],
+    }
+    assert QS.qc072_history_contradicts_status([row]) == []
+
+
+def test_qc072_still_catches_the_shape_it_was_built_for():
+    """The narrow exemption must not blunt the check. History saying WIN on a
+    LOSS row is the 2026-07-26 defect QC-072 exists for."""
+    import qc_selfheal as QS
+    row = {
+        "request_id": "req_regression",
+        "status": "LOSS",
+        "status_history": [{"at": "2026-07-01T00:00:00Z", "to": "WIN"}],
+    }
+    found = QS.qc072_history_contradicts_status([row])
+    assert [k for _, k, _ in found] == ["history-contradiction"]
+
+
+def test_undated_banner_states_where_the_rows_actually_are():
+    """The banner used to assert "They appear under PENDING HILMAR" — true
+    only while an undated quote could never age. Once they age, saying it
+    anyway points the reader at the wrong section."""
+    import gen_email as GE
+    undated = ([{"status": "LOSS", "quoted": True}] * 20) + [{"status": "PENDING"}]
+    html = GE._undated_quotes_note(undated)
+    assert "20 under Quoted &amp; Lost" in html
+    assert "1 under PENDING HILMAR" in html
+    # The old flat claim must be gone.
+    assert "They appear under PENDING HILMAR." not in html
+
+
+def test_undated_banner_still_says_pending_when_that_is_true():
+    import gen_email as GE
+    html = GE._undated_quotes_note([{"status": "PENDING"}, {"status": "PENDING"}])
+    assert "2 under PENDING HILMAR" in html
+
+
+def test_undated_banner_is_empty_when_there_is_nothing_to_say():
+    import gen_email as GE
+    assert GE._undated_quotes_note([]) == ""
