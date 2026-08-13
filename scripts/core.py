@@ -103,7 +103,36 @@ PENDING_OL_SLA_BIZ_HOURS = 3
 #:
 #: Retiring this is a one-line change once enough post-fix history exists to
 #: trust: delete the constant and the branches that read it.
-TIMING_VALID_FROM = "2026-08-13"
+#:
+#: RETIRED the same day, 2026-08-13, on evidence. Michael, once the shared
+#: mailbox came online: "turnaround clock should be fine now that you see the
+#: shard box yourself". Measured before flipping it rather than assuming
+#: (diag-blob 31736160870, stored state, 288 rows carrying BOTH a request and
+#: a response time):
+#:
+#:      NEGATIVE (response before ask)     0
+#:      0-48h                            ~254
+#:      48h-7d                              3
+#:      7-30d                               1
+#:      >30d                                8
+#:      IMPLAUSIBLE (negative or >30d)      8 of 288  (2.8%)
+#:
+#: Not one response predates its own ask, which is the shape that would say
+#: the pairing logic is broken. The 8 outliers are all April asks paired to
+#: June/July replies — Lonny re-using an Outlook thread months later, the
+#: known 2026-08-11 failure — and QC-021 already CLEARS turnaround above 40
+#: biz-hours as implausible, so they are excluded from every average rather
+#: than skewing it. The guard that made this constant necessary is not this
+#: one; it is that clearing rule, and it is still in force.
+#:
+#: Left as an empty string rather than deleted. `timing_is_valid` returns True
+#: for everything when it is falsy and `timing_reset_note` returns "", so the
+#: banners drop out of the email, the dashboard and the PDF with no other
+#: edit — and setting a date here re-arms the whole mechanism in one line if
+#: the clock ever needs stopping again. Deleting the constant would mean
+#: rebuilding all of that under pressure, which is when it was built the first
+#: time.
+TIMING_VALID_FROM = ""
 
 
 def timing_is_valid(when) -> bool:

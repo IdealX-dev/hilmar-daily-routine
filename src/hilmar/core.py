@@ -83,8 +83,16 @@ PENDING_OL_SLA_BIZ_HOURS = 3
 #: reads (forwarding was fixed 2026-08-12). A turnaround average over that
 #: period is not "slow OL", it is a clock started and never stopped.
 #:
+#: RETIRED 2026-08-13 PM, on evidence, once shared-mailbox access closed the
+#: gap described above. Measured over 288 rows carrying both timestamps: ZERO
+#: responses predate their own ask, and the 8 (2.8%) beyond 30 days are April
+#: asks paired to June/July replies, which QC-021 already clears at >40
+#: biz-hours. Emptied rather than deleted so the falsy branch below keeps this
+#: a one-line switch in BOTH directions. See scripts/core.py for the full
+#: write-up.
+#:
 #: Mirrored from scripts/core.py — tests/test_core_parity.py enforces it.
-TIMING_VALID_FROM = "2026-08-13"
+TIMING_VALID_FROM = ""
 
 
 def timing_is_valid(when) -> bool:
