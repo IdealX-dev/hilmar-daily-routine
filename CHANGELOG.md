@@ -3,6 +3,100 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (2) — OL's own 2026 book is now the authority; 12 phantom
+### wins removed, 54 real ones recovered, the response clock switched off
+
+Michael sent OL's transaction report, then the richer customer transaction
+report, and ruled: "THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY
+AND USE."
+
+THE RECONCILIATION (diag-reconcile 31701602704, backfill dry-run
+31702992685, diag-find 31703011175 / 31703548619 / 31705817226 — all
+read-only, against state written 2026-08-12 23:05:59 UTC):
+
+  OL's book: 134 Hilmar bookings, Jan 3 - Sep 5 2026 sailings, 533 TEU.
+   80 already recorded
+   +4 matched to requests recorded LOSS — 260358 260370 260433 260469.
+      OL booked cargo the tracker had written off.
+  +50 backfilled as standalone wins, 189 TEU, sailed Jan-Apr, before this
+      pipeline read any mail.
+  -12 excluded.
+
+THE 12, and they were three faults wearing one face:
+  NUMIDIA (6) — 260387 260388 260407 260486 260487 260928. A different
+    customer whose cargo loads at the Hilmar plant. Michael: "NUMIDIA IS
+    NOT HILMAR.. THAT'S WHEN HILMAR IS USED AS A LOCATION." Hilmar Cheese
+    is in Hilmar, California, and this pipeline could not tell the client
+    from the town.
+  CANCELLED (6) — 260772 260895 260963 260192 260426, and 261071.
+    Michael: "260905 260192 260963 were bookings hilmar cancelled",
+    "260772 was also cancelled", "260426 cancelled".
+
+CANCELLATION EXPLAINS THE EXPORT'S SHAPE, and it strengthens it: OL DROPS
+cancelled bookings rather than flagging them, which is why the cancelled
+column reads No on all 134 rows. Absence from the export IS the
+cancellation signal.
+
+THE PARSER DEFECT WAS ONE STRING. The operational-subject gate listed
+"LOADING APPT"; OL wrote "LOAD APPTS". "LOADING" is not a prefix of
+"LOAD ", so nothing matched, and a drayage leg from the town of Hilmar to
+the Port of Oakland became a WIN on the lane "Oakland → Oakland". Fixed by
+ADDING a string, since OL writes both, with a test asserting the
+non-containment so nobody merges them back.
+
+TWO OF MY OWN ERRORS, both caught by Michael and both corrected here:
+ (a) I called MDOLX260928 drayage with no booking behind it, reading a
+     subject line instead of the booking record. His MOVE screenshot shows
+     a real ocean export — NUMIDIA BV-LZ, Oakland to Penang. Real booking,
+     wrong customer.
+ (b) I created MDOLX261071 as a win on 2026-08-12 from a row that was
+     EMPTY — carrier null, pol "", pod "", booking_no "". "Everything she
+     sent as a booking is a win" presumes the row IS a booking. Withdrawn.
+
+AND A BLIND SPOT IN MY OWN CHECK. diag_reconcile's reverse direction was
+scoped `if lo <= ref <= hi and ...` with no else, so anything outside the
+export's range fell through to nothing. 261071 and 261072 sit one and two
+above its highest ref (261070) and were never examined: it reported "10
+wins the recap does not contain" when the true number was 12. Michael
+found one by hand. Out-of-range wins are now bucketed in the same branch
+and printed under their own heading.
+
+TWO RULES ARE NOW CODE RATHER THAN VIGILANCE:
+  - An empty row is not a booking. Twice a row with no port and no carrier
+    became a win. is_evidence_of_a_booking refuses and prints REFUSED.
+  - One carrier, one name. OL names carriers as legal entities, so ONE
+    would have appeared twice — 38 as "ONE", 19 as "OCEAN NETWORK EXPRESS
+    PTE, LTD" — splitting one carrier across every rollup and defeating the
+    point of the backfill. Six aliases in BOTH cores, plus a test that
+    fails if any spelling in the export has no canonical form.
+
+THE RESPONSE CLOCK IS OFF. Michael: "JUST INDICATE THE TURN AROUND CLOCK
+AND SUCH IS OFF AND START RUNNING IT AGAIN STARTING TODAY AND INDICATE
+THAT ON THE REPORTS." core.TIMING_VALID_FROM = "2026-08-13"; pre-floor
+samples are excluded from every turnaround aggregate AND counted. The
+averages return None, not 0.0 — a suppressed average rendering as "0.0h"
+is not a missing number, it is a FLATTERING one claiming OL replied
+instantly. Email, dashboard and PDF print OFF with the date, the live
+count, the excluded count and the cause. Clearing the constant removes the
+banner with it.
+
+MIGRATION: schema.json widens the two averages to accept null and declares
+turnaround_valid_from and turnaround_excluded. Additive, no stored data
+rewritten (ingest rebuilds every row each fire), reversible by revert. QC
+Phase 10 caught the drift before it shipped.
+
+TOOLING: extract_ol_recap.py reads .xls and .xlsx, routes on magic bytes,
+binds columns by HEADER never position and prints the binding, and
+confirms the MDOLX column by its VALUES. backfill_ol_bookings gained
+--create-missing. diag_reconcile takes a committed export path.
+diag_find prints request_id.
+
+operator_corrections.json 19 → 86: 51 created wins, 21 amendments, 14
+exclusions. Suite 2917 passed, ruff clean. PR #205 merged (3816d20).
+
+STILL OPEN: reports remain hard-stopped pending Michael's review of the
+verification fire.
+
 ### 2026-08-13 (1) — the 15 unlisted wins are ANSWERED; the next export gets
 ### read by machine, not by hand
 
