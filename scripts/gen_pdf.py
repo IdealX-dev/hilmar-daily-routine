@@ -270,7 +270,12 @@ def build_cover(story, styles, data, cfg):
     if total == 0:
         narrative.append("No requests ingested yet for this period. Pipeline is in dry-run mode — once Outlook ingestion runs, this section populates automatically.")
     else:
-        ta_str = f"{ta_biz:.1f}h biz-hrs avg response" if ta_biz else "turnaround data pending"
+        # TIMING RESET: "turnaround data pending" implied the number was
+        # coming. It is not coming for the old period — it was withdrawn.
+        ta_str = (f"{ta_biz:.1f}h biz-hrs avg response" if ta_biz
+                  else (f"response clock reset {core.TIMING_VALID_FROM}, "
+                        "measuring again from that date"
+                        if core.TIMING_VALID_FROM else "turnaround data pending"))
         narrative.append(
             f"Across <b>{total}</b> rate requests from Hilmar, OL-USA quoted <b>{wins+lost+pend}</b> "
             f"({_pct(quote_rate)}) and won <b>{wins}</b> ({_pct(win_rate)} win rate among decided). "
@@ -337,8 +342,26 @@ def build_turnaround(story, styles, data):
     ta_clock = s.get("turnaround_avg_clock_hours")
     n_ta = s.get("turnaround_entries", 0)
 
+    # TIMING RESET (Michael 2026-08-13, core.TIMING_VALID_FROM). This page
+    # used to say "no samples yet ... populated once quoted requests
+    # accumulate", which is the wrong reason and reads as a quiet startup
+    # state rather than a deliberate reset.
+    excluded = s.get("turnaround_excluded", 0) or 0
+    if core.TIMING_VALID_FROM:
+        story.append(Paragraph(
+            f"<b>Clock reset.</b> {core.timing_reset_note()}"
+            + (f" {excluded} earlier sample{'' if excluded == 1 else 's'} "
+               "excluded from the figures below." if excluded else ""),
+            styles["Body"]))
+        story.append(Spacer(1, 8))
+
     if not n_ta:
-        story.append(Paragraph("No turnaround samples yet. Populated once quoted requests accumulate.", styles["Body"]))
+        story.append(Paragraph(
+            f"No turnaround samples on or after {core.TIMING_VALID_FROM} yet — "
+            "the first post-reset quote populates this page."
+            if core.TIMING_VALID_FROM else
+            "No turnaround samples yet. Populated once quoted requests accumulate.",
+            styles["Body"]))
         return
 
     kpi_row = Table(

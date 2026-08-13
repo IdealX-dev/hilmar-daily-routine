@@ -133,8 +133,10 @@
         "teu_not_quoted": {"type": "integer"},
         "teu_pending": {"type": "integer"},
         "turnaround_entries": {"type": "integer"},
-        "turnaround_avg_biz_hours": {"type": "number"},
-        "turnaround_avg_clock_hours": {"type": "number"},
+        "turnaround_avg_biz_hours": {"type": ["number", "null"], "description": "Average business-hours response over samples on or after turnaround_valid_from. null when no such sample exists yet — NOT 0.0, which would read as an instant reply."},
+        "turnaround_avg_clock_hours": {"type": ["number", "null"], "description": "As turnaround_avg_biz_hours, on the raw clock."},
+        "turnaround_valid_from": {"type": ["string", "null"], "description": "Date floor for response-time metrics (core.TIMING_VALID_FROM, set 2026-08-13). Samples before it are excluded: OL's replies were not reaching the tracked mailbox, so the clock was started and never stopped. null once the reset is retired."},
+        "turnaround_excluded": {"type": "integer", "description": "How many measurable samples turnaround_valid_from dropped. Reported so the exclusion is stated on the report rather than silently shrinking the sample."},
         "dod": {"type": "object"}
       }
     },

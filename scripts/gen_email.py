@@ -1045,6 +1045,42 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
 """
 
 
+def _timing_reset_banner(measured: int, excluded: int) -> str:
+    """Say on the report that the response clock was restarted, and why.
+
+    Michael 2026-08-13: "JUST INDICATE THE TURN AROUND CLOCK AND SUCH IS OFF
+    AND START RUNNING IT AGAIN STARTING TODAY AND INDICATE THAT ON THE
+    REPORTS." A suppressed metric with no explanation is worse than a wrong
+    one — the reader assumes it is zero, or assumes nothing broke. This
+    states the floor, the count it is now measuring, and the count it threw
+    away, so nobody has to ask which.
+
+    Returns "" once TIMING_VALID_FROM is retired, so removing the constant
+    removes the banner with it and no dead notice can survive on the report.
+    """
+    if not core.TIMING_VALID_FROM:
+        return ""
+    if measured:
+        head = (f"Response-time metrics restarted {core.TIMING_VALID_FROM} — "
+                f"now measuring {measured} quote"
+                f"{'' if measured == 1 else 's'}.")
+    else:
+        head = (f"Response-time metrics are OFF and restart from "
+                f"{core.TIMING_VALID_FROM}.")
+    tail = (f" {excluded} earlier sample{'' if excluded == 1 else 's'} "
+            "excluded." if excluded else "")
+    return f"""
+<div style="background:{B.DOC_WARN_BG};border-left:4px solid {B.DOC_WARN};padding:10px 14px;margin:-8px 0 16px;border-radius:4px;font-size:12px;color:{B.DOC_WARN};line-height:1.5">
+  <strong>⏱ Turnaround clock reset.</strong> {_esc(head)}{_esc(tail)}
+  OL's replies were not reaching this mailbox beforehand — they went To:
+  Lonny, Cc: the group — so a turnaround measured over that period is a clock
+  that was started and never stopped, not a measure of how fast OL answered.
+  <strong>Win, loss and TEU figures are unaffected</strong>: those are
+  reconciled against OL's own booking export, not against mail timing.
+</div>
+"""
+
+
 def _kpi_card(value, label, bg, width="25%", sublabel=""):
     """Render a KPI tile.
 
@@ -1171,7 +1207,15 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     teu_nq = summary.get("teu_not_quoted", 0)
     pending = summary.get("pending_hilmar", 0)
     teu_pending = summary.get("teu_pending", 0)
-    biz = summary.get("turnaround_avg_biz_hours", 0.0) or 0.0
+    # TIMING RESET (Michael 2026-08-13). core.summarize returns None, not 0.0,
+    # while no post-floor sample exists — "0.0h" on this card would read as an
+    # instant reply. The card says OFF and the banner below says why.
+    biz = summary.get("turnaround_avg_biz_hours")
+    ta_n = summary.get("turnaround_entries", 0) or 0
+    ta_excluded = summary.get("turnaround_excluded", 0) or 0
+    biz_value = f"{biz:.1f}h" if biz is not None else "OFF"
+    biz_sub = ("Lonny → OL quote" if biz is not None
+               else f"restarted {core.TIMING_VALID_FROM}")
 
     # Pending is two materially different waits — surface WHO to chase as a
     # clear marker instead of one lumped "Pending". PENDING_OL = chase OL for a
@@ -1266,9 +1310,10 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     {_kpi_card(pending, "Pending", B.DOC_PENDING, sublabel=f"{pend_ol} Pending OL · {pend_hil} Pending Hilmar · {teu_pending} TEU")}
     {_kpi_card(f"{wr:.1f}%", "Win Rate", B.DOC_GOOD, sublabel=f"{wins} wins ÷ {decided_competitive} decided")}
     {_kpi_card(f"{no_resp_rate:.1f}%", "No-Response Rate", B.DOC_WARN, sublabel=f"{nq} NQ ÷ {decided_all} total")}
-    {_kpi_card(f"{biz:.1f}h", "Avg Biz-Hrs", B.DOC_PENDING, sublabel="Lonny → OL quote")}
+    {_kpi_card(biz_value, "Avg Biz-Hrs", B.DOC_PENDING, sublabel=biz_sub)}
   </tr>
 </table>
+{_timing_reset_banner(ta_n, ta_excluded)}
 
 <!-- 2026-05-19 PM 7th pass (Michael "i'm lost win rate 45.4 percent what
      is wins / wins + q&l"): plain-English explainer of Win Rate. -->
