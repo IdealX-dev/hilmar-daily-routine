@@ -3,6 +3,54 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (1) — the 15 unlisted wins are ANSWERED; the next export gets
+### read by machine, not by hand
+
+Michael: "linda only ran a partial report... i'll have a run a year long
+report.. and get it to you shortly."
+
+THE OPEN QUESTION FROM (12) AND (14) IS CLOSED, and it closes in the
+tracker's favour. 15 tracker WINs sat inside the Jun 1 - Aug 12 recap's date
+range while the recap did not list them (260716, 260718-260723, 260748,
+260770, 260809, 260811, 260833, 260842, 260928, 260963). I refused to call
+that either way, because the two readings — OL's export is narrower than it
+looks, or this pipeline is over-counting — have opposite fixes. It was the
+first: the export was partial. Absence from a partial list is not evidence
+against a win, so those 15 stand and the period's count is the higher one.
+
+Nothing in the pipeline had to change for that. The recap is read only by
+backfill_ol_bookings and the diagnostics — no QC rule, report section or
+gate keys on it — so those 15 were never at risk of being deleted; what was
+at risk was me "fixing" a non-defect. Recorded here so the next session does
+not reopen it.
+
+NEW: scripts/extract_ol_recap.py — Linda's .xlsx to the recap JSON that
+backfill_ol_bookings and diag_reconcile already consume. The Jun-Aug file
+was transcribed by hand at 35 rows; a year cannot be, and a mistyped MDOLX
+in that file becomes a WIN in the tracker for a booking that never happened
+— the precise failure the last three days were spent removing.
+
+  - stdlib only. openpyxl is not installed in the runner and this cannot
+    depend on a network install; .xlsx is a zip of XML.
+  - Columns bind by HEADER, never by position, and the binding is PRINTED
+    each run. Column order is the thing most likely to differ between a
+    two-month export and a year-long one, and a wrong guess belongs in the
+    run log, not silently in the data.
+  - A missing MDOLX column is a hard error that dumps every header it saw.
+    Emitting zero bookings would read as "OL booked nothing", which is a
+    worse lie than crashing.
+  - One booking per MDOLX. The report is
+    Container_Report_With_TEU_By_Container_Size — one booking split across
+    container sizes is several lines, and counting each would inflate wins.
+  - Unparseable reference, unmapped date: REPORTED and dropped, never
+    guessed. --customer filters to HILMAR if the year-long pull spans OL's
+    whole book.
+  - Excel's 1899-12-30 epoch is pinned by a test against a known serial; an
+    off-by-one there silently changes which request a booking can match.
+
+25 tests. Suite 2845 passed, ruff clean. Reports remain hard-stopped
+(verify_only, crons removed).
+
 ### 2026-08-12 (14) — 35/35: corrections can now record a win with no email
 
 Michael: "everything she sent as a booking is a win... assume that each win
