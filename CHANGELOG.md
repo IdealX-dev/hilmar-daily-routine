@@ -3,6 +3,75 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (6) — STATUS CHANGES holds only what happened; the shared
+### mailbox becomes reachable, and the QC-077 banner is measured not guessed
+
+STATUS CHANGES. Michael: "clean up the massive status changes asap to just
+what's current last two days.. we don't need to see all that you fixed".
+Measured (diag-blob 31731525694): Aug 12 = 16 transitions, of which 2 were
+real OL answers and 11 were "Operator correction: MDOLX2610xx booked" — his
+.xls folded in, none booked that day. Aug 13 already = 249: 35 "OL-USA never
+responded", 32 "Send received but no MDOLX", ~180 quotes aged out at up to
+2926h. Cause: record_transition stamps `at` = now, so a backlog flush lands
+on one day.
+
+  DECISION: judge a derived loss on LATENESS, not age. Aging never fires
+  before its window closes (48h/72h-Friday), so the obvious "newer than two
+  days" rule would have silenced EVERY genuine aging, not just the backlog —
+  a permanently empty section reading as a quiet week. Bookings and OL
+  answers are kept unconditionally; the booking IS the news. Reconciliation
+  reasons are dropped outright. Feed, not ledger: KPIs and totals unchanged.
+
+QC-077, MEASURED (diag-blob 31732181146). The banner's 22 split:
+   10  LOSS, rate present, no booking ref      <- REAL undated quotes
+    8  WIN, NO rate, booking ref, operator-corrected
+    3  WIN, rate present, booking ref
+    1  WIN, NO rate, booking ref
+So 9 of 22 carry NO rate at all — only a carrier, and that carrier was
+written by the booking reconciliation. A carrier from a booking is BOOKING
+evidence; QC-077 counts `rate or carrier` and therefore calls it a quote we
+failed to date. It is not a quote at all. NOT YET FIXED — logged so the next
+session does not re-derive it.
+
+  Also visible: Oakland → Algeciras $4938 CMA CGM appears as TWO undated
+  LOSS rows, while the Aug-12 row with the same lane/rate/carrier IS dated
+  (20:57:02Z). Same OL quote. A same-lane/same-rate/same-carrier sibling that
+  is dated is a real recovery route for some of the 10 — with a window guard,
+  since an identical price months apart is a re-quote, not the same event.
+
+SHARED MAILBOX — the constraint changed today. OL approved admin consent for
+"Microsoft Graph Command Line Tools", which IS this app
+(outlook_send.CLIENT_ID 14d82eec-204b-4c2f-b7e8-296a70dab67e). Since
+2026-06-10 the repo has recorded that Mail.Read.Shared needs ol-usa admin
+consent and that OL IT declined; refresh_stage.SHARED_MAILBOX says the read
+path "starts working with no edit" if that ever changes. It has.
+
+  Consent alone changes NOTHING: a scope has to be requested, and the cached
+  token in the blob was minted without it — acquire_token_silent cannot
+  invent a scope. auth_notify can now request it behind --shared, exposed as
+  the auth-refresh input include_shared.
+
+  DEFAULT FALSE, deliberately. The approval email did not enumerate scopes,
+  so whether it covers Mail.Read.Shared is UNVERIFIED. If it does not, AAD
+  refuses at REDEMPTION — after the human has signed in — and the run stores
+  no token at all. Defaulting it on would put the one lever that recovers a
+  dead credential behind an unproven permission. The run reports which way it
+  went, in both directions, rather than leaving it to be read off a scope
+  string.
+
+  Updated test_every_device_flow_requests_only_the_consentable_set, which
+  pinned `initiate_device_flow(scopes=OS.SCOPES)` in auth_notify because
+  consent had been declined. That fact expired; the invariant it protected
+  (never widen by default) is now pinned directly, plus the workflow input
+  defaulting false.
+
+  WHY IT MATTERS BEYOND ACCESS: the 13 genuinely undated quotes are undated
+  because the only message linked to them is Lonny's ask — OL's reply went to
+  the shared mailbox and never reached the one we read. Reading that mailbox
+  is the root fix for the QC-077 banner, not just a wider net.
+
+Suite 3115 passed / 1 skipped, ruff clean.
+
 ### 2026-08-13 (5) — Live fire 31728462371: the forwards landed, and the
 ### two checks that were only right while the bug existed
 

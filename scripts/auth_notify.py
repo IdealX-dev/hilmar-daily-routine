@@ -55,6 +55,16 @@ if str(ROOT / "scripts") not in sys.path:
 
 import outlook_send as OS  # noqa: E402
 
+#: Imported, not re-spelled. refresh_stage is what actually decides whether the
+#: shared mailbox is readable (read_targets → shared_token_silent), so the
+#: scope this asks for has to be the same object that gate tests, or a re-auth
+#: can report success against a permission the pipeline never uses.
+import refresh_stage as RS  # noqa: E402
+
+SHARED_SCOPES = RS.SHARED_READ_SCOPES
+SHARED_SCOPE = "Mail.Read.Shared"
+RS_SHARED_MAILBOX = RS.SHARED_MAILBOX
+
 
 def _body(code: str, uri: str, minutes: int) -> str:
     """Big code, one link, no prose above the fold.
@@ -103,6 +113,12 @@ def main() -> int:
                     help="Where to send the code. Repeatable.")
     ap.add_argument("--dry", action="store_true",
                     help="Print the code, send nothing, wait for nothing.")
+    ap.add_argument("--shared", action="store_true",
+                    help=f"Also request {SHARED_SCOPE}, so the pipeline can "
+                         f"read {RS_SHARED_MAILBOX}. Needs ol-usa admin "
+                         f"consent for this app; if it was not granted, AAD "
+                         f"refuses AFTER sign-in and no token is stored — "
+                         f"re-run without this flag to get back to base.")
     args = ap.parse_args()
 
     cache = OS._load_cache()
@@ -128,7 +144,23 @@ def main() -> int:
                   "the code — run the auth workflow and read it from the log.")
             return 2
 
-    flow = app.initiate_device_flow(scopes=OS.SCOPES)
+    # 2026-08-13: OL approved admin consent for "Microsoft Graph Command Line
+    # Tools" — which IS this app (OS.CLIENT_ID 14d82eec-…). That is the
+    # tenant-policy change refresh_stage.SHARED_MAILBOX said would make the
+    # shared-mailbox read start working with no code edit. But a SCOPE HAS TO
+    # BE ASKED FOR: acquire_token_silent cannot invent Mail.Read.Shared, and
+    # the cached token in the blob was minted without it, so consent alone
+    # changes nothing until a fresh sign-in requests it.
+    #
+    # OPT-IN, not the default-on, because the failure mode is asymmetric. If
+    # the consent did NOT actually cover Mail.Read.Shared, AAD refuses at
+    # REDEMPTION — after the human has already signed in — and the run ends
+    # with no token at all. Re-running with --no-shared then costs a second
+    # sign-in. Base scopes stay mandatory either way; the shared scope is
+    # reported, never required.
+    scopes = SHARED_SCOPES if args.shared else OS.SCOPES
+    print(f"auth_notify: requesting scopes: {' '.join(scopes)}")
+    flow = app.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
         print(f"::error::auth_notify: device flow failed to start: {flow}")
         return 2
@@ -177,6 +209,20 @@ def main() -> int:
         print(f"::error::auth_notify: consent completed WITHOUT {missing} — "
               f"the pipeline cannot send with this token.")
         return 1
+    # The shared scope is REPORTED, never required. Said plainly in both
+    # directions: "did the shared mailbox come online" is the whole question
+    # this re-auth exists to answer, and leaving the operator to infer it from
+    # a scope string is how it goes unnoticed for another week.
+    if args.shared:
+        if SHARED_SCOPE.lower() in granted.lower():
+            print(f"auth_notify: {SHARED_SCOPE} GRANTED — refresh_stage will "
+                  f"now read {RS_SHARED_MAILBOX} as well as /me. Nothing else "
+                  f"to change; read_targets picks it up on the next fire.")
+        else:
+            print(f"::warning::auth_notify: {SHARED_SCOPE} was requested but "
+                  f"NOT granted. The base scopes are fine and the pipeline "
+                  f"works, but it still reads /me only — the admin consent "
+                  f"did not cover this permission.")
     return 0
 
 
