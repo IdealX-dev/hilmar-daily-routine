@@ -81,6 +81,13 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "pod_country": ["pod country", "discharge country", "country"],
     "sheet_date": ["etd", "sail date", "sailing date", "departure date",
                    "vessel etd", "on board date", "booking date", "date"],
+    # ETS/ETA are SEPARATE columns from `date` in OL's customer transaction
+    # report, and they are the sailing and arrival dates the client report's
+    # ETD/ETA columns show. Placed AFTER sheet_date deliberately: on Linda's
+    # container report the only date column is headed "ETD", and sheet_date
+    # must keep claiming it or every downstream date breaks.
+    "ets": ["ets", "etd", "sailing date", "departure date"],
+    "eta_date": ["eta", "port arrival", "arrival date"],
     "teu": ["teu", "total teu", "teus"],
     "customer": ["customer", "customer name", "shipper", "consignee",
                  "account", "client"],
@@ -377,6 +384,11 @@ def extract(rows, customer_filter=None):
             "booking_no": cell(row, "booking_no"),
             "sheet_date": parse_date(cell(row, "sheet_date")),
         }
+        for datefield in ("ets", "eta_date"):
+            if datefield in bound:
+                parsed = parse_date(cell(row, datefield))
+                if parsed:
+                    rec[datefield] = parsed
         # The inland leg after discharge (Cai Mep -> Ho Chi Minh City). Kept
         # only when it differs, because a request quoted to the inland name
         # will not match the discharge port and the matcher needs both to
