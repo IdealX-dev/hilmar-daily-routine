@@ -157,3 +157,65 @@ def test_the_report_still_holds_the_bookings_that_were_backfilled():
                for c in _corrections() if c.get("create")}
     created.discard("261071")          # from Linda's recap, not this report
     assert created <= refs, sorted(created - refs)
+
+
+# ── one carrier, one name ────────────────────────────────────────────────
+
+def test_ols_legal_carrier_names_collapse_to_the_trade_names():
+    """The customer transaction report names carriers as LEGAL entities.
+    Without these aliases ONE appears twice — 38 bookings as "ONE" and 19
+    backfilled as "OCEAN NETWORK EXPRESS PTE, LTD" — and every carrier
+    rollup splits one carrier in two, which defeats the point of the
+    backfill ("so we can see complete and total volumes booked on lanes")."""
+    import core as C
+    for raw, want in [
+        ("OCEAN NETWORK EXPRESS PTE, LTD", "ONE"),
+        ("CMA CGM SA", "CMA CGM"),
+        ("MEDITERRANEAN SHIPPING LINES", "MSC"),
+        ("HAPAG-LLOYD AMERICA", "Hapag-Lloyd"),
+        ("EVERGREEN SHIPPING AGENCY (AMERICA)", "Evergreen"),
+        ("HYUNDAI MERCHANT MARINE INC.", "HMM"),
+    ]:
+        assert C.normalize_carrier(raw) == want, raw
+
+
+def test_every_carrier_in_the_export_normalises_to_something_known():
+    """A carrier spelling this file has never seen passes through unchanged
+    and quietly becomes its own row in the rollup. Better to fail here."""
+    import core as C
+    rows = json.loads(REPORT.read_text(encoding="utf-8"))
+    canon = set(C.CARRIER_ALIASES.values())
+    unknown = {r["carrier"] for r in rows
+               if r.get("carrier") and C.normalize_carrier(r["carrier"]) not in canon}
+    assert not unknown, f"carrier spellings with no canonical form: {sorted(unknown)}"
+
+
+def test_the_two_cores_agree_on_the_new_aliases():
+    import core as C
+
+    from hilmar import core as HC
+    assert C.CARRIER_ALIASES == HC.CARRIER_ALIASES
+
+
+def test_the_stored_export_carries_the_richer_customer_report_fields():
+    """Michael sent customertransactionreport_20260813093333.xls: "this is
+    another report for only client hilmar". Same 134 bookings, but it also
+    names the consignee, the vessel and the carrier's booking number."""
+    rows = json.loads(REPORT.read_text(encoding="utf-8"))
+    assert len(rows) == 134
+    withc = [r for r in rows if r.get("consignee")]
+    assert len(withc) > 100, "the consignee column did not survive extraction"
+    assert any(r.get("booking_no") for r in rows)
+    assert any(r.get("vessel") for r in rows)
+
+
+def test_the_destination_agent_is_not_recorded_as_a_place():
+    """The report's "destinationoffice" column holds OL's destination AGENT
+    (QUANTERM LOGISTICS VIETNAM), and it matched the "destination" alias.
+    A freight agent recorded as a place of delivery is a lane that does not
+    exist."""
+    rows = json.loads(REPORT.read_text(encoding="utf-8"))
+    agenty = [r["mdolx"] for r in rows
+              if "LOGISTICS" in (r.get("final_destination") or "").upper()
+              or "QUANTERM" in (r.get("final_destination") or "").upper()]
+    assert not agenty, f"an agent office became a destination: {agenty}"

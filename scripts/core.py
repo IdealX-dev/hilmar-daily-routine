@@ -470,6 +470,20 @@ CARRIER_ALIASES: dict[str, str] = {
     # Wan Hai
     "WAN HAI":   "Wan Hai",
     "WHL":       "Wan Hai",
+    # OL's own operational spellings, from the 2026 customer transaction
+    # report (2026-08-13). Added because the report is now the authority on
+    # what Hilmar booked, and its names are the LEGAL entities rather than
+    # the trade names this file already canonicalises: without these, ONE
+    # appears twice (38 bookings as "ONE", 19 backfilled as "OCEAN NETWORK
+    # EXPRESS PTE, LTD") and every carrier rollup splits one carrier in two.
+    "OCEAN NETWORK EXPRESS PTE, LTD": "ONE",
+    "OCEAN NETWORK EXPRESS PTE LTD":  "ONE",
+    "OCEAN NETWORK EXPRESS, ONE":     "ONE",
+    "CMA CGM SA":                     "CMA CGM",
+    "MEDITERRANEAN SHIPPING LINES":   "MSC",
+    "HAPAG-LLOYD AMERICA":            "Hapag-Lloyd",
+    "EVERGREEN SHIPPING AGENCY (AMERICA)": "Evergreen",
+    "HYUNDAI MERCHANT MARINE INC.":   "HMM",
 }
 
 

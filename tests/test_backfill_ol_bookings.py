@@ -309,9 +309,12 @@ def test_the_backfill_refuses_to_create_a_win_from_an_empty_row():
 
 
 def test_both_blank_rows_in_the_export_are_known():
-    """260192 is confirmed cancelled. 260426 has the identical signature and
-    is still counted as a win — this test names it so it cannot be
-    forgotten, and fails if a third blank row appears unexamined."""
+    """Both are confirmed cancelled — Michael 2026-08-13, "260905 260192
+    260963 were bookings hilmar cancelled" and "260426 cancelled". They are
+    the export's only rows with no port, no carrier, TEU 0.0 and no ETS or
+    ETA, which makes that signature the shape of a cancellation rather than
+    of a booking. This test fails if a third such row ever appears
+    unexamined."""
     import json
     rows = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
                        ).read_text(encoding="utf-8"))

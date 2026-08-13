@@ -66,7 +66,15 @@ FIELD_ALIASES: dict[str, list[str]] = {
     # discharge port.
     "pod": ["pod", "port of discharge", "discharge port", "discharge",
             "port of destination", "destination port", "destination"],
-    "final_destination": ["destination", "final destination", "place of delivery"],
+    "final_destination": ["final destination", "place of delivery", "destination"],
+    # Who the cargo is actually going to. OL's customer transaction report
+    # carries it (NESTLE VIETNAM, LACTOPROT DEUTSCH, Dairy Products
+    # Solutions) and nothing else this pipeline reads does.
+    "consignee": ["consignee"],
+    "shipper": ["shipper"],
+    "vessel": ["vessel", "ocean vessel"],
+    "bl_no": ["carrier bl number", "bl number", "master bl", "mbl"],
+    "pod_country": ["pod country", "discharge country", "country"],
     "sheet_date": ["etd", "sail date", "sailing date", "departure date",
                    "vessel etd", "on board date", "booking date", "date"],
     "teu": ["teu", "total teu", "teus"],
@@ -83,6 +91,15 @@ REQUIRED = ("mdolx",)
 #: Cell values in a cancelled column that mean "this booking did not happen".
 CANCELLED_TRUE = {"y", "yes", "true", "1", "cancelled", "canceled", "void",
                   "x"}
+
+#: Words that disqualify a header from binding to a PLACE field, no matter
+#: which alias it otherwise matches. OL's customer transaction report has a
+#: "destinationoffice" column holding the destination AGENT — "QUANTERM
+#: LOGISTICS VIETNAM", not a port — and it matched the "destination" alias
+#: happily. A freight agent recorded as a place of delivery is a lane that
+#: does not exist.
+NOT_A_PLACE = ("office", "agent", "region", "terminal operator")
+PLACE_FIELDS = ("pol", "pod", "final_destination")
 
 #: Excel's serial-date origin. 1900-01-00 in Excel's own terms; the
 #: off-by-one comes from its deliberate 1900-leap-year bug, which is why
@@ -198,22 +215,27 @@ def bind_headers(header: list[str]) -> tuple[dict[str, int], dict[str, str]]:
     labels: dict[str, str] = {}
     taken: set[int] = set()
     for field, aliases in FIELD_ALIASES.items():
+        # Scoped to THIS field, never merged into `taken`: a header barred
+        # from being a place may still be legitimate for some other field.
+        blocked = {i for i, h in enumerate(norm)
+                   if field in PLACE_FIELDS and any(w in h for w in NOT_A_PLACE)}
         for alias in aliases:
             flat = alias.replace(" ", "")
+            skip = taken | blocked
             hit = next((i for i, h in enumerate(norm)
-                        if h == alias and i not in taken), None)
+                        if h == alias and i not in skip), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(squashed)
-                            if h == flat and i not in taken), None)
+                            if h == flat and i not in skip), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(norm)
-                            if h and alias in h.split() and i not in taken), None)
+                            if h and alias in h.split() and i not in skip), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(norm)
-                            if h and alias in h and i not in taken), None)
+                            if h and alias in h and i not in skip), None)
             if hit is None:
                 hit = next((i for i, h in enumerate(squashed)
-                            if h and flat in h and i not in taken), None)
+                            if h and flat in h and i not in skip), None)
             if hit is not None:
                 bound[field] = hit
                 labels[field] = header[hit]
@@ -319,6 +341,10 @@ def extract(rows, customer_filter=None):
         i = bound.get(field)
         return (as_text(row[i]).strip() if i is not None and i < len(row) else "")
 
+    # The customer filter reads the customer column, falling back to shipper
+    # — an export that names only the shipper would otherwise silently stop
+    # filtering and let every other account through.
+    who_field = "customer" if "customer" in bound else "shipper"
     want = normalize(customer_filter) if customer_filter else None
     records, dropped = [], []
     for row in rows[hdr_i + 1:]:
@@ -331,9 +357,9 @@ def extract(rows, customer_filter=None):
                 dropped.append((raw_ref, "no 6-digit MDOLX in this cell"))
             continue
         if want:
-            who = normalize(cell(row, "customer"))
+            who = normalize(cell(row, who_field))
             if want not in who:
-                dropped.append((ref, f"customer {cell(row, 'customer')!r} "
+                dropped.append((ref, f"{who_field} {cell(row, who_field)!r} "
                                      f"does not contain {customer_filter!r}"))
                 continue
         if normalize(cell(row, "cancelled")) in CANCELLED_TRUE:
@@ -354,10 +380,14 @@ def extract(rows, customer_filter=None):
         final = cell(row, "final_destination")
         if final and final.upper() != rec["pod"].upper():
             rec["final_destination"] = final
-        if "teu" in bound and cell(row, "teu"):
-            rec["teu"] = cell(row, "teu")
-        if "customer" in bound and cell(row, "customer"):
-            rec["customer"] = cell(row, "customer")
+        # Optional detail, carried only when the export actually has it.
+        # OL's CUSTOMER transaction report supplies consignee and vessel;
+        # the plain transaction report does not, and a key present with an
+        # empty value reads as "we looked and there is none".
+        for extra in ("teu", "customer", "consignee", "shipper", "vessel",
+                      "bl_no", "pod_country"):
+            if extra in bound and cell(row, extra):
+                rec[extra] = cell(row, extra)
         records.append(rec)
 
     # One booking per MDOLX. A year-long export repeats a reference once per
