@@ -1577,7 +1577,8 @@ def is_business_stale(
 send_signal_stale = is_business_stale
 
 
-def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) -> bool:
+def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
+                         *, request_dt: datetime | None = None) -> bool:
     """True when a QUOTED PENDING-Hilmar row has aged out to Quoted & Lost.
 
     Pure CLOCK hours from the OL quote (response_timestamp):
@@ -1590,16 +1591,34 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) 
     number is what stops that recurring. Distinct from the SEND-
     signal aging (is_business_stale), which is unchanged.
 
+    `request_dt` (2026-08-13) is a FALLBACK anchor, used only when `resp_dt`
+    is None. Michael, verbatim: "if you have the quotes and you do not see a
+    booking for the quote, then it's a loss  that's it". A row that carries a
+    rate or a carrier but no parseable response_timestamp still has a clock we
+    trust — Lonny's request — and decide_status already ages off it inline.
+    Without this parameter every DETECTOR had to skip such rows (they all did:
+    QC-007, gen_improvements_report, auto_chase_pending), so a row stuck in
+    PENDING raised nothing and got no chase. The fallback exists so those
+    callers stop re-deriving the rule, or skipping it.
+
+    It is KEYWORD-ONLY on purpose. Positionally it would slide into `now`,
+    which is the same class of mistake that once put a hardcoded 24h literal
+    in QC-007 while decide_status ran 48h+Friday.
+
+    Behaviour for existing 2-arg callers is unchanged: with request_dt
+    defaulting to None the anchor is exactly resp_dt, including the None case.
+
     Kept byte-for-byte identical to src/hilmar/core.pending_hilmar_stale —
     tests/test_core_parity.py fails if they drift.
     """
-    if resp_dt is None:
+    anchor = resp_dt if resp_dt is not None else request_dt
+    if anchor is None:
         return False
     now = now or now_utc()
-    resp_et = resp_dt.astimezone(ET)
-    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if resp_et.weekday() == 4
+    anchor_et = anchor.astimezone(ET)
+    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if anchor_et.weekday() == 4
                 else PENDING_HILMAR_LOSS_HOURS)
-    return (now - resp_dt).total_seconds() / 3600.0 >= deadline
+    return (now - anchor).total_seconds() / 3600.0 >= deadline
 
 
 def pending_ol_stale(request_dt, now=None) -> bool:
@@ -1735,6 +1754,30 @@ def decide_status(
             ts = parse_iso(ev.get("at") if isinstance(ev, dict) else None)
             if ts and (send_at is None or ts > send_at):
                 send_at = ts
+        # THE ROW THAT NEVER AGED (2026-08-13). Michael, verbatim: "if you
+        # have the quotes and you do not see a booking for the quote, then
+        # it's a loss  that's it".
+        #
+        # send_at was derived ONLY from response_timestamp and
+        # send_signal_events, and is_business_stale returns False on None. A
+        # row holding a rate but no parseable response timestamp — exactly
+        # what patch_carriers produces when it recovers a rate from a sibling
+        # thread or a booking PDF — therefore had NO clock on this branch and
+        # returned PENDING/AWAITING_MDOLX forever. Measured before the fix:
+        # identical PENDING at +1d, +30d, +365d and +3650d. Quote evidence,
+        # no booking, never a loss; pending_substate keys off `quoted`, so it
+        # rendered under PENDING HILMAR and fed the report's "cannot be dated"
+        # banner.
+        #
+        # Fall back to Lonny's request, the one clock we always have and never
+        # invent — the same anchor the quote-aging branch below already uses
+        # for the same missing evidence. Deliberately NOT a change to
+        # is_business_stale: that predicate must keep returning False on None
+        # so a row with NO clock at all stays PENDING and surfaces as a DATA
+        # defect via QC-007, rather than being aged on a timestamp nobody can
+        # evidence.
+        if send_at is None:
+            send_at = parse_iso(request_timestamp)
         if send_signal_stale(send_at, now):
             # has_send stays TRUE. It is an EVIDENCE field — "did Lonny
             # accept?" — not a state field, and on this branch the answer is

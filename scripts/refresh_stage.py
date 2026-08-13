@@ -185,6 +185,108 @@ REPLY_PREFIX = re.compile(r"^\s*(re|fw|fwd)\s*:", re.I)
 # site (Dalhart was the 2026-06-11 miss) extends ONE list, not N regexes.
 RATE_RESPONSE_SUBJECT = BP.RATE_RESPONSE_SUBJECT_RX
 
+#: Same lane shape as RATE_RESPONSE_SUBJECT, but tolerant of a FORWARD prefix
+#: and of a chain of them ("Fwd: RE: Dalhart, TX to Caucedo").
+#:
+#: RATE_RESPONSE_SUBJECT_RX is anchored on a literal "re:", which is correct
+#: for a reply landing in the shared mailbox and WRONG for the forward shape
+#: that surfaced on 2026-08-12: OL quoted Lonny from the shared mailbox, then
+#: an OL person FORWARDED that thread on with the subject rewritten to
+#: "FW: Oakland to Algeciras". Built from BP.KNOWN_ORIGINS for the same
+#: reason RATE_RESPONSE_SUBJECT_RX is — one origin list, not N regexes.
+#:
+#: DELIBERATELY LOCAL to refresh_stage. Widening the shared BP regex would
+#: also change ingest.counts_as_rate_response's re-derivation over every
+#: historical mbd_inbound row in BOTH trees, which is a silent reclassification
+#: of shipped history. This pattern gates one new intake branch and nothing else.
+#:
+#: A prefix is REQUIRED (the `+`). A bare "Oakland to Algeciras" is Lonny's own
+#: request shape; admitting it here from an OL sender would let an OL person's
+#: brand-new ask masquerade as a response to it.
+LANE_SUBJECT_RX = re.compile(
+    r"^\s*(?:(?:re|fw|fwd)\s*:\s*)+(?:"
+    + "|".join(re.escape(o) for o in BP.KNOWN_ORIGINS)
+    + r")(?:,?\s*[A-Z]{2})?\s+to\s+",
+    re.IGNORECASE,
+)
+
+#: Buckets whose sender IS Lonny. Only these may seed a thread anchor — an
+#: anchor's whole job is to prove "Hilmar's buyer is in this conversation",
+#: and a message OL sent proves nothing of the kind.
+LONNY_BUCKETS = ("lonny_outbound", "lonny_reply")
+
+#: The mailbox this tracker reads AND sends from (config.json
+#: ingest_scope.mailboxes_to_scan). Mail from it is our own outbound. The
+#: existing OL_DOMAIN branch can afford to admit it because that branch also
+#: demands Lonny be a named participant; the thread-linkage branch below has
+#: no such check, so it excludes us explicitly.
+SELF_SENDER = "michael.deitchman@ol-usa.com"
+
+
+class LonnyThreads:
+    """Thread anchors — conversation ids and message ids of Lonny-SENT mail.
+
+    Exists because of the 2026-08-12 forwards (tests/fixtures/ol_quote_*.eml).
+    Both are real OL quotes for real Lonny requests, and both were dropped at
+    intake, because classify's OL branch requires Lonny in From/To/Cc and a
+    forward strips him: `From: Linda.Echevarria@ol-usa.com
+    To: Michael.Deitchman@ol-usa.com`, no Cc. His address IS in the body — at
+    byte offset 8678 and 4303 — but bodies are fetched AFTER staging
+    (main(), the get_message_body loop), and Graph's bodyPreview is ~255
+    chars, so no body test can be the intake gate. Measured, not assumed.
+
+    What IS on the item at classify() time is exactly GRAPH_SELECT:
+    conversationId, subject, from/to/cc, bodyPreview, internetMessageHeaders.
+    So identity comes from the THREAD instead of the header line: a message is
+    Hilmar's if it belongs to a conversation Lonny himself started or replied
+    in. A different customer's mail is a different Exchange conversation, so
+    this cannot bleed NUMIDIA / Agri Dairy / Hoogwegt / Erno Laszlo / Brisar
+    in the way a subject match would — their lane subjects are textually
+    identical ("Oakland to Algeciras" names no customer).
+
+    conversation_id is the load-bearing signal: it is a first-class Graph
+    property, it is in GRAPH_SELECT, and build_stage_record has persisted it
+    on every staged row since 2026-06-25. In-Reply-To/References are an OR,
+    not an AND — they are strictly stronger evidence when present (they name a
+    specific ancestor Lonny sent), but this repo has never measured whether
+    Graph returns internetMessageHeaders on a COLLECTION $select as opposed to
+    a single-message GET. Treating them as required would make the fix depend
+    on an unverified assumption; treating them as a bonus costs nothing.
+    """
+
+    __slots__ = ("conv_ids", "imids")
+
+    def __init__(self, conv_ids: set[str] | None = None,
+                 imids: set[str] | None = None) -> None:
+        self.conv_ids = set(conv_ids or ())
+        self.imids = set(imids or ())
+
+    def __bool__(self) -> bool:
+        return bool(self.conv_ids or self.imids)
+
+    def add(self, conversation_id: str | None = None, imid: str | None = None) -> None:
+        if conversation_id:
+            self.conv_ids.add(conversation_id)
+        if imid:
+            self.imids.add(imid)
+
+    def add_item(self, item: dict) -> None:
+        """Seed from a raw Graph item that classify() put in a Lonny bucket."""
+        self.add(item.get("conversationId"), item.get("internetMessageId"))
+
+    def links(self, item: dict) -> bool:
+        """True when `item` sits in a conversation Lonny is known to be in."""
+        conv = item.get("conversationId")
+        if conv and conv in self.conv_ids:
+            return True
+        if not self.imids:
+            return False
+        threading = _extract_thread_headers(item)
+        chain = set(threading["references"])
+        if threading["in_reply_to"]:
+            chain.add(threading["in_reply_to"])
+        return bool(chain & self.imids)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Auth — app-only (GH Actions) first, else outlook_send's token cache
@@ -720,8 +822,14 @@ def fetch_pdf_attachments(token: str, message_id: str, imid: str, dest_dir: Path
 # Classification
 # ─────────────────────────────────────────────────────────────────────
 
-def classify(item: dict) -> str | None:
-    """Return bucket name or None if message should be dropped."""
+def classify(item: dict, lonny_threads: LonnyThreads | None = None) -> str | None:
+    """Return bucket name or None if message should be dropped.
+
+    `lonny_threads` enables the thread-linkage branch at the bottom. It is
+    OPTIONAL and defaults to None so every existing caller and test keeps the
+    pure sender-rule behaviour; main() runs classify twice, once without it to
+    collect the anchors and once with it over the residual. See LonnyThreads.
+    """
     sender = ((item.get("from") or {}).get("emailAddress") or {}).get("address") or ""
     sender_l = sender.lower()
     subject = item.get("subject") or ""
@@ -769,6 +877,44 @@ def classify(item: dict) -> str | None:
             return "mbd_rate_response"
         return "mbd_inbound"
 
+    # OL FORWARDING a quote out of a Lonny thread, with Lonny stripped off the
+    # header line (2026-08-13). Michael: "also ol quoted these... i sent you
+    # the two fucking emails five times", against a report whose OL-USA
+    # RESPONSES section read (0) for the same two lanes it listed as new
+    # requests. Both mails are committed as tests/fixtures/ol_quote_*.eml.
+    #
+    # THREE conditions, all necessary:
+    #   sender is OL and is not us   — identity of the desk that answered
+    #   lane-shaped subject          — this is a QUOTE, not internal chatter
+    #   thread links to Lonny        — this is HILMAR's quote, not NUMIDIA's
+    #
+    # The third is what keeps the other customers out. NUMIDIA, Agri Dairy,
+    # Hoogwegt, Erno Laszlo and Brisar load out of the same plant on the same
+    # lanes; "FW: Oakland to Algeciras" about a Hoogwegt move is textually
+    # identical to this one, so subject alone would admit it. It is a
+    # different Exchange conversation, so thread linkage refuses it.
+    #
+    # Bucketed straight to mbd_rate_response, NOT mbd_inbound. That is not
+    # cosmetic: ingest.counts_as_rate_response re-derives
+    # BP.RATE_RESPONSE_SUBJECT_RX over mbd_inbound rows, and that pattern is
+    # anchored on a literal "re:" — so a forward admitted as mbd_inbound would
+    # be dropped a second time one layer down and OL-USA RESPONSES would still
+    # read (0). Returning the bucket short-circuits that re-derivation
+    # (ingest.py, `if bucket == "mbd_rate_response": return True`), which is
+    # why neither BP.RATE_RESPONSE_SUBJECT_RX nor its src/hilmar mirror has to
+    # be widened for the fix to land.
+    #
+    # No mbd_inbound fallthrough on this rule. Anything OL sends inside a
+    # Hilmar thread WITHOUT a lane subject stays out of stage entirely;
+    # forwarded booking confirmations are already covered by the
+    # hilmar-bookings query and the MBD_BOOKING_EMAIL branch above.
+    if (lonny_threads is not None
+            and sender_l.endswith(OL_DOMAIN)
+            and sender_l != SELF_SENDER.lower()
+            and LANE_SUBJECT_RX.match(subject)
+            and lonny_threads.links(item)):
+        return "mbd_rate_response"
+
     return None  # any other sender → drop
 
 
@@ -813,6 +959,33 @@ def load_existing_stage_keys() -> tuple[set[str], set[str]]:
             if rec.get("imid"):
                 imids.add(rec["imid"])
     return ids, imids
+
+
+def load_existing_stage_threads() -> LonnyThreads:
+    """Thread anchors for every Lonny-SENT message already in the stage file.
+
+    A sibling of load_existing_stage_keys rather than a change to it: that
+    function's contract is dedup keys across ALL buckets, and it deliberately
+    throws away bucket and conversation_id. Anchors need the opposite — the
+    bucket is the filter, and conversation_id is the payload.
+
+    Reading the stage file matters because a forward can arrive on a LATER
+    fire than the request it answers: Lonny asks Monday and is staged, OL
+    forwards Wednesday. In-run anchors alone would only ever link a forward to
+    a request that happened to land in the same 14-day sweep pass.
+    """
+    out = LonnyThreads()
+    if not STAGE_PATH.exists():
+        return out
+    with open(STAGE_PATH, encoding="utf-8") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("bucket") in LONNY_BUCKETS:
+                out.add(rec.get("conversation_id"), rec.get("imid"))
+    return out
 
 
 def load_existing_body_imids() -> set[str]:
@@ -1035,12 +1208,48 @@ def main() -> int:
     skipped_existing = 0
     dropped_senders: Counter = Counter()
     dropped_examples: list[tuple[str, str, str]] = []
+
+    # PASS 1 — date filter + the pure sender rules, collecting Lonny thread
+    # anchors as we go.
+    #
+    # THIS MUST BE TWO PASSES, and the reason is ordering. all_items is fed by
+    # the date sweep, which is newest-first, so on 2026-08-12 Linda's 20:57
+    # forward is visited BEFORE Lonny's 13:05 request that it answers. A
+    # single pass would test the forward against an anchor set that does not
+    # yet contain its own thread and drop it — the same bug, one refactor
+    # later. One extra pass is sufficient and no fixpoint is needed: anchors
+    # come only from Lonny-SENDER rows, which pass 1 decides purely on the
+    # From address and therefore order-independently.
+    windowed: list[list] = []   # [item, bucket] — bucket filled in below
     for it in all_items.values():
         ts = parse_iso(it.get("receivedDateTime")) or parse_iso(it.get("sentDateTime"))
         if ts and ts < cutoff:
             skipped_old += 1
             continue
-        bucket = classify(it)
+        windowed.append([it, None])
+
+    lonny_threads = load_existing_stage_threads()
+    _anchors_from_stage = (len(lonny_threads.conv_ids), len(lonny_threads.imids))
+    for pair in windowed:
+        pair[1] = classify(pair[0])
+        if pair[1] in LONNY_BUCKETS:
+            lonny_threads.add_item(pair[0])
+    print(f"refresh_stage: Lonny thread anchors: {len(lonny_threads.conv_ids)} "
+          f"conversation(s), {len(lonny_threads.imids)} message-id(s) "
+          f"({_anchors_from_stage[0]}/{_anchors_from_stage[1]} from the existing stage file)")
+
+    # PASS 2 — re-decide ONLY the residual, now that the anchor set is whole.
+    # Restricted to rows pass 1 dropped, so no sender rule can be overridden.
+    admitted_by_thread: list[tuple[str, str]] = []
+    for pair in windowed:
+        if pair[1] is not None:
+            continue
+        pair[1] = classify(pair[0], lonny_threads)
+        if pair[1] is not None:
+            sender = ((pair[0].get("from") or {}).get("emailAddress") or {}).get("address") or ""
+            admitted_by_thread.append((sender, (pair[0].get("subject") or "")[:110]))
+
+    for it, bucket in windowed:
         if bucket is None:
             sender = ((it.get("from") or {}).get("emailAddress") or {}).get("address") or ""
             if sender.lower() in {s.lower() for s in EXCLUDED_SENDERS}:
@@ -1082,6 +1291,18 @@ def main() -> int:
           f"{skipped_excluded} excluded, "
           f"{skipped_unclassified} unclassified, "
           f"{skipped_existing} already-staged")
+
+    # NAME the thread-admitted messages for the same reason the drops are
+    # named: this branch admits mail whose header line does NOT mention Lonny,
+    # so if it ever starts admitting the wrong customer, the log has to be able
+    # to say so without a re-run. Unconditional — the daily fire has no
+    # --verbose.
+    if admitted_by_thread:
+        print()
+        print(f"refresh_stage: ADMITTED by Lonny-thread linkage: "
+              f"{len(admitted_by_thread)} (OL forwards with Lonny off the header)")
+        for s, subj in admitted_by_thread[:12]:
+            print(f"    {s} | {subj!r}")
 
     # NAME the drops. `classify` returns None for any sender that is not Lonny
     # or the shared booking mailbox, and the 'lonny-flow' Graph query returns

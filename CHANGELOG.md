@@ -3,6 +3,160 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-13 (4) — OL forwards enter the tracker on thread identity;
+### an undated quote with a Send and no booking finally ages to a loss
+
+Two defects, both reported by Michael against the 2026-08-12 report, both
+fixed here with tests driven by the two committed OL quote emails.
+
+## A — "i sent you the two fucking emails five times"
+
+The report listed two NEW REQUESTS FROM LONNY (Oakland->HCMC Cat Lai,
+Oakland->Algeciras) and, for the same two lanes, OL-USA RESPONSES (0). OL had
+quoted both. `tests/fixtures/ol_quote_algeciras.eml` and
+`ol_quote_hcmc_cat_lai.eml` are those emails.
+
+MEASURED: both are FORWARDS — `From: Linda.Echevarria@ol-usa.com
+To: Michael.Deitchman@ol-usa.com`, no Cc, Lonny nowhere on the header line.
+`classify()`'s OL branch requires `LONNY_EMAIL in _addresses(item)`, so both
+returned None and were DROPPED AT INTAKE. Lonny's address IS in the body, at
+byte offset 8678 and 4303 — but bodies are fetched AFTER staging and Graph's
+bodyPreview is ~255 chars, so no body test could ever have been the gate.
+
+TWO GATES, NOT ONE. `BP.RATE_RESPONSE_SUBJECT_RX` is anchored on a literal
+"re:", so "FW: Oakland to Algeciras" fails it, and
+`ingest.counts_as_rate_response` re-derives that regex over `mbd_inbound`
+rows. Opening intake alone would have parked both in `mbd_inbound` and left
+OL-USA RESPONSES at (0) — the same bug one layer down, with a fix in front of
+it. `tests/test_ol_forward_intake.py::test_an_intake_only_fix_would_not_have_
+been_enough` proves it rather than asserting it.
+
+DECISIONS
+
+  Identity comes from the THREAD, not the header line. `LonnyThreads` collects
+  conversation ids + message ids of Lonny-SENT staged mail; a forward is
+  admitted only when it is OL-sent, not from us, carries a lane-shaped
+  subject, AND links to one of those threads. REJECTED: matching on subject
+  alone — Lonny's subjects name no customer ("Oakland to Algeciras"), and
+  NUMIDIA / Agri Dairy / Hoogwegt / Erno Laszlo / Brisar load out of the same
+  plant on the same lanes, so a subject rule admits their freight verbatim.
+  REJECTED: a second body-fetch pass — one Graph GET per candidate per fire,
+  and "lupfold appears somewhere in the body" fires on anything quoting a
+  thread he was ever on.
+
+  conversation_id is load-bearing; In-Reply-To/References are an OR, never an
+  AND. conversation_id is in GRAPH_SELECT and has been persisted by
+  build_stage_record since 2026-06-25. Whether Graph returns
+  internetMessageHeaders on a COLLECTION $select has never been measured in
+  this repo, so the fix does not depend on it.
+
+  Bucketed straight to `mbd_rate_response`, which short-circuits
+  `counts_as_rate_response`. `BP.RATE_RESPONSE_SUBJECT_RX` and its src mirror
+  are UNCHANGED — widening the shared regex would silently reclassify every
+  historical `mbd_inbound` row in both trees with no migration. The new
+  `LANE_SUBJECT_RX` is deliberately local to refresh_stage.
+
+  Intake is now TWO passes. The date sweep is newest-first, so Linda's 20:57
+  forward is visited BEFORE Lonny's 13:05 request; a single pass tests the
+  forward against an anchor set that does not yet contain its own thread. One
+  extra pass suffices — anchors come only from Lonny-SENDER rows, decided on
+  the From address alone and therefore order-independently. Pass 2 re-decides
+  only rows pass 1 dropped, so no sender rule can be overridden.
+
+  The fire now logs the anchor count and names every thread-admitted message,
+  unconditionally (the daily fire passes no --verbose). This branch admits
+  mail that does not mention Lonny anywhere a human can see; if it ever starts
+  admitting the wrong customer, the log must say so without a re-run.
+
+## B — "if you have the quotes and you do not see a booking, it is a loss"
+
+The report banner: "21 further quotes are recorded with a rate or carrier but
+no response time... They appear under PENDING HILMAR."
+
+THE STATED DIAGNOSIS WAS WRONG, and shipping it would have been a no-op that
+looked like a fix. `pending_hilmar_stale`'s `if resp_dt is None: return False`
+is unreachable — every call site already guards the argument. `decide_status`'s
+QUOTE-aging branch ALSO already falls back to Lonny's request. Measured: a
+3-week-old quoted row with no send and no MDOLX returned LOSS/NO_RESPONSE_TS
+before this change and after it.
+
+THE REAL HOLE was one branch earlier. On `has_send and not has_mdolx`,
+`send_at` came only from `response_timestamp` and `send_signal_events`, and
+`is_business_stale` returns False on None — so a row with neither (exactly
+what patch_carriers produces when it recovers a rate from a sibling thread or
+a booking PDF) had NO CLOCK AT ALL. Measured before the fix: identical
+PENDING/AWAITING_MDOLX at +1d, +30d, +365d and +3650d. `pending_substate`
+keys off `quoted`, so it rendered under PENDING HILMAR — the banner's
+population.
+
+DECISIONS
+
+  `decide_status` falls back to `request_timestamp` on the send branch, in
+  BOTH trees. NOT a change to `is_business_stale`: it must keep returning
+  False on None so a row with no clock at all stays PENDING and surfaces as a
+  DATA defect, rather than being aged on a timestamp nobody can evidence.
+
+  `pending_hilmar_stale` gains a KEYWORD-ONLY `request_dt` fallback, both
+  trees, byte-identical. Keyword-only so a future caller cannot slide it
+  positionally into `now` — the same class of error that put a hardcoded 24h
+  in QC-007 while decide_status ran 24h/72h. Every existing 2-arg call is
+  bit-for-bit unchanged.
+
+  All three detectors were BLIND, which is why nobody saw it: QC-007
+  (`if rt and`), gen_improvements_report (`if resp_dt is None: continue`) and
+  auto_chase_pending (`if not response_timestamp: continue`) each skipped
+  undated rows, so a stuck row raised nothing and got no chase. All three now
+  anchor on the request when the quote is undated.
+
+  Removing `if rt` from QC-007 also removed the scoping it was doing by
+  accident — `pending` is EVERY PENDING row. QC-007 is now explicitly scoped
+  to PENDING_HILMAR and skips AWAITING_MDOLX / MDOLX_NO_SEND, which
+  decide_status holds on purpose.
+
+  NO REPORT MAY CLAIM A QUOTE TIME IT CANNOT EVIDENCE. gen_improvements_report
+  now says "requested Xh ago (quote undated)" on a request anchor, and
+  auto_chase_pending — which emails LONNY — says "request from N days ago"
+  instead of "quote from N days ago". Fabricated timing shipped from this repo
+  once already (core.TIMING_VALID_FROM); it is not going out over Michael's
+  signature a second time. Also fixed a pre-existing mislabel: that flag cited
+  PENDING_WINDOW_HOURS while the predicate has always used
+  PENDING_HILMAR_LOSS_HOURS.
+
+UNFIXED — needs Michael
+
+  `has_mdolx and not has_send` returns PENDING/MDOLX_NO_SEND with no clock
+  consulted, at any age. Unbounded, and real. But there IS a booking, so under
+  Michael's verbatim rule it is not a loss — it needs an ops-review SLA, not a
+  loss rule. Pinned by test so nobody "fixes" it by accident.
+
+  When a quote is undated, the fallback anchors Friday-ness on LONNY'S
+  REQUEST, not OL's quote. A request anchor is always EARLIER than the quote,
+  so the window expires sooner than a quote-anchored one would. Mitigated by
+  qc_selfheal._heal_undated_quote running BEFORE decide_status in the same
+  loop (now pinned by test), which recovers a real response_timestamp from the
+  cached body first. Michael still needs to rule on whether an undated quote
+  should age off the request at all, or hold PENDING and raise a QC instead.
+
+  How many of the 21 rows are shape A vs the MDOLX_NO_SEND shape is UNKNOWN —
+  production tracking-data-v2.json is not in this repo or on this box.
+
+VERIFICATION (this session)
+  Baseline before:  3020 passed, 1 skipped; ruff All checks passed!
+  After:            3096 passed, 1 skipped; ruff All checks passed!
+  New tests verified to FAIL against the pre-fix tree: 30 of 44 (intake),
+  17 of 36 (aging). The remainder are regression guards that must hold in
+  both states.
+
+  Fixture classification:  BEFORE None -> AFTER mbd_rate_response, both
+  fixtures, via conversationId and via the real References chain
+  independently; ingest.counts_as_rate_response True on both staged records.
+
+  Synthetic quoted row, request 3 weeks old, no response_timestamp:
+    no send, no MDOLX     LOSS/NO_RESPONSE_TS    -> unchanged (already correct)
+    Lonny SEND, no MDOLX  PENDING/AWAITING_MDOLX -> LOSS/SEND_NO_BOOKING
+    MDOLX, no send        PENDING/MDOLX_NO_SEND  -> unchanged (out of scope)
+  Same three shapes with the request 2h old: all PENDING before and after.
+
 ### 2026-08-13 (3) — OL quote tables are read by header-to-cell alignment;
 ### the Dummy-SI footer and "vessel diversion" are now unreachable
 

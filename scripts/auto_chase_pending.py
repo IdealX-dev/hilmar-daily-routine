@@ -56,20 +56,36 @@ def _config() -> dict:
 
 
 def _find_overdue_pending(data: dict, min_age_hours: int) -> list[dict]:
-    """PENDING rows where response_timestamp is ≥ min_age_hours ago."""
+    """PENDING rows ≥ min_age_hours old, measured from the OL quote when we
+    have one and from Lonny's request when the quote is undated.
+
+    2026-08-13: this used to `continue` on a missing response_timestamp, so a
+    quote carrying a rate but no parseable response time was never chased — it
+    sat PENDING indefinitely with no detector and no follow-up, which is the
+    same blind spot QC-007 and gen_improvements_report had.
+
+    Rows admitted on the REQUEST anchor are marked `_age_dated=False`.
+    _build_chase_email MUST branch on it: this email goes to the CLIENT, and
+    telling Lonny "your quote from 6 days ago" off a request timestamp states
+    a quote time we cannot evidence. Fabricated timing has shipped from this
+    repo once already (core.TIMING_VALID_FROM exists because of it); it is not
+    going out over Michael's signature.
+    """
     out = []
     now = datetime.now(timezone.utc)
     for r in data.get("requests", []):
         if r.get("status") != "PENDING":
             continue
-        if not r.get("response_timestamp"):
-            continue
-        ts = core.parse_iso(r["response_timestamp"])
+        ts = core.parse_iso(r.get("response_timestamp"))
+        dated = ts is not None
+        if ts is None:
+            ts = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
         if not ts:
             continue
         hrs = (now - ts).total_seconds() / 3600.0
         if hrs >= min_age_hours:
             r["_age_hours"] = hrs
+            r["_age_dated"] = dated
             out.append(r)
     out.sort(key=lambda r: -r["_age_hours"])
     return out
@@ -85,12 +101,26 @@ def _build_chase_email(r: dict) -> tuple[str, str]:
     etd = r.get("etd_offered") or "?"
     age_h = r.get("_age_hours", 0)
     days = int(age_h / 24)
+    # Is age_h measured from OUR quote, or from Lonny's request because the
+    # quote carries no usable timestamp? Only the first licenses "quote from N
+    # days ago" — see _find_overdue_pending. Defaults True so any caller that
+    # builds an email from a row this module did not select keeps the old copy.
+    dated = r.get("_age_dated", True)
+    if dated:
+        opener = f"quote from {days} days ago" if days >= 1 else "recent quote"
+        footer = f"sent because the quote is {age_h:.0f}h old without a reply"
+    else:
+        # No quote time on record. Anchor the sentence on the request, which
+        # IS evidenced, and say nothing about when we answered.
+        opener = f"request from {days} days ago" if days >= 1 else "recent request"
+        footer = (f"sent because the request is {age_h:.0f}h old without a reply "
+                  f"(our quote on it carries no timestamp)")
 
     subject = f"Quick check — {lane}, {containers} {('(') if rate else ''}{rate_str}{(')') if rate else ''}"
     body = f"""<html><body style="font-family:'Segoe UI',Arial,sans-serif;font-size:14px;color:#0f172a">
 <p>Hi Lonny,</p>
 
-<p>Quick check on this {('quote from ' + str(days) + ' days ago') if days >= 1 else 'recent quote'} — let me know how you'd like to proceed:</p>
+<p>Quick check on this {opener} — let me know how you'd like to proceed:</p>
 
 <table style="border-collapse:collapse;margin:12px 0;font-size:13px">
 <tr><td style="padding:4px 12px 4px 0;color:#64748b">Lane</td><td style="padding:4px 0;font-weight:600">{lane}</td></tr>
@@ -103,7 +133,7 @@ def _build_chase_email(r: dict) -> tuple[str, str]:
 <p>If you'd like to book, just reply confirming. If you're going with a different carrier, no worries — just let me know.</p>
 
 <p>Thanks,<br>Michael</p>
-<p style="font-size:11px;color:#94a3b8">Auto-generated chase from the Hilmar tracker — sent because the quote is {age_h:.0f}h old without a reply.</p>
+<p style="font-size:11px;color:#94a3b8">Auto-generated chase from the Hilmar tracker — {footer}.</p>
 </body></html>"""
     return subject, body
 

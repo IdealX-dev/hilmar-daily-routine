@@ -2378,10 +2378,30 @@ def phase_6_rules(log: Log, data: dict):
         # them PENDING. Same drift class the parity test catches between
         # scripts/core ↔ src/hilmar/core — now also between qc_selfheal
         # ↔ core.is_business_stale.
-        if rt and core.pending_hilmar_stale(rt, now):
+        #
+        # 2026-08-13: the `if rt` that used to gate this made QC-007 BLIND to
+        # the rows most likely to be stuck — a quote with a rate but no
+        # parseable response_timestamp skipped the check entirely, so it aged
+        # forever and raised nothing. Pass the request as the fallback anchor
+        # so the detector sees exactly what decide_status sees.
+        #
+        # Losing `if rt` means losing the scoping it was doing by accident:
+        # `pending` is EVERY PENDING row, including PENDING_OL (unquoted, OL
+        # has not answered yet) and the MDOLX_NO_SEND / AWAITING_MDOLX
+        # anomalies that decide_status holds ON PURPOSE. Firing on those is
+        # the exact drift this comment block was written about, in the other
+        # direction. Scope explicitly instead.
+        if core.pending_substate(r) != "PENDING_HILMAR":
+            continue
+        if r.get("loss_reason") in ("AWAITING_MDOLX", "MDOLX_NO_SEND"):
+            continue
+        req_dt = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
+        if core.pending_hilmar_stale(rt, now, request_dt=req_dt):
+            _anchor = "quote" if rt else "request (quote undated)"
             log.error(f"QC-007: {r['request_id']} still PENDING past the "
                       f"{core.PENDING_HILMAR_LOSS_HOURS}h/{core.PENDING_HILMAR_LOSS_HOURS_FRIDAY}h-Friday "
-                      f"decision window — state machine should have aged this to Q&L")
+                      f"decision window measured from the {_anchor} — "
+                      f"state machine should have aged this to Q&L")
 
     # ─────────────────────────────────────────────────────────────────
     # QC-008/009/010 — paired with refresh_stage.py and the additive

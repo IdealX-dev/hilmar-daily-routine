@@ -224,20 +224,32 @@ def collect_red_flags(data, qc, drift):
     pending = [r for r in requests if r.get("status") == "PENDING"]
     now = datetime.now(timezone.utc)
     overdue = []
+    # 2026-08-13: `if resp_dt is None: continue` skipped exactly the rows most
+    # likely to be stuck — a quote carrying a rate but no parseable response
+    # timestamp. They aged forever and this audit never named one. Anchor on
+    # Lonny's request when the quote is undated, same as decide_status does.
     for r in pending:
         resp_dt = core.parse_iso(r.get("response_timestamp"))
-        if resp_dt is None:
-            continue
-        if core.pending_hilmar_stale(resp_dt, now):
-            h = (now - resp_dt).total_seconds() / 3600.0
-            overdue.append((r, h))
-    for r, h in overdue:
+        req_dt = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
+        if core.pending_hilmar_stale(resp_dt, now, request_dt=req_dt):
+            anchor = resp_dt if resp_dt is not None else req_dt
+            h = (now - anchor).total_seconds() / 3600.0
+            overdue.append((r, h, resp_dt is not None))
+    for r, h, dated in overdue:
+        # The age is measured from whichever anchor actually fired. Saying
+        # "quoted {h}h ago" off a REQUEST anchor states a quote time we do not
+        # have — the fabricated-timing failure this repo already shipped once.
+        when = f"quoted {h:.1f}h ago" if dated else f"requested {h:.1f}h ago (quote undated)"
+        # Cite the window the predicate actually enforces. This line named
+        # PENDING_WINDOW_HOURS while pending_hilmar_stale has always used
+        # PENDING_HILMAR_LOSS_HOURS — a pre-existing mislabel, fixed here.
         flags.append({
             "level": "🔴",
             "title": f"Pending past stale window: {r.get('request_id', '?')}",
-            "detail": f"Lane {r.get('lane', '?')} | quoted {h:.1f}h ago | "
-                      f"past the {core.PENDING_WINDOW_HOURS}h biz window "
-                      f"(weekend-aware) — Lonny hasn't responded.",
+            "detail": f"Lane {r.get('lane', '?')} | {when} | "
+                      f"past the {core.PENDING_HILMAR_LOSS_HOURS}h window "
+                      f"({core.PENDING_HILMAR_LOSS_HOURS_FRIDAY}h on a Friday anchor) "
+                      f"— Lonny hasn't responded.",
         })
 
     # 4. Drift FAIL
