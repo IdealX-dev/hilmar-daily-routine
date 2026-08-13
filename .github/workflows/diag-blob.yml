@@ -52,3 +52,18 @@ jobs:
         env:
           DIAG_WINDOW_DATE: ${{ inputs.window_date }}
         run: python3 scripts/diag_rows.py
+
+      - name: Propose RFQ links for the standalone bookings (read-only)
+        # Michael 2026-08-13: "the 49 you should be able to match up the
+        # vessel, container quantities and lanes by the emails from lonny and
+        # the team suggestions".
+        #
+        # Lives here rather than in its own workflow because a workflow file
+        # has to exist on the DEFAULT branch before it can be dispatched at
+        # all, and diag-standalones.yml does not yet — dispatching it 404s.
+        # This job already pulls the same state, so the step costs one extra
+        # read of a temp dir. When diag-standalones.yml reaches the default
+        # branch this can move back out.
+        #
+        # Writes nothing: it prints candidates and the evidence behind each.
+        run: python3 scripts/diag_match_standalones.py
