@@ -248,6 +248,69 @@ def main() -> int:
                   f"mdolx={r.get('mdolx_ref')!r} "
                   f"corrected={'Operator correction' in reasons}")
 
+    # ── THE REPORT CONTRADICTED ITSELF (2026-08-13 PM) ───────────────
+    # Michael, on the Aug 12 email: "in status shows nothing pending hilmar in
+    # the chart but then in words says yes, we had 2 new requests but three
+    # open etc etc.. it's all wrong".
+    #
+    # STATUS CHANGES listed three rows moving INTO PENDING HILMAR, and the
+    # PENDING HILMAR section immediately below read (0) / No activity. Both
+    # sections are fed by the same list and pending_substate only ever returns
+    # PENDING_OL or PENDING_HILMAR for a PENDING row, so (0) means there were
+    # no PENDING rows at render time at all. Print every one, with the fields
+    # that decide which bucket it lands in.
+    #
+    # The undated-quote note and QC-077 also disagreed — 16 against 7 — and
+    # they are supposed to count the SAME rows (they drifted once before,
+    # #148). Both predicates are evaluated here side by side so the difference
+    # is read rather than argued about.
+    print(f"\n{'=' * 78}\nPENDING ROWS AND THE TWO UNDATED COUNTS\n{'=' * 78}")
+    if C is None:
+        print("  core unavailable — skipped")
+    else:
+        pend = [r for r in rows if (r.get("status") or "").upper() == "PENDING"]
+        print(f"  rows with status == PENDING: {len(pend)}")
+        for r in pend:
+            print(f"    {r.get('request_id')}  {r.get('lane')}  "
+                  f"quoted={r.get('quoted')!r} "
+                  f"substate={C.pending_substate(r)!r} "
+                  f"loss_reason={r.get('loss_reason')!r} "
+                  f"resp={str(r.get('response_timestamp'))[:19]}")
+        if not pend:
+            print("    (none — this is why both PENDING sections render 0)")
+
+        # QC-077's predicate, spelled out exactly as qc_selfheal applies it.
+        qc = [r for r in rows
+              if (C.is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
+              and not r.get("response_timestamp")
+              and not C.has_no_rfq_chain(r)
+              and not C.quote_evidence_is_booking_derived(r)]
+        # The report note's predicate, via the real function.
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import gen_email as _GE
+            note = _GE.undated_quotes({"requests": rows})
+        except Exception as e:  # pragma: no cover - diagnostic only
+            note = []
+            print(f"  gen_email.undated_quotes unavailable: {e}")
+        print(f"\n  QC-077 predicate counts : {len(qc)}")
+        print(f"  report-note counts      : {len(note)}")
+        qc_ids = {r.get("request_id") for r in qc}
+        note_ids = {r.get("request_id") for r in note}
+        only_note = sorted(note_ids - qc_ids)
+        only_qc = sorted(qc_ids - note_ids)
+        print(f"  in the NOTE but not QC-077: {len(only_note)}")
+        for rid in only_note[:15]:
+            r = next((x for x in rows if x.get("request_id") == rid), {})
+            print(f"      {rid}  status={r.get('status')} "
+                  f"rate={r.get('ol_rate')!r} carrier={r.get('carrier_quoted')!r} "
+                  f"mdolx={r.get('mdolx_ref')!r} "
+                  f"no_rfq_chain={C.has_no_rfq_chain(r)} "
+                  f"booking_derived={C.quote_evidence_is_booking_derived(r)}")
+        print(f"  in QC-077 but not the NOTE: {len(only_qc)}")
+        for rid in only_qc[:15]:
+            print(f"      {rid}")
+
     # ── IS THE TURNAROUND CLOCK TRUSTWORTHY YET? ─────────────────────
     # Michael 2026-08-13, after the shared mailbox came online: "turnaround
     # clock should be fine now that you see the shard box yourself".
