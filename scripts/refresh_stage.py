@@ -450,10 +450,28 @@ def shared_token_silent() -> str | None:
 #: WHAT THIS GIVES UP, stated because it is a real trade: mail that reaches
 #: ONLY michael.deitchman@ol-usa.com and never the shared box stops being
 #: seen. Nothing already staged is lost — stage_emails.txt is durable — but
-#: future mail of that shape would be. Set HILMAR_READ_SHARED_ONLY=false to
-#: put /me back in one env var, with no code change.
+#: future mail of that shape would be.
+#:
+#: DEFAULT FLIPPED TO FALSE, 2026-08-14. Michael: "ol won't grant more
+#: access." That closes the Full Access request permanently, and Full Access
+#: was the only route to reading this mailbox — Graph returns 404 "Default
+#: folder Root not found" for every folder on it, a store-level refusal we
+#: cannot route around from this side.
+#:
+#: So `true` is the one setting that CANNOT work, and it was the DEFAULT,
+#: held off production by a single env var in daily.yml. That is a landmine:
+#: delete the env var, or run this module anywhere the var is unset (a
+#: dispatch, a diagnostic, a new workflow), and the fire reads a mailbox that
+#: answers 404 for everything, stages zero, and goes GREEN. That exact
+#: failure already happened once — the 10:41 fire on 2026-08-14 swept zero
+#: messages and reported success.
+#:
+#: The default is now the only configuration that can return mail. The flag
+#: is KEPT, not deleted: if OL ever does grant Full Access, this is a
+#: one-variable change back, and the per-mailbox zero-yield ::error:: below
+#: is what proves the grant worked before anyone claims it did.
 READ_SHARED_ONLY = os.environ.get(
-    "HILMAR_READ_SHARED_ONLY", "true").strip().lower() in ("1", "true", "yes")
+    "HILMAR_READ_SHARED_ONLY", "false").strip().lower() in ("1", "true", "yes")
 
 
 def read_targets(token: str) -> list[tuple[str, str, str]]:

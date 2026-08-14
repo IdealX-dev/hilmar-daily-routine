@@ -81,6 +81,43 @@ def test_app_only_auth_is_untouched(monkeypatch):
     assert labels == [mod.READ_MAILBOX]
 
 
+def test_default_is_false_because_shared_only_cannot_work(monkeypatch):
+    """THE LANDMINE THIS DEFUSES. Michael 2026-08-14: "ol won't grant more
+    access." Full Access was the only route to reading the shared mailbox —
+    Graph answers 404 "Default folder Root not found" for every folder on
+    it — so shared-only is now permanently the one setting that CANNOT
+    return mail.
+
+    It was the DEFAULT, held off production by a single env var in
+    daily.yml. Drop that var, or import this module anywhere it is unset,
+    and the fire reads a 404-for-everything mailbox, stages nothing, and
+    exits GREEN. That is not hypothetical: the 10:41 fire on 2026-08-14 did
+    exactly that and reported success.
+
+    The default must be the only configuration that can return mail."""
+    monkeypatch.delenv("HILMAR_READ_SHARED_ONLY", raising=False)
+    mod = importlib.reload(RS)
+    assert mod.READ_SHARED_ONLY is False, (
+        "HILMAR_READ_SHARED_ONLY defaults to shared-only, which cannot "
+        "return mail — OL will not grant the Full Access it requires. An "
+        "unset env var must not send the fire blind."
+    )
+
+
+def test_unset_env_still_reads_me_alongside_shared(monkeypatch):
+    """The default is not just a flag value — with no env var set, /me must
+    actually be in the target list, because it is the only mailbox that
+    answers. Asserting the constant alone would pass while read_targets
+    still dropped /me."""
+    monkeypatch.delenv("HILMAR_READ_SHARED_ONLY", raising=False)
+    mod = importlib.reload(RS)
+    labels = [t[0] for t in _targets(mod, monkeypatch, shared_ok=True)]
+    assert "me" in labels, (
+        f"/me missing from targets under the default config: {labels}. "
+        "The shared mailbox 404s on every folder, so this reads nothing."
+    )
+
+
 def teardown_module(_m):
     """Leave the module in its real, unpatched state for other test files."""
     import os

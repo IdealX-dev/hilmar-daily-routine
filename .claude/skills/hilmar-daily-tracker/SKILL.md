@@ -69,16 +69,28 @@ produces:
   synced through the blob. OL IT declined app-only; `GRAPH_APP_*` stays
   empty. Re-seed via the `auth-refresh.yml` workflow (code is emailed AND
   printed in the run log).
-- **Mailboxes:** intake reads `/me` (Michael's mailbox), which receives the
-  group's mail because he is on the distribution. `Mail.Read.Shared` IS
+- **Mailboxes — SETTLED, do not reopen:** intake reads `/me`
+  (Michael's mailbox) and that is now permanent. `Mail.Read.Shared` IS
   consented (2026-08-13), but `MBD_OceanExportBookingShared` returns 404
-  store-not-found on every folder — open hypothesis: Michael's account lacks
-  Full Access (Exchange hides such mailboxes as 404). His OWA
-  "Open another mailbox" test settles it; if IT grants Full Access, re-run
-  `diag_shared_mailbox` via `diag-blob.yml` BEFORE believing anything.
-  `HILMAR_READ_SHARED_ONLY` in `daily.yml` must stay `"false"` until reads
-  demonstrably return messages. A mailbox yielding zero for a whole window
-  is a red error, never a quiet day.
+  store-not-found on every folder, which needs Full Access to clear.
+  Michael, 2026-08-14: **"ol won't grant more access."** That closes it —
+  the OWA self-test and the IT request are both dead leads; do not propose
+  them again. `HILMAR_READ_SHARED_ONLY` now DEFAULTS to `"false"` in code
+  (it defaulted to `true`, the one setting that cannot work, and a fire
+  went blind and green on it). `seed-shared-mailbox.yml` is dead code kept
+  only as a record. A mailbox yielding zero for a whole window is a red
+  error, never a quiet day.
+- **The visibility gap this leaves is PERMANENT, and it is a business
+  problem, not a code one.** OL's staff reply to Lonny *from* the shared
+  mailbox; sent mail is not delivered to the distribution, so those replies
+  exist only in a store we can never read. Consequence: the tracker cannot
+  see OL's outbound quotes, which is what produced the false "Not Quoted"
+  rows, the empty OL-USA RESPONSES section, and the turnaround reset. The
+  NQ floor restarts the count on 2026-08-17 but does NOT fix this — absent
+  a process change the count re-inflates with the same artefacts. The only
+  fix available without OL IT is a **process** one: get OL to CC an address
+  Michael controls on quote replies, or have Lonny (who receives every one
+  of them) copy it. Raise this rather than re-litigating access.
 - **The win/loss ledger reconciles to OL's own book:**
   `data/ol-transaction-report-2026.json` (Michael's transaction report) is
   the authority for bookings; absence from it IS the cancellation signal.

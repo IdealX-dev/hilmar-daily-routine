@@ -127,12 +127,23 @@ def test_compute_volume_percentiles(now: datetime):
 
 
 def test_compute_win_rate_uses_decided_only(now: datetime):
-    """3 WIN, 1 Q&L, 1 NQ, 1 PENDING → win_rate = 60% (over the 5 decided).
+    """3 WIN, 1 Q&L, 1 NQ, 1 PENDING → win_rate = 75% (over the 4 decided).
 
-    Post 2026-04-27 four-state classifier: "decided" = WIN + Q&L + NQ.
-    PENDING is excluded because the row is still alive. Pre-cutover this
-    test used a single LOSS bucket; now we explicitly exercise both
-    LOSS variants so a regression that drops one of them is visible."""
+    DECISION REVERSED 2026-08-14: "decided" was WIN + Q&L + NQ (set
+    2026-04-27 with the four-state classifier); it is now WIN + Q&L.
+    The headline win rate is Wins/(Wins+Q&L) and never included NQ, so the
+    old set put a LEVEL and a DELTA over different populations in one
+    email — and since the 2026-08-17 NQ floor the report states plainly
+    that NQ rows are not counted, while this still counted them.
+    PENDING stays excluded: the row is still alive.
+
+    THIS TEST WAS GREEN THROUGH A 100% WIN-RATE BUG. Its fixtures use the
+    STRICT form ("Q&L"/"NQ"); production writes the LEGACY form —
+    scripts/core.decide_status returns "LOSS", enforced by QC-041. The
+    predicate under test compared raw status against a STRICT tuple, so on
+    real data it matched wins and nothing else and win_rate_pct was 100.0.
+    The test exercised a code path production never takes. That is why the
+    LEGACY companion below exists — do not delete it."""
     requests = (
         [_request(request_id=f"w{i}", request_timestamp=now.replace(hour=10),
                   status="WIN") for i in range(3)]
@@ -144,7 +155,33 @@ def test_compute_win_rate_uses_decided_only(now: datetime):
                     status="PENDING")]
     )
     b = baselines.compute(requests, now=now)
-    assert b.rolling_14d.win_rate_pct == 60.0
+    assert b.rolling_14d.win_rate_pct == 75.0
+
+
+def test_compute_win_rate_on_the_form_production_actually_writes(now: datetime):
+    """The same book in the LEGACY form, which is what is really stored:
+    quoted-and-lost is status="LOSS" + quoted=True, never-quoted is
+    status="LOSS" + quoted=False. Must give the same 75%.
+
+    This is the guard the STRICT-fixture test above could not provide. Run
+    against the pre-2026-08-14 predicate it returns 100.0, because every
+    LOSS row is invisible to a STRICT-tuple membership check."""
+    requests = (
+        [_request(request_id=f"w{i}", request_timestamp=now.replace(hour=10),
+                  status="WIN") for i in range(3)]
+        + [_request(request_id="l1", request_timestamp=now.replace(hour=11),
+                    status="LOSS", quoted=True)]
+        + [_request(request_id="nq1", request_timestamp=now.replace(hour=11, minute=30),
+                    status="LOSS", quoted=False)]
+        + [_request(request_id="p1", request_timestamp=now.replace(hour=12),
+                    status="PENDING")]
+    )
+    b = baselines.compute(requests, now=now)
+    assert b.rolling_14d.win_rate_pct == 75.0, (
+        f"win_rate_pct={b.rolling_14d.win_rate_pct} — 100.0 means the "
+        "predicate is comparing raw status against STRICT literals again "
+        "and cannot see the losses production writes."
+    )
 
 
 def test_compute_biz_hours_percentiles_handles_floats(now: datetime):

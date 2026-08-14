@@ -66,9 +66,10 @@ after completion). The run ends by printing which mailboxes the pipeline can
 read — but remember: that proves the TOKEN, not the mailbox. Only messages
 returned proves a mailbox.
 
-Shared-mailbox status and the Full Access hypothesis: see SKILL.md
-"Mailboxes". Re-run the probe (`diag-blob.yml`) after any permission change
-before claiming anything.
+`include_shared` is now vestigial: Michael, 2026-08-14, "ol won't grant more
+access" — the shared mailbox can never be read, so the scope buys nothing.
+Do not propose the OWA self-test or an IT request; both are closed. See
+SKILL.md "Mailboxes".
 
 ## Local development
 

@@ -199,6 +199,50 @@ def _parser_miss_rates(requests: list[dict[str, Any]]) -> dict[str, float]:
     return rates
 
 
+def is_decided(r: dict[str, Any]) -> bool:
+    """A resolved row, in the SAME denominator the headline win rate uses:
+    WIN + Quoted-and-Lost. PENDING is excluded (still alive), and so is NQ.
+
+    ONE definition, deliberately. This predicate is used by
+    :func:`_carrier_lane_winrates`, by :func:`compute`, and by
+    ``insights._is_decided``; when it was written out longhand at each of
+    those sites, all three carried the same two bugs for months.
+
+    TWO BUGS THIS CLOSES, both live before 2026-08-14.
+
+    1. STORAGE FORM. This was ``r["status"] in (STATUS_WIN, STATUS_Q_AND_L,
+       STATUS_NQ)``. Production stores the LEGACY form — scripts/core.
+       decide_status returns "LOSS" (verified by running it) and QC-041
+       enforces that LEGACY is what gets written. So the tuple matched WINS
+       AND NOTHING ELSE. Every loss was invisible, the decided set was
+       all-wins, and the win rate computed wins/wins = 100.0%. Today's
+       recomputation and the 90-day baseline were both wrong in the same
+       direction, so the delta came out 0.0 and looked healthy — which is
+       precisely why it survived. It also disabled two alert classes:
+       win_rate_shift and carrier_lane_drop cannot fire when both sides are
+       pinned at 100%.
+
+       core.display_status' docstring warns about exactly this: "Never
+       compare r['status'] == 'Q&L' directly — it'll silently miss legacy
+       rows." The trap was documented, then walked into here.
+
+    2. DENOMINATOR. NQ was in the set; the headline win rate is
+       Wins/(Wins+Q&L) and never included it. That is a LEVEL and a DELTA
+       over different populations in one email — and since the 2026-08-17
+       NQ floor the report states that NQ rows are not counted, while this
+       still counted them.
+
+    Both fixes land together on purpose. Correcting the storage form alone
+    would swing the delta by whatever NQ happens to be; correcting the
+    denominator alone would leave it pinned at 100%.
+
+    Baselines are recomputed from scratch each fire (:func:`compute` is
+    pure; :func:`update` persists its result), so no migration is needed —
+    the next fire recomputes both sides on the new definition.
+    """
+    return r.get("status") == core.STATUS_WIN or core.is_quoted_and_lost(r)
+
+
 def _carrier_lane_winrates(requests: list[dict[str, Any]]) -> dict[str, float]:
     """{<CARRIER>.<LANE>: win_rate_pct} over the input window. ``LANE`` is
     the destination only, lower-cased + stripped, to avoid carrier-pair
@@ -213,11 +257,8 @@ def _carrier_lane_winrates(requests: list[dict[str, Any]]) -> dict[str, float]:
         if not dest or dest.lower() == "unknown":
             continue
         key = f"{carrier}.{dest}"
-        # "Decided" = WIN or any LOSS variant (Q&L / NQ). PENDING is excluded
-        # because the row is still alive. Pre 2026-04-27 the LOSS status
-        # collapsed Q&L+NQ into one bucket; the four-state classifier
-        # split them, so the membership check now lists both explicitly.
-        if r.get("status") in (core.STATUS_WIN, core.STATUS_Q_AND_L, core.STATUS_NQ):
+        # "Decided" = WIN + Q&L, storage-form agnostic. See is_decided.
+        if is_decided(r):
             bucket_total[key] += 1
             if r.get("status") == core.STATUS_WIN:
                 bucket_won[key] += 1
@@ -250,8 +291,7 @@ def compute(
     # Same "decided" set as :func:`_carrier_lane_winrates` — kept symmetric so
     # the per-carrier rate and the global win-rate stddev are computed over
     # the same denominator.
-    decided_statuses = (core.STATUS_WIN, core.STATUS_Q_AND_L, core.STATUS_NQ)
-    decided_14 = [r for r in recent_14 if r.get("status") in decided_statuses]
+    decided_14 = [r for r in recent_14 if is_decided(r)]
     win_rate = (
         round(100.0 * sum(1 for r in decided_14 if r.get("status") == core.STATUS_WIN) / len(decided_14), 1)
         if decided_14 else None
