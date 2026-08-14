@@ -372,7 +372,25 @@ jobs:
       # where the fire is configured. Flip to "false" to put /me back — no code
       # change. If the Mail.Read.Shared token ever lapses, refresh_stage still
       # falls back to /me rather than reading nothing.
-      HILMAR_READ_SHARED_ONLY: "true"
+      #
+      # SET BACK TO "false" 2026-08-14, ~30 minutes later, on evidence. The
+      # shared mailbox is NOT READABLE and never has been. Every Graph call
+      # against it has failed:
+      #     403 ErrorAccessDenied  "Access is denied. Check credentials"
+      #     404 ErrorItemNotFound  "Default folder AllItems not found"
+      # The 08-13 run that appeared to prove shared access only proved the
+      # TOKEN carries Mail.Read.Shared; read_targets listed the mailbox and
+      # every actual read 403'd, so all 27,500 messages that day came from
+      # /me. With shared-only set, the 10:41 fire swept 0 messages and staged
+      # 0 records — the tracker was blind.
+      #
+      # "Default folder AllItems not found" is the signature of an address
+      # that is not a readable mailbox at all — consistent with
+      # MBD_OceanExportBookingShared being a DISTRIBUTION GROUP, whose mail
+      # lands in members' mailboxes with no mailbox of its own to read. That
+      # matches what Michael said in June: "i'm already included in the group
+      # emails from ops, nothing has changed." /me is the real source.
+      HILMAR_READ_SHARED_ONLY: "false"
       # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
       # single 8 AM fire reports the prior business day; there is no fire-time
       # or day-of-week branching anymore. core.py's default stays "current";

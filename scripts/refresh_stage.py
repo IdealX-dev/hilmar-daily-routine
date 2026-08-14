@@ -1228,10 +1228,39 @@ def main() -> int:
     print(f"refresh_stage: total unique results across queries: {len(all_items)} "
           f"({_swept_total} from the date sweep, "
           f"{len(all_items) - _swept_total} added by $search outside it)")
+    per_src: Counter = Counter(it.get("_src") or "?" for it in all_items.values())
     if len(targets) > 1:
-        per_src: Counter = Counter(it.get("_src") or "?" for it in all_items.values())
         for mbox, n in per_src.most_common():
             print(f"refresh_stage:   {n:>5} first seen in {mbox}")
+
+    # A MAILBOX THAT YIELDS NOTHING IS A BROKEN READ, NOT A QUIET WEEK.
+    #
+    # 2026-08-14. Shared-mailbox reads had been failing since the moment they
+    # were switched on — 403 ErrorAccessDenied, then 404 "Default folder
+    # AllItems not found" — and every failure was caught per-query and logged
+    # as a warning the run then walked straight past. On 08-13 that was
+    # invisible because /me was also being read and supplied 27,500 messages.
+    # On 08-14, reading the shared mailbox ALONE, the sweep returned 0, staged
+    # 0, printed "Nothing new to stage", and the fire went green.
+    #
+    # That is the precise shape this repo has already paid for twice: an empty
+    # report and a quiet day are indistinguishable downstream. A mailbox we
+    # cannot read must be LOUD at the point of the read, not inferred later
+    # from a report nobody can tell apart from a slow Tuesday.
+    #
+    # Per-mailbox, not just in total: with two targets, one dead mailbox is
+    # exactly the case the aggregate hides.
+    for _label, _base, _ in targets:
+        if per_src.get(_label, 0) == 0:
+            print(f"::error::refresh_stage: mailbox {_label} returned ZERO "
+                  f"messages for the whole window ({_base}). That is an "
+                  f"unreadable mailbox, not an empty one — check the Graph "
+                  f"errors above. Intake from it is BLIND; do not read the "
+                  f"resulting report as a quiet period.")
+    if not all_items:
+        print("::error::refresh_stage: NO mailbox returned any message. The "
+              "report built from this run reflects only previously-staged "
+              "mail and cannot show anything that arrived since.")
 
     # Apply client-side date filter, classify, dedupe vs existing stage.
     new_stage: list[tuple[dict, str]] = []  # (item, bucket)
