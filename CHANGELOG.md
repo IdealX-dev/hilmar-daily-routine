@@ -3,6 +3,70 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-14 — The Not-Quoted reset landed on main, and verifying it
+### surfaced a parity blind spot the suite could not see
+
+THE MERGE. PR #209 squash-merged to main as 9054644 — `NQ_VALID_FROM =
+"2026-08-17"`. Michael, on the report's "Not Quoted — Last 14 Days (9 listed
+• 25 total • 104 TEU)" section: "get rid of thjs as all quoted / and restart
+the count monday." Verified on main after the merge rather than trusting the
+API's "merged: true": both `scripts/core.py` carries the constant and the
+fire's import path resolves to it (`import core` in gen_email.py and
+qc_selfheal.py → `/scripts/core.py`, `NQ_VALID_FROM = '2026-08-17'`,
+executed this session). Monday's 8:07 AM ET fire carries the reset.
+Distribution unchanged: `HILMAR_REPORTS_PAUSED: "verify_only"`, Michael only.
+
+FINDING 1 — THE PARITY TEST HAS AN INTERSECTION BLIND SPOT. The merge shipped
+`NQ_VALID_FROM`, `nq_is_valid`, `counts_as_not_quoted` and `nq_reset_note` to
+`scripts/` and to NEITHER of them in `src/hilmar/` — with a 3,185-test green
+suite. Root cause, in `tests/test_core_parity.py::test_no_undocumented_
+constants_drift`:
+
+    common = set(sc) & set(hc) - set(ALLOWED_CROSS_FOLDER_DRIFT)
+
+INTERSECTION. It compares values of constants present in BOTH trees, so a
+constant added to only ONE tree is structurally invisible to it. The test
+built to stop PR #13-class drift could not see this drift at all.
+
+Not a production defect, and I checked rather than assumed: production
+renders NQ exclusively through `scripts/core`, and
+`src/hilmar/core.is_not_quoted` has ZERO callers anywhere under src/hilmar.
+The stale mirror renders nothing. Monday's numbers are correct.
+
+FIXED by checking the `*_VALID_FROM` policy-floor family by UNION instead —
+three tests: floors must exist in both trees or carry a written exemption;
+shared floors must hold equal values; and an exemption that no longer
+describes a real divergence fails, so the allowlist cannot go stale.
+`NQ_VALID_FROM` is entered as a documented scripts-only exemption with the
+reason (mirroring it would add dead code, not safety). The next undocumented
+one-tree floor fails CI.
+
+DECIDED, NOT DONE: the two cores are 46 symbols apart (24 scripts-only,
+22 hilmar-only — `aggregate_trade_regions`, `is_win`, `is_real_rate`,
+`trade_region_for` exist only in scripts; the snapshot/insights functions
+only in hilmar). "Mirror" is aspirational; they are two partly-overlapping
+libraries. Reconciling them is an architectural call on what `src/hilmar`
+is FOR, it is a second job, and I did not start it. Owner: Michael to
+decide; next step: pick one tree as the library or formally scope the split.
+
+FINDING 2 — TWO WIN-RATE DENOMINATORS, FLAGGED AND DELIBERATELY NOT CHANGED.
+`src/hilmar/insights.py:366` builds `decided_14 = WIN + Q&L + NQ` from RAW
+stored status and derives `today_win_rate` from it, which then feeds
+`win_rate_delta_pp` (line 404) and the `win_rate_shift` alert (line 185).
+The headline is Wins/(Wins+Q&L) — NQ has never been in it. So the insights
+block can print a delta and fire an alert computed on a denominator the
+headline does not use.
+
+PRE-EXISTING — the floor changes neither number (`ctx.win_rate_pct` reads the
+floored `summary`; `today_win_rate` reads raw status, which floored rows keep
+because nothing is deleted). What the floor changes is the FRAME: the report
+now states plainly that NQ is excluded and restarts Monday, while insights
+still bakes those same rows into a win-rate delta. That is the "report
+argues with itself" failure Michael has already caught once. Not touched
+this session because it changes a reported business metric — his number, his
+call. Owner: Michael; next step: confirm the insights delta should use
+Wins/(Wins+Q&L) to match the headline, then it is a one-line change.
+
 ### 2026-08-14 — The shared mailbox: two of my claims corrected on evidence,
 ### the blind-mailbox alarm, and where the truth actually landed
 
