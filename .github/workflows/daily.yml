@@ -398,14 +398,28 @@ jobs:
       # A real, named shared-mailbox object; token acquired with
       # Mail.Read.Shared; and Graph finds NO folder store behind it — not
       # even Root. That is past the permission layer: the errors are
-      # store-level, not access-level. OL staff demonstrably use the mailbox
-      # daily in Outlook, so the store exists SOMEWHERE — the explanation
-      # consistent with all of it is that the mailbox is homed outside
-      # Exchange Online (on-prem in a hybrid deployment), which Graph cannot
-      # reach regardless of scopes. That is an OL-IT infrastructure fact, not
-      # a permission or code fix. /me works because Michael is on the group's
-      # distribution, so its mail lands in his own (cloud) mailbox — which is
-      # how every message this tracker has ever ingested arrived.
+      # store-level, not access-level — or so it appears. Michael 2026-08-14:
+      # "they use exchange online... we do not run on our own servers at ol",
+      # which kills the on-prem/hybrid theory that briefly stood here.
+      #
+      # The remaining explanation that fits EVERYTHING observed [Likely, not
+      # yet verified]: Exchange Online answers 404 "not found" instead of 403
+      # "access denied" for a mailbox the signed-in user lacks FULL ACCESS to
+      # — it hides the mailbox rather than admit it exists. Being on the
+      # group's DISTRIBUTION (which is why /me receives the mail) grants no
+      # mailbox permission at all; Full Access is a separate per-mailbox
+      # grant in Exchange admin, on a different screen from the Entra app
+      # consent that WAS approved. Mail.Read.Shared only unlocks what the
+      # user could already open.
+      #
+      # The decisive test needs no IT: OWA -> "Open another mailbox" ->
+      # MBD_OceanExportBookingShared@ol-usa.com. Opens = theory wrong, keep
+      # digging. Refuses = confirmed; the fix is OL IT granting Michael's
+      # account Full Access (read) on that mailbox, after which this token
+      # and this code read it with no further change. Re-run
+      # diag_shared_mailbox after any grant before believing anything.
+      # /me remains the working intake either way — the group's mail lands
+      # there via the distribution, as it always has.
       HILMAR_READ_SHARED_ONLY: "false"
       # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
       # single 8 AM fire reports the prior business day; there is no fire-time
