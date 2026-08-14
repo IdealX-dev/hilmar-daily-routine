@@ -3,6 +3,54 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-14 — The shared mailbox: two of my claims corrected on evidence,
+### the blind-mailbox alarm, and where the truth actually landed
+
+THE SEQUENCE, honestly. (1) I reported the shared mailbox as live on 08-13
+without verifying a single message came back — the "proof" only showed the
+token carried Mail.Read.Shared. Every actual read had been failing (403).
+(2) I then made the unread mailbox the ONLY intake (HILMAR_READ_SHARED_ONLY)
+and the 10:41 fire swept ZERO messages, staged zero, and went green — the
+tracker was blind for that run. (3) I reverted to /me and diagnosed the
+mailbox as "probably a distribution group". Michael: "you did get the
+authorizaton you needed.. you are wrong." (4) The endpoint-by-endpoint probe
+(diag_shared_mailbox, run 31806028826) settled it:
+
+    directory object : PASS — 'MBD Ocean Export Booking (Shared)', userType Member
+    folder list      : 404 "Default folder Root not found"
+    inbox read       : 404 "Default folder Inbox not found"
+    sentitems read   : 404 "Default folder SentItems not found"
+    /messages        : 404 "Default folder AllItems not found"
+    inbox delta      : 404 "Default folder Inbox not found"
+
+WHAT THAT MEANS. Michael was RIGHT about the authorization: the token is
+granted, the object resolves, and the errors are STORE-level, not
+access-level (a permission failure is 403 ErrorAccessDenied — we are past
+that layer). The distribution-group theory was WRONG: the object is a named
+shared mailbox. And the reads still cannot work: Graph finds no folder
+store behind the address — not even Root. Since OL staff demonstrably use
+the mailbox in Outlook every day, the store exists somewhere Graph cannot
+see; the explanation consistent with every observation is that the mailbox
+is homed OUTSIDE Exchange Online (on-prem, hybrid), which Graph cannot
+reach regardless of scopes or consent. That is an OL-IT infrastructure
+question, and it is now ONE question: "Where is MBD_OceanExportBookingShared
+homed? If on-prem, Graph can never read it; if it can be homed in Exchange
+Online, the tracker reads it directly with what is already granted."
+
+OPERATIONAL POSITION, unchanged and healthy: /me is the intake, as it always
+really was. Michael is on the group's distribution, so the group's mail
+lands in his cloud mailbox. Post-revert fire 31805501343: 5,122 messages
+swept, 11 new staged, report sent 13:46 to Michael only.
+
+WHAT THE INCIDENT BOUGHT: a mailbox that yields zero messages for a whole
+window is now a per-mailbox ERROR at the point of the read (it fired
+correctly on the 13:36 run), and a sweep that returns nothing at all says
+the report reflects only previously-staged mail. An empty report and a
+quiet day are no longer indistinguishable — the exact shape that cost a
+week in July.
+
+verify_only throughout. Suite 3158 passed / 1 skipped, ruff clean.
+
 ### 2026-08-13 (7) — Shared mailbox live, turnaround clock back on, and
 ### what the 49 standalone bookings turned out to be
 

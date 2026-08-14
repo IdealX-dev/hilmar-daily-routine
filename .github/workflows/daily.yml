@@ -384,12 +384,28 @@ jobs:
       # /me. With shared-only set, the 10:41 fire swept 0 messages and staged
       # 0 records — the tracker was blind.
       #
-      # "Default folder AllItems not found" is the signature of an address
-      # that is not a readable mailbox at all — consistent with
-      # MBD_OceanExportBookingShared being a DISTRIBUTION GROUP, whose mail
-      # lands in members' mailboxes with no mailbox of its own to read. That
-      # matches what Michael said in June: "i'm already included in the group
-      # emails from ops, nothing has changed." /me is the real source.
+      # PROBED endpoint-by-endpoint on 2026-08-14 (diag_shared_mailbox, run
+      # 31806028826) after Michael pushed back that the authorization WAS
+      # granted. He was right about the authorization, and the earlier
+      # "distribution group" theory written here was wrong:
+      #
+      #   directory object : PASS — 'MBD Ocean Export Booking (Shared)'
+      #   folder list      : 404  "Default folder Root not found"
+      #   inbox read       : 404  "Default folder Inbox not found"
+      #   sentitems read   : 404  "Default folder SentItems not found"
+      #   /messages        : 404  "Default folder AllItems not found"
+      #
+      # A real, named shared-mailbox object; token acquired with
+      # Mail.Read.Shared; and Graph finds NO folder store behind it — not
+      # even Root. That is past the permission layer: the errors are
+      # store-level, not access-level. OL staff demonstrably use the mailbox
+      # daily in Outlook, so the store exists SOMEWHERE — the explanation
+      # consistent with all of it is that the mailbox is homed outside
+      # Exchange Online (on-prem in a hybrid deployment), which Graph cannot
+      # reach regardless of scopes. That is an OL-IT infrastructure fact, not
+      # a permission or code fix. /me works because Michael is on the group's
+      # distribution, so its mail lands in his own (cloud) mailbox — which is
+      # how every message this tracker has ever ingested arrived.
       HILMAR_READ_SHARED_ONLY: "false"
       # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
       # single 8 AM fire reports the prior business day; there is no fire-time
