@@ -4398,6 +4398,22 @@ def phase_6_rules(log: Log, data: dict):
             # reconciliation. See core.quote_evidence_is_booking_derived.
             and not core.quote_evidence_is_booking_derived(r)
         ]
+        # SPLIT BY WHETHER ANYONE CAN STILL ACT ON IT. Michael 2026-08-13:
+        # "all that truly matters at end of days is the wins and losses.
+        # turnaround is secondary for the past moves.. so clear this error".
+        # A quote from this week with no send time is worth chasing; one from
+        # April is a permanent accepted condition, and erroring on it every
+        # single fire trains the reader to skip the audit. The backlog is
+        # still COUNTED and still stated — as a fact, not an error. Deleting
+        # the detector outright is what let the count reach 41 unnoticed.
+        _q_old = [r for r in _q_nots if not core.undated_quote_is_current(r)]
+        _q_nots = [r for r in _q_nots if core.undated_quote_is_current(r)]
+        if _q_old:
+            log.ok(f"QC-077: {len(_q_old)} historical quote(s) carry a rate or "
+                   f"carrier with no response time — counted in wins/losses, "
+                   f"absent only from the dated OL-USA RESPONSES table. "
+                   f"Accepted backlog, not chased (older than "
+                   f"{core.UNDATED_QUOTE_RECENT_DAYS}d)")
         if _q_nots:
             _lanes = ", ".join(
                 str(r.get("lane") or f"{r.get('origin')} → {r.get('destination')}")

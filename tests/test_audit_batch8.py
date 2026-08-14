@@ -359,14 +359,26 @@ def _fire_phase6(rows):
     return log
 
 
+#: QC-077 and the report note now ignore quotes older than
+#: core.UNDATED_QUOTE_RECENT_DAYS (Michael: "turnaround is secondary for the
+#: past moves"). These tests exercise the DETECTOR, not the recency rule, so
+#: the fixture stays inside the window.
+from datetime import datetime as _dt
+from datetime import timedelta as _td
+from datetime import timezone as _tz
+
+_RECENT_REQ = (_dt.now(_tz.utc) - _td(days=2)).isoformat().replace("+00:00", "Z")
+_RECENT_RESP = (_dt.now(_tz.utc) - _td(days=1)).isoformat().replace("+00:00", "Z")
+
+
 def _quoted_row(rid="r1", **over):
     row = {
         "request_id": rid, "status": "Q&L", "quoted": True,
         "lane": "Oakland → Busan", "origin": "Oakland", "destination": "Busan",
         "ol_rate": 3150.0, "carrier_quoted": "CMA CGM",
-        "request_timestamp": "2026-07-29T17:15:00+00:00",
+        "request_timestamp": _RECENT_REQ,
         "request_date": "2026-07-29",
-        "response_timestamp": "2026-07-29T19:02:00+00:00",
+        "response_timestamp": _RECENT_RESP,
         "status_history": [],
     }
     row.update(over)
@@ -425,7 +437,14 @@ def test_the_report_says_how_many_quotes_it_cannot_show():
         {"requests": [_quoted_row(response_timestamp=None)]})
     assert len(undated) == 1
     note = gen_email._undated_quotes_note(undated)
-    assert "cannot be dated" in note
+    # WORDING CHANGED 2026-08-13. The note used to say these rows "cannot be
+    # dated and are NOT COUNTED above" — the second half meant "absent from
+    # the dated responses table" but read as "missing from the totals", and
+    # Michael reconciled against it ("also these 16 what?"). They ARE in the
+    # win/loss totals. The intent of this assertion is unchanged: the note
+    # must state the gap rather than render a silently short section.
+    assert "no response time" in note
+    assert "still counted in the win/loss totals" in note.lower()
     # WHERE the quote went is now READ off the row rather than asserted. This
     # line used to require the literal "PENDING HILMAR" on every note, which
     # was right only while an undated quote could never age out of PENDING

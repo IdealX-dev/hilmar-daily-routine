@@ -698,6 +698,15 @@ def undated_quotes(data) -> list:
         # dataset. See core.quote_evidence_is_booking_derived.
         if core.quote_evidence_is_booking_derived(r):
             continue
+        # RECENT ONLY. Michael 2026-08-13: "all that truly matters at end of
+        # days is the wins and losses. turnaround is secondary for the past
+        # moves.. so clear this error". A missing quote TIME on a move that
+        # already resolved is history nobody can act on, and every one of
+        # these rows is already counted in wins, losses, TEU and the lane
+        # rollups. The audit still states the historical backlog; the report
+        # stops raising it. See core.undated_quote_is_current.
+        if not core.undated_quote_is_current(r):
+            continue
         if core.has_quote_evidence(r):
             out.append(r)
     return out
@@ -749,10 +758,17 @@ def _undated_quotes_note(undated) -> str:
     return (
         f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_WARN};'
         f'background:{B.DOC_WARN_BG};border-left:3px solid {B.DOC_WARN};padding:6px 9px">'
-        f'⚠️ {n} further quote{"" if n == 1 else "s"} '
-        f'{"is" if n == 1 else "are"} recorded with a rate or carrier but no '
-        f'response time, so {"it" if n == 1 else "they"} cannot be dated and '
-        f'{"is" if n == 1 else "are"} not counted above. '
+        # "not counted above" USED TO SIT HERE and it was the misleading half.
+        # It meant "absent from the dated OL-USA RESPONSES table"; it read as
+        # "missing from the totals". These rows ARE counted in wins, losses,
+        # TEU and every lane rollup — the only thing missing is when OL sent
+        # the quote. Say that, so nobody reconciles a number that was never
+        # wrong (Michael 2026-08-13: "these 16 what?").
+        f'⚠️ {n} recent quote{"" if n == 1 else "s"} '
+        f'{"has" if n == 1 else "have"} a rate or carrier but no response '
+        f'time, so {"it is" if n == 1 else "they are"} missing from the dated '
+        f'responses above. {"It is" if n == 1 else "They are"} still counted '
+        f'in the win/loss totals. '
         f'{where}'
         f'See QC-077 in the audit.</p>'
     )
@@ -974,6 +990,35 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 _now_is = (r.get("status") or "?").upper()
                 _why = r.get("loss_reason") or r.get("reason_detail") or ""
                 reason = (f"{reason} — REVERSED, now {_now_is}"
+                          f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
+            # THE SAME HONESTY FOR A QUOTE THAT HAS SINCE MOVED ON.
+            #
+            # Michael 2026-08-13, on the Aug 12 email: "in status shows nothing
+            # pending hilmar in the chart but then in words says yes ... it's
+            # all wrong". Three rows rendered "PENDING OL → PENDING HILMAR"
+            # while the PENDING HILMAR section below them read (0).
+            #
+            # NEITHER NUMBER WAS WRONG. The pill describes the TRANSITION, and
+            # at the moment OL quoted, the ball really was in Hilmar's court.
+            # The section describes NOW, and by render time the row had aged
+            # out of PENDING. Both true, and together they read as the report
+            # arguing with itself.
+            #
+            # It happens most days, not rarely: PENDING_HILMAR_LOSS_HOURS is
+            # 24 (Michael's own figure, deliberately not 48), so a quote OL
+            # sends on Wednesday evening ages out before Thursday's fire
+            # renders — the transition and the section are almost never
+            # looking at the same state.
+            #
+            # So say where it went, exactly as the reversed-WIN branch above
+            # already does. Rendering the pill from current status instead
+            # would be the wrong fix: it would erase the fact that OL quoted,
+            # which is the one thing that section exists to record.
+            elif (h.get("to") or "").upper() == "QUOTED" and \
+                    (r.get("status") or "").upper() != "PENDING":
+                _now_is = core.display_status(r) or (r.get("status") or "?")
+                _why = r.get("loss_reason") or ""
+                reason = (f"{reason} — since aged to {_now_is}"
                           f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
             req_date = r.get('request_date') or '—'
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"

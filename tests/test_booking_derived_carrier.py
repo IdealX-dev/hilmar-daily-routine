@@ -32,7 +32,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
 import core  # noqa: E402
+
+#: These tests are about the BOOKING-DERIVED predicate and QC-077's advice,
+#: not about recency. core.undated_quote_is_current now drops anything older
+#: than 14 days, so a hardcoded June date would remove the rows before the
+#: predicate under test ever saw them — the fixture has to stay current.
+_RECENT = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat().replace("+00:00", "Z")
 import gen_email as GE  # noqa: E402
 
 
@@ -40,7 +48,7 @@ def _row(**over):
     r = {"request_id": "req_x", "status": "WIN", "quoted": True,
          "lane": "Oakland → Yokohama", "origin": "Oakland",
          "destination": "Yokohama",
-         "request_timestamp": "2026-06-20T12:00:00Z",
+         "request_timestamp": _RECENT,
          "ol_rate": None, "carrier_quoted": None, "response_timestamp": None}
     r.update(over)
     return r
@@ -174,7 +182,7 @@ def _undated(rid, **over):
          "lane": "Oakland → Algeciras", "origin": "Oakland",
          "destination": "Algeciras", "ol_rate": 4938.0,
          "carrier_quoted": "CMA CGM", "response_timestamp": None,
-         "request_timestamp": "2026-06-20T12:00:00Z",
+         "request_timestamp": _RECENT,
          "source_imids": ["<ask@namprd22>"]}
     r.update(over)
     return r

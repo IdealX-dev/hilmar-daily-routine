@@ -1087,6 +1087,42 @@ def has_quote_evidence(r: dict) -> bool:
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
 
 
+#: How recent an undated quote has to be before the report says anything about
+#: it. Michael 2026-08-13, on a banner reporting 16: "all that truly matters at
+#: end of days is the wins and losses. turnaround is secondary for the past
+#: moves.. so clear this error".
+#:
+#: He is right, and the banner's own wording was part of why it read as alarming
+#: — "they cannot be dated and are NOT COUNTED above" meant "absent from the
+#: dated OL-USA RESPONSES table", but read as "missing from the totals". Every
+#: one of those 16 rows IS counted in wins, losses, TEU and every lane rollup.
+#: The only thing missing is WHEN OL sent the quote, which feeds turnaround —
+#: and for moves that already resolved, turnaround is history nobody can act on.
+#:
+#: So the gap is reported only while it is still actionable: a quote from this
+#: week with no send time is worth chasing, one from April is a permanent,
+#: known, accepted condition. NOT deleted — a silent detector is how the count
+#: reached 41 unnoticed in the first place; the audit still states the backlog,
+#: it just stops calling it an error.
+UNDATED_QUOTE_RECENT_DAYS = 14
+
+
+def undated_quote_is_current(r: dict, now: datetime | None = None) -> bool:
+    """True when an undated quote is recent enough to still be worth chasing.
+
+    Anchored on the row's own request timestamp — the one clock these rows
+    always carry (their whole defect is having no response time). A row with
+    no usable request date counts as CURRENT, deliberately: an undateable row
+    that is also unanchored is a data defect, and defaulting it to "old" would
+    hide exactly the shape most worth seeing.
+    """
+    ts = parse_iso((r or {}).get("request_timestamp") or (r or {}).get("request_date"))
+    if ts is None:
+        return True
+    now = now or now_utc()
+    return (now - ts).total_seconds() <= UNDATED_QUOTE_RECENT_DAYS * 86400
+
+
 def quote_evidence_is_booking_derived(r: dict) -> bool:
     """True when a row's ONLY 'OL quoted' evidence is a carrier a BOOKING
     could have written.
