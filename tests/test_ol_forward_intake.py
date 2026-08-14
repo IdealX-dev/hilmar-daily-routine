@@ -435,15 +435,26 @@ def test_pass_two_cannot_override_a_sender_rule():
 
 
 def test_links_tolerates_the_leading_whitespace_real_headers_carry():
-    """Both fixtures' In-Reply-To values begin with a literal tab —
-    `'\\t<DS0PR01MB...>'`. _extract_thread_headers strips it; if that ever
+    """Real header values arrive with folding whitespace — a literal tab or
+    space before the id. _extract_thread_headers strips it; if that ever
     stops, every References match silently goes to zero and the fix reverts to
-    conversationId only, with nothing failing."""
+    conversationId only, with nothing failing.
+
+    2026-08-14: the whitespace is INJECTED rather than read off the fixture.
+    The old version asserted the .eml's own In-Reply-To still carried its
+    leading tab, which is version-dependent — Python 3.12's email parsing
+    strips folding whitespace that 3.11 preserves, so the self-check passed
+    locally (3.11) and failed on CI (3.12) with identical code. The case
+    under test was never "does the parser preserve tabs"; it is "does links()
+    survive them when they arrive"."""
     it = graph_item(ALGECIRAS, conversation_id="CONV-OTHER")
-    irt = next(h["value"] for h in it["internetMessageHeaders"]
-               if h["name"] == "In-Reply-To")
-    assert irt != irt.strip(), "fixture no longer exercises the whitespace case"
-    assert RS.LonnyThreads(imids={irt.strip()}).links(it) is True
+    clean = next(h["value"] for h in it["internetMessageHeaders"]
+                 if h["name"] == "In-Reply-To").strip()
+    assert clean.startswith("<"), "fixture lost its In-Reply-To entirely"
+    for h in it["internetMessageHeaders"]:
+        if h["name"] == "In-Reply-To":
+            h["value"] = "\t " + clean
+    assert RS.LonnyThreads(imids={clean}).links(it) is True
 
 
 # ─────────────────────────────────────────────────────────────────────
