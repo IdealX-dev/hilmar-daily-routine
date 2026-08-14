@@ -39,7 +39,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install the storage SDK
-        run: python -m pip install --quiet azure-storage-blob
+        # msal + requests + tzdata joined 2026-08-14: the shared-mailbox probe
+        # imports refresh_stage, which needs all three.
+        run: python -m pip install --quiet azure-storage-blob msal requests tzdata
 
       - name: Probe
         run: python3 scripts/diag_blob.py
@@ -67,3 +69,12 @@ jobs:
         #
         # Writes nothing: it prints candidates and the evidence behind each.
         run: python3 scripts/diag_match_standalones.py
+
+      - name: Probe the shared mailbox endpoint by endpoint (read-only)
+        # 2026-08-14, Michael: "you did get the authorizaton you needed.. you
+        # are wrong." This settles whether the shared mailbox is unreadable or
+        # only the mailbox-wide /messages endpoint is (the AllItems quirk) —
+        # folder list, inbox read, sentitems read, then the failing endpoint
+        # for the record. Never fails the job; the output IS the deliverable.
+        if: always()
+        run: python3 scripts/diag_shared_mailbox.py || true
