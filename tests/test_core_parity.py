@@ -194,6 +194,87 @@ def test_no_undocumented_constants_drift():
     )
 
 
+# ── Policy floors: the ONE-TREE-ONLY blind spot ───────────────────────────
+
+# 2026-08-14. test_no_undocumented_constants_drift above compares
+# `set(scripts) & set(hilmar)` — INTERSECTION. A constant added to only ONE
+# tree is therefore invisible to it, and that is exactly what happened with
+# NQ_VALID_FROM: it shipped to scripts/core.py in PR #209 with a green suite
+# while src/hilmar/core.py never got it. The suite could not have caught it.
+#
+# The *_VALID_FROM family is the highest-stakes constant class in this repo:
+# each one suppresses a category of number on a report that goes to the CEO.
+# A floor that exists in one tree and not the other means one tree reports a
+# figure the other has deliberately withheld. So the floors are checked by
+# UNION, not intersection, and a divergence must be written down.
+
+ALLOWED_POLICY_FLOOR_DRIFT = {
+    "NQ_VALID_FROM": (
+        "scripts-only, deliberately. The fire renders Not-Quoted exclusively "
+        "through scripts/core (gen_email and qc_selfheal both `import core`, "
+        "which resolves to scripts/core.py). src/hilmar/core.is_not_quoted "
+        "has NO callers anywhere under src/hilmar, so mirroring the floor "
+        "there would add dead code, not safety. If src/hilmar/core ever "
+        "grows a real NQ consumer, mirror the floor and delete this entry."
+    ),
+}
+
+
+def _policy_floors(mod) -> dict:
+    return {
+        n: getattr(mod, n) for n in dir(mod)
+        if n.endswith("_VALID_FROM") and isinstance(getattr(mod, n), str)
+    }
+
+
+def test_policy_floors_exist_in_both_trees_or_are_documented():
+    """UNION check over the *_VALID_FROM floors — catches the one-tree-only
+    addition that the intersection-based drift test structurally cannot see.
+
+    A floor present in one core and absent from the other means the two
+    trees disagree about which rows are reportable. That is allowed only
+    with a written rationale in ALLOWED_POLICY_FLOOR_DRIFT."""
+    sc = _policy_floors(scripts_core)
+    hc = _policy_floors(hilmar_core)
+    one_tree_only = sorted(
+        (set(sc) ^ set(hc)) - set(ALLOWED_POLICY_FLOOR_DRIFT)
+    )
+    assert not one_tree_only, (
+        "Policy floor(s) present in one core but not the other: "
+        f"{one_tree_only}. A *_VALID_FROM floor suppresses a category of "
+        "number on the CEO's report — it must either exist in BOTH trees "
+        "with the same value, or be listed in ALLOWED_POLICY_FLOOR_DRIFT "
+        "with a written rationale explaining why one tree is exempt."
+    )
+
+
+def test_policy_floors_shared_by_both_trees_have_equal_values():
+    """A floor carried by both trees must hold the same date, or the two
+    report paths silently disagree about the cutoff (TIMING_VALID_FROM is
+    the live example — retired to "" in both, together)."""
+    sc = _policy_floors(scripts_core)
+    hc = _policy_floors(hilmar_core)
+    for name in sorted(set(sc) & set(hc)):
+        assert sc[name] == hc[name], (
+            f"{name} drift: scripts={sc[name]!r} hilmar={hc[name]!r}. "
+            "Both trees must apply the same cutoff."
+        )
+
+
+def test_documented_floor_exemptions_are_real():
+    """Keeps ALLOWED_POLICY_FLOOR_DRIFT honest: an entry that no longer
+    describes an actual divergence is stale documentation, and stale
+    documentation is how the next drift gets waved through."""
+    sc = _policy_floors(scripts_core)
+    hc = _policy_floors(hilmar_core)
+    for name in ALLOWED_POLICY_FLOOR_DRIFT:
+        assert (name in sc) ^ (name in hc), (
+            f"{name} is listed in ALLOWED_POLICY_FLOOR_DRIFT but is no "
+            f"longer one-tree-only (scripts={name in sc}, "
+            f"hilmar={name in hc}). Remove the exemption."
+        )
+
+
 # ── decide_status: canonical outcome parity (accounts for LEGACY vs STRICT) ──
 
 def _canon(decision) -> tuple:
