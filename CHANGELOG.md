@@ -30,12 +30,21 @@ that layer). The distribution-group theory was WRONG: the object is a named
 shared mailbox. And the reads still cannot work: Graph finds no folder
 store behind the address — not even Root. Since OL staff demonstrably use
 the mailbox in Outlook every day, the store exists somewhere Graph cannot
-see; the explanation consistent with every observation is that the mailbox
-is homed OUTSIDE Exchange Online (on-prem, hybrid), which Graph cannot
-reach regardless of scopes or consent. That is an OL-IT infrastructure
-question, and it is now ONE question: "Where is MBD_OceanExportBookingShared
-homed? If on-prem, Graph can never read it; if it can be homed in Exchange
-Online, the tracker reads it directly with what is already granted."
+see. I first read that as the mailbox being homed on-prem. Michael, same
+day: "they use exchange online... we do not run on our own servers at ol"
+— that theory is DEAD too, the second wrong one on this mailbox. The
+surviving explanation [Likely, unverified]: Exchange Online returns 404
+"not found" rather than 403 for a mailbox the signed-in user lacks FULL
+ACCESS to — it hides the mailbox rather than admit it exists. Distribution
+membership (why /me receives the group's mail) grants no mailbox
+permission; Full Access is a separate per-mailbox Exchange grant, on a
+different admin surface from the Entra consent that WAS approved, and
+Mail.Read.Shared only unlocks what the user could already open. This also
+explains the 403/404 mix across runs. Decisive self-test, no IT: OWA →
+"Open another mailbox" → the shared address. If refused, the ask is one
+grant — Full Access (read) for michael.deitchman@ol-usa.com on
+MBD_OceanExportBookingShared — then re-run diag_shared_mailbox BEFORE
+believing anything.
 
 OPERATIONAL POSITION, unchanged and healthy: /me is the intake, as it always
 really was. Michael is on the group's distribution, so the group's mail
