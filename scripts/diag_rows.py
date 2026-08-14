@@ -311,6 +311,59 @@ def main() -> int:
         for rid in only_qc[:15]:
             print(f"      {rid}")
 
+    # ── THE BANNER ROW, AND EVERY MESSAGE THAT COULD HAVE DATED IT ───
+    # 2026-08-14. The report said "1 recent quote has a rate or carrier but
+    # no response time". Michael: "untrue again as i gave this to you before
+    # and emailed you a copy." If he emailed it, the evidence EXISTS in the
+    # mailbox we read, and "cannot be dated" is a pipeline failure, not a
+    # data gap. So: name the row, name its linked messages, then scan the
+    # whole stage for every message mentioning that lane — with its bucket
+    # and sender — so we can see exactly where his copy went.
+    print(f"\n{'=' * 78}\nTHE CURRENT UNDATED ROW(S), AND THE STAGE SCAN FOR THEIR LANES\n{'=' * 78}")
+    stage_recs = []
+    for name in ("stage_emails.txt",):
+        spath = tmp / name
+        if not spath.exists():
+            spath = tmp / "scripts" / name
+        if spath.exists():
+            with open(spath, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        stage_recs.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+    print(f"  stage records loaded: {len(stage_recs)}")
+    try:
+        import gen_email as _GE2
+        current_undated = _GE2.undated_quotes({"requests": rows})
+    except Exception as e:  # pragma: no cover - diagnostic only
+        current_undated = []
+        print(f"  gen_email unavailable: {e}")
+    print(f"  rows the banner counts RIGHT NOW: {len(current_undated)}")
+    for r in current_undated:
+        print(f"\n  {r.get('request_id')}  {r.get('lane')}")
+        print(f"    status={r.get('status')} quoted={r.get('quoted')} "
+              f"loss_reason={r.get('loss_reason')!r}")
+        print(f"    carrier={r.get('carrier_quoted')!r} rate={r.get('ol_rate')!r} "
+              f"mdolx={r.get('mdolx_ref')!r}")
+        print(f"    request_ts={r.get('request_timestamp')} "
+              f"resp_ts={r.get('response_timestamp')!r}")
+        print(f"    source_imids={r.get('source_imids')!r}")
+        # Every staged message that mentions this destination, bucket and all.
+        dest = str(r.get("destination") or "").split("(")[0].strip().lower()
+        if not dest:
+            continue
+        hits = [s for s in stage_recs
+                if dest in str(s.get("subject") or "").lower()]
+        print(f"    stage messages whose subject mentions {dest!r}: {len(hits)}")
+        for s in hits[-12:]:
+            print(f"      [{s.get('bucket')}] {s.get('sent') or s.get('received')} "
+                  f"from={s.get('sender_email')!r} imid={str(s.get('imid'))[:40]!r}")
+            print(f"        subj={str(s.get('subject'))[:90]!r}")
+
     # ── IS THE TURNAROUND CLOCK TRUSTWORTHY YET? ─────────────────────
     # Michael 2026-08-13, after the shared mailbox came online: "turnaround
     # clock should be fine now that you see the shard box yourself".
