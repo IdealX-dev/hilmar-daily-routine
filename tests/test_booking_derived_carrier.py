@@ -131,3 +131,83 @@ def test_qc077_and_the_note_count_the_same_rows():
     # stand_* is excluded by has_no_rfq_chain, as it always was.
     assert "stand_1" not in note_ids
     assert QS is not None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# QC-077's ADVICE has to match the bucket it is describing.
+#
+# 2026-08-13, after the shared mailbox and the booking-derived fix took the
+# count 22 -> 7, every survivor landed in one bucket: "links to a cached
+# message that carries no send time or could not be classified". That is the
+# ask-only bucket — the row's single linked message is Lonny's own RFQ, and
+# core.quote_evidence_ok refuses to stamp a quote time from it because doing
+# so manufactured the resp==req same-day quotes behind the W31/W32 phantom
+# Q&L run.
+#
+# The message nonetheless told the reader to "Re-pull with --days-back N to
+# widen the cache". Those messages are already cached. The advice sent the
+# reader to do work that cannot help and implied the data was recoverable.
+# ─────────────────────────────────────────────────────────────────────
+
+def _fire_qc077(rows, bodies=None):
+    """Fire phase 6 with a body cache we control.
+
+    _undated_reason reads the REAL scripts/stage_emails_bodies.txt, which does
+    not exist in the test environment — so without this every row lands in the
+    "no_body" bucket and the ask-only branch can never be exercised. Patching
+    the loader is what lets the two advice branches be told apart.
+    """
+    import pytest as _pytest
+    import qc_selfheal as QS
+    mp = _pytest.MonkeyPatch()
+    try:
+        mp.setattr(QS, "_load_bodies_index", lambda: dict(bodies or {}))
+        log = QS.Log()
+        QS.phase_6_rules(log, {"requests": rows})
+    finally:
+        mp.undo()
+    return [e for e in log.errors if "QC-077" in e]
+
+
+def _undated(rid, **over):
+    r = {"request_id": rid, "status": "LOSS", "quoted": True,
+         "lane": "Oakland → Algeciras", "origin": "Oakland",
+         "destination": "Algeciras", "ol_rate": 4938.0,
+         "carrier_quoted": "CMA CGM", "response_timestamp": None,
+         "request_timestamp": "2026-06-20T12:00:00Z",
+         "source_imids": ["<ask@namprd22>"]}
+    r.update(over)
+    return r
+
+
+#: The ask itself: cached, has a send time, but Lonny sent it — so
+#: core.quote_evidence_ok refuses to read a QUOTE time off it.
+_ASK_CACHED = {"<ask@namprd22>": {
+    "imid": "<ask@namprd22>",
+    "sender_email": "lupfold@hilmaringredients.com",
+    "sent_ts": "2026-06-20T12:00:00Z",
+    "text_body": "Please quote Oakland to Algeciras, 1x40HC.",
+}}
+
+
+def test_the_advice_does_not_send_the_reader_to_re_pull_a_cache_that_is_full():
+    msgs = _fire_qc077([_undated(f"req_{i}") for i in range(7)],
+                       bodies=_ASK_CACHED)
+    assert msgs, "QC-077 did not fire"
+    m = msgs[0]
+    assert "will not shrink it" in m, m[:500]
+    assert "fabricates turnaround" in m
+    assert "--days-back" not in m, (
+        "still telling the reader to widen a cache that already holds the "
+        "linked message")
+
+
+def test_a_real_cache_gap_still_gets_the_re_pull_advice():
+    """The advice must stay correct for the bucket it WAS written for: a row
+    whose linked message is genuinely no longer cached."""
+    msgs = _fire_qc077([_undated("req_gone",
+                                 source_imids=["<evicted@ol-usa.com>"])],
+                       bodies={})
+    assert msgs
+    assert "--days-back" in msgs[0], msgs[0][:500]
+    assert "will not shrink it" not in msgs[0]

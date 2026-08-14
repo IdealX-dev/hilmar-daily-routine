@@ -195,17 +195,6 @@
       "source": "ol-booking-recap-2026-08-12"
     },
     {
-      "request_id": "ol_261071",
-      "create": true,
-      "set": {
-        "status": "WIN",
-        "mdolx_ref": "261071",
-        "booking_timestamp": "2026-08-12T00:00:00Z"
-      },
-      "note": "MDOLX261071 booked 2026-08-12. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12. Michael: 'everything she sent as a booking is a win... assume that each win was a quote request so just use the wins if you cannot find the emails from lonny'. No confirmation email for this MDOLX exists in the tracked mailbox (diag_find, 2026-08-12) and OL's own row carries NO POD, carrier or booking number — so the lane is left unresolved rather than guessed. Supply the lane and this row gains it; if the real confirmation ever arrives, ingest's own row takes precedence and this one stands down automatically.",
-      "source": "ol-booking-recap-2026-08-12"
-    },
-    {
       "request_id": "req_c499ccd17e8763ff",
       "set": {
         "status": "WIN",
@@ -1116,24 +1105,6 @@
       "source": "ol-transaction-report-2026"
     },
     {
-      "request_id": "ol_260192",
-      "create": true,
-      "set": {
-        "status": "WIN",
-        "mdolx_ref": "260192",
-        "destination": "Unknown",
-        "lane": "Oakland → Unknown",
-        "origin": "Oakland",
-        "teu_requested": 0,
-        "teu_won": 0,
-        "booking_timestamp": "2026-02-25T12:00:00+00:00",
-        "request_timestamp": "2026-02-25T12:00:00+00:00",
-        "request_date": "2026-02-25"
-      },
-      "note": "MDOLX260192 booked (carrier n/a, Oakland → Unknown, 0 TEU). Source: OL transaction report pulled 2026-08-13 covering all 2026 Hilmar sailings. Michael: \"if it's a booking it's a win and yes the 54 that predate the tracker should be entered so we can see complete and total volumes booked on lanes\". No request row exists to amend — this booking sailed 2026-02-25, before or outside the window in which this pipeline read mail. DATE IS A SAILING DATE, not the date booked, so no turnaround is recorded for this row.",
-      "source": "ol-transaction-report-2026"
-    },
-    {
       "request_id": "ol_260209",
       "create": true,
       "set": {
@@ -1416,13 +1387,13 @@
     {
       "request_id": "ol_261071",
       "exclude": true,
-      "note": "MDOLX261071 is not Hilmar — Michael, 2026-08-13. Withdrawing a win I manufactured on 2026-08-12. Its source row in Linda Echevarria's container report is EMPTY: carrier null, pol \"\", pod \"\", booking_no \"\" — a number and a date, nothing else. No email carries the ref either (source_imids was []). It rendered as WIN / \"Lane unresolved\" / Unknown / 0 TEU. The standing instruction it was created under, \"everything she sent as a booking is a win\", presumes the row IS a booking; a row with no port, carrier or booking number is not evidence of one and should have been reported as unresolvable instead of counted. It is also absent from OL's 2026 transaction report, which tops out at 261070.",
+      "note": "MDOLX261071 is not Hilmar — Michael, 2026-08-13. Withdrawing a win I manufactured on 2026-08-12. Its source row in Linda Echevarria's container report is EMPTY: carrier null, pol \"\", pod \"\", booking_no \"\" — a number and a date, nothing else. No email carries the ref either (source_imids was []). It rendered as WIN / \"Lane unresolved\" / Unknown / 0 TEU. The standing instruction it was created under, \"everything she sent as a booking is a win\", presumes the row IS a booking; a row with no port, carrier or booking number is not evidence of one and should have been reported as unresolvable instead of counted. It is also absent from OL's 2026 transaction report, which tops out at 261070.  2026-08-13 PM: the paired `create: true` for this same request_id was REMOVED. The row was created from OL's transaction report and then excluded once Michael ruled on it; keeping both made the outcome depend on file order, which nothing enforces. With no create, this exclude is a silent no-op and stands purely as the record of why.",
       "source": "ol-transaction-report-2026"
     },
     {
       "request_id": "ol_260192",
       "exclude": true,
-      "note": "MDOLX260192 was cancelled. Michael 2026-08-13: \"260905 260192 260963 were bookings hilmar cancelled.\" A cancelled booking is not a win. This also explains the export: OL DROPS cancelled bookings from it entirely rather than flagging them, which is why its cancelled column reads No on all 134 rows — absence from the export is the cancellation signal. It is IN the export, but its row there is blank — no port, no carrier, no booking number, no TEU — and backfill_ol_bookings created a win from it on 2026-08-13 anyway. That is the second time an empty row became a win (MDOLX261071 was the first), so is_evidence_of_a_booking now REFUSES to create one from a row with neither a discharge port nor a carrier.",
+      "note": "MDOLX260192 was cancelled. Michael 2026-08-13: \"260905 260192 260963 were bookings hilmar cancelled.\" A cancelled booking is not a win. This also explains the export: OL DROPS cancelled bookings from it entirely rather than flagging them, which is why its cancelled column reads No on all 134 rows — absence from the export is the cancellation signal. It is IN the export, but its row there is blank — no port, no carrier, no booking number, no TEU — and backfill_ol_bookings created a win from it on 2026-08-13 anyway. That is the second time an empty row became a win (MDOLX261071 was the first), so is_evidence_of_a_booking now REFUSES to create one from a row with neither a discharge port nor a carrier.  2026-08-13 PM: the paired `create: true` for this same request_id was REMOVED. Both entries were mine — created while reconciling OL's transaction report, then excluded when Michael said it was cancelled. The net result was correct but only because the exclude ran after the create in the same pass; if that ordering ever shifted, a cancelled booking became a phantom win. With no create, this exclude is a silent no-op (ingest.apply_operator_corrections treats a missing row as the expected steady state) and is kept solely as the record of why MDOLX260192 is not a win.",
       "source": "ol-transaction-report-2026"
     },
     {

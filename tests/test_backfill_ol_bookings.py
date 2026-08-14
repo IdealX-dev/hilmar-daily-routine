@@ -258,10 +258,15 @@ def test_every_created_win_is_dated_to_its_sailing_not_to_today():
     doc = json.loads((ROOT / "scripts" / "operator_corrections.json"
                       ).read_text(encoding="utf-8"))
     created = [c for c in doc["corrections"] if c.get("create")]
-    assert len(created) >= 50
+    # 49, not 50+. Two creates were REMOVED on 2026-08-13 PM — ol_260192 and
+    # ol_261071 — because each also carried an `exclude` for the same
+    # request_id (cancelled, and not-Hilmar respectively). Keeping both made
+    # the outcome depend on the order apply_operator_corrections happens to
+    # iterate the file in; the excludes remain as the record of why. See
+    # tests/test_cancelled_bookings_stay_out.py.
+    assert len(created) >= 49
     undated = [c["request_id"] for c in created
-               if not c["set"].get("booking_timestamp")
-               and c["request_id"] != "ol_261071"]
+               if not c["set"].get("booking_timestamp")]
     assert undated == [], f"these would report as won today: {undated}"
     future = [c["request_id"] for c in created
               if (c["set"].get("booking_timestamp") or "") > "2026-08-13"]

@@ -4419,6 +4419,33 @@ def phase_6_rules(log: Log, data: dict):
             _rest_note = (
                 f", {_rest} link to a cached message that carries no send time "
                 f"or could not be classified" if _rest else "")
+            # THE ADVICE HAS TO MATCH THE BUCKET, 2026-08-13. This line read
+            # "Re-pull with --days-back N to widen the cache" unconditionally.
+            # For the no_body bucket that is right. For the bucket that now
+            # DOMINATES it is actively wrong: those rows link to a message
+            # that IS cached, and the reason they stay undated is that the
+            # only linked message is Lonny's own ask — core.quote_evidence_ok
+            # refuses to stamp a quote time from the ask, because doing so
+            # manufactured the resp==req same-day quotes that filled W31/W32
+            # with phantom Q&L. Widening the cache cannot fix that; nothing
+            # can, short of the real OL message existing somewhere. Telling
+            # the reader to re-pull sends them to do work that cannot help,
+            # and quietly implies the data is recoverable when it is not.
+            if _rest >= max(_no_imids, _no_body) and _rest:
+                _advice = (
+                    "The dominant group is NOT a cache gap and re-pulling will "
+                    "not shrink it: those rows link to a message that IS "
+                    "cached, and it is Lonny's own ask. Stamping a quote time "
+                    "from the ask is refused on purpose — it fabricates "
+                    "turnaround. They are dateable only if the real OL reply "
+                    "is recovered, or they stay undated and honest.")
+            elif _no_body:
+                _advice = ("Re-pull with `refresh_stage.py --days-back N` to "
+                           "widen the cache, or fix at ingest so the link is "
+                           "recorded when the rate is.")
+            else:
+                _advice = ("Fix at ingest so the link is recorded when the "
+                           "rate is.")
             log.error(
                 f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
                 f"NO response_timestamp — every one is a real quote that "
@@ -4433,9 +4460,7 @@ def phase_6_rules(log: Log, data: dict):
                 f"broken. These are the rows the auto-dating heal could NOT "
                 f"reach — {_no_imids} have no source message linked at all, "
                 f"{_no_body} link to a message no longer in the body cache "
-                f"(90-day retention){_rest_note}. Re-pull with "
-                f"`refresh_stage.py --days-back N` to widen the cache, or fix "
-                f"at ingest so the link is recorded when the rate is. "
+                f"(90-day retention){_rest_note}. {_advice} "
                 f"Lanes: {_lanes}"
                 + (f" … +{len(_q_nots) - 6} more" if len(_q_nots) > 6 else ""))
         else:
