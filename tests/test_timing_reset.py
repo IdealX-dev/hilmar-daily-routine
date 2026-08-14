@@ -40,6 +40,29 @@ from hilmar import core as HC  # noqa: E402
 
 FLOOR = "2026-08-13"
 
+#: THE FLOOR IS RETIRED IN PRODUCTION (2026-08-13 PM). Michael, once the
+#: shared mailbox came online: "turnaround clock should be fine now that you
+#: see the shard box yourself" — and the measurement backed him up: of 288
+#: rows carrying both timestamps, ZERO had a response before its ask and 8
+#: (2.8%) exceeded 30 days, all of which QC-021 already clears at >40
+#: biz-hours. core.TIMING_VALID_FROM is now "".
+#:
+#: These tests do NOT get deleted for that. Every one of them exercises the
+#: MECHANISM — exclusion, the null-not-zero rule, the banners, the two trees
+#: agreeing — and that mechanism is what makes stopping the clock a one-line
+#: change if it is ever needed again. Deleting them would mean the next stop
+#: ships untested, under pressure, which is how it shipped the first time.
+#:
+#: So they run against an ARMED clock, set here rather than read from
+#: production. `test_the_floor_is_retired_in_production` below is the one that
+#: asserts the live value, and it opts out.
+@pytest.fixture(autouse=True)
+def _armed_clock(request, monkeypatch):
+    if "live_floor" in request.keywords:
+        return
+    monkeypatch.setattr(C, "TIMING_VALID_FROM", FLOOR)
+    monkeypatch.setattr(HC, "TIMING_VALID_FROM", FLOOR)
+
 
 def _req(ts, biz=4.0, clock=6.0, status="WIN", **kw):
     r = {"request_id": f"r_{ts}", "request_timestamp": ts, "status": status,
@@ -52,8 +75,14 @@ def _req(ts, biz=4.0, clock=6.0, status="WIN", **kw):
 
 # ── the floor itself ─────────────────────────────────────────────────────
 
-def test_the_floor_is_the_day_michael_called_it():
-    assert C.TIMING_VALID_FROM == FLOOR
+@pytest.mark.live_floor
+def test_the_floor_is_retired_in_production():
+    """The clock is ON. Kept as an assertion rather than a deletion so that
+    re-arming it is a deliberate, visible edit to both the constant and this
+    line — not something that drifts back in unnoticed."""
+    assert C.TIMING_VALID_FROM == ""
+    assert HC.TIMING_VALID_FROM in ("", None), (
+        "the mirror tree still carries a floor the production tree dropped")
 
 
 @pytest.mark.parametrize("ts,ok", [

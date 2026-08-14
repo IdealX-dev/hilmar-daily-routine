@@ -57,15 +57,25 @@ on:
   # DST: the fire has a cron for BOTH UTC encodings; the gate proceeds on exactly
   # the one matching the current ET offset, so DST never doubles or skips.
   #   8 AM ET = 12 UTC (EDT) / 13 UTC (EST)
-  # PAUSED 2026-08-12 (Michael: "turn off all reports going out until you
-  # finally figure out where you made system changes in the last month that
-  # the report is all wrong still"). BOTH halves of the stop, per the
-  # 2026-08-03 lesson below: triggers out AND HILMAR_REPORTS_PAUSED=true.
-  # To resume: restore the two cron lines AND flip the flag back to "false"
-  # (here, weekly.yml, liveness.yml — tests enforce the pairing).
-  # schedule:
-  #   - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-  #   - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+  # RESUMED 2026-08-13 (Michael: "ol usa reponses you won't see for most for
+  # lat two months.. you'll see them going forward so set your chrons back up
+  # to work as of now"). BOTH halves restored together, per the 2026-08-03
+  # lesson: the cron lines below AND HILMAR_REPORTS_PAUSED="false".
+  #
+  # The pause it ends began 2026-08-12: "turn off all reports going out until
+  # you finally figure out where you made system changes in the last month
+  # that the report is all wrong still". What was found and fixed in between
+  # is in CHANGELOG 2026-08-13 (1)(2) — the win set now reconciles to OL's
+  # own 2026 book (133 wins), 12 phantom wins are out, and the turnaround
+  # clock is off and says so on the report.
+  #
+  # KNOWN AND ACCEPTED, not a defect to chase: OL-USA RESPONSES will be
+  # sparse for roughly Jun-Aug. OL's replies went To: Lonny, Cc: the group
+  # and never reached this mailbox; forwarding was fixed 2026-08-12, so the
+  # section fills from here forward. Michael, above.
+  schedule:
+    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
+    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -137,13 +147,11 @@ concurrency:
 # pages about a silence you chose is one you learn to ignore.
 # ─────────────────────────────────────────────────────────────────────
 env:
-  # verify_only (2026-08-12, Michael "go" on the resume plan): a third state
-  # between hard-stopped and live. Scheduled fires and ANY send_to=full stay
-  # blocked exactly as under "true"; the ONLY thing that may run is a manual
-  # dispatch with send_to=test (Michael alone), so the fixed pipeline can be
-  # verified without a single client-facing send. Crons stay out — the
-  # pairing tests treat verify_only like a pause. Resume = flag "false" +
-  # crons restored, in one PR, after Michael approves the verification email.
+  # verify_only, WITH the crons live (Michael 2026-08-13: "just resume
+  # running the report and only to myself until i approve it.. but you
+  # should be checking and scanning emails is what i meant"). The daily
+  # sweep runs and OL's mail keeps entering the tracker; every send goes to
+  # Michael alone. Flip to "false" only when he approves the content.
   HILMAR_REPORTS_PAUSED: "verify_only"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
@@ -182,20 +190,33 @@ jobs:
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # VERIFY-ONLY (2026-08-12): schedule and send_to=full stay blocked
-          # exactly as under the hard stop; the ONLY opening is a manual
-          # dispatch to the test recipient (Michael alone), so the fixed
-          # pipeline can prove itself before anything client-facing resumes.
+          # VERIFY-ONLY. REDEFINED 2026-08-13 by Michael: "just resume running
+          # the report and only to myself until i approve it.. but you should
+          # be checking and scanning emails is what i meant."
+          #
+          # It used to block the schedule outright, which also stopped the
+          # DAILY MAIL SCAN — and the scan is the thing that must not stop,
+          # because OL's replies only enter the tracker if the sweep runs the
+          # day they arrive. So verify_only now means: RUN on the normal
+          # schedule, scan mail, build everything — and send ONLY to Michael.
+          # send_to=full is refused from any trigger, and the SEND_TO export
+          # further down forces "test" regardless of what the trigger asked
+          # for, so a client-facing send is unreachable in this state, not
+          # merely discouraged.
+          #
+          # The hard stop above is unchanged and is still the way to stop
+          # everything including the scan.
+          #
           # Checked BEFORE the open-dispatch branch below, same reason the
           # hard stop is — an opening checked too late is not a gate.
-          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
-               [ "${{ github.event.inputs.send_to }}" != "full" ]; then
-              echo "verify_only — manual test dispatch allowed (send_to=test, Michael only)."
-              echo "proceed=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "::warning::verify_only — blocked. Only a manual dispatch with send_to=test may run; schedule and full sends stay off until the flag is 'false' and the crons are restored."
+          # It REFUSES send_to=full and then FALLS THROUGH — it must not
+          # short-circuit proceed=true on a schedule, because the DST
+          # cron-matching below is what picks exactly one of the two cron
+          # encodings. Returning early here would fire the pipeline twice
+          # every day, once per encoding.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ] \
+             && [ "${{ github.event.inputs.send_to }}" = "full" ]; then
+            echo "::warning::verify_only — send_to=full refused. Only Michael receives anything in this state."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -339,6 +360,67 @@ jobs:
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
       HILMAR_NONINTERACTIVE: "1"
+      # Read MBD_OceanExportBookingShared ONLY, not michael.deitchman@ol-usa.com.
+      # Michael 2026-08-14: "stop checking my ol emails and use your direct
+      # connection to the shared box." The shared mailbox is where OL sends and
+      # is already the authoritative copy in the dedupe; /me was mostly
+      # duplication (3,636 already-staged against 4 new on the 60-day sweep)
+      # plus 23,724 unclassified items from a personal mailbox carrying every
+      # non-Hilmar thread he is on.
+      #
+      # Set here as well as defaulted in refresh_stage so the choice is visible
+      # where the fire is configured. Flip to "false" to put /me back — no code
+      # change. If the Mail.Read.Shared token ever lapses, refresh_stage still
+      # falls back to /me rather than reading nothing.
+      #
+      # SET BACK TO "false" 2026-08-14, ~30 minutes later, on evidence. The
+      # shared mailbox is NOT READABLE and never has been. Every Graph call
+      # against it has failed:
+      #     403 ErrorAccessDenied  "Access is denied. Check credentials"
+      #     404 ErrorItemNotFound  "Default folder AllItems not found"
+      # The 08-13 run that appeared to prove shared access only proved the
+      # TOKEN carries Mail.Read.Shared; read_targets listed the mailbox and
+      # every actual read 403'd, so all 27,500 messages that day came from
+      # /me. With shared-only set, the 10:41 fire swept 0 messages and staged
+      # 0 records — the tracker was blind.
+      #
+      # PROBED endpoint-by-endpoint on 2026-08-14 (diag_shared_mailbox, run
+      # 31806028826) after Michael pushed back that the authorization WAS
+      # granted. He was right about the authorization, and the earlier
+      # "distribution group" theory written here was wrong:
+      #
+      #   directory object : PASS — 'MBD Ocean Export Booking (Shared)'
+      #   folder list      : 404  "Default folder Root not found"
+      #   inbox read       : 404  "Default folder Inbox not found"
+      #   sentitems read   : 404  "Default folder SentItems not found"
+      #   /messages        : 404  "Default folder AllItems not found"
+      #
+      # A real, named shared-mailbox object; token acquired with
+      # Mail.Read.Shared; and Graph finds NO folder store behind it — not
+      # even Root. That is past the permission layer: the errors are
+      # store-level, not access-level — or so it appears. Michael 2026-08-14:
+      # "they use exchange online... we do not run on our own servers at ol",
+      # which kills the on-prem/hybrid theory that briefly stood here.
+      #
+      # The remaining explanation that fits EVERYTHING observed [Likely, not
+      # yet verified]: Exchange Online answers 404 "not found" instead of 403
+      # "access denied" for a mailbox the signed-in user lacks FULL ACCESS to
+      # — it hides the mailbox rather than admit it exists. Being on the
+      # group's DISTRIBUTION (which is why /me receives the mail) grants no
+      # mailbox permission at all; Full Access is a separate per-mailbox
+      # grant in Exchange admin, on a different screen from the Entra app
+      # consent that WAS approved. Mail.Read.Shared only unlocks what the
+      # user could already open.
+      #
+      # The decisive test needs no IT: OWA -> "Open another mailbox" ->
+      # MBD_OceanExportBookingShared@ol-usa.com. Opens = theory wrong, keep
+      # digging. Refuses = confirmed; the fix is OL IT granting Michael's
+      # account Full Access (read) on that mailbox, after which this token
+      # and this code read it with no further change. Re-run
+      # diag_shared_mailbox after any grant before believing anything.
+      # /me remains the working intake either way — the group's mail lands
+      # there via the distribution, as it always has.
+      HILMAR_READ_SHARED_ONLY: "false"
       # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
       # single 8 AM fire reports the prior business day; there is no fire-time
       # or day-of-week branching anymore. core.py's default stays "current";
@@ -513,6 +595,16 @@ jobs:
             echo "::warning::gen_combined_pdf failed — falling back to the 3-email model this run"
             MAIN_PDF="reports/hilmar-report.pdf"
           fi
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$SEND_TO" = "full" ]; then
             # FORCE_RESEND=true (manual dispatch only) overrides the per-day
             # already-sent flag. We use --force (NOT --no-flag) so the send is
@@ -572,6 +664,16 @@ jobs:
             echo "Client-facing email artifacts missing (best-effort build step failed?) — skipping."
             exit 0
           fi
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$ENABLED" = "true" ] && [ "$SEND_TO" = "full" ] && [ -n "$CLIENT_TO" ]; then
             echo "CLIENT send — client_report.enabled=true and send_to=full → TO=$CLIENT_TO CC=$CLIENT_CC"
             python3 scripts/outlook_send.py daily --to $CLIENT_TO --cc $CLIENT_CC \
@@ -611,6 +713,16 @@ jobs:
         id: integrity
         if: always() && steps.pipeline.conclusion != 'skipped'
         run: |
+          # SECOND LOCK on the client distribution. The gate refuses an
+          # explicit send_to=full under verify_only, but a SCHEDULED fire
+          # never passes send_to at all and the expression above resolves it
+          # to "full". Michael 2026-08-13 wants the schedule to run and scan
+          # mail while every send goes to him alone, so verify_only rewrites
+          # SEND_TO here, where the flag is a real shell variable.
+          if [ "$HILMAR_REPORTS_PAUSED" = "verify_only" ]; then
+            SEND_TO=test
+            echo "verify_only — SEND_TO forced to 'test' (Michael only)."
+          fi
           if [ "$SEND_TO" = "full" ]; then
             python3 deploy/assert_fire_integrity.py --pipeline-rc "${{ steps.pipeline.outputs.rc }}"
           else

@@ -120,13 +120,17 @@ def _is_quoted(r: dict) -> bool:
 
 
 def _is_standalone(r: dict) -> bool:
-    """True for WIN rows ingested from a booking confirmation WITHOUT a
-    matching Lonny RFQ chain. These have request_id like 'stand_NNNN'
-    and lack the rate-response email that carries rate/ETD/transit info.
-    Excluded from rate/ETD accuracy measurement — the data is correctly
-    absent, not a parser failure."""
-    rid = (r.get("request_id") or "")
-    return rid.startswith("stand_")
+    """True for WIN rows recorded from a booking WITHOUT a matching Lonny
+    RFQ chain, so the rate-response email that carries rate/ETD/transit
+    info does not exist. Excluded from rate/ETD accuracy measurement — the
+    data is correctly absent, not a parser failure.
+
+    This is NOT a way to excuse a parser miss: a row only qualifies when
+    there is no source message to parse in the first place. A booking
+    recovered from OL's export has none by construction.
+    """
+    from . import core as _core  # local: avoids an import cycle
+    return _core.has_no_rfq_chain(r)
 
 
 def _is_chain_quoted(r: dict) -> bool:

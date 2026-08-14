@@ -1,0 +1,114 @@
+name: Seed the shared mailbox into stage
+
+# MANUAL ONLY, and it is a MIGRATION — run it once after shared-mailbox access
+# is granted, not on a schedule.
+#
+# WHY THIS EXISTS. On 2026-08-13 OL granted admin consent for Microsoft Graph
+# Command Line Tools, the re-auth minted a token carrying Mail.Read.Shared,
+# and refresh_stage began reading MBD_OceanExportBookingShared alongside /me
+# for the first time. That first read is a BULK BACKFILL: every Hilmar thread
+# in that mailbox is new, so every one needs a body fetched, one Graph GET at
+# a time. Two production-fire attempts (120d, then 60d) both ran past twenty
+# minutes inside daily.yml's 50-minute job and were abandoned with nothing
+# persisted — the state push is the LAST step, so a timeout discards the whole
+# sweep.
+#
+# The daily fire is a 4-minute job that happens to start with a 14-day
+# incremental sweep. It is the wrong place for a one-time bulk fetch, and
+# making its timeout big enough would only mean a wedged fire takes an hour to
+# fail. So the backfill runs here, once, with room; afterwards the bodies are
+# cached in the blob store and every daily fire is incremental again.
+#
+# WHAT IT WRITES: stage_emails.txt and stage_emails_bodies.txt, and nothing
+# else. `only` is not a convenience — it is the guard. This job pulls state at
+# the start, and if a daily fire writes tracking-data-v2.json while the sweep
+# is running, a full push here would upload this job's stale copy straight
+# over it. That exact last-writer-wins revert already cost a day's ingest once
+# via the weekly workflow (see state_store.push).
+#
+# It does NOT ingest, decide status, or send anything. Run the normal
+# production-fire afterwards to fold the newly staged mail into the tracker.
+
+on:
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: "How far back to sweep. 60 covers the whole window where OL's replies went to the group and never reached us."
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Shares daily.yml's group so this can never run WHILE a fire is running —
+  # both pull and push the same blob state, and interleaving them is the
+  # revert this job's `only` filter is already defending against.
+  group: hilmar-daily-fire
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Bulk-fetch the shared mailbox into the stage cache
+    runs-on: ubuntu-latest
+    # Deliberately long. The first sweep is thousands of messages and hundreds
+    # of body GETs; every later run is incremental and finishes in minutes.
+    timeout-minutes: 180
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      GRAPH_APP_TENANT_ID: ${{ secrets.GRAPH_APP_TENANT_ID }}
+      GRAPH_APP_CLIENT_ID: ${{ secrets.GRAPH_APP_CLIENT_ID }}
+      GRAPH_APP_CLIENT_SECRET: ${{ secrets.GRAPH_APP_CLIENT_SECRET }}
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      HILMAR_NONINTERACTIVE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # Mirrors daily.yml's fire job. azure-storage-blob is deliberately not
+        # in requirements.txt and is named by every workflow that touches the
+        # state store.
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      - name: Pull existing stage + token from the blob store
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0,'scripts')
+          import state_store
+          print('pulled:', state_store.pull())
+          "
+
+      - name: Report which mailboxes are readable BEFORE sweeping
+        # If the shared mailbox is not in this list the sweep has nothing new
+        # to do, and that is worth knowing in one line rather than after an
+        # hour of paging /me a second time.
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0,'scripts')
+          import refresh_stage as RS
+          tok = RS.get_token()
+          for label, base, _ in RS.read_targets(tok):
+              print(f'  will read: {label}  ->  {base}')
+          "
+
+      - name: Sweep
+        run: python3 scripts/refresh_stage.py --days-back "${{ inputs.days_back }}"
+
+      - name: Push ONLY the stage and body caches
+        # Never tracking-data-v2.json. See the header.
+        if: always()
+        run: |
+          python3 -c "
+          import sys; sys.path.insert(0,'scripts')
+          import state_store
+          print('pushed:', state_store.push(only=['stage_emails']))
+          "

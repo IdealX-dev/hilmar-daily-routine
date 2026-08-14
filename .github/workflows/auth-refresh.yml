@@ -8,12 +8,18 @@ name: Re-seed the Graph token
 # decommissioned, so if the ~90-day refresh token ever lapses this is the only
 # way back. Run it then, or to rotate the credential.
 #
-# WHAT IT IS NOT FOR: reading MBD_OceanExportBookingShared. That needs
-# Mail.Read.Shared, which needs ol-usa admin consent, which OL IT declined —
-# see refresh_stage.SHARED_MAILBOX for the constraint and the redirect-rule
-# route that works without them. This job was built on 2026-08-07 believing
-# otherwise; Michael: "these requires ol's it department to approve.. you have
-# had these details before.. why recreate the wheel here."
+# READING MBD_OceanExportBookingShared — changed 2026-08-13. That needs
+# Mail.Read.Shared, which needs ol-usa admin consent. OL IT declined in June,
+# and this job was built on 2026-08-07 believing otherwise; Michael: "these
+# requires ol's it department to approve.. you have had these details
+# before.. why recreate the wheel here."
+#
+# On 2026-08-13 OL approved admin consent for "Microsoft Graph Command Line
+# Tools", which IS this app (outlook_send.CLIENT_ID 14d82eec-…). Consent
+# alone changes nothing: a scope has to be REQUESTED, and the stored token
+# was minted without it. Set include_shared=true to ask for it on the next
+# sign-in. The approval email did not enumerate scopes, so whether it covers
+# Mail.Read.Shared is unverified — this run is the test.
 #
 # The code is EMAILED to you when the run starts, so there is nothing to find:
 #
@@ -44,6 +50,11 @@ on:
         description: "Where to email the sign-in code"
         required: true
         default: "michael.deitchman@ol-usa.com"
+      include_shared:
+        description: "Also request Mail.Read.Shared (reads MBD_OceanExportBookingShared). Needs the OL admin consent granted 2026-08-13. If it was NOT covered, AAD refuses AFTER you sign in and no token is stored — re-run with this off."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -85,7 +96,16 @@ jobs:
         # property of device-code flow, and Microsoft returns no pre-filled
         # link for this client (verified against the live endpoint). The
         # hunting can be: the code lands in his inbox before the wait starts.
-        run: python3 scripts/auth_notify.py --to "${{ inputs.notify }}"
+        # --shared is opt-in per the input above. The asymmetry matters: a
+        # refused shared scope costs the whole re-auth (AAD refuses at
+        # redemption, after the sign-in), so it is never on by default.
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.include_shared }}" = "true" ]; then
+            EXTRA="--shared"
+            echo "Requesting Mail.Read.Shared as well as the base scopes."
+          fi
+          python3 scripts/auth_notify.py --to "${{ inputs.notify }}" $EXTRA
 
       - name: Push the refreshed cache — and only the cache
         if: success()

@@ -61,6 +61,14 @@ hilmar = ["templates/*.j2", "templates/*.html", "prompts/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# `live_floor` marks the one test that reads the PRODUCTION value of
+# core.TIMING_VALID_FROM instead of the armed value the rest of
+# test_timing_reset.py monkeypatches in. Registered because addopts carries
+# --strict-markers, which turns an unknown marker into an error rather than a
+# warning — deliberately, so a typo cannot silently disable a test.
+markers = [
+    "live_floor: reads the live TIMING_VALID_FROM, not the armed test value",
+]
 # pythonpath = ["."] is belt-and-suspenders alongside the direct-conftest
 # imports introduced in commit a983e33. The repo root on sys.path means
 # `from tests.conftest import ...` ALSO resolves (in addition to the

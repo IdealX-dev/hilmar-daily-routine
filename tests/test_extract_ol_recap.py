@@ -421,3 +421,49 @@ def test_it_writes_nothing_without_out(tmp_path):
     assert "if args.out:" in src
     i = src.find("Path(args.out).write_text")
     assert i > src.find("if args.out:"), "a write happens outside the --out guard"
+
+
+# ── ETS / ETA: the dates the client report's ETD and ETA columns want ────
+
+def test_ets_and_eta_are_captured_as_their_own_fields():
+    """Michael, 2026-08-13, on a client report showing "—" in ETD/ETA for 11
+    of 14 bookings: "LOTS OF DATA MISSING AND YOU HAD IT ALL ON THE REPORT."
+    He was right — OL's customer transaction report carries ETS and ETA for
+    132 of its 134 bookings, in columns separate from `date`."""
+    rows = json.loads((ROOT / "data" / "ol-transaction-report-2026.json"
+                       ).read_text(encoding="utf-8"))
+    with_ets = [r for r in rows if r.get("ets")]
+    with_eta = [r for r in rows if r.get("eta_date")]
+    assert len(with_ets) == 132, len(with_ets)
+    assert len(with_eta) == 132, len(with_eta)
+
+
+def test_ets_binds_only_when_it_is_its_own_column():
+    """Placement matters. sheet_date's alias list starts with "etd", and on
+    Linda's container report the ONLY date column is headed ETD. If `ets`
+    claimed it first, sheet_date would go unbound and every downstream date
+    would break."""
+    head = ["MDOLX #", "Carrier", "POL", "POD", "Booking #", "ETD"]
+    row = ["261046", "ONE", "OAKLAND", "YOKOHAMA", "NAM1", "2026-08-27"]
+    recs, _, labels = X.extract([head, row])
+    assert labels["sheet_date"] == "ETD"
+    assert "ets" not in labels, "ets stole the only date column"
+    assert recs[0]["sheet_date"] == "2026-08-27"
+
+
+def test_a_separate_ets_column_does_not_disturb_sheet_date():
+    head = ["number", "date", "ets", "eta", "pod"]
+    row = ["MDOLX252071", "2026-01-03", "2026-01-05", "2026-01-27", "CAI MEP"]
+    recs, _, labels = X.extract([head, row])
+    assert recs[0]["sheet_date"] == "2026-01-03"
+    assert recs[0]["ets"] == "2026-01-05"
+    assert recs[0]["eta_date"] == "2026-01-27"
+
+
+def test_an_unparseable_sailing_date_is_omitted_not_blanked():
+    """The two cancelled rows carry "  -   -  : :" in ETS/ETA. A key present
+    with an empty value reads as "we looked and there is none"; omitting it
+    says the export had nothing."""
+    head = ["number", "date", "ets", "eta"]
+    recs, _, _ = X.extract([head, ["MDOLX260192", "2026-02-25", "  -   -  : :", ""]])
+    assert "ets" not in recs[0] and "eta_date" not in recs[0]

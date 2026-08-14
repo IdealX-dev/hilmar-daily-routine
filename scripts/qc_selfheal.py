@@ -488,7 +488,7 @@ def _heal_undated_quote(log: Log, rid_label: str, r: dict, bodies_idx: dict) -> 
     # Standalone bookings are excluded for the same reason QC-077 excludes
     # them: ingest.py:887 leaves the field None DELIBERATELY to signal "no
     # rate response was ever seen", and filling it would erase that signal.
-    if str(r.get("request_id") or "").startswith("stand_"):
+    if core.has_no_rfq_chain(r):
         return
     if _stamp_response_time_from_bodies(r, bodies_idx):
         log.fix(f"{rid_label}: undated quote dated {r['response_timestamp']} "
@@ -630,6 +630,101 @@ def _carrier_from_lane_rate_sibling(r: dict, requests: list, window_days: int = 
         return carriers.pop() if len(carriers) == 1 else None
     except Exception:
         return None
+
+
+def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
+    """A row that borrowed a quote's RATE must borrow its DATE.
+
+    2026-08-14. The report told Michael "1 recent quote has a rate or carrier
+    but no response time". Michael: "untrue again as i gave this to you before
+    and emailed you a copy." He was right on both counts, measured on stored
+    state (diag run 31808701667): the row was the Aug-4 Oakland→Algeciras ask
+    carrying $4,938 / CMA CGM with response_timestamp=None — and the quote
+    email he forwarded WAS in stage, an mbd_rate_response at
+    2026-08-12T20:57:02Z, correctly dated onto the Aug-12 sibling ask.
+
+    The rate and carrier had been propagated onto the older ask by the
+    sibling heals (same lane + identical rate is the same OL quote line —
+    _carrier_from_lane_rate_sibling above), but the TIMESTAMP was not. Half
+    the evidence travelled. That half-copy is what manufactures the
+    "quoted but undateable" state the banner then reports: no email is
+    missing, no data is missing — the pipeline split one quote's evidence
+    across two fields and lost the date on one row.
+
+    So: for a row holding a real rate but no response time, find the dated
+    same-lane sibling whose rate matches to the cent and whose response
+    POSTDATES this row's ask, and stamp that response time. This is recovery
+    of the same kind _stamp_response_time_from_bodies does — the value is
+    read off evidence already linked to the same quote, never synthesised.
+
+    Guards, all load-bearing:
+      - real rate required. A carrier-only row is booking-derived territory
+        (core.quote_evidence_is_booking_derived) — nothing to fingerprint on.
+      - rate matches to the CENT, same lane — the same fingerprint the
+        carrier-sibling heal above already trusts, for the same reason.
+      - the sibling's response must POSTDATE this row's ask: a quote cannot
+        answer a question that had not been asked. (Aug-12 quote covering the
+        Aug-4 re-asked lane passes; a June quote against an August ask does
+        not.)
+      - carrier, when present on both, must agree after normalisation —
+        same rate + different carrier is a different quote.
+      - the EARLIEST covering response wins: the first quote that answered.
+      - turnaround is computed inline under the same >40 biz-hour rule the
+        per-row heal enforces: past 40 the timing fields stay None (date
+        kept, statistic excluded) so a long-covered re-ask can never smear
+        the averages the clock was just turned back on for.
+    """
+    stamped = 0
+    dated = [s for s in requests
+             if s.get("response_timestamp")
+             and isinstance(s.get("ol_rate"), (int, float))]
+    for r in requests:
+        if r.get("response_timestamp") or core.has_no_rfq_chain(r):
+            continue
+        rate = r.get("ol_rate")
+        if not isinstance(rate, (int, float)):
+            continue
+        lane = (r.get("lane") or "").strip().lower()
+        req_dt = core.parse_iso(r.get("request_timestamp"))
+        if not lane or req_dt is None:
+            continue
+        my_car = r.get("carrier_quoted")
+        with contextlib.suppress(Exception):
+            my_car = core.normalize_carrier(my_car) or my_car
+        best = None
+        for s in dated:
+            if s is r or (s.get("lane") or "").strip().lower() != lane:
+                continue
+            if round(s["ol_rate"], 2) != round(rate, 2):
+                continue
+            s_car = s.get("carrier_quoted")
+            with contextlib.suppress(Exception):
+                s_car = core.normalize_carrier(s_car) or s_car
+            if my_car and s_car and my_car != s_car:
+                continue
+            resp_dt = core.parse_iso(s.get("response_timestamp"))
+            if resp_dt is None or resp_dt <= req_dt:
+                continue
+            if best is None or resp_dt < best:
+                best = resp_dt
+        if best is None:
+            continue
+        r["response_timestamp"] = best.isoformat()
+        biz = core.biz_hours_between(req_dt, best)
+        if isinstance(biz, (int, float)) and biz <= 40:
+            r["turnaround_biz_hours"] = biz
+            r["turnaround_hours"] = core.clock_hours_between(req_dt, best)
+            _timing = f"turnaround {biz:.1f} biz-hrs"
+        else:
+            r["turnaround_biz_hours"] = None
+            r["turnaround_hours"] = None
+            _timing = ("timing excluded — the covering quote answered a "
+                       "re-asked lane, not this ask's own clock")
+        stamped += 1
+        log.fix(f"{r.get('request_id')}: response_timestamp "
+                f"{r['response_timestamp']} taken from the dated same-lane "
+                f"same-rate sibling quote ({_timing})")
+    return stamped
 
 
 # QC-027's denominator, named once so a diagnostic cannot hold a different
@@ -930,6 +1025,11 @@ def phase_3_entries(log: Log, data: dict):
         if oos:
             removed_oos.append((oos, rid or (r.get("subject") or "")[:40]))
             continue
+        # DELIBERATELY a bare stand_ check, NOT core.has_no_rfq_chain.
+        # This purge drops a standalone row whose SUBJECT does not say
+        # HILMAR. A backfilled ol_ row has no subject at all, so the
+        # HILMAR test fails for it by construction and adopting the
+        # shared prefix here would delete all 49 recovered wins.
         if rid.startswith("stand_") and "HILMAR" not in subj_up:
             removed_misclassified.append(rid)
             continue
@@ -1930,12 +2030,12 @@ def qc073_standalone_booking_hygiene(rows):
             out.append((rid or "?", "error",
                         f"degenerate lane {origin} → {dest} — origin and "
                         f"destination are the same port"))
-        if (rid.startswith("stand_") and r.get("response_timestamp")
+        if (core.has_no_rfq_chain(rid) and r.get("response_timestamp")
                 and not r.get("ol_rate")):
             out.append((rid, "error",
                         f"response_timestamp={r['response_timestamp']} with no "
                         f"ol_rate — a booking confirmation is not a rate quote"))
-        if rid.startswith("stand_") and not r.get("carrier_won"):
+        if core.has_no_rfq_chain(rid) and not r.get("carrier_won"):
             out.append((rid, "warn",
                         "standalone booking WIN with no carrier_won — "
                         "unattributable win, find the thread"))
@@ -2001,6 +2101,22 @@ def qc072_history_contradicts_status(rows):
     Detect-only. Rewriting history is never a safe automatic act — the audit
     names the row so a human decides which record is the true one.
 
+    ONE PAIR IS NOT A CONTRADICTION: terminal QUOTED on a PENDING row.
+    "QUOTED" is not a status at all — VALID_STATUSES is {WIN, LOSS, PENDING} —
+    it is the logical sub-state ingest.py:1526 records when OL answers, with
+    decide_status finalizing WIN/LOSS later. So "we quoted it, Lonny hasn't
+    decided" is spelled exactly this way by design, and comparing the two
+    strings literally calls the intended shape an error.
+
+    It went unnoticed until 2026-08-13 only because it needs a row that is
+    quoted AND still pending, and there were none: the two that appeared that
+    day are the OL forwards admitted by refresh_stage's thread-linkage branch,
+    quoted 20:46 and 20:57 on 08-12 with Lonny yet to answer. Both were real
+    quotes correctly recorded, and both were reported as red errors.
+
+    Narrow on purpose. Any OTHER mismatch — the history-says-WIN /
+    status-says-LOSS shape this check was built for — still fires.
+
     Returns [(request_id, kind, detail), ...] where kind is
     "history-contradiction" or "stale-teu-won".
     """
@@ -2011,7 +2127,8 @@ def qc072_history_contradicts_status(rows):
         hist = r.get("status_history") or []
         if hist and isinstance(hist, list) and isinstance(hist[-1], dict):
             last_to = (hist[-1].get("to") or "").upper()
-            if last_to and status and last_to != status:
+            if last_to and status and last_to != status and not (
+                    last_to == "QUOTED" and status == "PENDING"):
                 out.append((rid, "history-contradiction",
                             f"status={status} but status_history ends at "
                             f"{last_to} (at {hist[-1].get('at')})"))
@@ -2191,7 +2308,7 @@ def qc066_impossible_states(rows, report_day=None):
             out.append((rid, f"newest status event {newest} predates request {req_d}"))
             continue
         if (report_day and req_d == report_day
-                and not str(rid).startswith("stand_")
+                and not core.has_no_rfq_chain(rid)
                 and r.get("status") in ("WIN", "LOSS")
                 and not any(d >= req_d for d, _ in dated)):
             out.append((rid, f"report-day request in terminal {r.get('status')} "
@@ -2373,10 +2490,30 @@ def phase_6_rules(log: Log, data: dict):
         # them PENDING. Same drift class the parity test catches between
         # scripts/core ↔ src/hilmar/core — now also between qc_selfheal
         # ↔ core.is_business_stale.
-        if rt and core.pending_hilmar_stale(rt, now):
+        #
+        # 2026-08-13: the `if rt` that used to gate this made QC-007 BLIND to
+        # the rows most likely to be stuck — a quote with a rate but no
+        # parseable response_timestamp skipped the check entirely, so it aged
+        # forever and raised nothing. Pass the request as the fallback anchor
+        # so the detector sees exactly what decide_status sees.
+        #
+        # Losing `if rt` means losing the scoping it was doing by accident:
+        # `pending` is EVERY PENDING row, including PENDING_OL (unquoted, OL
+        # has not answered yet) and the MDOLX_NO_SEND / AWAITING_MDOLX
+        # anomalies that decide_status holds ON PURPOSE. Firing on those is
+        # the exact drift this comment block was written about, in the other
+        # direction. Scope explicitly instead.
+        if core.pending_substate(r) != "PENDING_HILMAR":
+            continue
+        if r.get("loss_reason") in ("AWAITING_MDOLX", "MDOLX_NO_SEND"):
+            continue
+        req_dt = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))
+        if core.pending_hilmar_stale(rt, now, request_dt=req_dt):
+            _anchor = "quote" if rt else "request (quote undated)"
             log.error(f"QC-007: {r['request_id']} still PENDING past the "
                       f"{core.PENDING_HILMAR_LOSS_HOURS}h/{core.PENDING_HILMAR_LOSS_HOURS_FRIDAY}h-Friday "
-                      f"decision window — state machine should have aged this to Q&L")
+                      f"decision window measured from the {_anchor} — "
+                      f"state machine should have aged this to Q&L")
 
     # ─────────────────────────────────────────────────────────────────
     # QC-008/009/010 — paired with refresh_stage.py and the additive
@@ -4303,6 +4440,16 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
 
+    # A ROW THAT BORROWED A QUOTE'S RATE BORROWS ITS DATE TOO. Runs AFTER
+    # QC-056 (which may have just completed the rate+carrier pair from a
+    # sibling) and BEFORE QC-077 (so a row dated here never reports as
+    # undateable). See _stamp_response_from_dated_sibling for the 2026-08-14
+    # Algeciras case that forced this.
+    try:
+        _stamp_response_from_dated_sibling(log, requests)
+    except Exception as _e:
+        log.warn(f"sibling-date heal failed with exception: {_e}")
+
     # QC-077: A QUOTE THE DAILY REPORT CAN NEVER SHOW.
     #
     # 2026-07-30, Michael on the Jul 29 report: "lots of data missing all
@@ -4349,8 +4496,29 @@ def phase_6_rules(log: Log, data: dict):
             r for r in data.get("requests", [])
             if (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
             and not r.get("response_timestamp")
-            and not str(r.get("request_id") or "").startswith("stand_")
+            and not core.has_no_rfq_chain(r)
+            # A carrier that a BOOKING wrote is not a quote we failed to date.
+            # 9 of this check's 22 rows on 2026-08-13 carried no rate at all —
+            # only a carrier put there by the transaction-report
+            # reconciliation. See core.quote_evidence_is_booking_derived.
+            and not core.quote_evidence_is_booking_derived(r)
         ]
+        # SPLIT BY WHETHER ANYONE CAN STILL ACT ON IT. Michael 2026-08-13:
+        # "all that truly matters at end of days is the wins and losses.
+        # turnaround is secondary for the past moves.. so clear this error".
+        # A quote from this week with no send time is worth chasing; one from
+        # April is a permanent accepted condition, and erroring on it every
+        # single fire trains the reader to skip the audit. The backlog is
+        # still COUNTED and still stated — as a fact, not an error. Deleting
+        # the detector outright is what let the count reach 41 unnoticed.
+        _q_old = [r for r in _q_nots if not core.undated_quote_is_current(r)]
+        _q_nots = [r for r in _q_nots if core.undated_quote_is_current(r)]
+        if _q_old:
+            log.ok(f"QC-077: {len(_q_old)} historical quote(s) carry a rate or "
+                   f"carrier with no response time — counted in wins/losses, "
+                   f"absent only from the dated OL-USA RESPONSES table. "
+                   f"Accepted backlog, not chased (older than "
+                   f"{core.UNDATED_QUOTE_RECENT_DAYS}d)")
         if _q_nots:
             _lanes = ", ".join(
                 str(r.get("lane") or f"{r.get('origin')} → {r.get('destination')}")
@@ -4372,6 +4540,33 @@ def phase_6_rules(log: Log, data: dict):
             _rest_note = (
                 f", {_rest} link to a cached message that carries no send time "
                 f"or could not be classified" if _rest else "")
+            # THE ADVICE HAS TO MATCH THE BUCKET, 2026-08-13. This line read
+            # "Re-pull with --days-back N to widen the cache" unconditionally.
+            # For the no_body bucket that is right. For the bucket that now
+            # DOMINATES it is actively wrong: those rows link to a message
+            # that IS cached, and the reason they stay undated is that the
+            # only linked message is Lonny's own ask — core.quote_evidence_ok
+            # refuses to stamp a quote time from the ask, because doing so
+            # manufactured the resp==req same-day quotes that filled W31/W32
+            # with phantom Q&L. Widening the cache cannot fix that; nothing
+            # can, short of the real OL message existing somewhere. Telling
+            # the reader to re-pull sends them to do work that cannot help,
+            # and quietly implies the data is recoverable when it is not.
+            if _rest >= max(_no_imids, _no_body) and _rest:
+                _advice = (
+                    "The dominant group is NOT a cache gap and re-pulling will "
+                    "not shrink it: those rows link to a message that IS "
+                    "cached, and it is Lonny's own ask. Stamping a quote time "
+                    "from the ask is refused on purpose — it fabricates "
+                    "turnaround. They are dateable only if the real OL reply "
+                    "is recovered, or they stay undated and honest.")
+            elif _no_body:
+                _advice = ("Re-pull with `refresh_stage.py --days-back N` to "
+                           "widen the cache, or fix at ingest so the link is "
+                           "recorded when the rate is.")
+            else:
+                _advice = ("Fix at ingest so the link is recorded when the "
+                           "rate is.")
             log.error(
                 f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
                 f"NO response_timestamp — every one is a real quote that "
@@ -4386,9 +4581,7 @@ def phase_6_rules(log: Log, data: dict):
                 f"broken. These are the rows the auto-dating heal could NOT "
                 f"reach — {_no_imids} have no source message linked at all, "
                 f"{_no_body} link to a message no longer in the body cache "
-                f"(90-day retention){_rest_note}. Re-pull with "
-                f"`refresh_stage.py --days-back N` to widen the cache, or fix "
-                f"at ingest so the link is recorded when the rate is. "
+                f"(90-day retention){_rest_note}. {_advice} "
                 f"Lanes: {_lanes}"
                 + (f" … +{len(_q_nots) - 6} more" if len(_q_nots) > 6 else ""))
         else:

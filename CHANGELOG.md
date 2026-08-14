@@ -3,6 +3,630 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-14 — The shared mailbox: two of my claims corrected on evidence,
+### the blind-mailbox alarm, and where the truth actually landed
+
+THE SEQUENCE, honestly. (1) I reported the shared mailbox as live on 08-13
+without verifying a single message came back — the "proof" only showed the
+token carried Mail.Read.Shared. Every actual read had been failing (403).
+(2) I then made the unread mailbox the ONLY intake (HILMAR_READ_SHARED_ONLY)
+and the 10:41 fire swept ZERO messages, staged zero, and went green — the
+tracker was blind for that run. (3) I reverted to /me and diagnosed the
+mailbox as "probably a distribution group". Michael: "you did get the
+authorizaton you needed.. you are wrong." (4) The endpoint-by-endpoint probe
+(diag_shared_mailbox, run 31806028826) settled it:
+
+    directory object : PASS — 'MBD Ocean Export Booking (Shared)', userType Member
+    folder list      : 404 "Default folder Root not found"
+    inbox read       : 404 "Default folder Inbox not found"
+    sentitems read   : 404 "Default folder SentItems not found"
+    /messages        : 404 "Default folder AllItems not found"
+    inbox delta      : 404 "Default folder Inbox not found"
+
+WHAT THAT MEANS. Michael was RIGHT about the authorization: the token is
+granted, the object resolves, and the errors are STORE-level, not
+access-level (a permission failure is 403 ErrorAccessDenied — we are past
+that layer). The distribution-group theory was WRONG: the object is a named
+shared mailbox. And the reads still cannot work: Graph finds no folder
+store behind the address — not even Root. Since OL staff demonstrably use
+the mailbox in Outlook every day, the store exists somewhere Graph cannot
+see. I first read that as the mailbox being homed on-prem. Michael, same
+day: "they use exchange online... we do not run on our own servers at ol"
+— that theory is DEAD too, the second wrong one on this mailbox. The
+surviving explanation [Likely, unverified]: Exchange Online returns 404
+"not found" rather than 403 for a mailbox the signed-in user lacks FULL
+ACCESS to — it hides the mailbox rather than admit it exists. Distribution
+membership (why /me receives the group's mail) grants no mailbox
+permission; Full Access is a separate per-mailbox Exchange grant, on a
+different admin surface from the Entra consent that WAS approved, and
+Mail.Read.Shared only unlocks what the user could already open. This also
+explains the 403/404 mix across runs. Decisive self-test, no IT: OWA →
+"Open another mailbox" → the shared address. If refused, the ask is one
+grant — Full Access (read) for michael.deitchman@ol-usa.com on
+MBD_OceanExportBookingShared — then re-run diag_shared_mailbox BEFORE
+believing anything.
+
+OPERATIONAL POSITION, unchanged and healthy: /me is the intake, as it always
+really was. Michael is on the group's distribution, so the group's mail
+lands in his cloud mailbox. Post-revert fire 31805501343: 5,122 messages
+swept, 11 new staged, report sent 13:46 to Michael only.
+
+WHAT THE INCIDENT BOUGHT: a mailbox that yields zero messages for a whole
+window is now a per-mailbox ERROR at the point of the read (it fired
+correctly on the 13:36 run), and a sweep that returns nothing at all says
+the report reflects only previously-staged mail. An empty report and a
+quiet day are no longer indistinguishable — the exact shape that cost a
+week in July.
+
+verify_only throughout. Suite 3158 passed / 1 skipped, ruff clean.
+
+### 2026-08-13 (7) — Shared mailbox live, turnaround clock back on, and
+### what the 49 standalone bookings turned out to be
+
+SHARED MAILBOX. OL granted admin consent for Microsoft Graph Command Line
+Tools (= outlook_send.CLIENT_ID 14d82eec-...). A re-auth with --shared minted
+a token carrying Mail.Read.Shared and refresh_stage now reads two mailboxes:
+
+    will read: MBD_OceanExportBookingShared@ol-usa.com
+    will read: me
+
+The constraint recorded since 2026-06-10 is retired. The read path needed no
+edit, exactly as refresh_stage.SHARED_MAILBOX predicted.
+
+CORRECTION, ON THE RECORD. I told Michael reading that mailbox was "the root
+fix" for the 13 undated quotes. IT WAS NOT. Measured on the 60-day sweep:
+
+    NEW staged records: 4        already-staged: 3,636
+
+3,636 messages came back with imids we ALREADY had — the shared mailbox is
+largely a duplicate of Michael's own, which is what he said weeks ago and
+what the code already recorded ("i'm already included in the group emails
+from ops, nothing has changed"). The Jun-Aug gap was never an access problem:
+where OL replied to Lonny without copying the group, NEITHER mailbox has the
+message and no access recovers it. Of the 13, the shared mailbox dated 6; the
+booking-derived-carrier fix handled the other 9. Access is still worth having
+— it is the authoritative copy and catches anything OL sends only to the
+group from here — but it is not a historical trove.
+
+QC-077: 22 -> 7, and pre-patch is clean ("every quoted row has a
+response_timestamp"). The 7 survivors appear only AFTER carrier enrichment.
+NOT diagnosed — do not read 7 as finished.
+
+TURNAROUND CLOCK BACK ON. core.TIMING_VALID_FROM = "" in both trees. Measured
+first (diag-blob 31736160870, 288 rows with both timestamps): ZERO responses
+predate their own ask, 8 (2.8%) exceed 30 days, and those 8 are April asks
+paired to June/July replies that QC-021 already clears at >40 biz-hours. The
+fire confirmed it — 10 implausible turnarounds cleared, not averaged.
+
+THE 49 CANNOT BE CLOSED FROM EMAIL, and the reason is not a weak matcher.
+diag_match_standalones over 51 standalone rows: 1 CONFIDENT, 0 POSSIBLE, 50
+ORPHANS, every orphan "no same-lane RFQ inside the window". They are
+ol_2520xx / ol_2600xx — bookings for Jan-Mar sailings, quoted in late 2025 /
+early 2026. The tracker's RFQ history starts in April, so the asks do not
+exist in the data at all, and they are far past Graph's ~90-day body
+retention. Michael's transaction report is the only evidence for them and it
+is already in. The single CONFIDENT match is AMBIGUOUS and was left alone:
+stand_260842 (Oakland -> Yokohama, PRESIDENT LB JOHNSON) has THREE candidate
+RFQs, all CMA CGM at $3,076, asks 6-8 days apart.
+
+OPEN, FRAGILE, NOT FIXED — ol_260192 is CREATED then EXCLUDED on every fire.
+Both entries are mine: created while reconciling the transaction report, then
+excluded when Michael said it was cancelled. Net result is correct (133 wins,
+matching OL's book) but ONLY because the exclude runs after the create in the
+same pass. If that ordering ever shifts, a cancelled booking becomes a
+phantom win. Recommended fix: delete the create, keep the exclude (it carries
+the reason). NOT applied — operator_corrections.json is authoritative human
+state and the numbers are right today, so it is Michael's call.
+
+DISTRIBUTION UNCHANGED. Michael was asked directly whether to go full and
+answered "me only". HILMAR_REPORTS_PAUSED stays "verify_only": crons run, mail
+is scanned, every send goes to michael.deitchman@idealx.us alone. Lonny and
+the 9-recipient staff list receive nothing. Do not flip this without an
+explicit, unambiguous go — "great send" was read as approval and was not.
+
+Suite 3129 passed / 1 skipped, ruff clean.
+
+### 2026-08-13 (6) — STATUS CHANGES holds only what happened; the shared
+### mailbox becomes reachable, and the QC-077 banner is measured not guessed
+
+STATUS CHANGES. Michael: "clean up the massive status changes asap to just
+what's current last two days.. we don't need to see all that you fixed".
+Measured (diag-blob 31731525694): Aug 12 = 16 transitions, of which 2 were
+real OL answers and 11 were "Operator correction: MDOLX2610xx booked" — his
+.xls folded in, none booked that day. Aug 13 already = 249: 35 "OL-USA never
+responded", 32 "Send received but no MDOLX", ~180 quotes aged out at up to
+2926h. Cause: record_transition stamps `at` = now, so a backlog flush lands
+on one day.
+
+  DECISION: judge a derived loss on LATENESS, not age. Aging never fires
+  before its window closes (48h/72h-Friday), so the obvious "newer than two
+  days" rule would have silenced EVERY genuine aging, not just the backlog —
+  a permanently empty section reading as a quiet week. Bookings and OL
+  answers are kept unconditionally; the booking IS the news. Reconciliation
+  reasons are dropped outright. Feed, not ledger: KPIs and totals unchanged.
+
+QC-077, MEASURED (diag-blob 31732181146). The banner's 22 split:
+   10  LOSS, rate present, no booking ref      <- REAL undated quotes
+    8  WIN, NO rate, booking ref, operator-corrected
+    3  WIN, rate present, booking ref
+    1  WIN, NO rate, booking ref
+So 9 of 22 carry NO rate at all — only a carrier, and that carrier was
+written by the booking reconciliation. A carrier from a booking is BOOKING
+evidence; QC-077 counts `rate or carrier` and therefore calls it a quote we
+failed to date. It is not a quote at all. NOT YET FIXED — logged so the next
+session does not re-derive it.
+
+  Also visible: Oakland → Algeciras $4938 CMA CGM appears as TWO undated
+  LOSS rows, while the Aug-12 row with the same lane/rate/carrier IS dated
+  (20:57:02Z). Same OL quote. A same-lane/same-rate/same-carrier sibling that
+  is dated is a real recovery route for some of the 10 — with a window guard,
+  since an identical price months apart is a re-quote, not the same event.
+
+SHARED MAILBOX — the constraint changed today. OL approved admin consent for
+"Microsoft Graph Command Line Tools", which IS this app
+(outlook_send.CLIENT_ID 14d82eec-204b-4c2f-b7e8-296a70dab67e). Since
+2026-06-10 the repo has recorded that Mail.Read.Shared needs ol-usa admin
+consent and that OL IT declined; refresh_stage.SHARED_MAILBOX says the read
+path "starts working with no edit" if that ever changes. It has.
+
+  Consent alone changes NOTHING: a scope has to be requested, and the cached
+  token in the blob was minted without it — acquire_token_silent cannot
+  invent a scope. auth_notify can now request it behind --shared, exposed as
+  the auth-refresh input include_shared.
+
+  DEFAULT FALSE, deliberately. The approval email did not enumerate scopes,
+  so whether it covers Mail.Read.Shared is UNVERIFIED. If it does not, AAD
+  refuses at REDEMPTION — after the human has signed in — and the run stores
+  no token at all. Defaulting it on would put the one lever that recovers a
+  dead credential behind an unproven permission. The run reports which way it
+  went, in both directions, rather than leaving it to be read off a scope
+  string.
+
+  Updated test_every_device_flow_requests_only_the_consentable_set, which
+  pinned `initiate_device_flow(scopes=OS.SCOPES)` in auth_notify because
+  consent had been declined. That fact expired; the invariant it protected
+  (never widen by default) is now pinned directly, plus the workflow input
+  defaulting false.
+
+  WHY IT MATTERS BEYOND ACCESS: the 13 genuinely undated quotes are undated
+  because the only message linked to them is Lonny's ask — OL's reply went to
+  the shared mailbox and never reached the one we read. Reading that mailbox
+  is the root fix for the QC-077 banner, not just a wider net.
+
+Suite 3115 passed / 1 skipped, ruff clean.
+
+### 2026-08-13 (5) — Live fire 31728462371: the forwards landed, and the
+### two checks that were only right while the bug existed
+
+VERIFIED ON REAL MAIL, not fixtures. Dispatched daily.yml at
+mode=production-fire, send_to=test, days_back=21 on f3ea2b8. Both emails went
+to michael.deitchman@idealx.us alone (verify_only forced SEND_TO=test in both
+send steps; log: "Lonny receives NOTHING").
+
+WHAT THE INTAKE FIX ACTUALLY DID
+
+  refresh_stage: Lonny thread anchors: 85 conversation(s), 529 message-id(s)
+  refresh_stage: ADMITTED by Lonny-thread linkage: 4
+      Linda.Echevarria@ol-usa.com | 'RE: Oakland to HCMC (Cat Lai)'  x2
+      Linda.Echevarria@ol-usa.com | 'FW: Oakland to Algeciras'
+      Linda.Echevarria@ol-usa.com | 'FW: Oakland to HCMC (Cat Lai)'
+
+Exactly the two lanes Michael named, and NOTHING else — Hoogwegt's 87
+messages, the 1003 from our own mailbox, and every other OL sender stayed
+dropped. Both rows reached QUOTED, at 2026-08-12T20:46:10Z and 20:57:02Z.
+mbd_rate_response over 7d went to 49. OL-USA RESPONSES is no longer (0).
+
+The aging fix also held its line: both quotes are ~21h old against a 48h
+window, so both are correctly still PENDING. A quote given yesterday did not
+become a loss. Final tally 380 entries: 133W | 220 Q&L | 25 NQ | 2 P.
+
+THEN THE FIRE FOUND TWO MORE, both the same species — a check that was only
+correct while the defect was present.
+
+  QC-072 called both new rows red errors: "status=PENDING but status_history
+  ends at QUOTED". Nothing is wrong with those rows. "QUOTED" is not a status
+  at all (VALID_STATUSES is {WIN, LOSS, PENDING}); it is the sub-state
+  ingest.py:1526 records when OL answers, with decide_status finalizing later.
+  So "we quoted it, Lonny has not decided" is spelled exactly this way BY
+  DESIGN, and QC-072 compared the two strings literally. It never fired before
+  because it needs a row that is quoted AND still pending, and until today
+  there were none. Exempted that one pair, narrowly; the history-says-WIN /
+  status-says-LOSS shape it was built for still fires
+  (test_qc072_still_catches_the_shape_it_was_built_for).
+
+  The undated-quotes banner ended "They appear under PENDING HILMAR" as a flat
+  claim. True only while an undated quote could never age — decide_status had
+  no clock on such a row, so it held PENDING at any age. Now that they age off
+  Lonny's request, most are Quoted & Lost, and the banner had become a
+  confident pointer to the wrong section: the exact failure it exists to
+  prevent, committed by the banner itself. It now READS the statuses, through
+  core.display_status so LEGACY (LOSS+quoted) and STRICT (Q&L) rows both
+  bucket correctly rather than falling into "elsewhere".
+
+  Updated test_audit_batch8.py::test_the_report_says_how_many_quotes_it_cannot
+  _show, which required the literal "PENDING HILMAR" on every note. Its
+  fixture is a Q&L row, so that assertion demanded the wrong pointer. The
+  test's INTENT — "the note must tell the reader where the quote DID go" — is
+  unchanged and now actually enforced.
+
+STILL OPEN, NOT FIXED, DO NOT READ AS DONE
+
+  QC-077 is 22 (was 21; QC-056 backfilled a carrier onto one more row). It did
+  NOT go to zero and the aging fix was never going to take it there — QC-077
+  counts rows with a rate but no response TIME, which is a data gap, not a
+  status. The split says all 22 link to a CACHED message that carries no send
+  time or could not be classified, i.e. the only linked message is Lonny's own
+  ask. Stamping the ask's send time is what manufactured the phantom same-day
+  quotes in W31/W32, so quote_evidence_ok refuses it and the row stays
+  undated. That refusal is correct; the remaining work is recovering the real
+  OL message link at ingest, not loosening the guard.
+
+  QC-057: 3 staged Lonny RFQs still silently dropped (no destination parsed).
+
+  Suite 3105 passed / 1 skipped, ruff clean.
+
+### 2026-08-13 (4) — OL forwards enter the tracker on thread identity;
+### an undated quote with a Send and no booking finally ages to a loss
+
+Two defects, both reported by Michael against the 2026-08-12 report, both
+fixed here with tests driven by the two committed OL quote emails.
+
+## A — "i sent you the two fucking emails five times"
+
+The report listed two NEW REQUESTS FROM LONNY (Oakland->HCMC Cat Lai,
+Oakland->Algeciras) and, for the same two lanes, OL-USA RESPONSES (0). OL had
+quoted both. `tests/fixtures/ol_quote_algeciras.eml` and
+`ol_quote_hcmc_cat_lai.eml` are those emails.
+
+MEASURED: both are FORWARDS — `From: Linda.Echevarria@ol-usa.com
+To: Michael.Deitchman@ol-usa.com`, no Cc, Lonny nowhere on the header line.
+`classify()`'s OL branch requires `LONNY_EMAIL in _addresses(item)`, so both
+returned None and were DROPPED AT INTAKE. Lonny's address IS in the body, at
+byte offset 8678 and 4303 — but bodies are fetched AFTER staging and Graph's
+bodyPreview is ~255 chars, so no body test could ever have been the gate.
+
+TWO GATES, NOT ONE. `BP.RATE_RESPONSE_SUBJECT_RX` is anchored on a literal
+"re:", so "FW: Oakland to Algeciras" fails it, and
+`ingest.counts_as_rate_response` re-derives that regex over `mbd_inbound`
+rows. Opening intake alone would have parked both in `mbd_inbound` and left
+OL-USA RESPONSES at (0) — the same bug one layer down, with a fix in front of
+it. `tests/test_ol_forward_intake.py::test_an_intake_only_fix_would_not_have_
+been_enough` proves it rather than asserting it.
+
+DECISIONS
+
+  Identity comes from the THREAD, not the header line. `LonnyThreads` collects
+  conversation ids + message ids of Lonny-SENT staged mail; a forward is
+  admitted only when it is OL-sent, not from us, carries a lane-shaped
+  subject, AND links to one of those threads. REJECTED: matching on subject
+  alone — Lonny's subjects name no customer ("Oakland to Algeciras"), and
+  NUMIDIA / Agri Dairy / Hoogwegt / Erno Laszlo / Brisar load out of the same
+  plant on the same lanes, so a subject rule admits their freight verbatim.
+  REJECTED: a second body-fetch pass — one Graph GET per candidate per fire,
+  and "lupfold appears somewhere in the body" fires on anything quoting a
+  thread he was ever on.
+
+  conversation_id is load-bearing; In-Reply-To/References are an OR, never an
+  AND. conversation_id is in GRAPH_SELECT and has been persisted by
+  build_stage_record since 2026-06-25. Whether Graph returns
+  internetMessageHeaders on a COLLECTION $select has never been measured in
+  this repo, so the fix does not depend on it.
+
+  Bucketed straight to `mbd_rate_response`, which short-circuits
+  `counts_as_rate_response`. `BP.RATE_RESPONSE_SUBJECT_RX` and its src mirror
+  are UNCHANGED — widening the shared regex would silently reclassify every
+  historical `mbd_inbound` row in both trees with no migration. The new
+  `LANE_SUBJECT_RX` is deliberately local to refresh_stage.
+
+  Intake is now TWO passes. The date sweep is newest-first, so Linda's 20:57
+  forward is visited BEFORE Lonny's 13:05 request; a single pass tests the
+  forward against an anchor set that does not yet contain its own thread. One
+  extra pass suffices — anchors come only from Lonny-SENDER rows, decided on
+  the From address alone and therefore order-independently. Pass 2 re-decides
+  only rows pass 1 dropped, so no sender rule can be overridden.
+
+  The fire now logs the anchor count and names every thread-admitted message,
+  unconditionally (the daily fire passes no --verbose). This branch admits
+  mail that does not mention Lonny anywhere a human can see; if it ever starts
+  admitting the wrong customer, the log must say so without a re-run.
+
+## B — "if you have the quotes and you do not see a booking, it is a loss"
+
+The report banner: "21 further quotes are recorded with a rate or carrier but
+no response time... They appear under PENDING HILMAR."
+
+THE STATED DIAGNOSIS WAS WRONG, and shipping it would have been a no-op that
+looked like a fix. `pending_hilmar_stale`'s `if resp_dt is None: return False`
+is unreachable — every call site already guards the argument. `decide_status`'s
+QUOTE-aging branch ALSO already falls back to Lonny's request. Measured: a
+3-week-old quoted row with no send and no MDOLX returned LOSS/NO_RESPONSE_TS
+before this change and after it.
+
+THE REAL HOLE was one branch earlier. On `has_send and not has_mdolx`,
+`send_at` came only from `response_timestamp` and `send_signal_events`, and
+`is_business_stale` returns False on None — so a row with neither (exactly
+what patch_carriers produces when it recovers a rate from a sibling thread or
+a booking PDF) had NO CLOCK AT ALL. Measured before the fix: identical
+PENDING/AWAITING_MDOLX at +1d, +30d, +365d and +3650d. `pending_substate`
+keys off `quoted`, so it rendered under PENDING HILMAR — the banner's
+population.
+
+DECISIONS
+
+  `decide_status` falls back to `request_timestamp` on the send branch, in
+  BOTH trees. NOT a change to `is_business_stale`: it must keep returning
+  False on None so a row with no clock at all stays PENDING and surfaces as a
+  DATA defect, rather than being aged on a timestamp nobody can evidence.
+
+  `pending_hilmar_stale` gains a KEYWORD-ONLY `request_dt` fallback, both
+  trees, byte-identical. Keyword-only so a future caller cannot slide it
+  positionally into `now` — the same class of error that put a hardcoded 24h
+  in QC-007 while decide_status ran 24h/72h. Every existing 2-arg call is
+  bit-for-bit unchanged.
+
+  All three detectors were BLIND, which is why nobody saw it: QC-007
+  (`if rt and`), gen_improvements_report (`if resp_dt is None: continue`) and
+  auto_chase_pending (`if not response_timestamp: continue`) each skipped
+  undated rows, so a stuck row raised nothing and got no chase. All three now
+  anchor on the request when the quote is undated.
+
+  Removing `if rt` from QC-007 also removed the scoping it was doing by
+  accident — `pending` is EVERY PENDING row. QC-007 is now explicitly scoped
+  to PENDING_HILMAR and skips AWAITING_MDOLX / MDOLX_NO_SEND, which
+  decide_status holds on purpose.
+
+  NO REPORT MAY CLAIM A QUOTE TIME IT CANNOT EVIDENCE. gen_improvements_report
+  now says "requested Xh ago (quote undated)" on a request anchor, and
+  auto_chase_pending — which emails LONNY — says "request from N days ago"
+  instead of "quote from N days ago". Fabricated timing shipped from this repo
+  once already (core.TIMING_VALID_FROM); it is not going out over Michael's
+  signature a second time. Also fixed a pre-existing mislabel: that flag cited
+  PENDING_WINDOW_HOURS while the predicate has always used
+  PENDING_HILMAR_LOSS_HOURS.
+
+UNFIXED — needs Michael
+
+  `has_mdolx and not has_send` returns PENDING/MDOLX_NO_SEND with no clock
+  consulted, at any age. Unbounded, and real. But there IS a booking, so under
+  Michael's verbatim rule it is not a loss — it needs an ops-review SLA, not a
+  loss rule. Pinned by test so nobody "fixes" it by accident.
+
+  When a quote is undated, the fallback anchors Friday-ness on LONNY'S
+  REQUEST, not OL's quote. A request anchor is always EARLIER than the quote,
+  so the window expires sooner than a quote-anchored one would. Mitigated by
+  qc_selfheal._heal_undated_quote running BEFORE decide_status in the same
+  loop (now pinned by test), which recovers a real response_timestamp from the
+  cached body first. Michael still needs to rule on whether an undated quote
+  should age off the request at all, or hold PENDING and raise a QC instead.
+
+  How many of the 21 rows are shape A vs the MDOLX_NO_SEND shape is UNKNOWN —
+  production tracking-data-v2.json is not in this repo or on this box.
+
+VERIFICATION (this session)
+  Baseline before:  3020 passed, 1 skipped; ruff All checks passed!
+  After:            3096 passed, 1 skipped; ruff All checks passed!
+  New tests verified to FAIL against the pre-fix tree: 30 of 44 (intake),
+  17 of 36 (aging). The remainder are regression guards that must hold in
+  both states.
+
+  Fixture classification:  BEFORE None -> AFTER mbd_rate_response, both
+  fixtures, via conversationId and via the real References chain
+  independently; ingest.counts_as_rate_response True on both staged records.
+
+  Synthetic quoted row, request 3 weeks old, no response_timestamp:
+    no send, no MDOLX     LOSS/NO_RESPONSE_TS    -> unchanged (already correct)
+    Lonny SEND, no MDOLX  PENDING/AWAITING_MDOLX -> LOSS/SEND_NO_BOOKING
+    MDOLX, no send        PENDING/MDOLX_NO_SEND  -> unchanged (out of scope)
+  Same three shapes with the request 2h old: all PENDING before and after.
+
+### 2026-08-13 (3) — OL quote tables are read by header-to-cell alignment;
+### the Dummy-SI footer and "vessel diversion" are now unreachable
+
+Michael supplied two real OL quote emails. Measured this session, both were
+misparsed by `src/hilmar/body_parser.parse_rate_table`, which had no table
+parser at all and regex-scanned the entire flattened body:
+
+  ALGECIRAS  carrier "MSC"  <- the standing footer "Maersk, Sealand, MSC, ONE,
+                               CMA and Cosco do not accept Dummy SI"
+             vessel  "dive" <- the standing disclaimer "... routing changes,
+                               vessel diversion, or alternate discharge ..."
+             eta 2026-10-19 <- Lonny's OWN requested "ETA 10/19", quoted at
+                               the bottom of the forwarded chain
+             transshipment "Direct" <- Lonny's "direct service if possible"
+  HCMC       carrier "MSC", vessel "dive", NO RATE AT ALL (a `500 <= val`
+             gate on the prose fallback dropped the real $475.00), no POL,
+             no POD
+
+THE BLOCKER, AND IT REVERSES THE BRIEF: `scripts/body_parser.py` — the tree
+production actually binds — was ALREADY correct on both emails, 15/15. The two
+"mirrored" files had diverged into completely different algorithms and NOTHING
+in the suite compared them. So this defect never reached the daily fire; the
+client-report symptoms it was blamed for (QC-077, QC-039 at 92.8%, empty
+OL-USA RESPONSES) have a different root cause and still need one. The
+consumers' two dead keys are the better candidates — see UNFIXED below.
+
+DECISIONS
+
+  Both trees now share ONE rate-table core, copied verbatim, 14,868 bytes,
+  and `tests/test_body_parser_parity.py` fails if the copies drift. That guard
+  is the actual fix for how this shipped.
+
+  Every field comes from a CELL of the data row aligned under its own header.
+  parse_rate_table no longer scans body prose for carrier, vessel or rate at
+  all. Boilerplate is unreachable by construction, not by blocklist.
+
+  Header cells are matched WHOLE-CELL, then by word token — never by
+  substring. OL's NRA footer ("ACCEPTANCE OF THE RATES AND TERMS OF THIS NRA
+  OR NRA AMENDMENT.") scored a "rate" hint under the old substring scan;
+  "RATES" is not the token "rate", so it is now rejected, while OL's qualified
+  labels ("RATE (USD)", "Ocean Rate", "ETD (POL)") still map.
+
+  The one surviving prose path is the carrier for a grid with NO carrier
+  column (the 2026-06-15 Manila fix, which a green test requires). It is
+  double-guarded: OL's standing disclaimer lines are stripped first, and a
+  line naming TWO OR MORE carriers is rejected outright — a LIST of carriers
+  can never identify THE quoted carrier, which is exactly what the Dummy-SI
+  line is.
+
+  No sanity gate on the RATE cell. The old `500 <= val` gate is what threw
+  away HCMC's real $475.00, so a numeric floor cannot be the defence.
+
+  CORRECTED 2026-08-13, same day: the original wording here claimed
+  "alignment already rules out a stray date landing there". An adversarial
+  review DISPROVED that in the same commit — the token header fallback
+  shipped alongside it mapped an "Inland Rate" decoy column to `rate`, and
+  31 landed in ol_rate. The claim was false when written. The real defence
+  is the HEADER: a header carrying any word the parser does not recognise
+  now maps to nothing at all (see _HEADER_QUALIFIERS), so a decoy column
+  cannot supply a rate or a carrier. tests/test_decoy_columns.py pins it in
+  both trees.
+
+  `parse_vessel` was hardened too. Its blanket `re.IGNORECASE` defeated the
+  `[A-Z]` doing the work and its lazy `{3,40}?` stopped at the 4-char minimum
+  — together that is where "dive" came from. src/hilmar/ingest.py:350 calls it
+  on the raw body for EVERY bucket, so a clean table parser alone would not
+  have cleared the field.
+
+  `vessel` and `voyage` are now emitted as their own keys, and `vessel_voyage`
+  joins them in the house form "NYK METEOR 0CLNCE1MA" (matching
+  scripts/pdf_parser). src/hilmar previously joined with " / ".
+  scripts/build_ops_flow_v2.py recovered the voyage by splitting on "/", so it
+  was updated to read the split keys — it had no test at all before; it has
+  two now.
+
+  DELIBERATELY NOT CHANGED — both are persisted-data migrations, not parser
+  fixes, and need Michael's sign-off:
+  - Production keeps RAW table dates ("7-Sep-26"). src/hilmar keeps ISO plus
+    the legacy `etd`/`eta` keys its consumers read. The divergence is declared
+    once, as `_LEGACY_SRC_CONTRACT`, instead of hiding in two parsers.
+  - `detention_free`/`demurrage_free` stay out of the production tree.
+    schema.json documents them as "origin-side"/"destination-side" free time,
+    but OL's cells read "4 DETENTION + 5 DEMURRAGE" — different meanings, and
+    I have no ground truth to pick one. Guessing writes bad data into a
+    schema field. src/hilmar keeps them (nothing reads them there).
+    "7 COMBINED FREE DAYS" yields neither, on purpose.
+
+  Removed `_carrier_from_cells` / `_CARRIER_HEADER_ALIASES` from production
+  and `_TABLE_HEADER_HINTS` from both: three lists of OL column names that
+  could disagree, replaced by the single `_TABLE_CELL_ALIASES` map.
+
+TESTS. `tests/test_ol_quote_table_alignment.py`, 35 cases driven by the two
+real emails, now committed as `tests/fixtures/ol_quote_algeciras.eml` and
+`tests/fixtures/ol_quote_hcmc_cat_lai.eml` so they are self-contained.
+Asserts the full field set for each in both trees, that the Dummy-SI line
+alone yields NO carrier, that "vessel diversion" prose yields NO vessel, that
+appending OL's whole footer to a real table changes not one field, and that
+an absent column stays absent. Verified they FAIL on the pre-fix code: 21 of
+the 29 that existed at that point were red. Plus 3 drift guards in
+`tests/test_body_parser_parity.py`. Suite 2931 -> 2968 passed, 1 skipped
+(the day-count case, which production deliberately does not emit).
+`ruff check scripts/ src/ tests/ deploy/` clean.
+
+UNFIXED, FOUND WHILE READING THE CONSUMERS — not touched, no approval to
+change persisted behavior, and each needs its own tests:
+  - scripts/ingest.py:1463 reads `rt.get("etd")`, which production has never
+    emitted. Dead. So the `reason_detail` string is ALWAYS "ETD ?".
+  - scripts/ingest.py:1503-1504 write `detention_free`/`demurrage_free`
+    UNCONDITIONALLY, clobbering any earlier value with None. Both fields are
+    structurally always null in production.
+  - scripts/ingest.py:82 `_etd_fit_days` parses with `datetime.fromisoformat`,
+    but `eta_offered` holds a raw "24-Oct-26" from the table. `etd_fit_days`
+    is dead for every table-parsed row.
+
+### 2026-08-13 (2) — OL's own 2026 book is now the authority; 12 phantom
+### wins removed, 54 real ones recovered, the response clock switched off
+
+Michael sent OL's transaction report, then the richer customer transaction
+report, and ruled: "THE REPORT I UPLOADED EARLIER IS THE REPORT TO VERIFY
+AND USE."
+
+THE RECONCILIATION (diag-reconcile 31701602704, backfill dry-run
+31702992685, diag-find 31703011175 / 31703548619 / 31705817226 — all
+read-only, against state written 2026-08-12 23:05:59 UTC):
+
+  OL's book: 134 Hilmar bookings, Jan 3 - Sep 5 2026 sailings, 533 TEU.
+   80 already recorded
+   +4 matched to requests recorded LOSS — 260358 260370 260433 260469.
+      OL booked cargo the tracker had written off.
+  +50 backfilled as standalone wins, 189 TEU, sailed Jan-Apr, before this
+      pipeline read any mail.
+  -12 excluded.
+
+THE 12, and they were three faults wearing one face:
+  NUMIDIA (6) — 260387 260388 260407 260486 260487 260928. A different
+    customer whose cargo loads at the Hilmar plant. Michael: "NUMIDIA IS
+    NOT HILMAR.. THAT'S WHEN HILMAR IS USED AS A LOCATION." Hilmar Cheese
+    is in Hilmar, California, and this pipeline could not tell the client
+    from the town.
+  CANCELLED (6) — 260772 260895 260963 260192 260426, and 261071.
+    Michael: "260905 260192 260963 were bookings hilmar cancelled",
+    "260772 was also cancelled", "260426 cancelled".
+
+CANCELLATION EXPLAINS THE EXPORT'S SHAPE, and it strengthens it: OL DROPS
+cancelled bookings rather than flagging them, which is why the cancelled
+column reads No on all 134 rows. Absence from the export IS the
+cancellation signal.
+
+THE PARSER DEFECT WAS ONE STRING. The operational-subject gate listed
+"LOADING APPT"; OL wrote "LOAD APPTS". "LOADING" is not a prefix of
+"LOAD ", so nothing matched, and a drayage leg from the town of Hilmar to
+the Port of Oakland became a WIN on the lane "Oakland → Oakland". Fixed by
+ADDING a string, since OL writes both, with a test asserting the
+non-containment so nobody merges them back.
+
+TWO OF MY OWN ERRORS, both caught by Michael and both corrected here:
+ (a) I called MDOLX260928 drayage with no booking behind it, reading a
+     subject line instead of the booking record. His MOVE screenshot shows
+     a real ocean export — NUMIDIA BV-LZ, Oakland to Penang. Real booking,
+     wrong customer.
+ (b) I created MDOLX261071 as a win on 2026-08-12 from a row that was
+     EMPTY — carrier null, pol "", pod "", booking_no "". "Everything she
+     sent as a booking is a win" presumes the row IS a booking. Withdrawn.
+
+AND A BLIND SPOT IN MY OWN CHECK. diag_reconcile's reverse direction was
+scoped `if lo <= ref <= hi and ...` with no else, so anything outside the
+export's range fell through to nothing. 261071 and 261072 sit one and two
+above its highest ref (261070) and were never examined: it reported "10
+wins the recap does not contain" when the true number was 12. Michael
+found one by hand. Out-of-range wins are now bucketed in the same branch
+and printed under their own heading.
+
+TWO RULES ARE NOW CODE RATHER THAN VIGILANCE:
+  - An empty row is not a booking. Twice a row with no port and no carrier
+    became a win. is_evidence_of_a_booking refuses and prints REFUSED.
+  - One carrier, one name. OL names carriers as legal entities, so ONE
+    would have appeared twice — 38 as "ONE", 19 as "OCEAN NETWORK EXPRESS
+    PTE, LTD" — splitting one carrier across every rollup and defeating the
+    point of the backfill. Six aliases in BOTH cores, plus a test that
+    fails if any spelling in the export has no canonical form.
+
+THE RESPONSE CLOCK IS OFF. Michael: "JUST INDICATE THE TURN AROUND CLOCK
+AND SUCH IS OFF AND START RUNNING IT AGAIN STARTING TODAY AND INDICATE
+THAT ON THE REPORTS." core.TIMING_VALID_FROM = "2026-08-13"; pre-floor
+samples are excluded from every turnaround aggregate AND counted. The
+averages return None, not 0.0 — a suppressed average rendering as "0.0h"
+is not a missing number, it is a FLATTERING one claiming OL replied
+instantly. Email, dashboard and PDF print OFF with the date, the live
+count, the excluded count and the cause. Clearing the constant removes the
+banner with it.
+
+MIGRATION: schema.json widens the two averages to accept null and declares
+turnaround_valid_from and turnaround_excluded. Additive, no stored data
+rewritten (ingest rebuilds every row each fire), reversible by revert. QC
+Phase 10 caught the drift before it shipped.
+
+TOOLING: extract_ol_recap.py reads .xls and .xlsx, routes on magic bytes,
+binds columns by HEADER never position and prints the binding, and
+confirms the MDOLX column by its VALUES. backfill_ol_bookings gained
+--create-missing. diag_reconcile takes a committed export path.
+diag_find prints request_id.
+
+operator_corrections.json 19 → 86: 51 created wins, 21 amendments, 14
+exclusions. Suite 2917 passed, ruff clean. PR #205 merged (3816d20).
+
+STILL OPEN: reports remain hard-stopped pending Michael's review of the
+verification fire.
+
 ### 2026-08-13 (1) — the 15 unlisted wins are ANSWERED; the next export gets
 ### read by machine, not by hand
 

@@ -94,8 +94,41 @@ def test_every_device_flow_requests_only_the_consentable_set():
     assert src.count("initiate_device_flow(scopes=SCOPES)") == 2
     assert "AUTH_SCOPES" not in src, (
         "a second, wider scope list is back in outlook_send")
+
+
+def test_auth_notify_may_ask_for_the_shared_scope_but_never_by_default():
+    """UPDATED 2026-08-13. This used to pin
+    `initiate_device_flow(scopes=OS.SCOPES)` in auth_notify, because
+    Mail.Read.Shared needed an ol-usa admin consent OL IT had declined.
+
+    That fact changed: OL approved admin consent for "Microsoft Graph Command
+    Line Tools", which is this app (outlook_send.CLIENT_ID 14d82eec-…).
+    Consent alone does nothing — a scope has to be REQUESTED, and the stored
+    token was minted without it — so auth_notify can now ask.
+
+    THE INVARIANT THE OLD TEST WAS REALLY PROTECTING IS UNCHANGED and is what
+    this pins instead: asking must be OPT-IN. The approval email did not
+    enumerate scopes, so if it did not cover Mail.Read.Shared, AAD refuses at
+    REDEMPTION — after the human has signed in — and the run stores no token
+    at all. Defaulting it on would put the whole re-auth, the one lever that
+    recovers a dead credential, behind an unverified permission.
+    """
     notify = (ROOT / "scripts" / "auth_notify.py").read_text(encoding="utf-8")
-    assert "initiate_device_flow(scopes=OS.SCOPES)" in notify
+    assert "scopes = SHARED_SCOPES if args.shared else OS.SCOPES" in notify, (
+        "auth_notify must choose the scope set from the --shared flag")
+    assert 'ap.add_argument("--shared", action="store_true"' in notify, (
+        "the wider scope must be a store_true flag — never a default")
+    # No unconditional widening anywhere in the file.
+    assert "initiate_device_flow(scopes=SHARED_SCOPES)" not in notify
+
+    wf = (ROOT / ".github" / "workflows" / "auth-refresh.yml").read_text(
+        encoding="utf-8")
+    assert "include_shared" in wf, "the workflow must expose the choice"
+    # The boolean input has to default false for the same reason.
+    block = wf.split("include_shared:", 1)[1].split("permissions:", 1)[0]
+    assert "default: false" in block, (
+        "include_shared must default false — a refused shared scope costs the "
+        "entire re-auth, after the sign-in")
 
 
 def test_the_constraint_is_written_where_the_next_person_will_look():
@@ -114,8 +147,16 @@ def test_the_constraint_is_written_where_the_next_person_will_look():
 def test_shared_mailbox_is_read_first(monkeypatch):
     """Order is load-bearing: main() keeps the FIRST copy of a deduped
     message and fetches its body from that mailbox. The shared mailbox is the
-    authoritative copy of a thread that exists in both."""
+    authoritative copy of a thread that exists in both.
+
+    Pinned against READ_SHARED_ONLY=False, because the DEFAULT since
+    2026-08-14 is to read the shared mailbox alone (Michael: "stop checking my
+    ol emails"). This test is about ORDERING and per-target tokens, which only
+    have meaning when both are read — see tests/test_read_shared_only.py for
+    the default-path behaviour.
+    """
     import refresh_stage as RS
+    monkeypatch.setattr(RS, "READ_SHARED_ONLY", False)
     monkeypatch.setattr(RS, "_mailbox_base", f"{RS.GRAPH}/me")
     monkeypatch.setattr(RS, "shared_token_silent", lambda: "shared-tok")
 

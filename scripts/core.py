@@ -103,7 +103,36 @@ PENDING_OL_SLA_BIZ_HOURS = 3
 #:
 #: Retiring this is a one-line change once enough post-fix history exists to
 #: trust: delete the constant and the branches that read it.
-TIMING_VALID_FROM = "2026-08-13"
+#:
+#: RETIRED the same day, 2026-08-13, on evidence. Michael, once the shared
+#: mailbox came online: "turnaround clock should be fine now that you see the
+#: shard box yourself". Measured before flipping it rather than assuming
+#: (diag-blob 31736160870, stored state, 288 rows carrying BOTH a request and
+#: a response time):
+#:
+#:      NEGATIVE (response before ask)     0
+#:      0-48h                            ~254
+#:      48h-7d                              3
+#:      7-30d                               1
+#:      >30d                                8
+#:      IMPLAUSIBLE (negative or >30d)      8 of 288  (2.8%)
+#:
+#: Not one response predates its own ask, which is the shape that would say
+#: the pairing logic is broken. The 8 outliers are all April asks paired to
+#: June/July replies — Lonny re-using an Outlook thread months later, the
+#: known 2026-08-11 failure — and QC-021 already CLEARS turnaround above 40
+#: biz-hours as implausible, so they are excluded from every average rather
+#: than skewing it. The guard that made this constant necessary is not this
+#: one; it is that clearing rule, and it is still in force.
+#:
+#: Left as an empty string rather than deleted. `timing_is_valid` returns True
+#: for everything when it is falsy and `timing_reset_note` returns "", so the
+#: banners drop out of the email, the dashboard and the PDF with no other
+#: edit — and setting a date here re-arms the whole mechanism in one line if
+#: the clock ever needs stopping again. Deleting the constant would mean
+#: rebuilding all of that under pressure, which is when it was built the first
+#: time.
+TIMING_VALID_FROM = ""
 
 
 def timing_is_valid(when) -> bool:
@@ -485,6 +514,38 @@ CARRIER_ALIASES: dict[str, str] = {
     "EVERGREEN SHIPPING AGENCY (AMERICA)": "Evergreen",
     "HYUNDAI MERCHANT MARINE INC.":   "HMM",
 }
+
+
+#: request_id prefixes for rows with NO Lonny->OL RFQ chain behind them.
+#:   stand_  a booking confirmation arrived with no matching RFQ.
+#:   ol_     the booking was recovered from OL's operational export and no
+#:           email exists AT ALL.
+#:
+#: Added 2026-08-13 after the SECOND place a bare `startswith("stand_")`
+#: failed to recognise the 49 backfilled bookings. The first cost a blocked
+#: fire (QC-039 graded them on a rate they cannot have); the second put all
+#: 49 into QC-077's "quotes recorded with a rate or carrier but no response
+#: time" banner on the report Michael reads — they carry carrier_quoted from
+#: OL's export and can never have a response time, because there was never a
+#: quote. Michael: "this is absurd ... we should be clean."
+#:
+#: One tuple, one predicate, so the next surface cannot know only half of it.
+#: NOT every stand_ check should adopt this — qc_selfheal's scope purge
+#: drops stand_ rows whose SUBJECT lacks HILMAR, and an ol_ row has no
+#: subject at all, so adopting it there would delete every backfilled win.
+NO_RFQ_CHAIN_PREFIXES = ("stand_", "ol_")
+
+
+def has_no_rfq_chain(row_or_id) -> bool:
+    """True when this row was recorded from a booking, not from an RFQ.
+
+    Accepts a row dict or a bare request_id. These rows have no
+    rate-response email, so rate/ETD/response-time fields are correctly
+    absent rather than missing.
+    """
+    rid = (row_or_id.get("request_id") if isinstance(row_or_id, dict)
+           else row_or_id) or ""
+    return str(rid).startswith(NO_RFQ_CHAIN_PREFIXES)
 
 
 def normalize_carrier(name: str | None) -> str | None:
@@ -1026,6 +1087,84 @@ def has_quote_evidence(r: dict) -> bool:
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
 
 
+#: How recent an undated quote has to be before the report says anything about
+#: it. Michael 2026-08-13, on a banner reporting 16: "all that truly matters at
+#: end of days is the wins and losses. turnaround is secondary for the past
+#: moves.. so clear this error".
+#:
+#: He is right, and the banner's own wording was part of why it read as alarming
+#: — "they cannot be dated and are NOT COUNTED above" meant "absent from the
+#: dated OL-USA RESPONSES table", but read as "missing from the totals". Every
+#: one of those 16 rows IS counted in wins, losses, TEU and every lane rollup.
+#: The only thing missing is WHEN OL sent the quote, which feeds turnaround —
+#: and for moves that already resolved, turnaround is history nobody can act on.
+#:
+#: So the gap is reported only while it is still actionable: a quote from this
+#: week with no send time is worth chasing, one from April is a permanent,
+#: known, accepted condition. NOT deleted — a silent detector is how the count
+#: reached 41 unnoticed in the first place; the audit still states the backlog,
+#: it just stops calling it an error.
+UNDATED_QUOTE_RECENT_DAYS = 14
+
+
+def undated_quote_is_current(r: dict, now: datetime | None = None) -> bool:
+    """True when an undated quote is recent enough to still be worth chasing.
+
+    Anchored on the row's own request timestamp — the one clock these rows
+    always carry (their whole defect is having no response time). A row with
+    no usable request date counts as CURRENT, deliberately: an undateable row
+    that is also unanchored is a data defect, and defaulting it to "old" would
+    hide exactly the shape most worth seeing.
+    """
+    ts = parse_iso((r or {}).get("request_timestamp") or (r or {}).get("request_date"))
+    if ts is None:
+        return True
+    now = now or now_utc()
+    return (now - ts).total_seconds() <= UNDATED_QUOTE_RECENT_DAYS * 86400
+
+
+def quote_evidence_is_booking_derived(r: dict) -> bool:
+    """True when a row's ONLY 'OL quoted' evidence is a carrier a BOOKING
+    could have written.
+
+    2026-08-13, Michael on the QC-077 banner: "still shouldn't exist". Measured
+    on stored state (diag-blob 31732181146), the banner's 22 rows split:
+
+        10  LOSS, rate present, no booking ref     <- real undated quotes
+         8  WIN, NO rate, booking ref, operator-corrected
+         3  WIN, rate present, booking ref
+         1  WIN, NO rate, booking ref
+
+    Nine of the 22 carry NO rate at all. Their only evidence is
+    `carrier_quoted`, and on those rows the carrier was written by the
+    reconciliation that folded in OL's transaction report — CMA CGM on
+    MDOLX261026-33, ONE on MDOLX261068. That is BOOKING evidence. It says a
+    shipment moved and on whose vessel; it says nothing about a quote email
+    ever arriving, and for Jun-Aug none did — OL replied to Lonny with the
+    group copied and it never reached the mailbox we read.
+
+    So has_quote_evidence's `rate OR carrier` is right for "did OL respond
+    with something" and wrong for "is there a quote here we failed to date".
+    A row like this is not an undated quote; it is a booking whose quote we
+    never received, and reporting it as a data defect sends the reader looking
+    for a message that does not exist.
+
+    NARROW BY CONSTRUCTION. A real rate always wins — a row with a rate is a
+    quote, whatever else it carries. Absent a booking reference, a bare
+    carrier still counts as a quote, because OL does occasionally quote a
+    carrier with the rate to follow (see QC-056's own note). Only the
+    intersection — no rate, a carrier, AND a booking that explains it — is
+    excluded.
+    """
+    r = r or {}
+    if is_real_rate(r.get("ol_rate")):
+        return False
+    if not r.get("carrier_quoted"):
+        return False
+    return bool(r.get("mdolx_ref") or r.get("mdolx_refs_all")
+                or r.get("booking_no") or r.get("booking_timestamp"))
+
+
 # ─────────────────────────────────────────────────────────────────────
 # The send time of a cached email body — ONE reader, both schemas.
 #
@@ -1545,7 +1684,8 @@ def is_business_stale(
 send_signal_stale = is_business_stale
 
 
-def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) -> bool:
+def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
+                         *, request_dt: datetime | None = None) -> bool:
     """True when a QUOTED PENDING-Hilmar row has aged out to Quoted & Lost.
 
     Pure CLOCK hours from the OL quote (response_timestamp):
@@ -1558,16 +1698,34 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None) 
     number is what stops that recurring. Distinct from the SEND-
     signal aging (is_business_stale), which is unchanged.
 
+    `request_dt` (2026-08-13) is a FALLBACK anchor, used only when `resp_dt`
+    is None. Michael, verbatim: "if you have the quotes and you do not see a
+    booking for the quote, then it's a loss  that's it". A row that carries a
+    rate or a carrier but no parseable response_timestamp still has a clock we
+    trust — Lonny's request — and decide_status already ages off it inline.
+    Without this parameter every DETECTOR had to skip such rows (they all did:
+    QC-007, gen_improvements_report, auto_chase_pending), so a row stuck in
+    PENDING raised nothing and got no chase. The fallback exists so those
+    callers stop re-deriving the rule, or skipping it.
+
+    It is KEYWORD-ONLY on purpose. Positionally it would slide into `now`,
+    which is the same class of mistake that once put a hardcoded 24h literal
+    in QC-007 while decide_status ran 48h+Friday.
+
+    Behaviour for existing 2-arg callers is unchanged: with request_dt
+    defaulting to None the anchor is exactly resp_dt, including the None case.
+
     Kept byte-for-byte identical to src/hilmar/core.pending_hilmar_stale —
     tests/test_core_parity.py fails if they drift.
     """
-    if resp_dt is None:
+    anchor = resp_dt if resp_dt is not None else request_dt
+    if anchor is None:
         return False
     now = now or now_utc()
-    resp_et = resp_dt.astimezone(ET)
-    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if resp_et.weekday() == 4
+    anchor_et = anchor.astimezone(ET)
+    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if anchor_et.weekday() == 4
                 else PENDING_HILMAR_LOSS_HOURS)
-    return (now - resp_dt).total_seconds() / 3600.0 >= deadline
+    return (now - anchor).total_seconds() / 3600.0 >= deadline
 
 
 def pending_ol_stale(request_dt, now=None) -> bool:
@@ -1703,6 +1861,30 @@ def decide_status(
             ts = parse_iso(ev.get("at") if isinstance(ev, dict) else None)
             if ts and (send_at is None or ts > send_at):
                 send_at = ts
+        # THE ROW THAT NEVER AGED (2026-08-13). Michael, verbatim: "if you
+        # have the quotes and you do not see a booking for the quote, then
+        # it's a loss  that's it".
+        #
+        # send_at was derived ONLY from response_timestamp and
+        # send_signal_events, and is_business_stale returns False on None. A
+        # row holding a rate but no parseable response timestamp — exactly
+        # what patch_carriers produces when it recovers a rate from a sibling
+        # thread or a booking PDF — therefore had NO clock on this branch and
+        # returned PENDING/AWAITING_MDOLX forever. Measured before the fix:
+        # identical PENDING at +1d, +30d, +365d and +3650d. Quote evidence,
+        # no booking, never a loss; pending_substate keys off `quoted`, so it
+        # rendered under PENDING HILMAR and fed the report's "cannot be dated"
+        # banner.
+        #
+        # Fall back to Lonny's request, the one clock we always have and never
+        # invent — the same anchor the quote-aging branch below already uses
+        # for the same missing evidence. Deliberately NOT a change to
+        # is_business_stale: that predicate must keep returning False on None
+        # so a row with NO clock at all stays PENDING and surfaces as a DATA
+        # defect via QC-007, rather than being aged on a timestamp nobody can
+        # evidence.
+        if send_at is None:
+            send_at = parse_iso(request_timestamp)
         if send_signal_stale(send_at, now):
             # has_send stays TRUE. It is an EVIDENCE field — "did Lonny
             # accept?" — not a state field, and on this branch the answer is

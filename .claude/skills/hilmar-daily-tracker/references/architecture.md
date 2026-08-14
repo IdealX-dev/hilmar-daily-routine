@@ -52,7 +52,7 @@ that pdfplumber can't read (needs `secrets/anthropic-api-key.txt`).
 in source text (rate_expiry, etd_requested, temperature) are tracked but not
 gated.
 
-## QC + self-heal — ~46 checks (QC-001 .. QC-050)
+## QC + self-heal — QC-001 .. QC-077 (contiguous, some variants)
 
 `scripts/qc_selfheal.py` runs the full suite. Each check returns PASS / WARN
 / ERROR. ERROR-severity findings gate the pipeline AND fire Sentry events.
@@ -130,10 +130,13 @@ status per issue.
 
 - ET in chat output, UTC in code/DB/logs.
 - `PYTHONIOENCODING=utf-8` on every Python invocation (Windows cp1252 crash).
-- Windows-portable `strftime` — never `%-d` / `%-I` (Unix-only, raises
-  `ValueError` on the Cloud PC). Use `%d` / `%I` + `.replace(" 0", " ")`.
+- Windows-portable `strftime` — never `%-d` / `%-I` (Unix-only). Use
+  `%d` / `%I` + `.replace(" 0", " ")`. (The Cloud PC is decommissioned, but
+  the rule stays: the code must not assume its host.)
 - Outlook email rendering: solid `background-color` before any
   `linear-gradient`; escape HTML exactly once; KPI tiles `min-height` +
   `height` together.
-- `scripts/` mirrored between the repo and `PROJECT HILMAR/scripts/` — copy
-  after every edit; QC-040 enforces no drift.
+- `scripts/` ↔ `src/hilmar/` are the paired trees now (QC-040 +
+  tests/test_core_parity.py). The OneDrive `PROJECT HILMAR/` mirror is GONE
+  — the repo is the deployable, GitHub Actions the only production host.
+  PRODUCTION IMPORTS `scripts/`; diagnose there, never against the mirror.

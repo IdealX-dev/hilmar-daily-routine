@@ -16,7 +16,7 @@ import argparse
 import html
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -176,6 +176,68 @@ def _win_landed(r, h) -> bool:
     return h.get("to") == "WIN" and (r.get("status") or "").upper() == "WIN"
 
 
+#: How recent the UNDERLYING event must be for a derived loss to count as news.
+#: Michael 2026-08-13: "clean up the massive status changes asap to just what's
+#: current last two days.. we don't need to see all that you fixed".
+STATUS_CHANGE_CURRENT_DAYS = 2
+
+#: Reason prefixes written by RECONCILIATION, not by anything that happened.
+#: An operator correction is Michael's own transaction report being folded in;
+#: a prior-build restore is the tracker recovering a row it had degraded. Both
+#: are stamped the day the tracker acted, so they pile onto whatever day the
+#: work was done — 11 of Aug 12's 16 "status changes" were the MDOLX bookings
+#: reconciled out of his .xls, none of which were booked that day.
+_RECONCILIATION_REASONS = ("Operator correction:", "Prior-build WIN restored")
+
+
+def _is_current_status_change(r, h) -> bool:
+    """Does this transition report something that HAPPENED, recently?
+
+    THE PROBLEM (2026-08-13, measured on stored state): status_history is
+    stamped when the PIPELINE decided, not when the business event occurred —
+    core.record_transition defaults `at` to now. So the day a backlog flushes,
+    every row in it lands on that one day. Aug 13 carried 249 transitions: 35
+    "OL-USA never responded", 32 "Send received but no MDOLX", and ~180 quotes
+    aged out at ages up to 2926 HOURS. Rendered raw, the next morning's report
+    would open with a 249-row wall of things that did not happen yesterday.
+
+    A →WIN or →QUOTED transition is kept unconditionally: a booking landing or
+    OL answering IS the news, whatever the row's age. What gets dropped is a
+    derived loss recorded LONG AFTER it came due.
+
+    LATENESS, NOT AGE, is the test, and the difference is the whole fix. Aging
+    never fires before the decision window closes (48h, 72h on a Friday
+    anchor), so a plain "is the quote younger than N days" rule with N=2 would
+    hide EVERY genuine aging — the section would go permanently silent instead
+    of merely quiet. Measuring how late the record is separates "this quote
+    timed out yesterday, as scheduled" from "this quote timed out in April and
+    the tracker only wrote it down today".
+
+    This trims the FEED, not the ledger. Every one of these rows still counts
+    in the KPIs, the win/loss totals and the lane rollups; the audit still
+    names them. The section is "what happened", so it has to hold only that.
+    """
+    reason = h.get("reason") or ""
+    if reason.startswith(_RECONCILIATION_REASONS):
+        return False
+    to = (h.get("to") or "").upper()
+    if to in ("WIN", "QUOTED"):
+        return True
+    at = core.parse_iso(h.get("at"))
+    anchor = (core.parse_iso(r.get("response_timestamp"))
+              or core.parse_iso(r.get("request_timestamp")))
+    if at is None or anchor is None:
+        # No clock to judge it by. Keep it — a transition we cannot date is a
+        # data defect the audit should surface, not something to hide.
+        return True
+    # The most generous window any aging rule in core uses, so a loss that
+    # fired on schedule under ANY of them reads as on-time here.
+    due_h = max(core.PENDING_HILMAR_LOSS_HOURS_FRIDAY,
+                core.PENDING_OL_LOSS_HOURS)
+    late_h = (at - anchor).total_seconds() / 3600.0 - due_h
+    return late_h <= STATUS_CHANGE_CURRENT_DAYS * 24
+
+
 def _today_events(data, today_date):
     """Buckets the activity for the 'What Happened Today' block."""
     new_requests = []
@@ -192,7 +254,7 @@ def _today_events(data, today_date):
         # 0 TEU). They surface in STATUS CHANGES instead (the builder writes a
         # PENDING→WIN history entry), which is the honest event: "a booking
         # confirmed today".
-        _is_standalone = str(r.get("request_id") or "").startswith("stand_")
+        _is_standalone = core.has_no_rfq_chain(r)
         if req_d == today_date and not _is_standalone:
             new_requests.append(r)
         if resp_d == today_date and not _is_standalone:
@@ -200,7 +262,9 @@ def _today_events(data, today_date):
         # status changes today
         for h in (r.get("status_history") or []):
             at = h.get("at")
-            if at and _et_date(at) == today_date and h.get("from") and h.get("to") and h["from"] != h["to"]:
+            if (at and _et_date(at) == today_date and h.get("from")
+                    and h.get("to") and h["from"] != h["to"]
+                    and _is_current_status_change(r, h)):
                 status_changes.append((r, h))
         if r.get("status") == "PENDING":
             pending_today.append(r)
@@ -617,7 +681,7 @@ def undated_quotes(data) -> list:
     """
     out = []
     for r in data.get("requests", []):
-        if str(r.get("request_id") or "").startswith("stand_"):
+        if core.has_no_rfq_chain(r):
             continue
         if r.get("response_timestamp"):
             continue
@@ -628,6 +692,21 @@ def undated_quotes(data) -> list:
         # Two numbers off one dataset, and the docstring of
         # test_undated_quotes_excludes_standalones_like_the_check_does had
         # already written down that they must agree.
+        # Booking-derived carriers are excluded for the same reason standalone
+        # bookings are, and the two exclusions have to move together with
+        # QC-077's or the note and the audit report different numbers off one
+        # dataset. See core.quote_evidence_is_booking_derived.
+        if core.quote_evidence_is_booking_derived(r):
+            continue
+        # RECENT ONLY. Michael 2026-08-13: "all that truly matters at end of
+        # days is the wins and losses. turnaround is secondary for the past
+        # moves.. so clear this error". A missing quote TIME on a move that
+        # already resolved is history nobody can act on, and every one of
+        # these rows is already counted in wins, losses, TEU and the lane
+        # rollups. The audit still states the historical backlog; the report
+        # stops raising it. See core.undated_quote_is_current.
+        if not core.undated_quote_is_current(r):
+            continue
         if core.has_quote_evidence(r):
             out.append(r)
     return out
@@ -649,18 +728,48 @@ def _undated_quotes_note(undated) -> str:
     An empty section that is honest about being incomplete is worth far more
     than one that looks complete and isn't. QC-077 errors on the same
     condition so it gets fixed at the ingest end.
+
+    WHERE THEY SIT IS COMPUTED, NOT ASSERTED (2026-08-13). This banner used to
+    end "They appear under PENDING HILMAR" as a flat statement, which was true
+    only while an undated quote could never age: decide_status had no clock on
+    such a row, so it held PENDING at any age. Now that those rows age off
+    Lonny's request, most are Quoted & Lost and the sentence had become a
+    confident pointer to the wrong section — the failure mode this banner
+    exists to prevent, committed by the banner itself. Read the statuses.
+
+    Through core.display_status, because this repo stores status in two forms
+    (LEGACY LOSS+quoted vs STRICT Q&L) and a raw r["status"] read would bucket
+    every legacy row as "elsewhere" — a sentence that is vague in exactly the
+    case it most needs to be specific.
     """
     if not undated:
         return ""
     n = len(undated)
+    by_status = Counter(core.display_status(r) for r in undated)
+    _SECTIONS = [("PENDING", "PENDING HILMAR"), ("Q&L", "Quoted &amp; Lost"),
+                 ("WIN", "the wins"), ("NQ", "Not Quoted")]
+    parts = [f"{by_status[k]} under {label}" for k, label in _SECTIONS
+             if by_status[k]]
+    other = n - sum(by_status[k] for k, _ in _SECTIONS)
+    if other:
+        parts.append(f"{other} elsewhere")
+    where = (f'{"It appears" if n == 1 else "They appear"} '
+             + ", ".join(parts) + ". ") if parts else ""
     return (
         f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_WARN};'
         f'background:{B.DOC_WARN_BG};border-left:3px solid {B.DOC_WARN};padding:6px 9px">'
-        f'⚠️ {n} further quote{"" if n == 1 else "s"} '
-        f'{"is" if n == 1 else "are"} recorded with a rate or carrier but no '
-        f'response time, so {"it" if n == 1 else "they"} cannot be dated and '
-        f'{"is" if n == 1 else "are"} not counted above. '
-        f'{"It appears" if n == 1 else "They appear"} under PENDING HILMAR. '
+        # "not counted above" USED TO SIT HERE and it was the misleading half.
+        # It meant "absent from the dated OL-USA RESPONSES table"; it read as
+        # "missing from the totals". These rows ARE counted in wins, losses,
+        # TEU and every lane rollup — the only thing missing is when OL sent
+        # the quote. Say that, so nobody reconciles a number that was never
+        # wrong (Michael 2026-08-13: "these 16 what?").
+        f'⚠️ {n} recent quote{"" if n == 1 else "s"} '
+        f'{"has" if n == 1 else "have"} a rate or carrier but no response '
+        f'time, so {"it is" if n == 1 else "they are"} missing from the dated '
+        f'responses above. {"It is" if n == 1 else "They are"} still counted '
+        f'in the win/loss totals. '
+        f'{where}'
         f'See QC-077 in the audit.</p>'
     )
 
@@ -881,6 +990,35 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 _now_is = (r.get("status") or "?").upper()
                 _why = r.get("loss_reason") or r.get("reason_detail") or ""
                 reason = (f"{reason} — REVERSED, now {_now_is}"
+                          f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
+            # THE SAME HONESTY FOR A QUOTE THAT HAS SINCE MOVED ON.
+            #
+            # Michael 2026-08-13, on the Aug 12 email: "in status shows nothing
+            # pending hilmar in the chart but then in words says yes ... it's
+            # all wrong". Three rows rendered "PENDING OL → PENDING HILMAR"
+            # while the PENDING HILMAR section below them read (0).
+            #
+            # NEITHER NUMBER WAS WRONG. The pill describes the TRANSITION, and
+            # at the moment OL quoted, the ball really was in Hilmar's court.
+            # The section describes NOW, and by render time the row had aged
+            # out of PENDING. Both true, and together they read as the report
+            # arguing with itself.
+            #
+            # It happens most days, not rarely: PENDING_HILMAR_LOSS_HOURS is
+            # 24 (Michael's own figure, deliberately not 48), so a quote OL
+            # sends on Wednesday evening ages out before Thursday's fire
+            # renders — the transition and the section are almost never
+            # looking at the same state.
+            #
+            # So say where it went, exactly as the reversed-WIN branch above
+            # already does. Rendering the pill from current status instead
+            # would be the wrong fix: it would erase the fact that OL quoted,
+            # which is the one thing that section exists to record.
+            elif (h.get("to") or "").upper() == "QUOTED" and \
+                    (r.get("status") or "").upper() != "PENDING":
+                _now_is = core.display_status(r) or (r.get("status") or "?")
+                _why = r.get("loss_reason") or ""
+                reason = (f"{reason} — since aged to {_now_is}"
                           f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
             req_date = r.get('request_date') or '—'
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"

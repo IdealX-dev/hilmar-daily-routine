@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -177,6 +178,30 @@ def propose(bookings, requests, since, max_age_days, core):
     return matches, unmatched, skipped
 
 
+def equipment_to_containers(equipment: str) -> str:
+    """OL's equipment string → a container string core.parse_teu can read.
+
+    OL writes "4 × 40' HC (TCNU 303 414-4)" for four boxes and "20' DV
+    (GCXU 224 376-4)" for ONE — the quantity is simply omitted in the
+    singular. core.parse_teu requires an explicit quantity and returns
+    (0, 0) for the bare form, so a single-container booking would land with
+    no container count at all.
+
+    Normalising HERE rather than loosening parse_teu is deliberate. That
+    function feeds every TEU figure in the report, and teaching it to read a
+    bare "40'" as one container would also make it fire on prose ("rate for
+    40' HC") anywhere in an email body. In OL's equipment COLUMN the meaning
+    is unambiguous, so the assumption is safe in this one place and nowhere
+    else.
+
+    The parenthetical is the container's ID, not equipment, and is dropped.
+    """
+    head = (equipment or "").split("(")[0].strip()
+    if not head:
+        return ""
+    return head if re.match(r"^\s*\d+\s*[×xX]", head) else f"1 × {head}"
+
+
 def _teu(b) -> int:
     """TEU as an int, or 0. The export writes it as a float string."""
     try:
@@ -231,6 +256,10 @@ def creation(ref: str, b: dict) -> dict:
     dest = label_for(b.get("pod") or "")
     origin = (b.get("pol") or "").split(",")[0].strip().title() or "Oakland"
     teu = _teu(b)
+    # QC-039 grades container_count and containers on EVERY row, so a
+    # created win with neither is a measured parser failure on data OL did
+    # supply — the 2026-08-13 fire blocked at 92.3% for exactly this.
+    containers = equipment_to_containers(b.get("equipment") or "")
     setter = {
         "status": "WIN",
         "mdolx_ref": ref,
@@ -240,6 +269,17 @@ def creation(ref: str, b: dict) -> dict:
         "teu_requested": teu,
         "teu_won": teu,
     }
+    if containers:
+        import core as _core
+        count, derived_teu = _core.parse_teu(containers)
+        setter["containers"] = containers
+        setter["container_count"] = count
+        # OL's own TEU column wins on disagreement — it is the authority —
+        # but a mismatch means one of the two readings is wrong, so it is
+        # recorded rather than smoothed over.
+        if derived_teu and teu and derived_teu != teu:
+            setter["teu_note"] = (f"OL TEU column says {teu}, equipment "
+                                  f"{containers!r} implies {derived_teu}")
     if b.get("carrier"):
         setter["carrier_won"] = b["carrier"]
         setter["carrier_quoted"] = b["carrier"]

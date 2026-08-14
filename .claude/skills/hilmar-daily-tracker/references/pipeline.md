@@ -1,7 +1,7 @@
 # Hilmar Daily Tracker — the pipeline
 
 `scripts/run_pipeline.py` defines the ordered `STEPS` list. It fires every
-day at **8:07 AM ET** (reporting the PRIOR business day) via GitHub Actions (Cloud PC fallback). Each step is a separate
+day at **8:07 AM ET** (reporting the PRIOR business day) via GitHub Actions (the only production host — the Cloud PC is decommissioned). Each step is a separate
 Python script invoked as a subprocess; the orchestrator wraps the whole run
 in a Sentry Cron heartbeat + per-step performance spans.
 
@@ -77,8 +77,8 @@ it would see an artificially low number and fire false Sentry alerts. So:
   run — the daily email still ships.
 - Every step failure → Sentry `pipeline.step_failure` event → routed through
   `qc_actions_from_sentry.py` → Seer or Claude diagnosis.
-- Sentry Crons heartbeat: if the scheduled fire never starts (Cloud PC down,
-  scheduler dead), Sentry fires a "missed check-in" alert — the only signal
+- Sentry Crons heartbeat: if the scheduled fire never starts (runner outage,
+  crons removed), Sentry fires a "missed check-in" alert — the only signal
   that survives a total pipeline-didn't-run failure.
 
 ## Where things land

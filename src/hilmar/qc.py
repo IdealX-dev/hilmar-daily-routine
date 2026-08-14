@@ -288,7 +288,7 @@ def phase_3_entries(log: Log, data: dict) -> None:
         # outside the search window). Mirror it so the trade-region
         # TEU/value-won columns aggregate correctly.
         if (
-            str(r.get("request_id", "")).startswith("stand_")
+            core.has_no_rfq_chain(r)
             and r.get("status") == "WIN"
             and (not r.get("teu_won") or r["teu_won"] == 0)
             and (r.get("teu_requested") or 0) > 0
