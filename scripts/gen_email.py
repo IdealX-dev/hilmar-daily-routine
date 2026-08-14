@@ -338,7 +338,10 @@ def _week_rows(data):
         # (OL acknowledged the RFQ but sent no rate, so quoted=False) is NQ to
         # aggregate_summary and was Q&L here, in the same email.
         elif core.is_not_quoted(r):
-            b["nq"] += 1
+            # Captured here even when the NQ floor excludes it, so it can
+            # never fall into the Q&L branch below. See core.NQ_VALID_FROM.
+            if core.counts_as_not_quoted(r):
+                b["nq"] += 1
         elif st == "LOSS":
             b["ql"] += 1
 
@@ -412,7 +415,10 @@ def _build_lane_buckets(data):
             # to be reported as a competitive loss on a lane it was never
             # quoted on, and counted into that lane's teu_lost.
             if core.is_not_quoted(r):
-                b["nq"] += 1
+                # Floored rows count in neither bucket — NOT in ql, which
+                # would report a competitive loss on a lane never quoted.
+                if core.counts_as_not_quoted(r):
+                    b["nq"] += 1
             else:
                 b["ql"] += 1
                 b["lost"] += 1   # back-compat alias used by old callers
@@ -450,6 +456,32 @@ NQ_DISPLAY_WINDOW_DAYS = 14  # Hide stale NQ rows from the listing (still counte
 # rows under a tile claiming one, and a carrier charged a Q&L loss while
 # showing 0 quotes (win-rate denominator 0). loss_reason is now purely the
 # WHY column; it never decides the bucket.
+def _nq_reset_banner() -> str:
+    """Say on the report that Not-Quoted counting was restarted, and why.
+
+    Michael 2026-08-14, on a section listing 25 rows as OL non-responses:
+    "get rid of thjs as all quoted / and restart the count monday". Every one
+    of those had in fact been answered — the replies went To: Lonny with the
+    group copied and never reached this mailbox. Suppressing them silently
+    would leave the reader assuming OL simply behaved better this week, so
+    the reset is stated, exactly as the turnaround reset is.
+
+    Returns "" the moment NQ_VALID_FROM is retired, so no dead notice can
+    outlive the floor it describes.
+    """
+    if not core.NQ_VALID_FROM:
+        return ""
+    return f"""
+<div style="background:{B.DOC_WARN_BG};border-left:4px solid {B.DOC_WARN};padding:10px 14px;margin:0 0 14px;border-radius:4px;font-size:12px;color:{B.DOC_WARN};line-height:1.5">
+  <strong>Not-Quoted count restarted {_esc(core.NQ_VALID_FROM)}.</strong>
+  Earlier requests are not listed or counted here. OL <em>did</em> answer
+  them — those replies went To: Lonny with the group copied and never reached
+  this mailbox — so counting them as unanswered measured our visibility, not
+  OL's responsiveness. <strong>Wins, losses, TEU volumes and win rate are
+  unaffected.</strong>
+</div>"""
+
+
 def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
     """Return ALL Not-Quoted rows, filtered to the recent display window.
 
@@ -470,7 +502,11 @@ def _not_quoted_rows(data, cutoff_days: int = NQ_DISPLAY_WINDOW_DAYS):
         cutoff_iso = (datetime.now(timezone.utc).date() - timedelta(days=cutoff_days)).isoformat()
     rows = []
     for r in data.get("requests", []):
-        if core.is_not_quoted(r):
+        # counts_as_not_quoted, not is_not_quoted: the NQ_VALID_FROM floor
+        # (Michael 2026-08-14 "get rid of thjs as all quoted") applies to the
+        # LISTING and the TALLY alike. Routing both through one predicate is
+        # what stops QC-020b's display-leaked-into-aggregate failure.
+        if core.counts_as_not_quoted(r):
             if cutoff_iso is not None:
                 req_date = r.get("request_date") or r.get("date") or ""
                 if req_date < cutoff_iso:
@@ -484,7 +520,7 @@ def _not_quoted_aggregate(data):
     """ALL Not-Quoted rows regardless of age — for tally / TEU / lane stats
     that should reflect total Hilmar volume for rate negotiation depth.
     """
-    return [r for r in data.get("requests", []) if core.is_not_quoted(r)]
+    return [r for r in data.get("requests", []) if core.counts_as_not_quoted(r)]
 
 
 def _pending_rows(data):
@@ -1898,6 +1934,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
     return f"""
 <h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN};padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
 <p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
+{_nq_reset_banner()}
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_WARN};color:white">
     <th style="padding:8px;text-align:left">Date</th>

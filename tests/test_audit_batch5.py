@@ -67,8 +67,14 @@ def _response_no_rate_row():
     return {"request_id": "r-nq", "status": "LOSS", "quoted": False,
             "loss_reason": "RESPONSE_NO_RATE", "destination": "HCMC",
             "lane": "Oakland → HCMC", "teu_requested": 4, "containers": "2x40'RF",
-            "carrier_quoted": "ONE", "request_date": "2026-07-27",
-            "request_timestamp": "2026-07-27T15:00:00Z"}
+            # POST-NQ_VALID_FROM on purpose (2026-08-14). These tests pin
+            # the NQ *bucketing* predicate — is_not_quoted vs a loss_reason
+            # test — not the recency floor. A July date now falls under
+            # core.NQ_VALID_FROM and the row stops being counted as NQ at
+            # all, which would test the floor instead of the thing this file
+            # is about. tests/test_nq_reset.py owns the floor.
+            "carrier_quoted": "ONE", "request_date": "2026-08-18",
+            "request_timestamp": "2026-08-18T15:00:00Z"}
 
 
 def test_response_no_rate_is_not_quoted():
@@ -246,7 +252,8 @@ def test_phase_7_recomputes_aggregates_before_persisting(tmp_path):
 
 def test_day_tile_and_core_agree_on_a_response_no_rate_row():
     row = _response_no_rate_row()
-    summary = gen_email._today_summary([row], report_date=date(2026, 7, 27))
+    # Report date follows the fixture past core.NQ_VALID_FROM (2026-08-14).
+    summary = gen_email._today_summary([row], report_date=date(2026, 8, 18))
     agg = core.aggregate_summary([row])
     assert summary["not_quoted"] == 1
     assert agg["not_quoted"] == 1

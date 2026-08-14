@@ -454,7 +454,12 @@ def _response_no_rate():
     """OL acknowledged the RFQ but never sent a rate: quoted=False, so this is
     NOT-QUOTED — but loss_reason is RESPONSE_NO_RATE, not NO_RESPONSE."""
     return {"request_id": "rnr1", "status": "LOSS", "quoted": False,
-            "loss_reason": "RESPONSE_NO_RATE", "request_date": "2026-07-22",
+            # POST-NQ_VALID_FROM (2026-08-14): this fixture exists to prove
+            # the 8-week rollup and the summary bucket NQ by the SAME
+            # predicate. A July date now falls under core.NQ_VALID_FROM, so
+            # both would read 0 and the test would pass while proving
+            # nothing. The floor itself is owned by tests/test_nq_reset.py.
+            "loss_reason": "RESPONSE_NO_RATE", "request_date": "2026-08-18",
             "lane": "Oakland → Busan", "origin": "Oakland",
             "destination": "Busan", "teu_requested": 4,
             "carrier_quoted": "ONE"}
@@ -659,7 +664,12 @@ def test_qc075_still_fires_on_a_genuine_aggregator_disagreement(monkeypatch):
     row = {"request_id": "d1", "status": "LOSS", "loss_reason": "RESPONSE_NO_RATE",
            "quoted": False, "origin": "Oakland", "destination": "Busan",
            "lane": "Oakland → Busan", "teu_requested": 4,
-           "request_date": core.et_date_of(core.now_utc())}
+           # PAST core.NQ_VALID_FROM (2026-08-14). "Today" was correct until
+           # the NQ floor landed with a Monday-2026-08-17 restart: a row dated
+           # before it counts as NQ in NEITHER aggregator, so the planted
+           # disagreement disappears and this test would pass while proving
+           # QC-075 has teeth it no longer exercised.
+           "request_date": "2026-08-18"}
     data = {"requests": [row], "summary": {}, "lane_summary": {},
             "carrier_summary": {}}
 
