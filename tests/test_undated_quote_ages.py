@@ -65,6 +65,20 @@ NOW = dt.datetime(2026, 8, 13, 17, 0, tzinfo=UTC)
 THREE_WEEKS_AGO = dt.datetime(2026, 7, 23, 17, 0, tzinfo=UTC)   # a Thursday
 TODAY = NOW - dt.timedelta(hours=2)
 
+#: TWO CLOCKS, ON PURPOSE (2026-08-14). The pure-function tests above pass
+#: `now` explicitly, so the FROZEN clock (NOW) keeps them deterministic —
+#: including the weekday-sensitive boundary cases. The DETECTORS below
+#: (qc_selfheal.phase_6_rules, collect_red_flags, _find_overdue_pending) read
+#: the REAL clock internally and accept no override, so their fixtures must be
+#: built relative to real time. Freezing those too is the bug this comment
+#: replaces: "a request from TODAY" silently became a request from yesterday
+#: when the calendar rolled, and four negatives started failing exactly 22
+#: hours after they were written. Detector-positive fixtures use ages past the
+#: 72h Friday window so they fire on ANY weekday; detector-negative ("today")
+#: fixtures stay hours old, safe on any weekday.
+REAL_NOW = dt.datetime.now(UTC)
+REAL_TODAY = REAL_NOW - dt.timedelta(hours=2)
+
 
 def _row(**kw) -> dict:
     """The shape the banner counts: quote evidence, no response timestamp."""
@@ -290,7 +304,7 @@ def test_qc007_stays_silent_on_a_quote_from_today():
     live business."""
     log = qc_selfheal.Log()
     qc_selfheal.phase_6_rules(
-        log, {"requests": [_pending_row(request_timestamp=TODAY.isoformat())]})
+        log, {"requests": [_pending_row(request_timestamp=REAL_TODAY.isoformat())]})
     assert not [e for e in log.errors if "QC-007" in e]
 
 
@@ -324,7 +338,7 @@ def test_improvements_report_names_the_stuck_undated_row():
 
 
 def test_improvements_report_still_says_quoted_when_the_quote_is_dated():
-    old_quote = (NOW - dt.timedelta(days=5)).isoformat()
+    old_quote = (REAL_NOW - dt.timedelta(days=5)).isoformat()
     flags = GIR.collect_red_flags(
         {"requests": [_pending_row(response_timestamp=old_quote)]}, {}, {})
     hits = [f for f in flags if "Pending past stale window" in f["title"]]
@@ -334,7 +348,7 @@ def test_improvements_report_still_says_quoted_when_the_quote_is_dated():
 
 def test_improvements_report_stays_quiet_on_a_request_from_today():
     flags = GIR.collect_red_flags(
-        {"requests": [_pending_row(request_timestamp=TODAY.isoformat())]}, {}, {})
+        {"requests": [_pending_row(request_timestamp=REAL_TODAY.isoformat())]}, {}, {})
     assert not [f for f in flags if "Pending past stale window" in f["title"]]
 
 
@@ -346,7 +360,7 @@ def test_auto_chase_selects_the_undated_row_and_marks_the_anchor():
 
 def test_auto_chase_does_not_chase_a_request_from_today():
     got = ACP._find_overdue_pending(
-        {"requests": [_pending_row(request_timestamp=TODAY.isoformat())]},
+        {"requests": [_pending_row(request_timestamp=REAL_TODAY.isoformat())]},
         min_age_hours=24)
     assert got == []
 
@@ -367,7 +381,7 @@ def test_the_chase_email_never_claims_a_quote_time_it_cannot_evidence():
 def test_the_chase_email_is_unchanged_when_the_quote_is_dated():
     """The old copy is correct whenever we actually have a quote time, and it
     must not regress into hedged language for rows that never had a problem."""
-    old_quote = (NOW - dt.timedelta(days=6)).isoformat()
+    old_quote = (REAL_NOW - dt.timedelta(days=6)).isoformat()
     row = ACP._find_overdue_pending(
         {"requests": [_pending_row(response_timestamp=old_quote)]}, 24)[0]
     _subject, body = ACP._build_chase_email(row)
