@@ -104,4 +104,9 @@ def test_no_bare_stand_check_survives_outside_the_two_known_sites():
         for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             if 'startswith("stand_")' in line and not line.lstrip().startswith("#"):
                 hits.append(f"{f.name}:{n}")
-    assert sorted(hits) == ["ingest.py:764", "qc_selfheal.py:938"], hits
+    # Line numbers shift when code is inserted above these sites; the pin is
+    # the FILE-AND-COUNT, the exact line is informative. 2026-08-14: the
+    # qc_selfheal site moved 938 → 1033 when _stamp_response_from_dated_sibling
+    # was added above it. Same two deliberate sites, nothing new.
+    assert sorted(h.split(":")[0] for h in hits) == ["ingest.py", "qc_selfheal.py"], hits
+    assert len(hits) == 2, hits

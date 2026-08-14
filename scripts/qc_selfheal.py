@@ -632,6 +632,101 @@ def _carrier_from_lane_rate_sibling(r: dict, requests: list, window_days: int = 
         return None
 
 
+def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
+    """A row that borrowed a quote's RATE must borrow its DATE.
+
+    2026-08-14. The report told Michael "1 recent quote has a rate or carrier
+    but no response time". Michael: "untrue again as i gave this to you before
+    and emailed you a copy." He was right on both counts, measured on stored
+    state (diag run 31808701667): the row was the Aug-4 Oakland→Algeciras ask
+    carrying $4,938 / CMA CGM with response_timestamp=None — and the quote
+    email he forwarded WAS in stage, an mbd_rate_response at
+    2026-08-12T20:57:02Z, correctly dated onto the Aug-12 sibling ask.
+
+    The rate and carrier had been propagated onto the older ask by the
+    sibling heals (same lane + identical rate is the same OL quote line —
+    _carrier_from_lane_rate_sibling above), but the TIMESTAMP was not. Half
+    the evidence travelled. That half-copy is what manufactures the
+    "quoted but undateable" state the banner then reports: no email is
+    missing, no data is missing — the pipeline split one quote's evidence
+    across two fields and lost the date on one row.
+
+    So: for a row holding a real rate but no response time, find the dated
+    same-lane sibling whose rate matches to the cent and whose response
+    POSTDATES this row's ask, and stamp that response time. This is recovery
+    of the same kind _stamp_response_time_from_bodies does — the value is
+    read off evidence already linked to the same quote, never synthesised.
+
+    Guards, all load-bearing:
+      - real rate required. A carrier-only row is booking-derived territory
+        (core.quote_evidence_is_booking_derived) — nothing to fingerprint on.
+      - rate matches to the CENT, same lane — the same fingerprint the
+        carrier-sibling heal above already trusts, for the same reason.
+      - the sibling's response must POSTDATE this row's ask: a quote cannot
+        answer a question that had not been asked. (Aug-12 quote covering the
+        Aug-4 re-asked lane passes; a June quote against an August ask does
+        not.)
+      - carrier, when present on both, must agree after normalisation —
+        same rate + different carrier is a different quote.
+      - the EARLIEST covering response wins: the first quote that answered.
+      - turnaround is computed inline under the same >40 biz-hour rule the
+        per-row heal enforces: past 40 the timing fields stay None (date
+        kept, statistic excluded) so a long-covered re-ask can never smear
+        the averages the clock was just turned back on for.
+    """
+    stamped = 0
+    dated = [s for s in requests
+             if s.get("response_timestamp")
+             and isinstance(s.get("ol_rate"), (int, float))]
+    for r in requests:
+        if r.get("response_timestamp") or core.has_no_rfq_chain(r):
+            continue
+        rate = r.get("ol_rate")
+        if not isinstance(rate, (int, float)):
+            continue
+        lane = (r.get("lane") or "").strip().lower()
+        req_dt = core.parse_iso(r.get("request_timestamp"))
+        if not lane or req_dt is None:
+            continue
+        my_car = r.get("carrier_quoted")
+        with contextlib.suppress(Exception):
+            my_car = core.normalize_carrier(my_car) or my_car
+        best = None
+        for s in dated:
+            if s is r or (s.get("lane") or "").strip().lower() != lane:
+                continue
+            if round(s["ol_rate"], 2) != round(rate, 2):
+                continue
+            s_car = s.get("carrier_quoted")
+            with contextlib.suppress(Exception):
+                s_car = core.normalize_carrier(s_car) or s_car
+            if my_car and s_car and my_car != s_car:
+                continue
+            resp_dt = core.parse_iso(s.get("response_timestamp"))
+            if resp_dt is None or resp_dt <= req_dt:
+                continue
+            if best is None or resp_dt < best:
+                best = resp_dt
+        if best is None:
+            continue
+        r["response_timestamp"] = best.isoformat()
+        biz = core.biz_hours_between(req_dt, best)
+        if isinstance(biz, (int, float)) and biz <= 40:
+            r["turnaround_biz_hours"] = biz
+            r["turnaround_hours"] = core.clock_hours_between(req_dt, best)
+            _timing = f"turnaround {biz:.1f} biz-hrs"
+        else:
+            r["turnaround_biz_hours"] = None
+            r["turnaround_hours"] = None
+            _timing = ("timing excluded — the covering quote answered a "
+                       "re-asked lane, not this ask's own clock")
+        stamped += 1
+        log.fix(f"{r.get('request_id')}: response_timestamp "
+                f"{r['response_timestamp']} taken from the dated same-lane "
+                f"same-rate sibling quote ({_timing})")
+    return stamped
+
+
 # QC-027's denominator, named once so a diagnostic cannot hold a different
 # idea of it than the check does. 2026-08-10: QC-027 has reported Carrier
 # below 90% since August and "it used to work" — but a completeness
@@ -4344,6 +4439,16 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-056: healed {len(_healed)} rate-without-carrier row(s); none stuck")
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
+
+    # A ROW THAT BORROWED A QUOTE'S RATE BORROWS ITS DATE TOO. Runs AFTER
+    # QC-056 (which may have just completed the rate+carrier pair from a
+    # sibling) and BEFORE QC-077 (so a row dated here never reports as
+    # undateable). See _stamp_response_from_dated_sibling for the 2026-08-14
+    # Algeciras case that forced this.
+    try:
+        _stamp_response_from_dated_sibling(log, requests)
+    except Exception as _e:
+        log.warn(f"sibling-date heal failed with exception: {_e}")
 
     # QC-077: A QUOTE THE DAILY REPORT CAN NEVER SHOW.
     #
