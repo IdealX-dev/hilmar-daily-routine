@@ -4178,9 +4178,17 @@ def phase_6_rules(log: Log, data: dict):
         from datetime import timedelta as _td
         NQ_WINDOW = 14
         _cutoff = (_dt.now(core.ET).date() - _td(days=NQ_WINDOW)).isoformat()
-        # Aggregate check (b)
-        _all_nq = [r for r in requests
+        # Aggregate check (b) — the DISPLAY window must never leak into the
+        # tally. Since 2026-08-14 the NQ_VALID_FROM floor is a legitimate,
+        # deliberate exclusion, so this compares against the same predicate
+        # aggregate_summary uses; comparing against a raw count would now fire
+        # every fire and train the reader to ignore a check whose whole job is
+        # catching a silent tally break.
+        _raw_nq = [r for r in requests
                    if r.get("status") == "LOSS" and (r.get("loss_reason") or "") == "NO_RESPONSE"]
+        _all_nq = [r for r in _raw_nq if core.nq_is_valid(
+            r.get("request_date") or r.get("date") or r.get("request_timestamp"))]
+        _floored = len(_raw_nq) - len(_all_nq)
         _summary_nq = (data.get("summary") or {}).get("not_quoted", 0)
         if _summary_nq != len(_all_nq):
             log.error(
@@ -4188,7 +4196,11 @@ def phase_6_rules(log: Log, data: dict):
                 "Display-window filter leaked into the aggregate — volume tally broken."
             )
         else:
-            log.ok(f"QC-020b: NQ aggregate intact ({len(_all_nq)} total — full tally for rate-neg)")
+            log.ok(f"QC-020b: NQ aggregate intact ({len(_all_nq)} counted"
+                   + (f", {_floored} pre-{core.NQ_VALID_FROM} excluded by the "
+                      f"reset — they were answered, we could not see it"
+                      if _floored else "")
+                   + " — full tally for rate-neg)")
         # Display check (a)
         _body_path = Path(__file__).resolve().parent.parent / "reports" / "email-body.html"
         if _body_path.exists():

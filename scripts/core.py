@@ -429,8 +429,17 @@ def aggregate_trade_regions(requests: list[dict],
         # printed directly beneath the words "reconciles to summary" — the
         # divergence QC-075 now escalates instead of printing.
         elif is_not_quoted(r):
-            m["not_quoted"] += 1
-            m["teu_not_quoted"] += teu
+            # NQ FLOOR (NQ_VALID_FROM). Captured by THIS branch even when
+            # floored, then counted only if valid. Letting a floored row fall
+            # through to the LOSS branch below would book it as Quoted & Lost
+            # — inflating losses and moving win rate, which is exactly what
+            # this reset must not touch. It stays in `requests`/`teu_requested`
+            # (incremented above), matching summary.total_entries, so QC-075's
+            # reconciliation still balances.
+            if nq_is_valid(r.get("request_date") or r.get("date")
+                           or r.get("request_timestamp")):
+                m["not_quoted"] += 1
+                m["teu_not_quoted"] += teu
         elif st == "LOSS":
             m["quoted_lost"] += 1
             m["teu_quoted_lost"] += teu
@@ -1085,6 +1094,72 @@ def has_quote_evidence(r: dict) -> bool:
     QC-077 banner, and the quoted-flag reconciliation."""
     r = r or {}
     return bool(is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
+
+
+#: NOT-QUOTED RESET. Michael 2026-08-14, on the report's "Not Quoted — Last 14
+#: Days (9 listed • 25 total • 104 TEU)" section: "get rid of thjs as all
+#: quoted / and restart the count monday."
+#:
+#: NQ means "Lonny asked and OL never answered". Every row in that section was
+#: in fact ANSWERED — the replies went To: Lonny with the group copied and
+#: never reached the mailbox this pipeline reads, which is the same root cause
+#: that produced the empty OL-USA RESPONSES section and forced the turnaround
+#: reset. So the label was an artefact of our visibility, not OL's behaviour,
+#: and it was being shown to the CEO as a list of OL failures.
+#:
+#: Same shape as TIMING_VALID_FROM, deliberately: a row asked BEFORE this
+#: floor is not counted or listed as Not Quoted, and the report SAYS SO rather
+#: than quietly shrinking. Monday 2026-08-17 is the restart Michael named.
+#:
+#: WHAT THIS DOES NOT TOUCH, and must not: wins, Q&L, TEU volumes, lane
+#: rollups, or win rate. Win rate is Wins/(Wins+Q&L) and has never included
+#: NQ, so suppressing NQ cannot move it. The rows keep their stored status —
+#: nothing is deleted, and clearing the floor restores them in one line.
+NQ_VALID_FROM = "2026-08-17"
+
+
+def nq_is_valid(when) -> bool:
+    """True when a request is recent enough to be CALLED Not Quoted.
+
+    Mirrors timing_is_valid: falsy floor ⇒ everything counts, so retiring
+    this is a one-line change. A row with no parseable request date counts
+    as valid — an undateable row is a data defect that should stay visible,
+    not something to hide behind the floor.
+    """
+    if not NQ_VALID_FROM:
+        return True
+    s = when if isinstance(when, str) else (when.isoformat() if when else "")
+    if not s:
+        return True
+    return s[:10] >= NQ_VALID_FROM
+
+
+def counts_as_not_quoted(r: dict) -> bool:
+    """is_not_quoted AND recent enough to be called that (NQ_VALID_FROM).
+
+    ONE predicate for the count, the listing, the TEU tally and the QC
+    aggregate check. They are four different call sites over one dataset and
+    they have drifted before; QC-020b exists because a display filter once
+    leaked into the aggregate.
+    """
+    r = r or {}
+    return is_not_quoted(r) and nq_is_valid(
+        r.get("request_date") or r.get("date") or r.get("request_timestamp"))
+
+
+def nq_reset_note(short: bool = False) -> str:
+    """One sentence for the report, or "" once the floor is retired."""
+    if not NQ_VALID_FROM:
+        return ""
+    if short:
+        return f"Not-Quoted count restarted {NQ_VALID_FROM}"
+    return (
+        f"Not-Quoted counting restarted {NQ_VALID_FROM}. Earlier requests are "
+        f"not listed or counted here: OL did answer them, but those replies "
+        f"went to Lonny with the group copied and never reached this mailbox, "
+        f"so calling them unanswered measured our visibility, not OL. Wins, "
+        f"losses, TEU volumes and win rate are unaffected."
+    )
 
 
 #: How recent an undated quote has to be before the report says anything about
@@ -2152,7 +2227,15 @@ def aggregate_summary(requests: list[dict]) -> dict:
     wins = [r for r in requests if r.get("status") == "WIN"]
     losses = [r for r in requests if r.get("status") == "LOSS"]
     ql = [r for r in losses if r.get("quoted")]
-    nq = [r for r in losses if not r.get("quoted")]
+    # NQ RESET (Michael 2026-08-14, see NQ_VALID_FROM): a request from before
+    # the floor was answered — we just could not see the answer — so it is not
+    # counted as Not Quoted. Excluded and COUNTED, so the report states how
+    # many rather than silently shrinking. Wins/Q&L/win rate are untouched:
+    # NQ has never been in the win-rate denominator.
+    _nq_all = [r for r in losses if not r.get("quoted")]
+    nq = [r for r in _nq_all if nq_is_valid(
+        r.get("request_date") or r.get("date") or r.get("request_timestamp"))]
+    nq_excluded = len(_nq_all) - len(nq)
     pending = [r for r in requests if r.get("status") == "PENDING"]
 
     # win_rate per CLAUDE.md §6 = Wins / (Wins + Q&L). NQ is "no contest
@@ -2187,6 +2270,8 @@ def aggregate_summary(requests: list[dict]) -> dict:
         "wins": len(wins),
         "quoted_lost": len(ql),
         "not_quoted": len(nq),
+        "not_quoted_excluded": nq_excluded,
+        "nq_valid_from": NQ_VALID_FROM,
         "pending_hilmar": len(pending),
         "win_rate": round(len(wins) / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
         "quote_rate": round(total_quoted / total * 100, 1) if total else 0.0,
