@@ -360,6 +360,19 @@ jobs:
       # device-code prompt — on a headless runner that blocks until the
       # job times out. Fail loudly instead.
       HILMAR_NONINTERACTIVE: "1"
+      # Read MBD_OceanExportBookingShared ONLY, not michael.deitchman@ol-usa.com.
+      # Michael 2026-08-14: "stop checking my ol emails and use your direct
+      # connection to the shared box." The shared mailbox is where OL sends and
+      # is already the authoritative copy in the dedupe; /me was mostly
+      # duplication (3,636 already-staged against 4 new on the 60-day sweep)
+      # plus 23,724 unclassified items from a personal mailbox carrying every
+      # non-Hilmar thread he is on.
+      #
+      # Set here as well as defaulted in refresh_stage so the choice is visible
+      # where the fire is configured. Flip to "false" to put /me back — no code
+      # change. If the Mail.Read.Shared token ever lapses, refresh_stage still
+      # falls back to /me rather than reading nothing.
+      HILMAR_READ_SHARED_ONLY: "true"
       # Report window (2026-07-21): the gate ALWAYS emits "previous" — the
       # single 8 AM fire reports the prior business day; there is no fire-time
       # or day-of-week branching anymore. core.py's default stays "current";

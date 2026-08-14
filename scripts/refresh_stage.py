@@ -435,15 +435,43 @@ def shared_token_silent() -> str | None:
     return result["access_token"]
 
 
+#: Read the SHARED mailbox alone and skip /me. Michael 2026-08-14: "all quotes
+#: from this week are out and you should see the emails in the graphed box not
+#: from my ol usa email so stop checking my ol emails and use your direct
+#: connection to the shared box."
+#:
+#: The shared mailbox is where OL actually sends, and it is already the
+#: authoritative copy in the dedupe. Reading /me on top of it was mostly
+#: duplication — the 2026-08-14 60-day sweep took 3,636 messages as
+#: already-staged against 4 genuinely new, and paged 23,724 unclassified items
+#: out of a personal mailbox that carries every non-Hilmar thread Michael is
+#: on.
+#:
+#: WHAT THIS GIVES UP, stated because it is a real trade: mail that reaches
+#: ONLY michael.deitchman@ol-usa.com and never the shared box stops being
+#: seen. Nothing already staged is lost — stage_emails.txt is durable — but
+#: future mail of that shape would be. Set HILMAR_READ_SHARED_ONLY=false to
+#: put /me back in one env var, with no code change.
+READ_SHARED_ONLY = os.environ.get(
+    "HILMAR_READ_SHARED_ONLY", "true").strip().lower() in ("1", "true", "yes")
+
+
 def read_targets(token: str) -> list[tuple[str, str, str]]:
     """Every mailbox to read, as (label, base_url, token_for_that_base).
 
     App-only addresses READ_MAILBOX directly and has no /me, so it is a single
-    target. Delegated reads /me always, and adds the shared mailbox when — and
-    only when — a token with Mail.Read.Shared is available.
+    target.
 
-    The shared mailbox is FIRST in the delegated list so that a thread present
-    in both dedupes to the shared copy, which is the authoritative one.
+    Delegated prefers the SHARED mailbox and, under READ_SHARED_ONLY (the
+    default since 2026-08-14), reads nothing else. The shared mailbox is FIRST
+    regardless, so a thread present in both dedupes to the shared copy, which
+    is the authoritative one.
+
+    /me IS STILL THE FALLBACK when no Mail.Read.Shared token exists. That is
+    not a leftover — dropping /me without a shared token would leave the fire
+    reading NO mailbox at all, and "Lonny sent nothing" already read identical
+    to "we cannot see the mailbox" for a week once. A degraded read beats a
+    blind one.
     """
     if not _mailbox_base.endswith("/me"):
         # app-only: _mailbox_base is already /users/{READ_MAILBOX}
@@ -453,6 +481,12 @@ def read_targets(token: str) -> list[tuple[str, str, str]]:
     shared_tok = shared_token_silent()
     if shared_tok:
         targets.append((SHARED_MAILBOX, f"{GRAPH}/users/{SHARED_MAILBOX}", shared_tok))
+        if READ_SHARED_ONLY:
+            print(f"refresh_stage: reading {SHARED_MAILBOX} ONLY "
+                  f"(HILMAR_READ_SHARED_ONLY) — /me is skipped. Mail that "
+                  f"reaches only the personal mailbox will not be seen; set "
+                  f"HILMAR_READ_SHARED_ONLY=false to restore it.")
+            return targets
     else:
         # Loud, because "Lonny sent nothing" and "we cannot see the mailbox
         # Lonny sends to" read identically for a week and cost us that week.

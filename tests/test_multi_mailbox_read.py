@@ -147,8 +147,16 @@ def test_the_constraint_is_written_where_the_next_person_will_look():
 def test_shared_mailbox_is_read_first(monkeypatch):
     """Order is load-bearing: main() keeps the FIRST copy of a deduped
     message and fetches its body from that mailbox. The shared mailbox is the
-    authoritative copy of a thread that exists in both."""
+    authoritative copy of a thread that exists in both.
+
+    Pinned against READ_SHARED_ONLY=False, because the DEFAULT since
+    2026-08-14 is to read the shared mailbox alone (Michael: "stop checking my
+    ol emails"). This test is about ORDERING and per-target tokens, which only
+    have meaning when both are read — see tests/test_read_shared_only.py for
+    the default-path behaviour.
+    """
     import refresh_stage as RS
+    monkeypatch.setattr(RS, "READ_SHARED_ONLY", False)
     monkeypatch.setattr(RS, "_mailbox_base", f"{RS.GRAPH}/me")
     monkeypatch.setattr(RS, "shared_token_silent", lambda: "shared-tok")
 
