@@ -3,6 +3,90 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-14 — The insights engine was reporting a 100% win rate, and the
+### delta was hiding it. Shared mailbox closed permanently.
+
+Michael: "ol won't grant more access." + "do whatever is best for you."
+
+THE BUG, and it is the real one. `baselines._carrier_lane_winrates`,
+`baselines.compute` and `insights.build_context` each decided which rows
+counted as resolved with
+
+    r["status"] in ("WIN", "Q&L", "NQ")
+
+Production stores the LEGACY form. `scripts/core.decide_status` returns
+"LOSS" for both quoted-and-lost and never-quoted rows — verified this
+session by running it, not inferred — and QC-041 enforces LEGACY as what
+gets written. So that tuple matched WINS AND NOTHING ELSE. Every loss was
+invisible to the insights engine, the decided set was all-wins, and the win
+rate computed wins/wins = **100.0%**.
+
+WHY NOTHING CAUGHT IT. `win_rate_delta_pp = today_win_rate -
+baselines.win_rate_pct`, and BOTH sides used the same broken filter. Both
+returned 100.0, so the delta was a flat, healthy-looking 0.0. Two alert
+classes were disabled as a side effect: `win_rate_shift` and
+`carrier_lane_drop` compare today against baseline and cannot fire when
+both are pinned at 100%. Carriers that lost every quote vanished from the
+lane view entirely rather than showing 0%.
+
+WHERE IT LANDED. `insights.context_to_dict` feeds the Opus narrative
+prompt, so the business advice embedded in the daily email was written from
+a fabricated 0.0pp delta. `ctx.win_rate_pct` reads the stored summary and
+was always correct — so the email carried a right headline next to a wrong
+delta, which is why it read as plausible.
+
+WHY THE TESTS WERE GREEN — worth reading twice. `test_baselines.py::
+test_compute_win_rate_uses_decided_only` built its fixtures in the STRICT
+form (`status="Q&L"`, `status="NQ"`). Production writes LEGACY. The test
+exercised a code path production never takes and passed while the
+production path returned 100%. A LEGACY companion test now sits beside it
+and must not be deleted. `core.display_status`' own docstring had warned
+about exactly this: "Never compare r['status'] == 'Q&L' directly — it'll
+silently miss legacy rows." The trap was documented, then walked into in
+two files.
+
+DECISION REVERSED, by name. "Decided = WIN + Q&L + NQ" (set 2026-04-27 with
+the four-state classifier) is now "decided = WIN + Q&L". The headline win
+rate is Wins/(Wins+Q&L) and never included NQ, so the old set put a LEVEL
+and a DELTA over different populations in one email — and since the
+2026-08-17 floor the report states that NQ rows are not counted while this
+still counted them. Both fixes landed together on purpose: correcting the
+storage form alone would have swung the delta by whatever NQ happened to
+be; correcting the denominator alone would have left it pinned at 100%.
+One predicate now, `baselines.is_decided`, which insights aliases rather
+than restating — three longhand copies is how all three drifted
+identically.
+
+No migration: `baselines.compute` is pure and `update` persists its result,
+so the next fire recomputes both sides on the new definition.
+
+THE SHARED MAILBOX IS CLOSED, PERMANENTLY. Full Access was the only route
+to reading `MBD_OceanExportBookingShared` (Graph 404s every folder without
+it). Michael: "ol won't grant more access." The OWA self-test and the IT
+request are both dead leads and the docs now say so.
+
+FIXED A LANDMINE THIS EXPOSED. `HILMAR_READ_SHARED_ONLY` DEFAULTED to
+`true` in code — the one configuration that cannot return mail — held off
+production by a single env var in daily.yml. Delete that var, or import the
+module anywhere it is unset, and the fire reads a 404-for-everything
+mailbox, stages nothing and exits GREEN. Not hypothetical: the 10:41 fire
+on 2026-08-14 did exactly that. The default is now `false`. The flag is
+kept, not deleted, so a future grant is a one-variable change.
+
+STATED PLAINLY, because it is the thing that actually matters: the NQ floor
+does NOT fix the underlying blindness. OL's staff reply to Lonny *from* the
+shared mailbox, and sent mail is not delivered to the distribution, so
+those replies exist only in a store we can never read. Restarting the count
+on 2026-08-17 gives a clean slate that re-dirties. The only fix available
+without OL IT is a PROCESS one — OL CCs an address Michael controls on
+quote replies, or Lonny (who receives every one) copies it. Owner: Michael;
+next step: one ask to the OL team. No code change can substitute.
+
+CORRECTION TO MY OWN PRIOR ENTRY. The entry below calls the win-rate split
+"pre-existing, changes neither number, just a frame clash". That was wrong
+— it changes the number, from a true ~25-38% to a reported 100%. Corrected
+here rather than edited there.
+
 ### 2026-08-14 — The Not-Quoted reset landed on main, and verifying it
 ### surfaced a parity blind spot the suite could not see
 

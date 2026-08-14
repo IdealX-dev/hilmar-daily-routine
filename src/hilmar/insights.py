@@ -239,6 +239,14 @@ def _detect_anomalies(
     return out
 
 
+#: Delegates to :func:`baselines.is_decided` rather than restating it. Today's
+#: recomputation and the persisted baseline MUST share one denominator — when
+#: this was written out longhand at both sites they drifted identically for
+#: months (LEGACY rows invisible, win rate pinned at 100%, delta a flat 0.0).
+#: See that function for the full history.
+_is_decided = baselines_mod.is_decided
+
+
 def _today_carrier_lane(requests: list[dict[str, Any]]) -> dict[str, float]:
     """Quick recomputation of carrier-lane win rate over the same data
     we're scoring today, for anomaly comparison vs the 90-day baseline."""
@@ -249,10 +257,8 @@ def _today_carrier_lane(requests: list[dict[str, Any]]) -> dict[str, float]:
         dest = (r.get("destination") or "").strip()
         if not carrier or not dest or dest.lower() == "unknown":
             continue
-        # Decided = WIN + Q&L + NQ (PENDING excluded — alive). Mirrors
-        # baselines._carrier_lane_winrates so today's recomputation is
-        # comparable to the persisted baseline.
-        if r.get("status") not in ("WIN", "Q&L", "NQ"):
+        # Decided = WIN + Q&L, storage-form agnostic. See _is_decided.
+        if not _is_decided(r):
             continue
         key = f"{carrier}.{dest}"
         bucket_total[key] += 1
@@ -362,8 +368,9 @@ def build_context(
         if (baselines_mod.core.parse_iso(r.get("request_timestamp")) or now) >= cutoff_14
     ]
 
-    # 4-state classifier: decided = WIN + Q&L + NQ (PENDING excluded).
-    decided_14 = [r for r in recent_14 if r.get("status") in ("WIN", "Q&L", "NQ")]
+    # decided = WIN + Q&L, storage-form agnostic — the headline denominator.
+    # See _is_decided for the two bugs the old tuple carried.
+    decided_14 = [r for r in recent_14 if _is_decided(r)]
     today_wins = sum(1 for r in decided_14 if r.get("status") == "WIN")
     today_win_rate = _safe_pct(today_wins, len(decided_14))
 
