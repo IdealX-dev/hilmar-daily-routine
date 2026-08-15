@@ -1,11 +1,30 @@
 name: Test
 
+# WHY `push` IS UNFILTERED, 2026-08-15. It was `branches: [main]`, so a
+# working branch only got CI via the `pull_request` event — and that event
+# does not always produce a run. Observed the same day: PRs #209 and #210
+# got their `test` check automatically; #211 and #212 got NO check run at
+# all and sat at "pending" with total_count 0 until the suite was dispatched
+# by hand. #211 was the fix for a 100% win rate reaching the CEO's email; on
+# the PR's own signal it would have merged with zero checks.
+#
+# Pushing to any branch now runs the suite on its own trigger, so coverage no
+# longer depends on the PR event firing. "Never push red" (CLAUDE.md) becomes
+# something the repo enforces rather than something a human remembers.
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+# One run per (event, ref). A rapid second push supersedes its own earlier
+# run, but push and pull_request are kept in SEPARATE groups deliberately —
+# sharing one would let a push cancel the very run a required status check is
+# waiting on, and a cancelled check blocks the merge it was meant to protect.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
