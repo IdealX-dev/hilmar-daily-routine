@@ -80,17 +80,33 @@ produces:
   went blind and green on it). `seed-shared-mailbox.yml` is dead code kept
   only as a record. A mailbox yielding zero for a whole window is a red
   error, never a quiet day.
-- **The visibility gap this leaves is PERMANENT, and it is a business
-  problem, not a code one.** OL's staff reply to Lonny *from* the shared
-  mailbox; sent mail is not delivered to the distribution, so those replies
-  exist only in a store we can never read. Consequence: the tracker cannot
-  see OL's outbound quotes, which is what produced the false "Not Quoted"
-  rows, the empty OL-USA RESPONSES section, and the turnaround reset. The
-  NQ floor restarts the count on 2026-08-17 but does NOT fix this — absent
-  a process change the count re-inflates with the same artefacts. The only
-  fix available without OL IT is a **process** one: get OL to CC an address
-  Michael controls on quote replies, or have Lonny (who receives every one
-  of them) copy it. Raise this rather than re-litigating access.
+- **The tracker is NOT blind to OL's replies — measured, 2026-08-15.** An
+  earlier version of this file claimed the opposite ("the visibility gap is
+  PERMANENT… the count re-inflates… only a process fix"). That was wrong,
+  and it was wrong twice: first as a theory built on the shared mailbox's
+  404, then repeated to Michael as fact. He corrected it — **"i am in the
+  group email so i see them"** — and diag-blob run 31877434357 backs him,
+  not me:
+
+      response_timestamp by ET day   … 2026-08-12: 5, 2026-08-13: 5
+      turnaround, 294 dated rows     254 in 0-4h, 0 negative
+      rate responses in transitions  08-12: 3, 08-13: 1, 07-22: 2 …
+
+  Michael is on the distribution, the group copy lands in his OL mailbox,
+  and `/me` is exactly what intake reads — so OL's replies DO arrive and
+  ARE captured, usually within four hours. The mechanism is already in
+  `classify()`: an OL-domain sender with Lonny on the message, plus the
+  `LonnyThreads` linkage for forwards that strip him.
+- **What the 2026-08-14 spike actually was.** 255 transitions in one day —
+  33 "OL-USA never responded", 33 "Send but no MDOLX" — reads like mass
+  blindness and is not. The reasons carry their own age: *"Quoted 2952.7h
+  ago"* is 123 days. It is the aging sweep catching up on APRIL rows, not
+  33 new failures. Do not quote that number as a current-week signal.
+- **The genuinely undated rows are 60, and mostly not email at all:** 49
+  have no `source_imids` whatsoever (they entered from OL's transaction
+  report, never as mail — nothing to date them with), 10 link only to
+  Lonny's own ask, and 1 is unexplained and worth chasing. That is the
+  QC-077 population; it is a backlog, not a live leak.
 - **The win/loss ledger reconciles to OL's own book:**
   `data/ol-transaction-report-2026.json` (Michael's transaction report) is
   the authority for bookings; absence from it IS the cancellation signal.

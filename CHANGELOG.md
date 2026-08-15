@@ -3,6 +3,60 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-15 — I was wrong about the blindness. Michael was right, and the
+### stored data proves it.
+
+Michael: "i am in the group email so i see them."
+
+WHAT I CLAIMED, twice, in the entry below and in SKILL.md: that OL's replies
+live only in the unreadable shared mailbox, that the tracker therefore
+cannot see OL's outbound quotes, that the NQ count would re-inflate after
+the 2026-08-17 restart, and that only a process change (OL CCing an address
+we can read) could fix it. I put that to Michael as fact and told him to
+raise it with OL.
+
+IT IS FALSE. diag-blob run 31877434357, against real stored state:
+
+    response_timestamp by ET day … 2026-07-15: 1 … 2026-08-12: 5, 08-13: 5
+    turnaround, 294 dated rows     254 in 0-4h, 17 in 4-24h, 0 negative
+    rate responses in transitions  07-22: 2, 07-23: 1, 08-04: 1, 08-12: 3,
+                                   08-13: 1
+
+OL's replies are arriving and being captured, usually inside four hours.
+Michael is on the distribution, the group copy lands in his OL mailbox, and
+`/me` is precisely what intake reads. The mechanism has been in `classify()`
+all along: OL-domain sender with Lonny on the message, plus `LonnyThreads`
+for forwards that strip him. There was never a permanent gap to route
+around.
+
+HOW I GOT IT WRONG. The shared mailbox 404s, which is true and unchanged
+(probe re-run this session: all six endpoints still fail, directory object
+still resolves). I generalised from that one fact to "we cannot see OL's
+replies" WITHOUT checking whether the replies were arriving by another
+path — which the stored response timestamps would have answered in one
+diagnostic run. I had the tool, I had written the tool, and I reasoned
+instead of running it. Same failure mode as the 2026-08-13 "shared mailbox
+is live" claim: a precondition mistaken for an observation. The rule this
+repo already encodes — a capability claim requires observed OUTPUT, never a
+passed precondition — applies equally to claims of INCAPACITY. Absence of
+evidence got reported as evidence of absence.
+
+THE 2026-08-14 SPIKE, correctly read. 255 transitions in one day (33 "OL-USA
+never responded", 33 "Send but no MDOLX") is not mass blindness: the loss
+reasons carry their own age, and "Quoted 2952.7h ago" is 123 days. It is the
+aging sweep catching up on APRIL rows. The NQ floor is still the right call
+for that backlog — but "the count will re-inflate" was unsupported and is
+retracted.
+
+THE REAL UNDATED POPULATION is 60 rows: 49 with no source_imids at all
+(entered from OL's transaction report, never as mail, so nothing can date
+them), 10 linked only to Lonny's own ask, 1 unexplained and worth chasing.
+A backlog, not a live leak.
+
+NO CODE CHANGED. Nothing was broken; what was broken was my description of
+it. SKILL.md rewritten so the next session does not inherit the false
+premise and go asking OL for a process change it does not need.
+
 ### 2026-08-14 — The insights engine was reporting a 100% win rate, and the
 ### delta was hiding it. Shared mailbox closed permanently.
 
