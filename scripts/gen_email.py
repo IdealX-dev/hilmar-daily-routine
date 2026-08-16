@@ -2298,12 +2298,31 @@ def _trade_region_html(data, summary):
     alt = True
     for m in ordered:
         bg = B.DOC_CARD if alt else B.DOC_TH_BG
+        label = _esc(m["region"])
         if m["region"] == "Unmapped":
             bg = B.DOC_BAD_BG
+            # NAME THE PORTS, 2026-08-16. Michael, on an Unmapped row of 3
+            # requests / 18 TEU: "we fixed this at root before and it's back."
+            # It was back because the row reported only a COUNT — the ports
+            # behind it appear nowhere in this email, and the lane tables show
+            # a top-N that these rows fall outside of. Identifying them took
+            # reading the delivered message out of his mailbox and re-running
+            # every lane through trade_region_for. The names cost one line and
+            # turn the fix into a one-word map edit.
+            _dests = [d for d in (m.get("destinations") or []) if d]
+            if _dests:
+                _shown = ", ".join(_esc(str(d)) for d in _dests[:6])
+                if len(_dests) > 6:
+                    _shown += f" +{len(_dests) - 6} more"
+                label += (
+                    f'<div style="font-size:9px;color:{B.DOC_MUTED};'
+                    f'font-weight:400;letter-spacing:.01em;margin-top:2px">'
+                    f'{_shown}</div>'
+                )
         alt = not alt
         rows_html += (
             f'<tr style="background:{bg}">'
-            f'<td style="padding:6px 8px"><strong>{_esc(m["region"])}</strong></td>'
+            f'<td style="padding:6px 8px"><strong>{label}</strong></td>'
             f'<td style="padding:6px 8px;text-align:center">{m["requests"]}</td>'
             f'<td style="padding:6px 8px;text-align:center">{m["wins"]}</td>'
             f'<td style="padding:6px 8px;text-align:center">{m["quoted_lost"]}</td>'
