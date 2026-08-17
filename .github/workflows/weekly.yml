@@ -62,7 +62,7 @@ env:
   # verify_only WITH crons live, mirroring daily.yml (Michael 2026-08-13:
   # "just resume running the report and only to myself until i approve it").
   # Tests assert the two files agree.
-  HILMAR_REPORTS_PAUSED: "verify_only"
+  HILMAR_REPORTS_PAUSED: "false"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
 

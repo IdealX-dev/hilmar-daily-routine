@@ -17,14 +17,17 @@ Dispatch **`daily.yml`** on the working branch with inputs:
 | input | test fire | notes |
 |---|---|---|
 | `mode` | `production-fire` | `audit-only` runs tests, no fire |
-| `send_to` | `test` | `test` = Michael only. `full` = staff list — needs Michael's explicit approval AND the gate at `"false"` |
+| `send_to` | `test` | `test` = Michael only. `full` = the real staff list + Lonny — live since 2026-08-17, no extra approval needed per-fire (the gate itself is the approval) |
 | `force_resend` | `true` | overrides the per-day already-sent flag |
 | `days_back` | `14` (default) | widen only with a reason; first-read of a new mailbox is a bulk job — use `seed-shared-mailbox.yml` instead |
 
-Under `HILMAR_REPORTS_PAUSED: "verify_only"` (current), every send is forced
-to Michael regardless of `send_to` — the gate refuses `full` and the send
-steps force `SEND_TO=test` again. Scheduled fires: Mon–Fri ~8:07 AM ET, dual
-crons for DST with a gate that picks exactly one.
+`HILMAR_REPORTS_PAUSED: "false"` (current, since 2026-08-17) — `send_to=full`
+reaches `config.json → distribution.full_list` for the staff email and
+`client_report.to`/`cc` for Lonny's. If the gate is ever reset to
+`"verify_only"`, every send is forced to Michael regardless of `send_to` —
+the gate refuses `full` and the send steps force `SEND_TO=test` again.
+Scheduled fires: Mon–Fri ~8:07 AM ET, dual crons for DST with a gate that
+picks exactly one.
 
 From a Claude session, dispatch via the GitHub MCP tools
 (`actions_run_trigger` with `workflow_id: daily.yml`, `ref: <branch>`); from
@@ -52,8 +55,10 @@ for:
   blind read, not a quiet day.
 - `NEW staged records: N` and the bucket breakdown.
 - `QC SELF-HEAL COMPLETE … NNN entries: …W | … Q&L | … NQ | … P`.
-- `→ TO (…)` on each send step — under verify_only both must show only
-  `michael.deitchman@idealx.us`.
+- `→ TO (…)` on each send step — live, a `send_to=full` fire should show
+  `config.json → distribution.full_list` on the staff send and
+  `client_report.to`/`cc` on the client send. Under `verify_only` (if ever
+  reset there) both must show only `michael.deitchman@idealx.us`.
 - `✅ Sent. request-id=…` — the actual send proof.
 
 ## Graph token maintenance
