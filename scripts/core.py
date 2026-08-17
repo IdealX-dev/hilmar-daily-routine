@@ -251,6 +251,10 @@ _TRADE_REGION_MAP = {
     "kobe": "Far East", "nagoya": "Far East", "busan": "Far East",
     "port busan": "Far East", "incheon": "Far East", "keelung": "Far East",
     "kaohsiung": "Far East", "taichung": "Far East", "hong kong": "Far East",
+    # Shekou — a terminal of Shenzhen, on the Pearl River Delta. Added
+    # 2026-08-16; confirmed present in the real book as ol_260291
+    # (Oakland → Shekou), where it had been sitting Unmapped.
+    "shekou": "Far East", "shenzhen": "Far East", "yantian": "Far East",
     # Southeast Asia
     "hcmc": "SE Asia", "ho chi minh": "SE Asia", "cat lai": "SE Asia",
     "cai mep": "SE Asia", "haiphong": "SE Asia", "manila": "SE Asia",
@@ -268,6 +272,10 @@ _TRADE_REGION_MAP = {
     # Australia / NZ
     "sydney": "Oceania", "melbourne": "Oceania", "brisbane": "Oceania",
     "fremantle": "Oceania", "auckland": "Oceania",
+    # Lyttelton — Christchurch's port, South Island NZ. Added 2026-08-16;
+    # confirmed present in the real book as ol_260140 (Oakland → Lyttelton),
+    # where it had been sitting Unmapped.
+    "lyttelton": "Oceania",
     # Europe
     "hamburg": "Europe", "rotterdam": "Europe", "antwerp": "Europe",
     "felixstowe": "Europe", "le havre": "Europe", "algeciras": "Europe",

@@ -3,6 +3,60 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-16 — Unmapped came back because the DETECTOR hid it, not because
+### the lookup broke. And the manual report did send.
+
+Michael: "i ran manually and got no report   unmapped.. we fixed this at
+root before and it's back"
+
+THE REPORT DID SEND. Run 31966507635 (workflow_dispatch, 19:04 UTC) was
+green end to end, and the email is in his IdealX inbox — verified by reading
+the delivered message, not the job log: "[VERIFY] Hilmar Ingredients — Daily
+Shipment Tracker Update (Aug 14, 2026)", received 19:15 UTC, isRead false,
+toRecipients michael.deitchman@idealx.us, four attachments. Under
+verify_only every send is forced to the IdealX address; watching the OL
+mailbox is why it looked like nothing fired. Worth noting for next time
+rather than re-diagnosing.
+
+UNMAPPED — HE IS RIGHT THAT IT IS BACK, AND RIGHT THAT WE FIXED IT AT ROOT.
+The 2026-08-05 fix was the comma-qualified LOOKUP ("Shanghai, CN" finding
+"shanghai") and it is intact; every lane rendered in his report resolves
+correctly, checked one by one. What was broken is QC-015's tiering:
+
+    >10  -> log.error
+    >5   -> log.warn
+    else -> log.ok        # green, and the port names NEVER printed
+
+One to five unmapped destinations were green and silent. His row was 3
+requests / 18 TEU / 2 wins, so QC said OK while a pink row went to the CEO.
+
+The silent branch also named the WRONG THING. `_urows` is rows with no
+destination at all (Unknown / "Lane unresolved"); `_unmapped` is real ports
+missing from the map. They are different conditions and `_urows` was empty
+here, so the message read "zero unresolved rows" while three real ports sat
+unclassified.
+
+COST OF THAT SILENCE, measured: identifying the ports took reading the
+delivered email out of Michael's mailbox through the M365 connector,
+extracting every lane from the HTML, and running each back through
+trade_region_for. The report showed a count; the count is not actionable.
+
+FIXED IN TWO PLACES, because one was not enough last time. QC-015 now
+reports ANY non-empty unmapped list and always names the ports (error above
+10, warn otherwise — never OK). The email's Unmapped row renders the
+destination names underneath the label, because the audit is not what
+Michael reads and the lane tables show a top-N these rows fall outside of.
+
+MAP EXTENDED with the two ports confirmed present in the real book, both
+found sitting Unmapped in the diag orphan list: shekou (ol_260291, Oakland →
+Shekou) → Far East, with shenzhen/yantian alongside it; lyttelton
+(ol_260140, Oakland → Lyttelton) → Oceania.
+
+DECISION: the tier thresholds stay for SEVERITY but no longer gate
+VISIBILITY. A detector that hides small counts is how a fixed symptom comes
+back looking like a regression — which is exactly what happened here, and
+what cost the investigation.
+
 ### 2026-08-15 — I was wrong about the blindness. Michael was right, and the
 ### stored data proves it.
 

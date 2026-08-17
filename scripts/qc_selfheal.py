@@ -2834,30 +2834,51 @@ def phase_6_rules(log: Log, data: dict):
                 f"lane on the source row (stand_* rows)."
             )
 
-        # Historical-tail tiers — map-extension signal. "within tolerance"
-        # GREEN is only reachable when NOTHING rendered above.
-        if len(_unmapped) > 10:
-            log.error(
-                f"QC-015: {len(_unmapped)} unmapped destinations — extend "
-                f"core._TRADE_REGION_MAP. First 5: {_unmapped[:5]}"
-            )
-        elif len(_unmapped) > 5:
-            log.warn(f"QC-015: {len(_unmapped)} unmapped destinations — consider extending map: {_unmapped[:5]}")
+        # Map-extension signal. Michael's standing rule is "unmapped
+        # shouldn't exist", so ANY non-empty list is reported and every
+        # report NAMES THE PORTS.
+        #
+        # 2026-08-16, why this changed. The tiers were >10 error, >5 warn,
+        # and otherwise log.ok — so one to five unmapped destinations went
+        # GREEN AND SILENT. Michael's report carried a pink Unmapped row of
+        # 3 requests / 18 TEU / 2 wins while QC-015 said OK, and finding the
+        # cause took a full investigation: reading the delivered email out of
+        # his mailbox and running every lane in it back through
+        # trade_region_for. He put it exactly right — "we fixed this at root
+        # before and it's back". The 2026-08-05 fix was the comma-qualified
+        # LOOKUP and it is intact; what was broken is the DETECTOR.
+        #
+        # The old silent branch also named the wrong thing. `_urows` is rows
+        # with NO destination at all (Unknown / "Lane unresolved");
+        # `_unmapped` is real ports that simply are not in the map. A row can
+        # be unmapped with `_urows` empty — which is this case exactly, so
+        # the message read "zero unresolved rows" while three real ports sat
+        # unclassified. Both are printed now, and they are labelled
+        # differently so they cannot be confused again.
+        _names = ", ".join(map(str, _unmapped[:25]))
+        _more = f" (+{len(_unmapped) - 25} more)" if len(_unmapped) > 25 else ""
+        if _unmapped:
+            _msg = (f"QC-015: {len(_unmapped)} unmapped destination(s) — add to "
+                    f"core._TRADE_REGION_MAP: {_names}{_more}")
+            if len(_unmapped) > 10:
+                log.error(_msg)
+            else:
+                # WARN, not OK. A pink row on the CEO's report must never be
+                # green here, however few ports caused it.
+                log.warn(_msg)
         elif not _rendered:
-            # Name the offending ROWS, not just the count — "2 unmapped
-            # (within tolerance)" hid WHICH rows for two days (2026-07-09/10)
-            # and root-causing them needed an ad-hoc diagnostic workflow.
+            # No unmapped ports. Rows with no destination at all are a
+            # separate condition and keep their own message.
             if _urows:
                 _det = "; ".join(
                     f"{r.get('request_id')} pod={r.get('pod') or '—'} "
                     f"subj='{(r.get('subject') or '')[:60]}'"
                     for r in _urows[:5])
-                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) within "
-                       f"tolerance — {len(_urows)} unresolved row(s), all "
-                       f"non-rendered historical tail: {_det}")
+                log.ok(f"QC-015: zero unmapped destinations — "
+                       f"{len(_urows)} unresolved row(s), all non-rendered "
+                       f"historical tail: {_det}")
             else:
-                log.ok(f"QC-015: {len(_unmapped)} unmapped destination(s) "
-                       f"(within tolerance); zero unresolved rows")
+                log.ok("QC-015: zero unmapped destinations; zero unresolved rows")
     except Exception as _e:
         log.warn(f"QC-015: check failed with exception: {_e}")
 
