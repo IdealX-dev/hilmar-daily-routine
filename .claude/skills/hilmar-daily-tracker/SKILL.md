@@ -128,11 +128,20 @@ test asserts all three agree) is three-state:
 | `"verify_only"` | runs on schedule, scans mail, **sends ONLY to michael.deitchman@idealx.us** |
 | `"false"` | live — staff distribution + gated client email |
 
-**Current: `verify_only`.** Michael has explicitly withheld full
-distribution ("me only"). Going live is HIS call, given in unambiguous
-words; a bare "go"/"send" after other discussion is NOT that call — ask.
-The client email to Lonny is additionally gated by `config.json →
-client_report.enabled`.
+**Current: `"false"` (LIVE), since 2026-08-17.** Michael, unprompted and
+explicit: "release all reports to everyone and resend them.. they looked
+fine this morning." That is the unambiguous approval the gate always
+required — distinct from a bare "go"/"send" after other discussion, which
+is NOT that call and still means ask. The client email to Lonny is
+additionally gated by `config.json → client_report.enabled`, which has been
+`true` since 2026-07-12 — so flipping this ONE switch released both the
+staff list AND the client email in the same fire. Full staff list lives in
+`config.json → distribution.full_list`; do not assume who is on it without
+reading it.
+
+Rolling back to `verify_only` is the one-line reverse of this edit, in all
+three workflows (the test that enforces they agree will catch a partial
+revert).
 
 ## What you can do, from anywhere (including the phone)
 
@@ -153,10 +162,13 @@ pipeline: `references/pipeline.md`. Parser/QC/data model:
 
 ## Hard rules (do not violate)
 
-1. **Sends.** Under `verify_only` every send goes to Michael alone and the
-   workflow forces it in two places — do not "fix" that. Full distribution
-   requires Michael's explicit, unambiguous approval AND flipping the gate.
-   Never send a test to the staff list or Lonny.
+1. **Sends.** Live since 2026-08-17 — every scheduled and manual
+   `send_to=full` fire now reaches the real staff list and Lonny. If the
+   gate is ever set back to `verify_only`, every send goes to Michael alone
+   and the workflow forces it in two places; do not "fix" that. Any future
+   distribution change (going live again, adding/removing recipients)
+   requires Michael's explicit, unambiguous approval. Never send a test to
+   the staff list or Lonny.
 2. **Timestamps in chat = Eastern Time.** Code stays UTC; chat converts.
 3. **Parser accuracy is a 95% hard gate** (QC-039). Fix the parser, never
    lower the gate.

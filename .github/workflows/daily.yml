@@ -152,7 +152,7 @@ env:
   # should be checking and scanning emails is what i meant"). The daily
   # sweep runs and OL's mail keeps entering the tracker; every send goes to
   # Michael alone. Flip to "false" only when he approves the content.
-  HILMAR_REPORTS_PAUSED: "verify_only"
+  HILMAR_REPORTS_PAUSED: "false"
   PYTHONIOENCODING: utf-8
   PYTHONUTF8: "1"
   HILMAR_PARSER_FALLBACK_DISABLE: "1"
