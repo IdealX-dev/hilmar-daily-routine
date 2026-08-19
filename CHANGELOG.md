@@ -3,6 +3,47 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 (fourth pass) — QC-078, and a borrowed date could have HALTED
+### the fire through drift phase 2
+
+Michael: "make sure drift and qc checks are up to date". Two real gaps, one of
+them capable of blocking a send.
+
+DRIFT PHASE 2 COUNTED BORROWED ROWS AS MATCHER DRIFT. It asks "is there a
+closer same-destination NQ record than the one this OL reply is attached to?"
+and answers from |response_timestamp - request_timestamp|. On a borrowed row
+that interval measures nothing — no reply was ever attached to it, the date
+came off a different row's quote. And it is not cosmetic: THREE drift
+candidates trip MATCHER_DRIFT_FAIL_FLOOR and halt the whole fire, so borrowed
+rows on a busy standing-rate lane could black out the daily send on evidence
+that does not exist. That is the HILMAR-DAILY-TRACKER-6 failure mode, which
+already cost days once. Phase 2 now skips non-evidenced rows; a test asserts
+it still flags REAL drift, so the fix cannot be mistaken for disabling it.
+
+QC-078 ADDED — nothing may be derived from a borrowed response time. The
+invariant existed only in unit tests, which pin TODAY'S writers. The three
+derived fields (turnaround_biz_hours, turnaround_hours, olusa_time_et) have
+20+ readers and one write gate, so only a check over the REAL dataset catches
+tomorrow's writer: a new heal, a backfill script, a snapshot restored from
+before the fix. It runs after phase_3_entries has both written and scrubbed,
+so any survivor means a writer the check does not know about. A clean borrowed
+row is REPORTED, not errored — the date itself is legitimate evidence about
+which quote covered the lane, and crying wolf on correct behaviour every fire
+is how QC-077's count reached 41 unnoticed.
+
+QC-078 is deliberately SEPARATE from QC-048, with a test saying so. QC-048
+clears only >40 biz-hours; the measured fabrication was 6.95. Merging them
+later would reopen exactly the gap that let it reach the KPI.
+
+The QC governance ratchet did its job unprompted: adding QC-078 failed
+test_every_emitted_check_has_a_test_or_is_known_untested until it had real
+tests, which is the rule QC-INDEX states ("every new code pattern ships with
+QC + self-heal in the same commit") being enforced rather than remembered.
+
+3,266 passed / 1 skipped, coverage 91.04%, ruff clean. The drift guard was
+verified by reverting it — test_a_borrowed_row_is_not_matcher_drift fails
+without it.
+
 ### 2026-08-19 (third pass) — the marker reached 1 of 5 readers, a fabricated
 ### 6.95 biz-hours was in the KPI, and "rebuild-not-merge handles it" was false
 

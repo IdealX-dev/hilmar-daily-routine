@@ -4800,6 +4800,54 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-077: check failed with exception: {_e}")
 
+    # QC-078: NOTHING IS DERIVED FROM A BORROWED RESPONSE TIME.
+    #
+    # 2026-08-19. _stamp_response_from_dated_sibling can COPY a
+    # response_timestamp from one row's quote onto another undated ask on the
+    # same lane at the same rate. That date is real evidence about WHICH quote
+    # covered the lane — the ledger and QC-077 rightly keep reading it — but
+    # it is not proof OL sent anything at that minute, so nothing may be
+    # derived from it: no turnaround statistic, no stored clock string, no age.
+    #
+    # WHY THIS IS A QC CHECK AND NOT ONLY A TEST. The three derived fields
+    # have 20+ readers across scripts/, src/hilmar/ and two Jinja templates,
+    # and the guard lives at ONE writer (phase_3_entries). A unit test pins
+    # today's writers; only a check on the real dataset catches TOMORROW's —
+    # a new heal, a backfill script, a restored snapshot from before the fix.
+    # The measured cost of not having it: a fabricated 6.95 biz-hours reached
+    # summary.turnaround_avg_biz_hours, the carrier scoreboard gen_pdf sorts
+    # by, and the insights baseline future fires compare against, and QC-048
+    # could never catch it because 6.95 is not > 40.
+    #
+    # This runs AFTER phase_3_entries has both written and scrubbed, so a
+    # non-empty result means a writer this check does not know about.
+    try:
+        _borrowed = [r for r in data.get("requests", [])
+                     if r.get("response_time_source")
+                     == core.BORROWED_RESPONSE_TIME]
+        _derived = ("turnaround_biz_hours", "turnaround_hours", "olusa_time_et")
+        _leaks = []
+        for r in _borrowed:
+            _bad = [f for f in _derived if r.get(f) is not None]
+            if _bad:
+                _leaks.append((r.get("request_id"), _bad))
+        if _leaks:
+            _detail = "; ".join(f"{rid}: {', '.join(fs)}" for rid, fs in _leaks[:6])
+            log.error(
+                f"QC-078: {len(_leaks)} row(s) carry a value derived from a "
+                f"BORROWED response time — a statistic, clock string or age "
+                f"built on a minute no email supports. phase_3_entries clears "
+                f"these every pass, so a survivor means a writer runs after it "
+                f"or bypasses it: {_detail}")
+        elif _borrowed:
+            log.ok(f"QC-078: {len(_borrowed)} row(s) hold a borrowed response "
+                   f"date (which quote covered the lane) and none carries a "
+                   f"turnaround, clock string or age derived from it")
+        else:
+            log.ok("QC-078: no row holds a borrowed response date")
+    except Exception as _e:
+        log.warn(f"QC-078: check failed with exception: {_e}")
+
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
     # On 2026-07-27 the fire was blocked, raised a FIRE-ALERT, and that alert
