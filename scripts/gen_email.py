@@ -268,7 +268,7 @@ def _today_events(data, today_date):
         # as well as container count." The date stays on the row for history
         # and QC; the day listing shows only responses OL actually sent.
         if (resp_d == today_date and not _is_standalone
-                and r.get("response_time_source") != "sibling_quote"):
+                and core.response_time_is_evidenced(r)):
             ol_responses.append(r)
         # status changes today
         for h in (r.get("status_history") or []):
@@ -1132,9 +1132,16 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
             signer = r.get("ol_responder_signer") or "—"
             lonny_t = _fmt_short_pt(r.get("request_timestamp"))
-            ol_t = _fmt_short_et(r.get("response_timestamp"))
-            ttq_s, ttq_color = _ttq_cell(r)
-            resp_dt = core.parse_iso(r.get("response_timestamp"))
+            # A BORROWED minute is not a send time, and its age is not an age.
+            # _today_events already keeps these rows out of the day's reply
+            # list, but this section is CURRENT STATE and is not windowed —
+            # so before 2026-08-19 it printed the copied minute, a
+            # time-to-quote and an "hours since" on the staff report, for a
+            # row no email supports. Rate, carrier and lane are real and stay.
+            _evidenced = core.response_time_is_evidenced(r)
+            ol_t = _fmt_short_et(r.get("response_timestamp")) if _evidenced else "—"
+            ttq_s, ttq_color = _ttq_cell(r) if _evidenced else ("—", B.DOC_MUTED)
+            resp_dt = core.parse_iso(r.get("response_timestamp")) if _evidenced else None
             hrs_s = "—"
             if resp_dt:
                 delta_h = (datetime.now(timezone.utc) - resp_dt).total_seconds() / 3600.0
@@ -2095,14 +2102,18 @@ def _pending_html(rows):
         rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
         signer = r.get('ol_responder_signer') or "—"
         lonny_t = _fmt_pt_full(r.get('request_timestamp'))
-        ol_t = _fmt_et_full(r.get('response_timestamp'))
+        # See the PENDING HILMAR block above: a borrowed response time is
+        # withheld here too, along with the Time-to-Quote derived from it and
+        # the hours-since in the last cell.
+        _evidenced = core.response_time_is_evidenced(r)
+        ol_t = _fmt_et_full(r.get('response_timestamp')) if _evidenced else "—"
         # 2026-05-19 PM (Michael "add a column after ol quoted time with
         # how long it took"): Time to Quote = OL response biz-hours from
         # Lonny's RFQ. Pulled from turnaround_biz_hours (set by
         # apply_rate_responses when the rate-response email is the source).
         # Falls back to clock-hours if biz-hours wasn't computed.
-        ttq_biz = r.get('turnaround_biz_hours')
-        ttq_clock = r.get('turnaround_hours')
+        ttq_biz = r.get('turnaround_biz_hours') if _evidenced else None
+        ttq_clock = r.get('turnaround_hours') if _evidenced else None
         if isinstance(ttq_biz, (int, float)):
             ttq_s = f"{ttq_biz:.1f}h"
             ttq_color = B.DOC_GOOD if ttq_biz <= 4 else (B.DOC_WARN if ttq_biz <= 24 else B.DOC_BAD)
@@ -2123,7 +2134,7 @@ def _pending_html(rows):
   <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(lonny_t)}</td>
   <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(ol_t)}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:600;color:{ttq_color}">{_esc(ttq_s)}</td>
-  <td style="padding:6px 8px;text-align:center;font-weight:600">{_esc(_hours_since(r.get('response_timestamp')))}</td>
+  <td style="padding:6px 8px;text-align:center;font-weight:600">{_esc(_hours_since(r.get('response_timestamp')) if _evidenced else "—")}</td>
 </tr>
 """
     # Totals row for TEU reconciliation

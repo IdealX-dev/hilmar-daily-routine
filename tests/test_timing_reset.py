@@ -65,8 +65,16 @@ def _armed_clock(request, monkeypatch):
 
 
 def _req(ts, biz=4.0, clock=6.0, status="WIN", **kw):
+    # response_timestamp is NOT decoration. Production cannot produce a
+    # turnaround without one — ingest._t sets response_timestamp at :1461 and
+    # derives the turnaround at :1516 in the same function — and since
+    # 2026-08-19 the aggregates require an EVIDENCED response time, so a
+    # fixture omitting it silently drops out of every average and these tests
+    # measure an empty list. Fixtures that do not match what production
+    # writes is the exact failure this repo keeps paying for.
     r = {"request_id": f"r_{ts}", "request_timestamp": ts, "status": status,
-         "turnaround_biz_hours": biz, "turnaround_hours": clock,
+         "response_timestamp": ts, "turnaround_biz_hours": biz,
+         "turnaround_hours": clock,
          "destination": "Yokohama", "teu_requested": 2, "quoted": True,
          "carrier_quoted": "ONE", "carrier_won": "ONE", "teu_won": 2}
     r.update(kw)

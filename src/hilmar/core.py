@@ -1463,6 +1463,23 @@ def _sum(iterable: Iterable[int]) -> int:
     return sum(x or 0 for x in iterable)
 
 
+#: Marker qc_selfheal writes on a row whose response_timestamp was COPIED
+#: from another row's quote rather than read off an email of its own.
+#: MIRRORS scripts/core.py. Production renders from scripts/, but
+#: test_timing_reset pairs the two aggregate_summary implementations directly
+#: and a guard living in one tree only is exactly how they drift.
+BORROWED_RESPONSE_TIME = "sibling_quote"
+
+
+def response_time_is_evidenced(r: dict) -> bool:
+    """True when this row's response_timestamp came from an actual email.
+    Full history on scripts/core.response_time_is_evidenced."""
+    r = r or {}
+    if not r.get("response_timestamp"):
+        return False
+    return r.get("response_time_source") != BORROWED_RESPONSE_TIME
+
+
 def aggregate_summary(requests: list[dict]) -> dict:
     # Bucket by the status field directly (post 2026-04-27 four-state
     # classifier). The legacy code derived ql/nq from a single LOSS
@@ -1486,7 +1503,8 @@ def aggregate_summary(requests: list[dict]) -> dict:
 
     # TIMING RESET (Michael 2026-08-13, see TIMING_VALID_FROM). A sample from
     # before the floor measures a clock that was started and never stopped.
-    _measurable = [r for r in requests if (r.get("turnaround_biz_hours") or 0) > 0]
+    _timed = [r for r in requests if response_time_is_evidenced(r)]
+    _measurable = [r for r in _timed if (r.get("turnaround_biz_hours") or 0) > 0]
     ta_entries = [r for r in _measurable
                   if timing_is_valid(r.get("request_timestamp"))]
     ta_excluded = len(_measurable) - len(ta_entries)

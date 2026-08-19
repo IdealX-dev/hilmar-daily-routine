@@ -2327,14 +2327,21 @@ def aggregate_summary(requests: list[dict]) -> dict:
     # because OL's replies were not reaching this mailbox. Excluded from the
     # aggregate and COUNTED, so the report can say how many rather than
     # silently shrinking the sample.
-    _measurable = [r for r in requests if (r.get("turnaround_biz_hours") or 0) > 0]
+    # response_time_is_evidenced FIRST, before the clock-reset floor. A
+    # borrowed date is a minute OL never sent, so it is not a sample at all —
+    # and filtering it here rather than after keeps it out of ta_excluded,
+    # which gen_pdf labels "earlier sample(s) excluded" under the clock-reset
+    # note. A fabricated row is not an excluded historical sample; counting it
+    # as one would explain it with the wrong reason.
+    _timed = [r for r in requests if response_time_is_evidenced(r)]
+    _measurable = [r for r in _timed if (r.get("turnaround_biz_hours") or 0) > 0]
     ta_entries = [r for r in _measurable
                   if timing_is_valid(r.get("request_timestamp"))]
     ta_excluded = len(_measurable) - len(ta_entries)
     avg_biz = (round(sum(r["turnaround_biz_hours"] for r in ta_entries)
                      / len(ta_entries), 2) if ta_entries else None)
 
-    _clock = [r for r in requests if (r.get("turnaround_hours") or 0) > 0
+    _clock = [r for r in _timed if (r.get("turnaround_hours") or 0) > 0
               and timing_is_valid(r.get("request_timestamp"))]
     avg_clock = (round(sum(r["turnaround_hours"] for r in _clock)
                        / len(_clock), 2) if _clock else None)
@@ -2555,7 +2562,14 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
             # Same timing reset as summarize(): a per-carrier average built
             # from pre-floor samples would rank carriers on a clock that was
             # never stopped.
+            # response_time_is_evidenced for the same reason the summary
+            # average has it: gen_pdf SORTS the carrier scoreboard by this
+            # number and the dashboard tells the reader to use it in line
+            # meetings. Guarding the summary alone would leave the carrier
+            # table disagreeing with the KPI strip printed above it — two
+            # numbers off one dataset, again.
             if (r.get("turnaround_biz_hours") and r["turnaround_biz_hours"] > 0
+                    and response_time_is_evidenced(r)
                     and timing_is_valid(r.get("request_timestamp"))):
                 cm["_turnaround_samples"].append(r["turnaround_biz_hours"])
             if r.get("etd_fit_days") is not None:
