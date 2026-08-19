@@ -90,6 +90,8 @@ def phase2_matcher_quality(data: dict, log: dict, auto_heal: bool) -> None:
     """For each OL reply currently attached, is there a better same-dest match
     among NQ records?
 
+    Only EVIDENCED response times are considered — see the guard below.
+
     Today's bug: FIFO matcher attached OL Apr-27 Xingang reply to Apr-22 Xingang
     request (5 days off) while Apr-27 Xingang request (17 min off) was starved.
     """
@@ -111,6 +113,19 @@ def phase2_matcher_quality(data: dict, log: dict, auto_heal: bool) -> None:
             continue
         if r.get("manual_locked"):
             continue  # skip explicitly-locked records
+        # A BORROWED response time is not matcher evidence. qc_selfheal's
+        # sibling heal copies a date from another row's quote onto an undated
+        # ask (core.BORROWED_RESPONSE_TIME); the interval between THIS ask and
+        # THAT quote measures nothing about how well the matcher attached
+        # anything, because no reply was ever attached to this row.
+        #
+        # 2026-08-19: this matters more than a stray warning. Three drift
+        # candidates halt the whole fire (MATCHER_DRIFT_FAIL_FLOOR above), so
+        # a handful of borrowed rows on a busy standing-rate lane could black
+        # out the daily send on evidence that does not exist — the failure
+        # mode HILMAR-DAILY-TRACKER-6 already cost days.
+        if not core.response_time_is_evidenced(r):
+            continue
         resp_dt = core.parse_iso(r.get("response_timestamp"))
         req_dt = core.parse_iso(r.get("request_timestamp"))
         if not resp_dt or not req_dt:
