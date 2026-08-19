@@ -850,14 +850,23 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         ctx = ""
         if r.get("after_hours_request"):
             ctx = '<span class="badge badge-amber">After-hours req</span>'
-        elif r.get("response_timestamp"):
+        elif core.response_time_is_evidenced(r):
             ctx = '<span class="badge badge-blue">Biz hours</span>'
         elif core.is_not_quoted(r):
             ctx = '<span class="badge badge-amber">No response</span>'
         elif core.is_pending(r):
             ctx = '<span class="badge badge-purple">Awaiting send</span>'
         lonny_t = r.get("lonny_time_pt") or (core.fmt_pt(core.parse_iso(r.get("request_timestamp")), with_date=False) if r.get("request_timestamp") else "—")
-        ol_t = r.get("olusa_time_et") or (core.fmt_et(core.parse_iso(r.get("response_timestamp")), with_date=False) if r.get("response_timestamp") else "—")
+        # The ONE reader the writer-side fix cannot reach: it falls back to
+        # re-deriving the clock string from response_timestamp when the
+        # stored olusa_time_et is empty — which is exactly the state the
+        # phase-3 scrub leaves a borrowed row in. Without this guard the
+        # dashboard would print the identical borrowed minute the scrub just
+        # removed.
+        ol_t = "—"
+        if core.response_time_is_evidenced(r):
+            ol_t = r.get("olusa_time_et") or core.fmt_et(
+                core.parse_iso(r.get("response_timestamp")), with_date=False)
         html += f'<tr class="{_row_class(r)}"><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_esc(lonny_t)}</td><td>{_esc(ol_t)}</td><td>{clk_s}</td><td class="{tc}">{biz_s}</td><td>{_status_badge(r)}</td><td>{ctx}</td></tr>\n'
     html += '</table></div></div>\n'
 

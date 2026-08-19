@@ -3,6 +3,71 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 (third pass) — the marker reached 1 of 5 readers, a fabricated
+### 6.95 biz-hours was in the KPI, and "rebuild-not-merge handles it" was false
+
+A 33-agent enumeration (four sweeps — by grep, by audience, by statistic, by
+writer — each blind to the others, every hit then verified) found 17 confirmed
+sites. Three were things I had not seen at all.
+
+FABRICATED STATISTICS IN THE KPI. The heal kept turnaround_biz_hours whenever
+the borrowed gap fell under 40 biz-hours. That window is not a safety check —
+it is the band where a made-up number stays plausible enough that QC-048
+(which clears only >40) never looks at it. Measured: 6.95 biz-hours on a row
+whose date was copied off another quote, feeding
+summary.turnaround_avg_biz_hours, the carrier scoreboard gen_pdf SORTS by, the
+dashboard's "use in your 1:1 line meetings" table, and the insights baseline
+that future fires are compared against. No turnaround is derived from a
+borrowed minute now, at any magnitude.
+
+A THIRD FABRICATED FIELD I MISSED ENTIRELY: olusa_time_et. phase_3_entries
+stored a pre-rendered "OL sent at (ET)" clock string off the borrowed minute.
+Because it is a CACHED STRING, a reader that correctly guards
+response_timestamp still prints it — gen_email, gen_dashboard, core.compute_dod
+and restructure_two_table all read it raw. Now guarded at the writer.
+
+"REBUILD-NOT-MERGE MEANS YESTERDAY'S STAMPS DISAPPEAR" WAS FALSE, and I wrote
+it twice today. Nothing ever un-stamps a borrowed row: the heal skips any row
+that already carries a response_timestamp, so the marker and every value
+derived from it persist across fires. The 6.95 would have sat in
+tracking-data-v2.json indefinitely behind a skip-only gate. phase_3_entries now
+CLEARS all three derived fields on any non-evidenced row — a migration, not
+belt-and-braces — and it runs immediately before QC-048 so nothing re-derived
+reaches phase_7_save. The earlier claim is retracted in place above.
+
+WHY THE FIX IS AT THE WRITERS. The three derived fields have 20+ readers
+across scripts/, src/hilmar/ and two Jinja templates. Guarding each is the
+"fix one reader, ship two numbers" failure this repo has now paid for four
+times in a week. One write gate plus one unconditional scrub, both in
+phase_3_entries — the only code that runs on every pass of every fire over the
+persisted file. Read-side guards are a closed list: only the sites that touch
+response_timestamp directly, which a writer fix cannot reach (notably
+gen_dashboard, which RE-DERIVES the clock string when the stored one is empty
+— exactly the state the scrub leaves).
+
+ALSO CLOSED: the marker was being tested by inline string literal in
+gen_email; the two report sections outside the day list (PENDING HILMAR and
+the full detail table) still printed the borrowed minute, its time-to-quote
+and its hours-since to the 9-address staff list; and hilmar/core's
+aggregate_summary had no guard at all while test_timing_reset pairs it
+directly against scripts/core's.
+
+DECISION REVERSED: "inside 40 biz-hours the turnaround is real and kept"
+(shipped 2026-08-14) is gone, with its test rewritten to say why.
+
+TEST FIXTURE CORRECTED, and it is the same disease: test_timing_reset's _req
+built rows with turnaround_biz_hours and NO response_timestamp — a shape
+production cannot produce (ingest._t sets response_timestamp at :1461 and
+derives the turnaround at :1516, same function). Verified before touching it,
+because changing a test to make new code pass is exactly the wrong move.
+
+QC-048 now has real tests and left KNOWN_UNTESTED (ceiling 17 -> 16),
+including one asserting it is NOT what protects against a borrowed date —
+6.95 is not > 40, and nobody should merge the two checks later.
+
+3,259 passed / 1 skipped, coverage 91.04%, ruff clean. The phase-3 guard was
+verified by reverting it: 4 tests fail without it.
+
 ### 2026-08-19 (second pass) — my own fan-out fix was wrong, and a 36-agent
 ### adversarial review caught it before it shipped
 
@@ -140,8 +205,9 @@ QC-077 also now excludes booking-confirmed WINs outright. Without that, the
 eight Yokohama rows the heal stops stamping would re-enter the banner as
 undateable quotes the moment the stamp was refused. Booked is booked.
 
-Rebuild-not-merge means all of this re-decides on the next fire; yesterday's
-over-stamps disappear with no migration.
+Rebuild-not-merge re-decides the STAMPING each fire. It does NOT un-stamp a
+row already carrying a borrowed date — see the 2026-08-19 (third pass) entry,
+which retracts this and adds the migration.
 
 3,230 passed / 1 skipped, ruff clean. The renderer guard was verified by
 removing it — two tests fail without it.

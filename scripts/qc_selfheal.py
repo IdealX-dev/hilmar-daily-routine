@@ -673,10 +673,10 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
         original "earliest covering response wins" tie-break, which was a
         guess: two dated rows at one rate on one lane are either two quote
         events or one quote captured twice, and nothing distinguishes them.
-      - turnaround is computed inline under the same >40 biz-hour rule the
-        per-row heal enforces: past 40 the timing fields stay None (date
-        kept, statistic excluded) so a long-covered re-ask can never smear
-        the averages the clock was just turned back on for.
+      - NO turnaround is derived at all: date kept, statistic never invented.
+        This replaces a >40 biz-hour rule that kept the number below the
+        threshold — which is the band where a fabricated sample is plausible
+        enough to survive QC-048 and reach the KPI.
     """
     # THREE MORE GUARDS, 2026-08-19, after this heal put 11 rows into the
     # Aug-18 OL-USA RESPONSES section against 4 new requests. Michael:
@@ -855,16 +855,21 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
         r, req_dt, best = group[0]
         r["response_timestamp"] = best.isoformat()
         r["response_time_source"] = core.BORROWED_RESPONSE_TIME
-        biz = core.biz_hours_between(req_dt, best)
-        if isinstance(biz, (int, float)) and biz <= 40:
-            r["turnaround_biz_hours"] = biz
-            r["turnaround_hours"] = core.clock_hours_between(req_dt, best)
-            _timing = f"turnaround {biz:.1f} biz-hrs"
-        else:
-            r["turnaround_biz_hours"] = None
-            r["turnaround_hours"] = None
-            _timing = ("timing excluded — the covering quote answered a "
-                       "re-asked lane, not this ask's own clock")
+        # NO STATISTIC FROM A BORROWED MINUTE, at any magnitude. This used to
+        # keep the turnaround whenever the gap was <= 40 biz-hours, and that
+        # window is not a safety check — it is the band in which a fabricated
+        # number stays plausible enough that QC-048 below (which only clears
+        # > 40) never notices. Measured 2026-08-19: a borrowed row carrying
+        # 6.95 biz-hours, which then feeds summary.turnaround_avg_biz_hours,
+        # the carrier scoreboard gen_pdf sorts by, and the insights baseline
+        # that future fires are compared against.
+        #
+        # core.response_time_is_evidenced(r) is False by construction here —
+        # the line above just set the BORROWED marker — so there is no branch
+        # to take, only a value not to invent.
+        r["turnaround_biz_hours"] = None
+        r["turnaround_hours"] = None
+        _timing = "timing excluded — borrowed date, not an observed send time"
         stamped += 1
         log.fix(f"{r.get('request_id')}: response_timestamp "
                 f"{r['response_timestamp']} taken from the dated same-lane "
@@ -1366,15 +1371,45 @@ def phase_3_entries(log: Log, data: dict):
 
         req_dt = core.parse_iso(r.get("request_timestamp"))
         resp_dt = core.parse_iso(r.get("response_timestamp"))
-        if req_dt and resp_dt:
+        # lonny_time_pt derives from request_timestamp, which is never
+        # borrowed — hoisted out so the guard below cannot withhold it.
+        if req_dt and not r.get("lonny_time_pt"):
+            r["lonny_time_pt"] = core.fmt_pt(req_dt, with_date=False)
+
+        # THE SECOND WRITER, and the one that matters most. Everything below
+        # is derived from response_timestamp, so none of it may exist on a
+        # row whose date was BORROWED from another row's quote.
+        #
+        # Placement is load-bearing. run_pipeline.py:78 and :82 run this whole
+        # script TWICE per fire over the persisted file, and main() runs
+        # phase_3_entries BEFORE phase_6_rules (where the sibling heal lives).
+        # So pass 1's phase-6 stamp is pass 2's phase-3 input: guarding the
+        # heal alone (edit 1) only moves the fabrication one phase later.
+        #
+        # And the elif is a MIGRATION, not belt-and-braces. Nothing ever
+        # un-stamps a borrowed row — the heal skips any row that already has a
+        # response_timestamp — so "rebuild-not-merge re-decides it" is FALSE
+        # here, and the 6.95 biz-hours written by earlier fires would sit in
+        # tracking-data-v2.json forever behind a skip-only gate. It must
+        # CLEAR, and it runs just before QC-048 so nothing re-derived can
+        # reach phase_7_save.
+        _evidenced = core.response_time_is_evidenced(r)
+        if req_dt and resp_dt and _evidenced:
             if r.get("turnaround_hours") is None:
                 r["turnaround_hours"] = core.clock_hours_between(req_dt, resp_dt)
             if r.get("turnaround_biz_hours") is None:
                 r["turnaround_biz_hours"] = core.biz_hours_between(req_dt, resp_dt)
-            if not r.get("lonny_time_pt"):
-                r["lonny_time_pt"] = core.fmt_pt(req_dt, with_date=False)
             if not r.get("olusa_time_et"):
                 r["olusa_time_et"] = core.fmt_et(resp_dt, with_date=False)
+        elif resp_dt and not _evidenced:
+            _had = [f for f in ("turnaround_hours", "turnaround_biz_hours",
+                                "olusa_time_et") if r.get(f) is not None]
+            if _had:
+                for f in _had:
+                    r[f] = None
+                log.fix(f"{rid_label}: cleared {', '.join(_had)} — the "
+                        f"response time was borrowed from another row's "
+                        f"quote, so nothing may be derived from it")
 
         # QC-048 self-heal: a real OL rate-response turnaround is sub-day
         # (biz-hours, usually <4h). A value above 40 biz-hours means the

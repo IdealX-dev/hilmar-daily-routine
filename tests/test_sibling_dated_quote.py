@@ -117,13 +117,25 @@ def test_two_quotes_on_one_lane_and_rate_are_ambiguous():
     assert log.warnings and "2 dated quote(s)" in log.warnings[0]
 
 
-def test_a_short_gap_keeps_its_timing():
-    """Inside 40 biz-hours the turnaround is real and kept."""
+def test_a_short_gap_STILL_gets_no_turnaround():
+    """DECISION REVERSED 2026-08-19. This asserted that inside 40 biz-hours
+    the borrowed row's turnaround "is real and kept".
+
+    It is not real. The date was copied off another row's quote, so the
+    interval measures nothing OL did, at any magnitude. The <=40 window was
+    never a safety check — it is the band where a fabricated sample stays
+    plausible enough that QC-048 (which clears only >40) never sees it, which
+    is why a measured 6.95 biz-hours reached the KPI, the carrier scoreboard
+    gen_pdf sorts by, and the insights baseline.
+
+    The DATE is still stamped: it is real evidence about which quote covered
+    the lane. Only the statistic is refused."""
     undated = _row("req_recent_ask", request_timestamp="2026-08-12T14:00:00Z")
     n, _ = _run([undated, _dated_sibling()])
     assert n == 1
-    assert isinstance(undated["turnaround_biz_hours"], float)
-    assert undated["turnaround_biz_hours"] <= 40
+    assert undated["response_timestamp"] == "2026-08-12T20:57:02+00:00"
+    assert undated["turnaround_biz_hours"] is None
+    assert undated["turnaround_hours"] is None
 
 
 def test_standalone_bookings_and_dated_rows_are_untouched():
