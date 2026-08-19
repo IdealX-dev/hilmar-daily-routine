@@ -257,7 +257,18 @@ def _today_events(data, today_date):
         _is_standalone = core.has_no_rfq_chain(r)
         if req_d == today_date and not _is_standalone:
             new_requests.append(r)
-        if resp_d == today_date and not _is_standalone:
+        # A BORROWED date is not "OL quoted today". qc_selfheal's sibling
+        # heal marks rows whose response_timestamp was taken from another
+        # row's quote (response_time_source="sibling_quote"); no email sits
+        # behind that date, which is why such rows rendered with no signer,
+        # no time-to-quote and the WRONG container counts. On 2026-08-18 the
+        # heal fanned one Singapore quote and one Xingang quote across old
+        # same-rate asks and this section showed 11 responses against 4 new
+        # requests. Michael: "the request count and reply count vary greatly
+        # as well as container count." The date stays on the row for history
+        # and QC; the day listing shows only responses OL actually sent.
+        if (resp_d == today_date and not _is_standalone
+                and r.get("response_time_source") != "sibling_quote"):
             ol_responses.append(r)
         # status changes today
         for h in (r.get("status_history") or []):

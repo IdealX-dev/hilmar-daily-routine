@@ -3,6 +3,80 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 — One quote was dating a dozen asks. The report counted them
+### all as replies.
+
+Michael, on the Aug-18 report showing NEW REQUESTS FROM LONNY (4) above
+OL-USA RESPONSES (11): "there is data missing and the request count and reply
+count vary greatly as well as container count."
+
+THE TELL WAS IN HIS SCREENSHOT, before any data was pulled. Four Singapore
+rows all read "OL Quoted Aug 18 1:44 PM ET" and both Xingang rows "4:42 PM
+ET". One real email, fanned across every old same-lane row. Those rows also
+rendered with no signer, no time-to-quote and container counts belonging to
+a different ask — because no email sits behind them.
+
+CONFIRMED ON THAT FIRE'S OWN LOG (run 32255989336): 17 rows stamped by
+_stamp_response_from_dated_sibling, grouped by the source quote they took
+their time from:
+
+    2026-08-13T19:59:04   x8   one Yokohama quote -> eight booking WINs
+    2026-08-18T17:44:45   x3   one Singapore quote -> three July/Aug asks
+    2026-08-12T20:57:02   x2
+    four others           x1   each
+
+ROOT CAUSE. The heal's fingerprint was "same lane + rate to the cent", and
+that is not a fingerprint on lanes with STANDING rates. $3,289
+Oakland->Singapore matches every Singapore row for weeks; $745 Xingang the
+same. So an August quote dated July asks, and each stamped row then entered
+that day's OL-USA RESPONSES, which buckets purely on response_timestamp.
+Eleven replies against four requests, exactly as he read it. One stamp even
+produced a fabricated 29.2 biz-hour turnaround sample on a row whose real
+resolving event was a booking.
+
+THIS IS MY OWN 2026-08-14 CHANGE. It was built for a single half-copied row
+(the Algeciras case) and shipped with tests that only ever exercised one
+undated row against one sibling — so nothing in the suite could see fan-out.
+Same shape as the two bugs found on 08-15: a test that passes because it
+never poses the question production poses.
+
+THREE GUARDS ADDED.
+  - A booking-confirmed WIN is never stamped. Its rate arrived by the
+    rate/carrier sibling copies; the event that resolved it was the BOOKING,
+    and dating that copied rate manufactures a phantom "OL quoted today".
+  - Ask SHAPE must not conflict: teu_requested and container_count, when
+    present on both sides, must match. Michael named this one directly. A
+    quote for 8 boxes does not date an ask for 15. Absent is not
+    conflicting, or the heal would disable itself on the many rows that
+    carry no container_count.
+  - ONE source, ONE row. A response claimed by several rows is ambiguous
+    evidence, and ambiguity is a human's call. Refusals are WARNed by
+    request_id rather than dropped silently.
+
+SECOND LINE OF DEFENCE, in the renderer. Stamped rows now carry
+response_time_source="sibling_quote", and _today_events excludes those from
+the day's OL-USA RESPONSES. A borrowed date is evidence about which quote
+covered a lane; it is not proof OL sent something that day. The date stays
+on the row — the win/loss ledger and QC-077 read it — but it no longer
+inflates a reply count.
+
+COST, MEASURED NOT ASSUMED. req_0818ca58087a1cc8 — the very Algeciras row
+this heal was written for — now shares its source with another ask, so it is
+refused and returns to undated. It does not reopen the 08-14 complaint: the
+ask is 2026-08-04, past UNDATED_QUOTE_RECENT_DAYS=14, so QC-077 files it as
+accepted backlog (log.ok), not the error banner Michael was reading. Written
+into the code comment so nobody "fixes" it back.
+
+QC-077 also now excludes booking-confirmed WINs outright. Without that, the
+eight Yokohama rows the heal stops stamping would re-enter the banner as
+undateable quotes the moment the stamp was refused. Booked is booked.
+
+Rebuild-not-merge means all of this re-decides on the next fire; yesterday's
+over-stamps disappear with no migration.
+
+3,230 passed / 1 skipped, ruff clean. The renderer guard was verified by
+removing it — two tests fail without it.
+
 ### 2026-08-16 — Unmapped came back because the DETECTOR hid it, not because
 ### the lookup broke. And the manual report did send.
 

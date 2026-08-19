@@ -674,12 +674,69 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
         kept, statistic excluded) so a long-covered re-ask can never smear
         the averages the clock was just turned back on for.
     """
-    stamped = 0
+    # THREE MORE GUARDS, 2026-08-19, after this heal put 11 rows into the
+    # Aug-18 OL-USA RESPONSES section against 4 new requests. Michael:
+    # "there is data missing and the request count and reply count vary
+    # greatly as well as container count." Measured on that fire's own log:
+    # 17 rows stamped, one Aug-13 Yokohama quote fanned onto EIGHT
+    # booking-confirmed WINs, one Aug-18 Singapore quote onto three July
+    # asks with different container counts, one Aug-18 Xingang quote onto
+    # an Aug-5 ask for 15 boxes when the answered ask was for 8.
+    #
+    # The original fingerprint — same lane + rate to the cent — is
+    # worthless on lanes with STANDING rates: $3,289 Oakland→Singapore
+    # matches every Singapore row for weeks. So:
+    #
+    #   - a booking-confirmed WIN is never stamped. Its rate arrived by the
+    #     rate/carrier sibling copies, not by a quote answering it; the
+    #     event that resolved it was the BOOKING, and dating the copied
+    #     rate manufactures a phantom "OL quoted today" row (and once put a
+    #     fabricated 29.2 biz-hr sample into the turnaround stats).
+    #   - the ask SHAPE must not conflict: teu_requested and
+    #     container_count, when present on both sides, must match. A quote
+    #     for 8x20' does not date an ask for 15x20'.
+    #   - ONE source, ONE row. If a single sibling response would stamp
+    #     more than one row this fire, none of them get it and the log
+    #     names them — the same ambiguity-refusal diag_match_standalones
+    #     applies to booking links. The Algeciras case this heal was built
+    #     for was a single half-copied row; fan-out is how it broke.
+    #
+    # THE COST OF THAT LAST GUARD, stated because it is real and was
+    # measured, not assumed. req_0818ca58087a1cc8 — the Aug-4 Algeciras row
+    # this heal was WRITTEN for, after Michael's "untrue again as i gave
+    # this to you before and emailed you a copy" — now shares its Aug-12
+    # source quote with req_0439263982d6db55, so it is refused too and goes
+    # back to undated. That is the honest answer: with two candidate asks
+    # for one quote we do not know which it answered, and picking by
+    # proximity would be guessing dressed as recovery.
+    #
+    # It does NOT reopen his complaint, checked rather than hoped: the ask
+    # is 2026-08-04, past UNDATED_QUOTE_RECENT_DAYS=14, so QC-077 files it
+    # under the historical backlog (log.ok, "accepted backlog") instead of
+    # the error banner he was reading. If a future fire ever puts a CURRENT
+    # row in that position, the refusal warning above names it and a human
+    # settles which ask the quote answered.
+    #
+    # Rows stamped carry response_time_source="sibling_quote" so the report
+    # can tell a borrowed date from an evidenced one. Rebuild-not-merge
+    # means these guards re-decide every fire: yesterday's over-stamps
+    # disappear on the next fire with no data migration.
     dated = [s for s in requests
              if s.get("response_timestamp")
              and isinstance(s.get("ol_rate"), (int, float))]
+
+    def _shape_conflicts(a, b) -> bool:
+        for f in ("teu_requested", "container_count"):
+            va, vb = a.get(f), b.get(f)
+            if va and vb and va != vb:
+                return True
+        return False
+
+    winners = []  # (row, req_dt, best_resp_dt)
     for r in requests:
         if r.get("response_timestamp") or core.has_no_rfq_chain(r):
+            continue
+        if core.display_status(r) == "WIN" and r.get("mdolx_ref"):
             continue
         rate = r.get("ol_rate")
         if not isinstance(rate, (int, float)):
@@ -697,6 +754,8 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
                 continue
             if round(s["ol_rate"], 2) != round(rate, 2):
                 continue
+            if _shape_conflicts(r, s):
+                continue
             s_car = s.get("carrier_quoted")
             with contextlib.suppress(Exception):
                 s_car = core.normalize_carrier(s_car) or s_car
@@ -707,9 +766,27 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
                 continue
             if best is None or resp_dt < best:
                 best = resp_dt
-        if best is None:
+        if best is not None:
+            winners.append((r, req_dt, best))
+
+    # One source, one row: a response timestamp claimed by several rows is
+    # ambiguous evidence, and ambiguity is for a human, not a heal.
+    by_source = {}
+    for r, req_dt, best in winners:
+        by_source.setdefault(best.isoformat(), []).append((r, req_dt, best))
+
+    stamped = 0
+    for src, group in by_source.items():
+        if len(group) > 1:
+            ids = ", ".join(str(g[0].get("request_id")) for g in group)
+            log.warn(
+                f"sibling-date stamp REFUSED for {len(group)} rows — the "
+                f"same response {src} covers all of them and one quote "
+                f"cannot be assumed to answer {len(group)} asks: {ids}")
             continue
+        r, req_dt, best = group[0]
         r["response_timestamp"] = best.isoformat()
+        r["response_time_source"] = "sibling_quote"
         biz = core.biz_hours_between(req_dt, best)
         if isinstance(biz, (int, float)) and biz <= 40:
             r["turnaround_biz_hours"] = biz
@@ -4535,6 +4612,14 @@ def phase_6_rules(log: Log, data: dict):
             # only a carrier put there by the transaction-report
             # reconciliation. See core.quote_evidence_is_booking_derived.
             and not core.quote_evidence_is_booking_derived(r)
+            # A booking-confirmed WIN is a CLOSED outcome — there is no OL
+            # send time left to chase, whatever rate the sibling copies later
+            # attached to it. 2026-08-19: the sibling-date heal stopped
+            # stamping these (it was manufacturing phantom "OL quoted today"
+            # rows), which un-dates them again; without this line the 8
+            # Yokohama booking WINs would re-enter here as "current" errors
+            # the moment the stamp is refused. Booked is booked.
+            and not (core.display_status(r) == "WIN" and r.get("mdolx_ref"))
         ]
         # SPLIT BY WHETHER ANYONE CAN STILL ACT ON IT. Michael 2026-08-13:
         # "all that truly matters at end of days is the wins and losses.
