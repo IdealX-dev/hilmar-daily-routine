@@ -3,6 +3,75 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 (second pass) — my own fan-out fix was wrong, and a 36-agent
+### adversarial review caught it before it shipped
+
+The first fix (80686e1) claimed the invariant "ONE source, ONE row". It did
+not hold, and it failed hardest on exactly the lanes that caused the
+incident. Before merging I ran an adversarial review — five independent
+lenses, every finding then attacked by a skeptic told to refute it. 30
+findings, 19 confirmed, 11 refuted. Four blocked the merge. I reproduced the
+two worst myself rather than take the reviewers' word.
+
+BLOCKER 1 — THE HEADLINE CLAIM WAS FALSE. `best` is chosen per row as the
+earliest quote covering THAT row's own ask, so several old asks on one
+standing-rate lane pick DIFFERENT quotes, land in different groups, and every
+one is stamped. Reproduced on the exact $3,289 Oakland→Singapore shape:
+
+    stamped: 3   warnings: 0   turnaround samples fabricated: 2
+
+Silent — worse than the loud bug it replaced. The guard fired only in the
+degenerate single-quote case, i.e. never on a standing-rate lane. FIXED by
+judging ambiguity on the FINGERPRINT the heal actually trusts (lane + rate to
+the cent): more than one undated contender, or more than one dated quote,
+refuses the lot and says why. Now: 0 stamped, 1 warning naming the rows.
+
+BLOCKER 2 — THE HEAL RUNS TWICE PER FIRE. run_pipeline.py:78 and :82, with
+patch_carriers between, over the file core.save_data persists. Pass 1's stamp
+became pass 2's evidence. Excluding borrowed rows from the source pool was
+necessary and NOT sufficient: on pass 2 the row stamped in pass 1 drops out of
+both the candidate pool and the contender count, leaving the next ask looking
+unambiguous. Rows already holding a borrowed date on a fingerprint are now
+counted as prior claimants. The test runs the heal TWICE, which is the shape
+production runs and the shape no previous test used.
+
+BLOCKER 3 — I INTRODUCED A NEW COUNT CONTRADICTION ON THE SAME REPORT.
+Excluding booking-confirmed WINs from QC-077 without excluding them from
+gen_email.undated_quotes meant the banner would say 8 while QC-077 — which
+the banner tells the reader to go consult — said 0. Verified on a
+Yokohama-shaped row. This is the #148 bug (two numbers off one dataset) for
+the third time. FIXED by one predicate, core.is_undated_quote, called by
+both. The 2026-08-19 review also mutation-proved that
+test_qc077_and_the_note_count_the_same_rows — written to prevent exactly
+this — RE-TYPED the predicate inline instead of calling it, so deleting the
+exclusion from production changed nothing in the suite. It calls the shared
+predicate now.
+
+BLOCKER 4 — THE MARKER REACHED ONE OF FIVE READERS. response_time_source was
+added and then read only by gen_email. Three CLIENT-FACING sites still stated
+a borrowed minute as fact to Lonny: gen_client_email's "Quoted at (ET)" in
+both Quotes provided and Awaiting your decision, gen_client_weekly's "Quoted"
+column (Mondays), and auto_chase_pending, where a borrowed date licenses
+"quote from N days ago" in a chase email — the fabrication that module's own
+docstring forbids. All four now route through core.response_time_is_evidenced.
+The row keeps its place in the table; only the minute is withheld.
+
+DECISION REVERSED: "the earliest covering quote wins" (a tie-break shipped
+2026-08-14) is gone. Two dated rows at one rate on one lane are either two
+quote events or one quote captured twice, and nothing distinguishes them —
+picking the earlier one is a guess, and on standing-rate lanes it is usually
+wrong. More than one quote on a fingerprint now refuses.
+
+ALSO FIXED, and it is the same disease: two tests failed on this change
+because they SCAN SOURCE TEXT rather than call the code —
+test_qc077_no_longer_counts_a_backfilled_booking grepped the QC-077 block for
+a literal that had moved into core, and test_the_promise_is_gone caught my own
+new docstring quoting a forbidden client phrase. The first is now
+behavioural. The second was right and I reworded the docstring.
+
+3,248 passed / 1 skipped, coverage 91.03%, ruff clean. Both client guards and
+the renderer guard were verified by REMOVING them and watching the tests fail.
+
 ### 2026-08-19 — One quote was dating a dozen asks. The report counted them
 ### all as replies.
 

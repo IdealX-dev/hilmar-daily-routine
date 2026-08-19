@@ -1418,6 +1418,72 @@ def is_pending(r: dict) -> bool:
     return (r or {}).get("status") == "PENDING"
 
 
+def is_undated_quote(r: dict) -> bool:
+    """A real quote carrying no response time — QC-077's population, and the
+    report banner's, in ONE place.
+
+    THE WHOLE POINT IS THAT THERE IS ONE SPELLING. PR #148 shipped two numbers
+    off one dataset here; the test written to stop that
+    (test_qc077_and_the_note_count_the_same_rows) then RE-TYPED the predicate
+    inline instead of calling it, so it went green while the two drifted —
+    proven by mutation on 2026-08-19: deleting the exclusion from QC-077
+    changed nothing in the suite. Every clause below was, at some point, added
+    to one caller and not the other.
+
+    The exclusions, each earned:
+      - no RFQ chain (stand_*/ol_*): ingest leaves response_timestamp None
+        deliberately, to say "no rate-response email existed", not to report a
+        defect.
+      - booking-derived evidence: a carrier the transaction report wrote is
+        not a quote we failed to date (9 of 22 rows on 2026-08-13).
+      - a booking-confirmed WIN: a closed outcome with no send time left to
+        chase. Added 2026-08-19 when the sibling heal stopped stamping these
+        and un-dated eight Yokohama rows at once.
+      - is_real_rate, not `is not None`: this module writes the STRING
+        "Not Quoted" into ol_rate as an NQ sentinel.
+    """
+    r = r or {}
+    if not (is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted")):
+        return False
+    if r.get("response_timestamp"):
+        return False
+    if has_no_rfq_chain(r):
+        return False
+    if quote_evidence_is_booking_derived(r):
+        return False
+    return not is_confirmed_win(r)
+
+
+#: Marker qc_selfheal writes on a row whose response_timestamp was COPIED from
+#: another row's quote rather than read off an email of its own.
+BORROWED_RESPONSE_TIME = "sibling_quote"
+
+
+def response_time_is_evidenced(r: dict) -> bool:
+    """True when this row's response_timestamp came from an actual email.
+
+    ONE predicate for every renderer that prints a quote time or reasons about
+    one, because on 2026-08-19 the alternative was demonstrated: the marker was
+    added to qc_selfheal and read in exactly one of the six places that print
+    or average a response time. The staff report stopped counting borrowed
+    dates as replies while gen_client_email still printed "Quoted at (ET)" off
+    the borrowed minute — to LONNY, the external client.
+
+    A borrowed date is real evidence about WHICH quote covered a lane, and the
+    win/loss ledger and QC-077 are right to keep reading it. What it is not is
+    proof that OL sent something at that minute, so nothing may present it as
+    an observed time, a turnaround, or an elapsed age.
+
+    Rows with no response time at all return False: there is nothing evidenced
+    to show. Callers that only want to exclude BORROWED times (and still treat
+    "no time" separately) should test the marker directly.
+    """
+    r = r or {}
+    if not r.get("response_timestamp"):
+        return False
+    return r.get("response_time_source") != BORROWED_RESPONSE_TIME
+
+
 def fmt_pt(dt: datetime | None, with_date: bool = True) -> str:
     if not dt:
         return "—"

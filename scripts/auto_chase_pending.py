@@ -76,7 +76,14 @@ def _find_overdue_pending(data: dict, min_age_hours: int) -> list[dict]:
     for r in data.get("requests", []):
         if r.get("status") != "PENDING":
             continue
-        ts = core.parse_iso(r.get("response_timestamp"))
+        # core.response_time_is_evidenced, NOT `response_timestamp is not
+        # None`. A borrowed date (copied off another row's quote by
+        # qc_selfheal's sibling heal) is not a minute OL sent anything, and
+        # `dated` licenses the "quote from N days ago" wording below — which
+        # is exactly the fabrication this function's docstring forbids.
+        # 2026-08-19: this file sends to lupfold@hilmaringredients.com.
+        ts = (core.parse_iso(r.get("response_timestamp"))
+              if core.response_time_is_evidenced(r) else None)
         dated = ts is not None
         if ts is None:
             ts = core.parse_iso(r.get("request_timestamp") or r.get("request_date"))

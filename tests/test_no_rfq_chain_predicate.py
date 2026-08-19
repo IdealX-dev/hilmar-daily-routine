@@ -71,13 +71,26 @@ def test_qc077_no_longer_counts_a_backfilled_booking():
     """THE banner. A backfilled booking carries carrier_quoted from OL's
     export and no response time; it is not a quote that failed to be dated."""
     import qc_selfheal  # noqa: F401  (import guards against a syntax slip)
-    src = (ROOT / "scripts" / "qc_selfheal.py").read_text(encoding="utf-8")
-    i = src.find("_q_nots = [")
-    assert i > 0, "the QC-077 population moved — re-point this test"
-    block = src[i:i + 400]
-    assert "has_no_rfq_chain" in block, (
-        "QC-077 is back to a bare stand_ check and will count the 49 "
-        "backfilled bookings as undated quotes again")
+
+    # BEHAVIOUR, not a source scan. This asserted that the literal
+    # "has_no_rfq_chain" appeared within 400 characters of "_q_nots = [".
+    # On 2026-08-19 QC-077's population moved into core.is_undated_quote —
+    # shared with gen_email's banner, precisely so the two cannot report
+    # different numbers — and the scan failed while the behaviour was
+    # correct. A test that reads source text measures where code lives, not
+    # what it does, and it fails on the refactors you most want to make.
+    booking = {"request_id": "ol_260291", "carrier_quoted": "ONE",
+               "ol_rate": None, "response_timestamp": None, "status": "WIN"}
+    assert C.has_no_rfq_chain(booking) is True
+    assert C.is_undated_quote(booking) is False, (
+        "QC-077 counts a backfilled booking as an undated quote again — "
+        "that is the 49 rows from OL's export, which never had a rate "
+        "response to date.")
+
+    quote = {"request_id": "req_real", "ol_rate": 570.0,
+             "response_timestamp": None, "status": "LOSS", "quoted": True}
+    assert C.is_undated_quote(quote) is True, (
+        "the exclusion swallowed a genuine undated quote")
 
 
 def test_the_scope_purge_deliberately_does_not_use_the_predicate():

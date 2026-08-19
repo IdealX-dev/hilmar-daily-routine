@@ -728,30 +728,16 @@ def undated_quotes(data) -> list:
     """
     out = []
     for r in data.get("requests", []):
-        if core.has_no_rfq_chain(r):
+        # core.is_undated_quote — the SAME predicate QC-077 uses. The banner
+        # points the reader at QC-077, so the two counts must be the same
+        # number or the pointer dead-ends (#148, and again 2026-08-19).
+        if not core.is_undated_quote(r):
             continue
-        if r.get("response_timestamp"):
-            continue
-        # core.has_quote_evidence, NOT `ol_rate is not None`. qc_selfheal's
-        # NQ-contamination heal writes the STRING "Not Quoted" into ol_rate,
-        # which is not None, so the old spelling counted rows with no quote at
-        # all — inflating this note while QC-077, fixed in #148, excluded them.
-        # Two numbers off one dataset, and the docstring of
-        # test_undated_quotes_excludes_standalones_like_the_check_does had
-        # already written down that they must agree.
-        # Booking-derived carriers are excluded for the same reason standalone
-        # bookings are, and the two exclusions have to move together with
-        # QC-077's or the note and the audit report different numbers off one
-        # dataset. See core.quote_evidence_is_booking_derived.
-        if core.quote_evidence_is_booking_derived(r):
-            continue
-        # RECENT ONLY. Michael 2026-08-13: "all that truly matters at end of
-        # days is the wins and losses. turnaround is secondary for the past
-        # moves.. so clear this error". A missing quote TIME on a move that
-        # already resolved is history nobody can act on, and every one of
-        # these rows is already counted in wins, losses, TEU and the lane
-        # rollups. The audit still states the historical backlog; the report
-        # stops raising it. See core.undated_quote_is_current.
+        # RECENT ONLY, and this is the one thing the banner does that QC-077
+        # does not: Michael 2026-08-13, "all that truly matters at end of days
+        # is the wins and losses. turnaround is secondary for the past
+        # moves.. so clear this error". QC-077 still STATES the historical
+        # backlog; the report stops raising it. See undated_quote_is_current.
         if not core.undated_quote_is_current(r):
             continue
         if core.has_quote_evidence(r):
