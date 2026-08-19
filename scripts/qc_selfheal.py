@@ -668,18 +668,136 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
         not.)
       - carrier, when present on both, must agree after normalisation —
         same rate + different carrier is a different quote.
-      - the EARLIEST covering response wins: the first quote that answered.
+      - MORE THAN ONE quote on the lane+rate fingerprint, or more than one
+        undated ask contending for it, refuses the lot. This SUPERSEDES the
+        original "earliest covering response wins" tie-break, which was a
+        guess: two dated rows at one rate on one lane are either two quote
+        events or one quote captured twice, and nothing distinguishes them.
       - turnaround is computed inline under the same >40 biz-hour rule the
         per-row heal enforces: past 40 the timing fields stay None (date
         kept, statistic excluded) so a long-covered re-ask can never smear
         the averages the clock was just turned back on for.
     """
-    stamped = 0
+    # THREE MORE GUARDS, 2026-08-19, after this heal put 11 rows into the
+    # Aug-18 OL-USA RESPONSES section against 4 new requests. Michael:
+    # "there is data missing and the request count and reply count vary
+    # greatly as well as container count." Measured on that fire's own log:
+    # 17 rows stamped, one Aug-13 Yokohama quote fanned onto EIGHT
+    # booking-confirmed WINs, one Aug-18 Singapore quote onto three July
+    # asks with different container counts, one Aug-18 Xingang quote onto
+    # an Aug-5 ask for 15 boxes when the answered ask was for 8.
+    #
+    # The original fingerprint — same lane + rate to the cent — is
+    # worthless on lanes with STANDING rates: $3,289 Oakland→Singapore
+    # matches every Singapore row for weeks. So:
+    #
+    #   - a booking-confirmed WIN is never stamped. Its rate arrived by the
+    #     rate/carrier sibling copies, not by a quote answering it; the
+    #     event that resolved it was the BOOKING, and dating the copied
+    #     rate manufactures a phantom "OL quoted today" row (and once put a
+    #     fabricated 29.2 biz-hr sample into the turnaround stats).
+    #   - the ask SHAPE must not conflict: teu_requested and
+    #     container_count, when present on both sides, must match. A quote
+    #     for 8x20' does not date an ask for 15x20'.
+    #   - ONE source, ONE row. If a single sibling response would stamp
+    #     more than one row this fire, none of them get it and the log
+    #     names them — the same ambiguity-refusal diag_match_standalones
+    #     applies to booking links. The Algeciras case this heal was built
+    #     for was a single half-copied row; fan-out is how it broke.
+    #
+    # THE COST OF THAT LAST GUARD, stated because it is real and was
+    # measured, not assumed. req_0818ca58087a1cc8 — the Aug-4 Algeciras row
+    # this heal was WRITTEN for, after Michael's "untrue again as i gave
+    # this to you before and emailed you a copy" — now shares its Aug-12
+    # source quote with req_0439263982d6db55, so it is refused too and goes
+    # back to undated. That is the honest answer: with two candidate asks
+    # for one quote we do not know which it answered, and picking by
+    # proximity would be guessing dressed as recovery.
+    #
+    # It does NOT reopen his complaint, checked rather than hoped: the ask
+    # is 2026-08-04, past UNDATED_QUOTE_RECENT_DAYS=14, so QC-077 files it
+    # under the historical backlog (log.ok, "accepted backlog") instead of
+    # the error banner he was reading. If a future fire ever puts a CURRENT
+    # row in that position, the refusal warning above names it and a human
+    # settles which ask the quote answered.
+    #
+    # Rows stamped carry response_time_source="sibling_quote" so the report
+    # can tell a borrowed date from an evidenced one. Rebuild-not-merge
+    # means these guards re-decide every fire: yesterday's over-stamps
+    # disappear on the next fire with no data migration.
+    # A BORROWED DATE IS NEVER A SOURCE. qc_selfheal runs TWICE per fire
+    # (run_pipeline.py:78 and :82, with patch_carriers between them, over the
+    # file core.save_data persists). Without this filter pass 1's stamp is
+    # pass 2's evidence, and the ambiguity check below — which only sees THIS
+    # invocation's candidates — cannot possibly notice.
     dated = [s for s in requests
              if s.get("response_timestamp")
-             and isinstance(s.get("ol_rate"), (int, float))]
+             and isinstance(s.get("ol_rate"), (int, float))
+             and s.get("response_time_source") != core.BORROWED_RESPONSE_TIME]
+
+    def _shape_conflicts(a, b) -> bool:
+        # `va and vb` deliberately treats 0/None as ABSENT rather than as a
+        # real value. ingest.py:608-619 holds that a truncated preview cannot
+        # prove a count is zero, so a 0 here means "not parsed", and blocking
+        # on it would re-break the RFQ-deletion case that helper exists for.
+        for f in ("teu_requested", "container_count"):
+            va, vb = a.get(f), b.get(f)
+            if va and vb and va != vb:
+                return True
+        return False
+
+    def _fingerprint(r):
+        """What the heal actually matches on. Ambiguity is judged HERE, not on
+        the source timestamp.
+
+        2026-08-19, second pass. Keying the ambiguity check on the source
+        TIMESTAMP looked right and was worthless: `best` is chosen per row as
+        the earliest quote covering THAT row's own ask date, so three old asks
+        on one standing-rate lane pick three DIFFERENT quotes, land in three
+        different groups, and every one is stamped. Reproduced on the exact
+        $3,289 Oakland→Singapore shape from the incident: 3 stamps, 0
+        warnings, and 2 fabricated turnaround samples — silent, where the bug
+        it replaced at least announced itself. The guard fired only in the
+        degenerate one-quote case, i.e. never on the lanes that caused this.
+
+        The honest unit of ambiguity is the FINGERPRINT the heal trusts:
+        lane + rate to the cent. If that fingerprint has more than one undated
+        contender, or more than one dated quote that could answer them, no
+        single pairing is defensible and none is made.
+        """
+        return ((r.get("lane") or "").strip().lower(),
+                round(float(r["ol_rate"]), 2))
+
+    # How many distinct quotes exist per fingerprint — a lane whose rate has
+    # been quoted repeatedly cannot attribute any one ask to any one quote.
+    quotes_per_fp = {}
+    claimed_per_fp = {}
+    for s in dated:
+        quotes_per_fp.setdefault(_fingerprint(s), set()).add(
+            (s.get("request_id"), s.get("response_timestamp")))
+
+    # PRIOR CLAIMANTS. Excluding borrowed rows from `dated` stops a stamp
+    # being re-used as evidence, but it does NOT stop a second row claiming
+    # the same underlying quote on a later pass: qc_selfheal runs twice per
+    # fire, and on pass 2 the row stamped in pass 1 simply drops out of both
+    # the candidate pool and the contender count, leaving the next ask looking
+    # unambiguous. Counting rows that already hold a borrowed date on this
+    # fingerprint is what makes the guard hold ACROSS invocations, which is
+    # the shape production actually runs.
+    for r in requests:
+        if r.get("response_time_source") == core.BORROWED_RESPONSE_TIME:
+            with contextlib.suppress(Exception):
+                claimed_per_fp[_fingerprint(r)] = (
+                    claimed_per_fp.get(_fingerprint(r), 0) + 1)
+
+    winners = []  # (row, req_dt, best_resp_dt)
     for r in requests:
         if r.get("response_timestamp") or core.has_no_rfq_chain(r):
+            continue
+        # core.is_confirmed_win, not a fourth hand-spelling of it. It already
+        # accepts mdolx_refs_all as well as the primary ref, and core.py:1407
+        # says in as many words to keep the definitions in step.
+        if core.is_confirmed_win(r):
             continue
         rate = r.get("ol_rate")
         if not isinstance(rate, (int, float)):
@@ -697,6 +815,8 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
                 continue
             if round(s["ol_rate"], 2) != round(rate, 2):
                 continue
+            if _shape_conflicts(r, s):
+                continue
             s_car = s.get("carrier_quoted")
             with contextlib.suppress(Exception):
                 s_car = core.normalize_carrier(s_car) or s_car
@@ -707,9 +827,34 @@ def _stamp_response_from_dated_sibling(log: Log, requests: list) -> int:
                 continue
             if best is None or resp_dt < best:
                 best = resp_dt
-        if best is None:
+        if best is not None:
+            winners.append((r, req_dt, best))
+
+    # ONE FINGERPRINT, ONE ASK, ONE QUOTE. Ambiguity is judged on the thing
+    # the heal matched on (see _fingerprint), not on the timestamp it landed
+    # on — that distinction is the whole difference between a guard that fires
+    # on standing-rate lanes and one that fires only when there was never a
+    # problem.
+    by_fp = {}
+    for r, req_dt, best in winners:
+        by_fp.setdefault(_fingerprint(r), []).append((r, req_dt, best))
+
+    stamped = 0
+    for fp, group in by_fp.items():
+        n_quotes = len(quotes_per_fp.get(fp, ()))
+        n_prior = claimed_per_fp.get(fp, 0)
+        if len(group) + n_prior > 1 or n_quotes > 1:
+            ids = ", ".join(str(g[0].get("request_id")) for g in group)
+            _prior = f", {n_prior} already borrowed" if n_prior else ""
+            log.warn(
+                f"sibling-date stamp REFUSED for {len(group)} row(s) on "
+                f"{fp[0]} @ ${fp[1]:,.2f} — {len(group)} undated ask(s)"
+                f"{_prior} against {n_quotes} dated quote(s) on that lane and "
+                f"rate; no single pairing is evidenced: {ids}")
             continue
+        r, req_dt, best = group[0]
         r["response_timestamp"] = best.isoformat()
+        r["response_time_source"] = core.BORROWED_RESPONSE_TIME
         biz = core.biz_hours_between(req_dt, best)
         if isinstance(biz, (int, float)) and biz <= 40:
             r["turnaround_biz_hours"] = biz
@@ -4525,17 +4670,14 @@ def phase_6_rules(log: Log, data: dict):
         # quote to date — by definition, not by accident — so it inflated the
         # banner Michael reads and made the number untrustworthy. Same class
         # of error as the stand_* rows this check already excludes.
-        _q_nots = [
-            r for r in data.get("requests", [])
-            if (_is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
-            and not r.get("response_timestamp")
-            and not core.has_no_rfq_chain(r)
-            # A carrier that a BOOKING wrote is not a quote we failed to date.
-            # 9 of this check's 22 rows on 2026-08-13 carried no rate at all —
-            # only a carrier put there by the transaction-report
-            # reconciliation. See core.quote_evidence_is_booking_derived.
-            and not core.quote_evidence_is_booking_derived(r)
-        ]
+        # core.is_undated_quote — ONE predicate, shared with
+        # gen_email.undated_quotes (the ⚠️ banner). Every clause and the
+        # reason for it lives on that function; re-typing it here is exactly
+        # how #148 shipped two numbers off one dataset, and how the test
+        # meant to prevent that went green while they drifted again on
+        # 2026-08-19.
+        _q_nots = [r for r in data.get("requests", [])
+                   if core.is_undated_quote(r)]
         # SPLIT BY WHETHER ANYONE CAN STILL ACT ON IT. Michael 2026-08-13:
         # "all that truly matters at end of days is the wins and losses.
         # turnaround is secondary for the past moves.. so clear this error".

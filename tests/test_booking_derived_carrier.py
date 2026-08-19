@@ -126,19 +126,53 @@ def test_qc077_and_the_note_count_the_same_rows():
         _row(request_id="stand_1", carrier_quoted="ONE", ol_rate=100.0,
              status="WIN"),
     ]
+    # CALL the predicate, do not re-type it. This assertion was a hand-copy
+    # of QC-077's four clauses until 2026-08-19, when production grew a fifth
+    # (booking-confirmed WINs) and this test stayed green while the banner and
+    # QC-077 reported different numbers off one dataset — the very #148 bug it
+    # was written to prevent. Mutation-proven: deleting the exclusion from
+    # qc_selfheal changed nothing in the suite.
     note_ids = {r["request_id"] for r in GE.undated_quotes({"requests": rows})}
-    qc_ids = {
-        r["request_id"] for r in rows
-        if (core.is_real_rate(r.get("ol_rate")) or r.get("carrier_quoted"))
-        and not r.get("response_timestamp")
-        and not core.has_no_rfq_chain(r)
-        and not core.quote_evidence_is_booking_derived(r)
-    }
+    qc_ids = {r["request_id"] for r in rows if core.is_undated_quote(r)}
     assert note_ids == qc_ids
     assert "drop_1" not in note_ids and "drop_2" not in note_ids
     # stand_* is excluded by has_no_rfq_chain, as it always was.
     assert "stand_1" not in note_ids
     assert QS is not None
+
+
+def test_a_booking_confirmed_win_is_in_neither_count():
+    """2026-08-19. The sibling heal stopped stamping booking-confirmed WINs
+    (it was manufacturing phantom "OL quoted today" rows), which un-dated
+    eight Yokohama rows at once. Both the banner and QC-077 must ignore them:
+    a booked row is a closed outcome with no OL send time left to chase.
+
+    The fixture carries a REAL rate, so quote_evidence_is_booking_derived is
+    False — this row is excluded by is_confirmed_win alone, which is what
+    makes it a genuine guard on the new clause rather than a restatement of
+    the old one."""
+    won = _row(request_id="req_yoko", status="WIN", mdolx_ref="261026",
+               ol_rate=3176.0, carrier_quoted="CMA CGM")
+    assert core.quote_evidence_is_booking_derived(won) is False
+    assert core.is_undated_quote(won) is False
+    assert GE.undated_quotes({"requests": [won]}) == []
+
+
+def test_a_plain_undated_quote_is_still_counted():
+    """The exclusions must not swallow the thing the check exists for."""
+    plain = _row(request_id="req_plain", ol_rate=570.0, status="LOSS")
+    assert core.is_undated_quote(plain) is True
+    assert [r["request_id"] for r in GE.undated_quotes({"requests": [plain]})] \
+        == ["req_plain"]
+
+
+def test_a_win_without_a_booking_ref_is_still_counted():
+    """is_confirmed_win requires the MDOLX ref, not merely WIN status. A row
+    that flipped to WIN on a send-signal has no booking behind it and its
+    missing quote time is still a real gap — QC-049 has said so since May."""
+    unconfirmed = _row(request_id="req_sendonly", status="WIN", ol_rate=570.0)
+    assert core.is_confirmed_win(unconfirmed) is False
+    assert core.is_undated_quote(unconfirmed) is True
 
 
 # ─────────────────────────────────────────────────────────────────────

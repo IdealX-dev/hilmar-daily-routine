@@ -86,6 +86,17 @@ TREND_WEEKS = 4
 # Period
 # ─────────────────────────────────────────────────────────────────────
 
+def _quoted_on(r):
+    """The "Quoted" date cell. Blank when the date was BORROWED rather than
+    read off an email of this row's own — see core.response_time_is_evidenced
+    and gen_client_email._quoted_at. This sheet goes to Lonny on Mondays, and
+    a date OL cannot stand behind is worse than no date.
+    """
+    if not core.response_time_is_evidenced(r):
+        return "—"
+    return str(_iso_date(r.get("response_timestamp")) or "—")
+
+
 def week_bounds(today: date | None = None) -> tuple[date, date]:
     """Monday–Friday of the PREVIOUS (just-completed) week.
 
@@ -309,7 +320,7 @@ def build_body(data, cfg, start: date, end: date, now=None) -> str:
             str(_teu(r)),
             _rate(r),
             _etd_with_staleness(r.get("etd_offered"), end),
-            str(_iso_date(r.get("response_timestamp")) or "—"),
+            _quoted_on(r),
         ] for r in s["open_quotes"]],
     )
 

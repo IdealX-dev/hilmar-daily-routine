@@ -3,6 +3,149 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 (second pass) — my own fan-out fix was wrong, and a 36-agent
+### adversarial review caught it before it shipped
+
+The first fix (80686e1) claimed the invariant "ONE source, ONE row". It did
+not hold, and it failed hardest on exactly the lanes that caused the
+incident. Before merging I ran an adversarial review — five independent
+lenses, every finding then attacked by a skeptic told to refute it. 30
+findings, 19 confirmed, 11 refuted. Four blocked the merge. I reproduced the
+two worst myself rather than take the reviewers' word.
+
+BLOCKER 1 — THE HEADLINE CLAIM WAS FALSE. `best` is chosen per row as the
+earliest quote covering THAT row's own ask, so several old asks on one
+standing-rate lane pick DIFFERENT quotes, land in different groups, and every
+one is stamped. Reproduced on the exact $3,289 Oakland→Singapore shape:
+
+    stamped: 3   warnings: 0   turnaround samples fabricated: 2
+
+Silent — worse than the loud bug it replaced. The guard fired only in the
+degenerate single-quote case, i.e. never on a standing-rate lane. FIXED by
+judging ambiguity on the FINGERPRINT the heal actually trusts (lane + rate to
+the cent): more than one undated contender, or more than one dated quote,
+refuses the lot and says why. Now: 0 stamped, 1 warning naming the rows.
+
+BLOCKER 2 — THE HEAL RUNS TWICE PER FIRE. run_pipeline.py:78 and :82, with
+patch_carriers between, over the file core.save_data persists. Pass 1's stamp
+became pass 2's evidence. Excluding borrowed rows from the source pool was
+necessary and NOT sufficient: on pass 2 the row stamped in pass 1 drops out of
+both the candidate pool and the contender count, leaving the next ask looking
+unambiguous. Rows already holding a borrowed date on a fingerprint are now
+counted as prior claimants. The test runs the heal TWICE, which is the shape
+production runs and the shape no previous test used.
+
+BLOCKER 3 — I INTRODUCED A NEW COUNT CONTRADICTION ON THE SAME REPORT.
+Excluding booking-confirmed WINs from QC-077 without excluding them from
+gen_email.undated_quotes meant the banner would say 8 while QC-077 — which
+the banner tells the reader to go consult — said 0. Verified on a
+Yokohama-shaped row. This is the #148 bug (two numbers off one dataset) for
+the third time. FIXED by one predicate, core.is_undated_quote, called by
+both. The 2026-08-19 review also mutation-proved that
+test_qc077_and_the_note_count_the_same_rows — written to prevent exactly
+this — RE-TYPED the predicate inline instead of calling it, so deleting the
+exclusion from production changed nothing in the suite. It calls the shared
+predicate now.
+
+BLOCKER 4 — THE MARKER REACHED ONE OF FIVE READERS. response_time_source was
+added and then read only by gen_email. Three CLIENT-FACING sites still stated
+a borrowed minute as fact to Lonny: gen_client_email's "Quoted at (ET)" in
+both Quotes provided and Awaiting your decision, gen_client_weekly's "Quoted"
+column (Mondays), and auto_chase_pending, where a borrowed date licenses
+"quote from N days ago" in a chase email — the fabrication that module's own
+docstring forbids. All four now route through core.response_time_is_evidenced.
+The row keeps its place in the table; only the minute is withheld.
+
+DECISION REVERSED: "the earliest covering quote wins" (a tie-break shipped
+2026-08-14) is gone. Two dated rows at one rate on one lane are either two
+quote events or one quote captured twice, and nothing distinguishes them —
+picking the earlier one is a guess, and on standing-rate lanes it is usually
+wrong. More than one quote on a fingerprint now refuses.
+
+ALSO FIXED, and it is the same disease: two tests failed on this change
+because they SCAN SOURCE TEXT rather than call the code —
+test_qc077_no_longer_counts_a_backfilled_booking grepped the QC-077 block for
+a literal that had moved into core, and test_the_promise_is_gone caught my own
+new docstring quoting a forbidden client phrase. The first is now
+behavioural. The second was right and I reworded the docstring.
+
+3,248 passed / 1 skipped, coverage 91.03%, ruff clean. Both client guards and
+the renderer guard were verified by REMOVING them and watching the tests fail.
+
+### 2026-08-19 — One quote was dating a dozen asks. The report counted them
+### all as replies.
+
+Michael, on the Aug-18 report showing NEW REQUESTS FROM LONNY (4) above
+OL-USA RESPONSES (11): "there is data missing and the request count and reply
+count vary greatly as well as container count."
+
+THE TELL WAS IN HIS SCREENSHOT, before any data was pulled. Four Singapore
+rows all read "OL Quoted Aug 18 1:44 PM ET" and both Xingang rows "4:42 PM
+ET". One real email, fanned across every old same-lane row. Those rows also
+rendered with no signer, no time-to-quote and container counts belonging to
+a different ask — because no email sits behind them.
+
+CONFIRMED ON THAT FIRE'S OWN LOG (run 32255989336): 17 rows stamped by
+_stamp_response_from_dated_sibling, grouped by the source quote they took
+their time from:
+
+    2026-08-13T19:59:04   x8   one Yokohama quote -> eight booking WINs
+    2026-08-18T17:44:45   x3   one Singapore quote -> three July/Aug asks
+    2026-08-12T20:57:02   x2
+    four others           x1   each
+
+ROOT CAUSE. The heal's fingerprint was "same lane + rate to the cent", and
+that is not a fingerprint on lanes with STANDING rates. $3,289
+Oakland->Singapore matches every Singapore row for weeks; $745 Xingang the
+same. So an August quote dated July asks, and each stamped row then entered
+that day's OL-USA RESPONSES, which buckets purely on response_timestamp.
+Eleven replies against four requests, exactly as he read it. One stamp even
+produced a fabricated 29.2 biz-hour turnaround sample on a row whose real
+resolving event was a booking.
+
+THIS IS MY OWN 2026-08-14 CHANGE. It was built for a single half-copied row
+(the Algeciras case) and shipped with tests that only ever exercised one
+undated row against one sibling — so nothing in the suite could see fan-out.
+Same shape as the two bugs found on 08-15: a test that passes because it
+never poses the question production poses.
+
+THREE GUARDS ADDED.
+  - A booking-confirmed WIN is never stamped. Its rate arrived by the
+    rate/carrier sibling copies; the event that resolved it was the BOOKING,
+    and dating that copied rate manufactures a phantom "OL quoted today".
+  - Ask SHAPE must not conflict: teu_requested and container_count, when
+    present on both sides, must match. Michael named this one directly. A
+    quote for 8 boxes does not date an ask for 15. Absent is not
+    conflicting, or the heal would disable itself on the many rows that
+    carry no container_count.
+  - ONE source, ONE row. A response claimed by several rows is ambiguous
+    evidence, and ambiguity is a human's call. Refusals are WARNed by
+    request_id rather than dropped silently.
+
+SECOND LINE OF DEFENCE, in the renderer. Stamped rows now carry
+response_time_source="sibling_quote", and _today_events excludes those from
+the day's OL-USA RESPONSES. A borrowed date is evidence about which quote
+covered a lane; it is not proof OL sent something that day. The date stays
+on the row — the win/loss ledger and QC-077 read it — but it no longer
+inflates a reply count.
+
+COST, MEASURED NOT ASSUMED. req_0818ca58087a1cc8 — the very Algeciras row
+this heal was written for — now shares its source with another ask, so it is
+refused and returns to undated. It does not reopen the 08-14 complaint: the
+ask is 2026-08-04, past UNDATED_QUOTE_RECENT_DAYS=14, so QC-077 files it as
+accepted backlog (log.ok), not the error banner Michael was reading. Written
+into the code comment so nobody "fixes" it back.
+
+QC-077 also now excludes booking-confirmed WINs outright. Without that, the
+eight Yokohama rows the heal stops stamping would re-enter the banner as
+undateable quotes the moment the stamp was refused. Booked is booked.
+
+Rebuild-not-merge means all of this re-decides on the next fire; yesterday's
+over-stamps disappear with no migration.
+
+3,230 passed / 1 skipped, ruff clean. The renderer guard was verified by
+removing it — two tests fail without it.
+
 ### 2026-08-16 — Unmapped came back because the DETECTOR hid it, not because
 ### the lookup broke. And the manual report did send.
 

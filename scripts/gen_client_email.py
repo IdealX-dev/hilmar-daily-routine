@@ -135,6 +135,24 @@ def _short_et(iso):
     return _short_tz(iso, core.ET, "ET")
 
 
+def _quoted_at(r):
+    """The "Quoted at (ET)" cell — a minute, or an honest dash.
+
+    2026-08-19. qc_selfheal's sibling heal can COPY a response_timestamp from
+    another row's quote onto an undated row (core.BORROWED_RESPONSE_TIME).
+    That is fair evidence about which quote covered a lane and useless as a
+    clock: no email was sent at that minute for THIS row. Printing it here
+    states a time to Lonny that OL cannot stand behind — the same class of
+    unearned assurance Michael caught in the client templates on 2026-08-10.
+
+    The rate, carrier and ETD on the row are real, so the row still belongs in
+    the table; only the minute is withheld.
+    """
+    if not core.response_time_is_evidenced(r):
+        return "—"
+    return _short_et(r.get("response_timestamp"))
+
+
 def _rate(r):
     v = r.get("ol_rate")
     return f"${v:,.0f}" if isinstance(v, (int, float)) else (str(v) if v else "—")
@@ -690,7 +708,7 @@ def build_body(data, cfg, now=None):
             _teu(r),
             r.get("carrier_quoted") or "—",
             _rate(r),
-            _short_et(r.get("response_timestamp")),
+            _quoted_at(r),
             r.get("etd_offered") or "—",
             r.get("eta_offered") or "—",
         ] for r in s["quotes"]],
@@ -725,7 +743,7 @@ def build_body(data, cfg, now=None):
             _lane(r),
             r.get("carrier_quoted") or "—",
             _rate(r),
-            _short_et(r.get("response_timestamp")),
+            _quoted_at(r),
             _etd_with_staleness(r.get("etd_offered"), report_date),
         ] for r in s["awaiting"]],
     )
