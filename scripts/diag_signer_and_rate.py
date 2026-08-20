@@ -42,6 +42,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import core  # noqa: E402
 
 MONEY = re.compile(r"(?:USD\s*)?\$\s?([0-9][0-9,]{1,7}(?:\.\d{2})?)", re.I)
+OL_EMAIL = re.compile(r"[A-Za-z][A-Za-z.'\-]*@ol-usa\.com", re.I)
 BAR = "=" * 78
 
 
@@ -75,7 +76,7 @@ def _text(rec) -> str:
     return ""
 
 
-def _tail(text: str, n: int = 6) -> list[str]:
+def _tail(text: str, n: int = 14) -> list[str]:
     """Last non-empty lines of the TOP message — where a signature lives."""
     try:
         top = core._strip_chain(text)
@@ -161,6 +162,11 @@ def main() -> int:
                   "be re-derived or checked from here")
             continue
 
+        # PER ROW, not per body. A row links Lonny's ASK and OL's REPLY; only
+        # the reply carries money. The first version counted each body, so a
+        # perfectly-parsed dataset reported "stored rate NOT in body: 12" —
+        # a scary number that was purely an artefact of counting the asks.
+        rate_seen_somewhere = False
         for rec in linked[:2]:
             txt = _text(rec)
             subj = (rec.get("subject") or "")[:70]
@@ -174,13 +180,22 @@ def main() -> int:
             if rate is not None:
                 as_str = f"{float(rate):.2f}".rstrip("0").rstrip(".")
                 hit = any(abs(float(u) - float(rate)) < 0.01 for u in uniq)
-                if not hit:
-                    rate_absent += 1
-                print(f"    stored rate {as_str} appears in body: "
-                      f"{'YES' if hit else '*** NO ***'}")
+                rate_seen_somewhere = rate_seen_somewhere or hit
+                print(f"    stored rate {as_str} in THIS body: "
+                      f"{'YES' if hit else 'no'}")
+                if len(uniq) > 1:
+                    print(f"    *** {len(uniq)} different $ figures in one "
+                          f"body — the parser chose {as_str}; confirm it "
+                          f"picked the right one ***")
+            ols = sorted(set(OL_EMAIL.findall(txt)))
+            if ols:
+                print(f"    ol-usa addresses in body: {ols[:4]}")
             print("    signature tail :")
             for ln in _tail(txt):
                 print(f"        | {ln[:90]}")
+        if rate is not None and not rate_seen_somewhere:
+            rate_absent += 1
+            print("    *** stored rate appears in NO linked body — mis-pick ***")
 
     print("\n" + BAR)
     print("SUMMARY")
@@ -188,7 +203,8 @@ def main() -> int:
     print(f"  rows examined            : {len(recent)}")
     print(f"  blank signer             : {no_signer}")
     print(f"  no cached body at all    : {no_body}")
-    print(f"  stored rate NOT in body  : {rate_absent}")
+    print(f"  stored rate in NO linked body : {rate_absent}   "
+          f"(0 = every rate traced to an OL email)")
     print("\n  A blank signer with a cached body means the signature pattern "
           "missed.\n  A blank signer with NO body means the evidence is gone "
           "(90-day retention)\n  and nothing can recover it from here.")
