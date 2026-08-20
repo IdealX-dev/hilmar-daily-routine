@@ -70,6 +70,21 @@ jobs:
         # Writes nothing: it prints candidates and the evidence behind each.
         run: python3 scripts/diag_match_standalones.py
 
+      - name: Why is the signer blank, and is the rate what OL wrote (read-only)
+        # 2026-08-20, Michael on the OL-USA RESPONSES table: "why are signors
+        # missing nothing should be missing.. also the numbers are wrong for
+        # $". Neither question is answerable from the rendered table — that
+        # shows what was PARSED, and the question is how it compares to what
+        # the email SAID. This pairs each recent quoted row with its cached
+        # body and prints the signature tail plus every currency-shaped number
+        # in the text beside the stored ol_rate.
+        #
+        # ol_responder_signer has no completeness gate: QC-027 covers
+        # ETD/ETA/Vessel/Rate/Carrier/POL/POD and not this, so a blank is
+        # silent. Writes nothing.
+        if: always()
+        run: python3 scripts/diag_signer_and_rate.py --days 7 --limit 12 || true
+
       - name: Probe the shared mailbox endpoint by endpoint (read-only)
         # 2026-08-14, Michael: "you did get the authorizaton you needed.. you
         # are wrong." This settles whether the shared mailbox is unreadable or
