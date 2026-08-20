@@ -31,6 +31,7 @@ import argparse
 import json
 import re
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -44,10 +45,12 @@ MONEY = re.compile(r"(?:USD\s*)?\$\s?([0-9][0-9,]{1,7}(?:\.\d{2})?)", re.I)
 BAR = "=" * 78
 
 
-def _bodies() -> dict:
+def _bodies(root: Path) -> dict:
     """internetMessageId -> cached body record."""
     out = {}
-    p = ROOT / "scripts" / "stage_emails_bodies.txt"
+    p = root / "scripts" / "stage_emails_bodies.txt"
+    if not p.exists():
+        p = root / "stage_emails_bodies.txt"
     if not p.exists():
         return out
     for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -88,9 +91,32 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=12)
     a = ap.parse_args()
 
-    data = core.load_data(str(ROOT / "tracking-data-v2.json"))
+    # PULL THE STATE. Nothing lives in the checkout — tracking-data-v2.json
+    # and the body cache are in the blob store, and every other diag in this
+    # workflow pulls them itself. The first version of this script read the
+    # repo root, died with FileNotFoundError on its first line, and the
+    # step's `|| true` swallowed it: run 32380990788 went GREEN having
+    # printed nothing. A diagnostic that cannot say it failed is worse than
+    # no diagnostic, so the pull failure below is loud and the exit is
+    # non-zero.
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        import state_store
+        pulled = state_store.pull(root=tmp)
+    except Exception as e:
+        print(f"::error::diag_signer_and_rate: state pull FAILED: "
+              f"{type(e).__name__}: {e}")
+        return 2
+    print(f"pulled {len(pulled)} file(s)")
+
+    data_path = tmp / "tracking-data-v2.json"
+    if not data_path.exists():
+        print("::error::diag_signer_and_rate: tracking-data-v2.json not in "
+              "the store — nothing to inspect")
+        return 2
+    data = json.loads(data_path.read_text(encoding="utf-8"))
     rows = data.get("requests", []) or []
-    bodies = _bodies()
+    bodies = _bodies(tmp)
     cutoff = datetime.now(timezone.utc) - timedelta(days=a.days)
 
     recent = []
