@@ -187,6 +187,18 @@ def main() -> int:
                     print(f"    *** {len(uniq)} different $ figures in one "
                           f"body — the parser chose {as_str}; confirm it "
                           f"picked the right one ***")
+                    # WHICH option did it skip? parse_rate_table reads
+                    # _table_cells(rows[0], rows[1]) — the header and the
+                    # FIRST data row only. Michael 2026-08-20: "could be
+                    # different rates for different steamship lines." If the
+                    # extra rows name a different carrier, the parser is
+                    # silently picking one carrier's price; if they name the
+                    # same carrier on a later vessel, it is picking the first
+                    # sailing. Those need opposite fixes, so print the rows.
+                    for ln in txt.splitlines():
+                        if ln.count("|") >= 3 and any(
+                                c.isdigit() for c in ln):
+                            print(f"        ROW | {ln.strip()[:150]}")
             ols = sorted(set(OL_EMAIL.findall(txt)))
             if ols:
                 print(f"    ol-usa addresses in body: {ols[:4]}")

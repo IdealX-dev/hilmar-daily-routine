@@ -2826,6 +2826,33 @@ _BLOCKLIST = {
     "eddie",
 }
 
+#: Words that appear where a name would and are not one. The signature regex
+#: matches the line after a sign-off, which is usually the person — but on a
+#: block like "Best regards,\nOcean Export Team" it is not. Cheap, and it only
+#: has to catch the shapes that actually occur in OL mail.
+_NOT_A_NAME = {
+    "ocean", "export", "import", "team", "desk", "pricing", "booking",
+    "customer", "service", "support", "operations", "logistics", "best",
+    "regards", "thanks", "thank", "sincerely", "cheers", "sent", "from",
+    "subject", "hilmar", "ingredients",
+}
+
+
+def _looks_like_person(name: str) -> bool:
+    """A parsed signature line that is plausibly a human name.
+
+    Deliberately permissive — the roster gate it replaces was the bug, and
+    the sender domain (see parse_signer) is what actually establishes that
+    this is OL staff. This only rejects the obvious non-names.
+    """
+    parts = [p for p in name.strip().split() if p]
+    if not 1 <= len(parts) <= 3:
+        return False
+    if any(p.lower() in _NOT_A_NAME for p in parts):
+        return False
+    return all(p[:1].isupper() and p.isalpha() for p in parts)
+
+
 _SIGNATURE_PATTERNS = [
     # "Best regards,\nFirstname Lastname"
     re.compile(r"(?im)^[ \t]*(?:thanks|thank you|regards|best|best regards|kind regards|cheers|sincerely|warm regards|warmest regards|warmest)[,!&\s]*(?:and\s+best\s+regards)?[,!]?[ \t]*\r?\n+[ \t]*([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)?)(?:\s*\([^)]+\))?\s*\r?$"),
@@ -2912,6 +2939,32 @@ def parse_signer(from_name, body=None):
                     continue
                 if parts[0] in _OL_FIRST_NAMES:
                     candidates.append((m.start(), _OL_FIRST_NAMES[parts[0]]))
+                    continue
+            # A NAME OFF THE ROSTER IS STILL A NAME. Michael 2026-08-20:
+            # "a signor is a signor if new staff comes, new staff comes. if
+            # they change they change.. maria machado is staff then."
+            #
+            # Until now every branch above required membership in a
+            # 14-entry hardcoded roster, so a cleanly-parsed signature was
+            # FOUND and then discarded. Measured on the Aug-19 report: 8 of
+            # 12 quoted rows had a blank signer, and the body of one showed
+            # "Best regards, / Maria Machado / Ocean Export Specialist" in
+            # plain text with a full OL phone and address block. She is
+            # staff; the roster simply had not been edited. A closed list
+            # means every new OL hire is invisible by construction, and
+            # silently so — nothing checks this field.
+            #
+            # WHY ACCEPTING AN UNKNOWN NAME IS SAFE HERE. parse_signer is
+            # only ever called on a body whose bucket is mbd_inbound or
+            # mbd_rate_response (fetch_bodies.py:231), and refresh_stage
+            # assigns those buckets ONLY when the sender is @ol-usa.com.
+            # Michael, same day: "lonny doesn't sign from an ol email
+            # address" — exactly so, and the bucket already enforces it.
+            # _BLOCKLIST stays as the second line of defence: an OL reply
+            # quotes the ask beneath it, and if _strip_chain ever fails to
+            # cut the chain, Lonny's own sign-off is sitting right there.
+            if _looks_like_person(name):
+                candidates.append((m.start(), name))
     if candidates:
         candidates.sort(key=lambda x: x[0])
         return candidates[0][1]
