@@ -92,16 +92,57 @@ def test_the_audit_reports_the_backlog_as_a_fact_not_an_error(capsys):
     log = QS.Log()
     QS.phase_6_rules(log, {"requests": [_undated(f"old_{i}", 120)
                                         for i in range(16)]})
-    errs = [e for e in log.errors if "QC-077" in e]
+    errs = [e for e in log.warnings if "QC-077" in e]
     assert errs == [], f"historical backlog still raised as an error: {errs}"
     out = capsys.readouterr().out
     assert "QC-077: 16 historical quote(s)" in out, out[-800:]
     assert "Accepted backlog" in out
 
 
-def test_a_current_gap_is_still_an_error():
-    """The detector must not go silent — that is how it reached 41 unnoticed."""
+def test_a_current_gap_is_still_reported():
+    """The detector must not go silent — that is how it reached 41 unnoticed.
+
+    SEVERITY LOWERED 2026-08-19, substance unchanged. Michael, on the report
+    banner this check backs: "this error shouldn't exist / just clear it."
+    Every one of these rows is counted in wins, losses and TEU; only the send
+    TIME is missing. So it is a recorded WARNING, not an error — and warn(),
+    not ok(), because Log.ok merely prints and never reaches qc-result.json,
+    which would delete the count from the audit."""
     import qc_selfheal as QS
     log = QS.Log()
     QS.phase_6_rules(log, {"requests": [_undated("fresh", 2)]})
-    assert any("QC-077" in e for e in log.errors)
+    assert any("QC-077" in w for w in log.warnings), (
+        "QC-077 stopped reporting a current undated quote entirely")
+    assert not any("QC-077" in e for e in log.errors), (
+        "QC-077 is raising an ERROR again on a known, accepted gap")
+
+
+# ── the banner is gone from the report ────────────────────────────────────
+
+def test_the_report_body_no_longer_renders_the_undated_banner():
+    """Michael, 2026-08-19, on "⚠️ 1 recent quote has a rate or carrier but no
+    response time…": "this error shouldn't exist / just clear it."
+
+    Second time he has asked. On 2026-08-13 the same instruction bought a
+    14-day recency filter instead of the removal he wanted. The banner's own
+    text says the row IS counted in the win/loss totals — so the only thing
+    missing is WHEN OL quoted, which is turnaround detail on a report whose
+    job is wins and losses.
+
+    The FUNCTION stays and QC-077 stays: a silent detector is how the count
+    reached 41 unnoticed, and the audit still records it. Only the render is
+    gone."""
+    src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in src.splitlines()
+                     if not ln.lstrip().startswith("#"))
+    assert "{_undated_quotes_note(undated_quotes)}" not in code, (
+        "the undated-quote banner is being rendered into the report body "
+        "again — Michael has asked for it gone twice")
+
+
+def test_the_detector_itself_is_not_deleted():
+    """Removing the banner must not become removing the check. The count is
+    what let anyone notice the gap had reached 41 in the first place."""
+    import gen_email as GE
+    assert callable(GE._undated_quotes_note)
+    assert callable(GE.undated_quotes)

@@ -746,8 +746,24 @@ def undated_quotes(data) -> list:
 
 
 def _undated_quotes_note(undated) -> str:
-    """Say, in the report, how many real quotes it cannot date — and so is not
-    showing above.
+    """The undated-quote banner. NOT RENDERED ON THE DAILY REPORT since
+    2026-08-19 — Michael, on "⚠️ 1 recent quote has a rate or carrier but no
+    response time": "this error shouldn't exist / just clear it."
+
+    He is right, and he had already said it once on 2026-08-13 ("all that
+    truly matters at end of days is the wins and losses. turnaround is
+    secondary for the past moves.. so clear this error"), which bought the
+    14-day recency filter instead of the removal he asked for. The banner
+    states, in its own text, that the row IS counted in the win/loss totals —
+    so the only thing missing is WHEN OL quoted, which is turnaround detail,
+    on a report whose job is wins and losses. It alarms without being
+    actionable by its reader.
+
+    The function stays, and so does QC-077 behind it: a silent detector is
+    how the count reached 41 unnoticed, and the audit still states the number.
+    Re-rendering it is one line at the call site in the report body.
+
+    ORIGINAL RATIONALE, kept because it explains what the detector is for:
 
     OL-USA RESPONSES is bucketed on response_timestamp (see _today_events). A
     row with an ol_rate or a carrier_quoted but no response_timestamp is
@@ -1207,7 +1223,6 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_INFO};font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
   {resp_table}
-  {_undated_quotes_note(undated_quotes)}
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}

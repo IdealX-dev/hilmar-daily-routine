@@ -4777,7 +4777,22 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 _advice = ("Fix at ingest so the link is recorded when the "
                            "rate is.")
-            log.error(
+            # log.warn, NOT log.error, since 2026-08-19. Michael, on the
+            # report banner this check backs: "this error shouldn't exist /
+            # just clear it" — the second time he has said it about this
+            # exact condition. Every one of these rows IS counted in wins,
+            # losses, TEU and the lane rollups; the only missing field is
+            # WHEN the quote was sent, which is turnaround detail. An ERROR
+            # every fire over a known, accepted gap trains the reader to skip
+            # the audit, and that is worse than the gap.
+            #
+            # WARN and not ok(), deliberately: Log.ok only PRINTS — it is not
+            # recorded on the Log and never reaches qc-result.json — so
+            # downgrading that far would delete the count from the audit
+            # entirely. A silent detector is how this number reached 41
+            # unnoticed. The banner is gone from the CEO's report; the audit
+            # keeps the record.
+            log.warn(
                 f"QC-077: {len(_q_nots)} row(s) carry an OL rate or carrier but "
                 f"NO response_timestamp — every one is a real quote that "
                 f"OL-USA RESPONSES can NEVER show, because that section is "
