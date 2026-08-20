@@ -208,7 +208,7 @@ def _fire_qc077(rows, bodies=None):
         QS.phase_6_rules(log, {"requests": rows})
     finally:
         mp.undo()
-    return [e for e in log.errors if "QC-077" in e]
+    return [e for e in log.warnings if "QC-077" in e]
 
 
 def _undated(rid, **over):

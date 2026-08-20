@@ -3,6 +3,46 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-19 (fifth pass) — the undated-quote banner is off the report
+
+Michael, on "⚠️ 1 recent quote has a rate or carrier but no response time, so
+it is missing from the dated responses above. It is still counted in the
+win/loss totals": "this error shouldn't exist / just clear it."
+
+SECOND TIME HE HAS ASKED. On 2026-08-13 the same instruction — "all that truly
+matters at end of days is the wins and losses. turnaround is secondary for the
+past moves.. so clear this error" — bought a 14-day recency filter instead of
+the removal he wanted. Reading it as "make it smaller" rather than "remove it"
+cost a week and a second complaint about the same line.
+
+He is right on the merits, and the banner said so itself: the row IS counted
+in wins, losses, TEU and every lane rollup. The only missing field is WHEN OL
+sent the quote — turnaround detail, on a report whose stated job is wins and
+losses. It alarmed without being actionable by its reader.
+
+REMOVED from the report body. The FUNCTION and QC-077 both stay: a silent
+detector is how this count reached 41 unnoticed, and re-rendering it is one
+line at the call site.
+
+QC-077 SEVERITY LOWERED, ERROR -> WARNING, for the same reason: an error every
+fire over a known, accepted gap trains the reader to skip the audit, and that
+is worse than the gap.
+
+warn() AND NOT ok(), deliberately — and this is the part that needed checking
+rather than assuming. Log.ok only PRINTS; it is not recorded on the Log and
+never reaches qc-result.json. Downgrading that far would have deleted the
+count from the audit entirely while I described it as "kept", which is the
+failure this project exists not to commit. The historical bucket has been
+log.ok since 2026-08-13 and is silent in qc-result.json for the same reason —
+pre-existing, noted here rather than fixed in the same breath.
+
+Five tests moved from asserting log.errors to log.warnings: severity changed,
+substance did not. Two new tests pin the removal — one that the banner is not
+rendered, one that the detector behind it still exists, so "clear the banner"
+cannot quietly become "delete the check".
+
+3,268 passed / 1 skipped, coverage 91.04%, ruff clean.
+
 ### 2026-08-19 (fourth pass) — QC-078, and a borrowed date could have HALTED
 ### the fire through drift phase 2
 

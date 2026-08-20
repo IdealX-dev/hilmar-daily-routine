@@ -392,7 +392,7 @@ def test_qc077_errors_on_a_quote_with_no_response_timestamp():
     self-contradictory rather than broken. 29 of 315 real rows were like this
     and nothing said so."""
     log = _fire_phase6([_quoted_row(response_timestamp=None)])
-    hits = [e for e in log.errors if "QC-077" in e]
+    hits = [e for e in log.warnings if "QC-077" in e]
     assert hits, "a quote with no response_timestamp did not raise QC-077"
     assert "OL-USA RESPONSES" in hits[0], (
         "the error must name the section the row is invisible in")
@@ -400,7 +400,7 @@ def test_qc077_errors_on_a_quote_with_no_response_timestamp():
 
 def test_qc077_silent_when_the_quote_is_dateable():
     log = _fire_phase6([_quoted_row()])
-    assert not [e for e in log.errors if "QC-077" in e]
+    assert not [e for e in log.warnings if "QC-077" in e]
 
 
 def test_qc077_ignores_standalone_bookings():
@@ -410,7 +410,7 @@ def test_qc077_ignores_standalone_bookings():
     be crying wolf over correct behaviour."""
     log = _fire_phase6([_quoted_row(rid="stand_260426", status="WIN",
                                     response_timestamp=None)])
-    assert not [e for e in log.errors if "QC-077" in e], (
+    assert not [e for e in log.warnings if "QC-077" in e], (
         "QC-077 fired on a standalone booking, which legitimately has no "
         "response_timestamp")
 
@@ -421,7 +421,7 @@ def test_qc077_does_not_name_another_check_in_its_message():
     it fired from here — it broke two QC-056 tests when this check was first
     written."""
     log = _fire_phase6([_quoted_row(response_timestamp=None)])
-    msg = [e for e in log.errors if "QC-077" in e][0]
+    msg = [e for e in log.warnings if "QC-077" in e][0]
     others = {t for t in __import__("re").findall(r"QC-\d+", msg)} - {"QC-077"}
     assert not others, (
         f"QC-077's message names other checks {sorted(others)} — substring "
