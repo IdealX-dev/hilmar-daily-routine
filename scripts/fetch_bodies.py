@@ -202,10 +202,36 @@ def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = 
     if bucket in ("mbd_rate_response", "mbd_inbound"):
         rt = BP.parse_rate_table(text_body)
         out["rate_table"] = rt if rt else None
+
+        # THE OFFERED DATES ARE OL'S, AND ONLY OL'S.
+        #
+        # 2026-08-21. These two keys were set ~40 lines up by running the
+        # prose date parsers over the WHOLE body — and an OL reply carries
+        # Lonny's RFQ quoted underneath it. So when OL's grid had no ETA
+        # column the parser could name, the prose fallback read Lonny's own
+        # "ETA 10/21" out of the quoted ask and stored it as OL's offered
+        # ETA. Measured on req_720044de494c2b58 (Oakland->Algeciras, diag run
+        # 32493969967): OL's grid says Arrive 24-Oct-26, the row held
+        # 2026-10-21, and 10/21 is the date Lonny asked for. The report
+        # handed the CEO Hilmar's own request back as OL's answer.
+        #
+        # Two changes, and both are needed. The header alias for "Arrive"
+        # (see _TABLE_CELL_ALIASES) stops the grid from being missed in the
+        # first place; this stops the fallback from inventing a replacement
+        # when a grid genuinely has no ETA. The grid now WINS outright, and
+        # the prose fallback sees only the top message — OL's own words.
+        _ol_only = C._strip_chain(text_body) if text_body else ""
+        if rt:
+            out["etd_offered"] = (rt.get("etd_offered") or rt.get("etd")
+                                  or BP.parse_etd_offered(_ol_only))
+            out["eta_offered"] = (rt.get("eta_offered") or rt.get("eta")
+                                  or BP.parse_eta_offered(_ol_only))
+        else:
+            out["etd_offered"] = BP.parse_etd_offered(_ol_only)
+            out["eta_offered"] = BP.parse_eta_offered(_ol_only)
+
         # Bubble up individual fields for convenience
         if rt:
-            out["etd_offered"]   = out["etd_offered"] or rt.get("etd_offered") or rt.get("etd")
-            out["eta_offered"]   = out["eta_offered"] or rt.get("eta_offered") or rt.get("eta")
             out["vessel_voyage"] = out["vessel_voyage"] or rt.get("vessel_voyage")
             out["transshipment"] = out["transshipment"] or rt.get("transshipment")
             # 2026-05-19 parser-gap fix: pull the 4 newly-exposed fields up

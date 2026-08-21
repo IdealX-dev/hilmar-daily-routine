@@ -100,14 +100,46 @@ prints — the lesson from 2026-08-19), and the helper only runs inside a
 failing assert's message. It would have replaced a real QC-078 failure with an
 AttributeError at the exact moment the failure mattered.
 
+#### 3. LINDA'S COLUMNS HAD NO NAMES, AND THE ETA FELL BACK TO LONNY'S ASK
+
+"important data still missing" (2026-08-20, on a row with ETA Offered "—").
+Diag run 32493969967 printed her header verbatim:
+
+  Port of loading | Port of discharge | Container Size | Vessel | Voyage |
+  ERD | Doc Cutoff | Cutoff | Sail | Arrive | RATE | CARRIER | ...
+
+"Doc Cutoff", "Cutoff" and "Arrive" mapped to NOTHING. Header-to-cell
+alignment is only as good as the header dictionary, and a column the parser
+cannot name has its value dropped without a word — so on every quote Linda
+sends, the doc cutoff, the port cutoff and the ETA were discarded.
+
+WORSE THAN A BLANK. With the grid's ETA gone, fetch_bodies fell back to the
+prose date parsers — which it ran over the WHOLE body, and an OL reply carries
+Lonny's RFQ quoted underneath it. On req_720044de494c2b58 (Oakland→Algeciras)
+OL's grid says Arrive 24-Oct-26; the stored row said 2026-10-21; and 10/21 is
+the date LONNY asked for in the ask below the chain marker. The report handed
+the CEO Hilmar's own request back as OL's answer.
+
+Both halves fixed, because either alone leaves it possible: the aliases stop
+the grid being missed, and the prose fallback now sees only the top message —
+OL's own words — with the grid winning outright. The decoy guard is unchanged
+and tested ("Terminal Operator", "Service Line" still map to nothing).
+
+Also closed a dead term in ingest: `best["etd_offered"]` read `rt.get("etd")`,
+a key production's parse_rate_table never emits (it is the src/hilmar
+mirror's), so every production ETD arrived via the prose path. It now hedges
+both spellings, exactly as the ETA line beside it already did.
+
 #### STILL OPEN
 
-The Shanghai "ETA Offered —" in Michael's 2026-08-20 screenshot is NOT
-explained yet. The diagnostic now prints stored etd/eta/vessel beside a live
-re-parse of the same body, so the next run says whether the cell was lost in
-parsing or was never in OL's email. Not guessed at in the meantime.
+None from this report. The multi-option and ETA fixes are verified against the
+real bodies in diag run 32493969967 — live re-parse beside the stored row —
+but they are verified in the PARSER, not yet in a delivered email: the fire
+has not run since. Michael's next daily report is the proof, and if any of
+these three still shows a gap, the diagnostic prints stored value beside live
+parse for every row and will say which.
 
-3,293 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
+3,297 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
 
 ### 2026-08-19 (fifth pass) — the undated-quote banner is off the report
 

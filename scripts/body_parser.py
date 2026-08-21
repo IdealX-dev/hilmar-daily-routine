@@ -994,11 +994,26 @@ _TABLE_CELL_ALIASES = {
     "vessel": "vessel", "voyage": "voyage",
     "erd": "erd", "doc_cut": "doc_cut", "port_cut": "port_cut",
     "rail_cut": "rail_cut",
+    # LINDA'S TEMPLATE, 2026-08-21. Measured, not guessed: diag run
+    # 32493969967 printed her header verbatim as
+    #   Port of loading | Port of discharge | … | ERD | Doc Cutoff | Cutoff |
+    #   Sail | Arrive | RATE | CARRIER | …
+    # Three of those named nothing here, so on every quote she sends, the
+    # doc cutoff, the port cutoff and — the one that reached the CEO — the
+    # ETA were read out of a column the parser could not name and dropped.
+    # The Algeciras row is the proof: OL's grid says Arrive 24-Oct-26, the
+    # report said 2026-10-21, and 10/21 is the date LONNY asked for in the
+    # RFQ quoted underneath. Michael, 2026-08-20: "important data still
+    # missing".
+    "doc_cutoff": "doc_cut", "document_cutoff": "doc_cut",
+    "cutoff": "port_cut", "port_cutoff": "port_cut",
+    "cargo_cutoff": "port_cut", "cy_cutoff": "port_cut",
     # ETD/ETA — OL relabels these across schedule templates (2026-06-16).
     "etd": "etd", "etd_pol": "etd", "pol_etd": "etd", "sailing": "etd",
     "departure": "etd", "departs": "etd", "sail": "etd", "ets": "etd",
+    "sails": "etd", "depart": "etd",
     "eta": "eta", "eta_pod": "eta", "pod_eta": "eta", "arrival": "eta",
-    "arrives": "eta", "arriving": "eta",
+    "arrives": "eta", "arriving": "eta", "arrive": "eta",
     "rate": "rate", "dthc": "dthc",
     # Carrier — OL relabels this too (2026-06-15 Manila fix).
     "carrier": "carrier", "ocean_carrier": "carrier", "ocean_line": "carrier",

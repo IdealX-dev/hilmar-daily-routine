@@ -253,3 +253,90 @@ def test_qc079_names_the_reply_that_priced_another_destination(capsys):
                                      other_lane_pods=["SHANGHAI"])], capsys)
     assert "ALSO priced a different destination" in text
     assert "SHANGHAI" in text
+
+
+# ── Linda's template, and the ETA that was Lonny's own ask ───────────────────
+#
+# Michael, 2026-08-20, on the same report: "important data still missing" —
+# a Shanghai row with ETA Offered "—". Diag run 32493969967 printed Linda's
+# header verbatim and three of its columns named nothing the parser knew:
+#
+#   Port of loading | Port of discharge | Container Size | Vessel | Voyage |
+#   ERD | Doc Cutoff | Cutoff | Sail | Arrive | RATE | CARRIER | ...
+#
+# "Doc Cutoff", "Cutoff" and "Arrive" were all unmapped, so on every quote she
+# sends, the doc cutoff, the port cutoff and the ETA were read out of columns
+# the parser could not name and dropped on the floor.
+
+LINDA_HEADER = ("Port of loading | Port of discharge | Container Size | "
+                "Vessel | Voyage | ERD | Doc Cutoff | Cutoff | Sail | "
+                "Arrive | RATE | CARRIER | TRANSSHIPMENT | ORIGIN FREE TIME "
+                "| DESTINATION FREE TIME")
+
+# The real 2026-08-19 Algeciras reply, with Lonny's RFQ quoted beneath it —
+# the shape every OL reply has.
+ALGECIRAS_FULL = f"""{LINDA_HEADER}
+OAKLAND | ALGECIRAS | 40' HC | NYK RIGEL | 0CLNEE1MA | 8-Sep-26 | 10-Sep-26 | 11-Sep-26 | 15-Sep-26 | 24-Oct-26 | $4,938.00 | CMA | LE HARVE | 4 DETENTION + 5 DEMURRAGE FREE DAYS | 7 COMBINED FREE DAYS
+OAKLAND | ALGECIRAS | 40' HC | MAERSK KANSAS | 639E | 4-Sep-26 | 15-Sep-26 | 7-Sep-26 | 21-Sep-26 | 18-Oct-26 | $4,201.00 | HAPAG | HOUSTON, TX & ANTWERP | 4 DENTION FREE DAYS | 7 COMBINED FREE DAYS
+
+Linda Echevarria
+Ocean Export Manager
+email: Linda.Echevarria@ol-usa.com
+
+From: Lonny Upfold
+Sent: Tuesday, August 19, 2026
+Subject: Oakland to Algeciras
+
+1-40' HC
+Oakland to Algeciras
+ETA 10/21
+Product Protein
+Thanks,
+Lonny Upfold
+"""
+
+
+def test_lindas_column_names_are_understood():
+    """Every header cell of her template must name a field, or the value
+    under it is silently discarded."""
+    unmapped = [c.strip() for c in LINDA_HEADER.split("|")
+                if BP._header_key(c.strip()) is None]
+    assert not unmapped, (
+        f"These columns of Linda's grid name nothing, so their values are "
+        f"dropped on every quote she sends: {unmapped}")
+
+
+def test_the_decoy_columns_are_still_refused():
+    """Widening the alias list must not re-open the decoy hole: a header the
+    parser only half-understands stays unmapped."""
+    for decoy in ("Terminal Operator", "Service Line", "Rate Notes"):
+        assert BP._header_key(decoy) is None, decoy
+
+
+def test_the_eta_comes_from_ols_grid_not_lonnys_ask():
+    out = BP.parse_rate_table(ALGECIRAS_FULL)
+    assert out["ol_rate"] == 4201.0
+    assert out["eta_offered"] == "18-Oct-26", (
+        "OL's Arrive column was dropped, so the row falls back to prose — "
+        "and the prose under an OL reply is Lonny's RFQ.")
+    assert out["etd_offered"] == "21-Sep-26"
+    assert out["doc_cutoff"] == "15-Sep-26"
+    assert out["port_cutoff"] == "7-Sep-26"
+
+
+def test_fetch_bodies_never_reads_the_offered_eta_out_of_the_quoted_ask():
+    """The end-to-end shape: an OL reply whose grid has NO eta column at all.
+    The fallback may read OL's own prose and nothing below the chain marker."""
+    import fetch_bodies as FB
+    body = (
+        "Hello Lonny, please see below:\n"
+        "POL | POD | Container Size | Vessel | RATE | CARRIER\n"
+        "OAKLAND | ALGECIRAS | 40' HC | NYK RIGEL | $4,938.00 | CMA\n"
+        "\nLinda Echevarria\n"
+        "\nFrom: Lonny Upfold\nSent: Tuesday, August 19, 2026\n"
+        "Oakland to Algeciras\nETA 10/21\nThanks,\nLonny Upfold\n")
+    parsed = FB._parse_all(body, "RE: Oakland to Algeciras",
+                           "mbd_rate_response")
+    assert parsed.get("eta_offered") is None, (
+        f"Lonny's requested ETA came back as OL's offered ETA: "
+        f"{parsed.get('eta_offered')!r}")
