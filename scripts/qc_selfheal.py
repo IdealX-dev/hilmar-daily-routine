@@ -1186,6 +1186,35 @@ def phase_3_entries(log: Log, data: dict):
         cleaned.append(r)
     if removed_misclassified or removed_oos:
         data["requests"] = cleaned
+
+    # A BOOKED QUOTE REPORTS THE BOOKED OPTION, NOT THE CHEAPEST ONE.
+    #
+    # Michael's ruling, 2026-08-21, on a reply offering several sailings:
+    # "the booked one when there is a booking." The parser's headline rule
+    # (lowest rate offered on the lane) is the honest answer while the
+    # decision is still open; once a booking confirmation exists, the option
+    # Hilmar booked IS the transaction and reporting a cheaper one it
+    # declined would be as wrong as the row-order rule both replaced.
+    #
+    # This runs in PHASE 3 of BOTH qc_selfheal passes, so the post-patch pass
+    # sees carrier_won after patch_carriers has enriched it — the pre-patch
+    # pass often cannot, and a row that only becomes bookable later would
+    # otherwise wait a full day to move.
+    _snapped = []
+    for r in data["requests"]:
+        try:
+            moved = core.snap_quote_to_booked_option(r)
+        except Exception:
+            moved = None
+        if moved is not None:
+            _snapped.append((r.get("request_id"), r.get("carrier_won"), moved))
+    if _snapped:
+        _d = "; ".join(f"{rid} -> {car} @ ${rate:,.0f}"
+                       for rid, car, rate in _snapped[:5])
+        log.fix(
+            f"PHASE 3: moved {len(_snapped)} booked quote(s) onto the option "
+            f"Hilmar actually booked, with that option's schedule: {_d}"
+            + (f" +{len(_snapped) - 5} more" if len(_snapped) > 5 else ""))
     if removed_oos:
         _by_reason = Counter(reason for reason, _ in removed_oos)
         log.fix(
@@ -4888,12 +4917,25 @@ def phase_6_rules(log: Log, data: dict):
         _multi = [r for r in data.get("requests", [])
                   if isinstance(r.get("rate_options"), list)
                   and len(r["rate_options"]) > 1]
-        _wrong = []
+        _wrong, _booked = [], []
         for r in _multi:
             _priced = [o.get("ol_rate") for o in r["rate_options"]
                        if isinstance(o.get("ol_rate"), (int, float))]
             _stored = r.get("ol_rate")
             if not _priced or not isinstance(_stored, (int, float)):
+                continue
+            # A row deliberately moved onto the BOOKED option is not a defect
+            # — it is Michael's ruling of 2026-08-21 ("the booked one when
+            # there is a booking"), and it is the one legitimate reason to
+            # carry a rate OL beat in the same email. It still has to name
+            # itself: the marker is set only by snap_quote_to_booked_option,
+            # and the row must really be a confirmed win, or this is a
+            # writer forging an exemption.
+            if r.get("rate_option_source") == core.BOOKED_RATE_OPTION:
+                if core.is_confirmed_win(r):
+                    _booked.append(r.get("request_id"))
+                    continue
+                _wrong.append((r.get("request_id"), _stored, min(_priced)))
                 continue
             if abs(_stored - min(_priced)) > 0.01:
                 _wrong.append((r.get("request_id"), _stored, min(_priced)))
@@ -4909,7 +4951,9 @@ def phase_6_rules(log: Log, data: dict):
         elif _multi:
             log.ok(f"QC-079: {len(_multi)} row(s) came from an OL reply "
                    f"offering more than one option, and each stores the best "
-                   f"rate offered on its lane")
+                   f"rate offered on its lane"
+                   + (f" — except {len(_booked)} on the option Hilmar booked"
+                      if _booked else ""))
         else:
             log.ok("QC-079: no multi-option OL reply in the dataset")
         if _foreign:

@@ -1413,6 +1413,98 @@ def is_confirmed_win(r: dict) -> bool:
     return bool(r.get("mdolx_ref") or r.get("mdolx_refs_all"))
 
 
+# Fields that describe WHICH SAILING a quote is for. They move together or
+# not at all — see snap_quote_to_booked_option.
+_SAILING_FIELDS = (
+    "vessel_voyage", "etd_offered", "eta_offered", "transshipment",
+    "origin_free_time", "dest_free_time",
+)
+
+
+def _current_rate_option(r: dict, options: list):
+    """Which of the offered options is this row currently sitting on?
+
+    Matched on rate first (the field the headline rule selects) and carrier
+    second. Returns None when the row's values match no option — which means
+    something other than the rate sheet wrote them, and snapping must not
+    disturb them.
+    """
+    rate = r.get("ol_rate")
+    if rate is None:
+        return None
+    carrier = normalize_carrier(r.get("carrier_quoted") or "") or None
+    for opt in options:
+        if opt.get("ol_rate") != rate:
+            continue
+        opt_carrier = normalize_carrier(opt.get("carrier_quoted") or "") or None
+        if carrier is None or opt_carrier is None or opt_carrier == carrier:
+            return opt
+    return None
+
+
+def snap_quote_to_booked_option(r: dict):
+    """Move a multi-option quote onto the option Hilmar actually BOOKED.
+
+    Michael's ruling, 2026-08-21, asked which rate the report should call
+    "the rate" on a reply offering several sailings: "the booked one when
+    there is a booking."
+
+    So the ladder is evidence-first. The parser's headline rule (lowest rate
+    offered on the lane) answers a quote nobody has acted on yet — it is the
+    best OL put on the table, and it is the honest answer while the decision
+    is still open. But once a booking confirmation exists, guessing is over:
+    the option Hilmar booked IS the transaction, and reporting a cheaper one
+    it declined would be as wrong as the row-order rule this replaces.
+
+    "There is a booking" means is_confirmed_win — a WIN with an MDOLX
+    reference behind it, the same bar every client-facing claim clears
+    (QC-049). A send-signal WIN with no confirmation is not a booking, and
+    this will not move a row on one.
+
+    THE SAILING FIELDS MOVE WITH THE RATE, OR NOT AT ALL. A quote may never
+    pair one sailing's price with another sailing's schedule — that invariant
+    is the whole point of reading options as units. But a WIN row's ETD/ETA
+    may already have been written from the booking PDF, which is BETTER
+    evidence than the rate sheet, so a field is only rewritten when it still
+    holds the value of the option the row is leaving. Anything else was
+    written by a stronger source and is left alone.
+
+    Returns the booked option's rate when the row moved, else None.
+    """
+    options = (r or {}).get("rate_options")
+    if not isinstance(options, list) or len(options) < 2:
+        return None
+    if not is_confirmed_win(r):
+        return None
+    booked = normalize_carrier(r.get("carrier_won") or "")
+    if not booked:
+        return None
+    chosen = None
+    for opt in options:
+        if normalize_carrier(opt.get("carrier_quoted") or "") == booked:
+            chosen = opt
+            break
+    if chosen is None or chosen.get("ol_rate") is None:
+        return None
+    if (r.get("ol_rate") == chosen["ol_rate"]
+            and normalize_carrier(r.get("carrier_quoted") or "") == booked):
+        return None                      # already on the booked option
+    leaving = _current_rate_option(r, options)
+    for field in _SAILING_FIELDS:
+        value = chosen.get(field)
+        if value is None:
+            continue
+        if r.get(field) is None or (leaving is not None
+                                    and r.get(field) == leaving.get(field)):
+            r[field] = value
+    r["ol_rate"] = chosen["ol_rate"]
+    r["carrier_quoted"] = booked
+    # Why this row is not on the cheapest option. QC-079 reads it, and so
+    # does anyone reading the row six months from now.
+    r["rate_option_source"] = BOOKED_RATE_OPTION
+    return chosen["ol_rate"]
+
+
 def is_pending(r: dict) -> bool:
     """True if row is still pending. Same spelling in both forms — see is_win."""
     return (r or {}).get("status") == "PENDING"
@@ -1457,6 +1549,10 @@ def is_undated_quote(r: dict) -> bool:
 #: Marker qc_selfheal writes on a row whose response_timestamp was COPIED from
 #: another row's quote rather than read off an email of its own.
 BORROWED_RESPONSE_TIME = "sibling_quote"
+
+#: rate_option_source marker: this row's rate is the option Hilmar BOOKED,
+#: not the cheapest OL offered. Set only by snap_quote_to_booked_option.
+BOOKED_RATE_OPTION = "booked_carrier"
 
 
 def response_time_is_evidenced(r: dict) -> bool:
