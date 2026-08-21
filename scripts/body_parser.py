@@ -994,11 +994,26 @@ _TABLE_CELL_ALIASES = {
     "vessel": "vessel", "voyage": "voyage",
     "erd": "erd", "doc_cut": "doc_cut", "port_cut": "port_cut",
     "rail_cut": "rail_cut",
+    # LINDA'S TEMPLATE, 2026-08-21. Measured, not guessed: diag run
+    # 32493969967 printed her header verbatim as
+    #   Port of loading | Port of discharge | … | ERD | Doc Cutoff | Cutoff |
+    #   Sail | Arrive | RATE | CARRIER | …
+    # Three of those named nothing here, so on every quote she sends, the
+    # doc cutoff, the port cutoff and — the one that reached the CEO — the
+    # ETA were read out of a column the parser could not name and dropped.
+    # The Algeciras row is the proof: OL's grid says Arrive 24-Oct-26, the
+    # report said 2026-10-21, and 10/21 is the date LONNY asked for in the
+    # RFQ quoted underneath. Michael, 2026-08-20: "important data still
+    # missing".
+    "doc_cutoff": "doc_cut", "document_cutoff": "doc_cut",
+    "cutoff": "port_cut", "port_cutoff": "port_cut",
+    "cargo_cutoff": "port_cut", "cy_cutoff": "port_cut",
     # ETD/ETA — OL relabels these across schedule templates (2026-06-16).
     "etd": "etd", "etd_pol": "etd", "pol_etd": "etd", "sailing": "etd",
     "departure": "etd", "departs": "etd", "sail": "etd", "ets": "etd",
+    "sails": "etd", "depart": "etd",
     "eta": "eta", "eta_pod": "eta", "pod_eta": "eta", "arrival": "eta",
-    "arrives": "eta", "arriving": "eta",
+    "arrives": "eta", "arriving": "eta", "arrive": "eta",
     "rate": "rate", "dthc": "dthc",
     # Carrier — OL relabels this too (2026-06-15 Manila fix).
     "carrier": "carrier", "ocean_carrier": "carrier", "ocean_line": "carrier",
@@ -1189,12 +1204,30 @@ def _collapse_multiline_pipe_table(text: str) -> str:
     return "\n".join(out_lines)
 
 
-def _find_table_rows(text: str):
-    """Locate OL's rate-table header row and the data row aligned under it.
+def _is_rule_row(cells: list) -> bool:
+    """True for a decoration row ('|---|---|') that carries no values."""
+    return bool(cells) and all(
+        (not c) or re.fullmatch(r"[-=:_\s]+", c) for c in cells)
 
-    Returns ``[header_cells, data_cells]`` or None. The FIRST qualifying
+
+def _find_table_block(text: str):
+    """Locate OL's rate-table header and EVERY option row aligned under it.
+
+    Returns ``[header_cells, data_cells, ...]`` or None. The FIRST qualifying
     header wins: in a flattened reply chain the newest message sits at the
     top, so first-found is the current quote, not a quoted older one.
+
+    ONE HEADER, MANY ROWS — the 2026-08-21 change. This used to stop at the
+    first data row, so an OL reply offering a choice was stored as whichever
+    line Maria happened to type first and the rest was discarded unseen
+    (Michael, 2026-08-20: "the numbers are wrong for $" / "could be different
+    rates for different steamship lines"). Measured on real bodies from the
+    week of 2026-08-17: Oakland->Xingang offered $810 ONE via Pusan AND $675
+    CMA direct; Oakland->Algeciras offered $4,938 CMA AND $4,201 Hapag. Both
+    discarded options were the cheaper one.
+
+    Every option row is returned. Choosing among them is _pick_headline's job,
+    and dropping rows that quote a different lane is _same_lane_options'.
     """
     if not text:
         return None
@@ -1206,12 +1239,118 @@ def _find_table_rows(text: str):
         known = sum(1 for c in header if _header_key(c))
         if known < _HEADER_MIN_KNOWN:
             continue
-        for j in range(i + 1, min(i + 1 + _HEADER_DATA_WINDOW, len(lines))):
+        rows: list = []
+        gap = 0
+        for j in range(i + 1, len(lines)):
             data = _split_pipe_cells(lines[j])
-            if sum(1 for c in data if c) >= 2:
-                return [header, data]
-        return None
+            if sum(1 for c in data if c) >= 2 and not _is_rule_row(data):
+                # A repeated header ENDS this grid instead of joining it —
+                # OL restates the column names when a second table follows.
+                if sum(1 for c in data if _header_key(c)) >= _HEADER_MIN_KNOWN:
+                    break
+                rows.append(data)
+                gap = 0
+                continue
+            # Blank and decoration lines are tolerated between rows, but any
+            # NON-blank line that is not a data row ends the grid, and the run
+            # of skipped lines is bounded. Together those stop the scan from
+            # wandering out of the table and into OL's NRA footer, which is
+            # itself pipe-shaped ("... NRA AMENDMENT. | | |").
+            if rows and lines[j].strip():
+                break
+            gap += 1
+            if gap > _HEADER_DATA_WINDOW:
+                break
+        return [header, *rows] if rows else None
     return None
+
+
+def _find_table_rows(text: str):
+    """Header plus the FIRST data row only.
+
+    Kept as the narrow view onto _find_table_block for callers that genuinely
+    want one row (and for the tests that pin the header-detection gates).
+    """
+    block = _find_table_block(text)
+    return [block[0], block[1]] if block else None
+
+
+def _option_pod(opt: dict) -> str:
+    """Comparable form of an option's POD cell ('Haiphong'/'HAIPHONG' -> same)."""
+    return re.sub(r"[^a-z]", "", (opt.get("pod") or "").lower())
+
+
+def _same_lane_options(options: list):
+    """Drop option rows quoting a DIFFERENT destination from the first row's.
+
+    OL pastes more than one lane into a single reply. The 2026-08-19 answer to
+    "Oakland to Haiphong" carries a Haiphong row AND an
+    "OAKLAND | SHANGHAI | ... | $740 | CMA" row. Nothing but row order was
+    keeping that Shanghai price off a Haiphong quote, and row order is not a
+    guarantee — it is what Maria typed.
+
+    A row with no POD cell is KEPT: an absent cell is not evidence of a
+    different lane, and most narrow grids have no POD column at all.
+
+    Returns (kept, dropped_pods).
+    """
+    lane = ""
+    for opt in options:
+        lane = _option_pod(opt)
+        if lane:
+            break
+    if not lane:
+        return list(options), []
+    kept, dropped = [], []
+    for opt in options:
+        pod = _option_pod(opt)
+        if pod and pod != lane:
+            dropped.append(opt.get("pod"))
+        else:
+            kept.append(opt)
+    return kept, dropped
+
+
+def _pick_headline(options: list) -> dict:
+    """The option that represents the quote: the LOWEST rate OL offered.
+
+    [ASSUMPTION 2026-08-21, stated to Michael, awaiting his ruling] "What OL
+    quoted" for a lane is the best price OL put on the table for it. The rule
+    it replaces was not a rule at all — it was "whichever row came first",
+    which on 2026-08-19 reported $4,938 to Algeciras when OL had also offered
+    $4,201, and $810 to Xingang against $675. In both the discarded option was
+    cheaper AND arrived sooner, so first-row was not buying service quality.
+
+    Every other field of the quote — carrier, vessel, voyage, ETD, ETA, free
+    time — comes from THIS SAME ROW, so a quote can never pair one sailing's
+    price with another sailing's schedule.
+
+    When no row priced anything, the first row still stands: it carries the
+    carrier and the schedule, and dropping it would lose a real response.
+    """
+    priced = [o for o in options if o.get("ol_rate") is not None]
+    if not priced:
+        return dict(options[0]) if options else {}
+    return dict(min(priced, key=lambda o: o["ol_rate"]))
+
+
+def _table_options(block: list, text: str):
+    """Parse every option row of a matched grid, then drop the foreign lanes.
+
+    Shared by both trees' parse_rate_table so they can never disagree about
+    which option is the quote. Returns (options, dropped_pods).
+    """
+    header, data_rows = block[0], block[1:]
+    options = []
+    for data in data_rows:
+        cells = _table_cells(header, data)
+        opt = _rate_table_from_cells(cells)
+        if "carrier_quoted" not in opt:
+            opt.update(_carrier_fallback(data, text or ""))
+        opt.update(_table_date_fields(cells))
+        if opt:
+            options.append(opt)
+    return _same_lane_options(options)
 
 
 def _table_cells(header: list, data: list) -> dict:
@@ -1569,18 +1708,29 @@ def parse_rate_table(text: str) -> dict:
       etd_offered, eta_offered, erd, origin_cutoff, doc_cutoff, port_cutoff,
       origin_free_time, dest_free_time
 
+    Plus, only when OL offered a choice:
+      rate_options    — every option row, in OL's order, each the same shape
+      other_lane_pods — PODs of rows dropped for quoting a different lane
+
     rate_expiry is deliberately NOT emitted here: it lives in the body prose,
     not the grid, and fetch_bodies composes it from parse_rate_expiry at the
     call site. Keeping the table parser pure is the point.
     """
-    rows = _find_table_rows(text or "")
-    if not rows:
+    block = _find_table_block(text or "")
+    if not block:
         return parse_prose_rate(text or "")
-    cells = _table_cells(rows[0], rows[1])
-    out = _rate_table_from_cells(cells)
-    if "carrier_quoted" not in out:
-        out.update(_carrier_fallback(rows[1], text or ""))
-    out.update(_table_date_fields(cells))
+    options, dropped = _table_options(block, text or "")
+    if not options:
+        return parse_prose_rate(text or "")
+    out = _pick_headline(options)
+    # EVERY option OL wrote, in the order OL wrote them, so nothing is
+    # discarded silently and the report can show Michael the choice he was
+    # actually offered. Present only when there IS a choice — a one-row grid
+    # keeps exactly its old shape, keys and all.
+    if len(options) > 1:
+        out["rate_options"] = [dict(o) for o in options]
+    if dropped:
+        out["other_lane_pods"] = dropped
     return out
 
 

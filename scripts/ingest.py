@@ -1460,7 +1460,13 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict],
         best["ol_rate"] = rt.get("ol_rate")
         best["response_timestamp"] = sent
         best["olusa_time_et"] = C.fmt_et(sent_dt)
-        best["etd_offered"] = rt.get("etd") or parsed.get("etd_offered")
+        # rt.get("etd_offered") added 2026-08-21 alongside the legacy
+        # rt.get("etd"), for the same reason the ETA line below already hedges
+        # both: scripts/body_parser.parse_rate_table emits etd_offered and
+        # NEVER emits "etd" (that key is the src/hilmar mirror's), so the old
+        # term was dead here and every production ETD arrived via `parsed`.
+        best["etd_offered"] = (rt.get("etd") or rt.get("etd_offered")
+                               or parsed.get("etd_offered"))
         # ETA KEEPS A KNOWN VALUE RATHER THAN BEING NULLED BY A LATER EMAIL.
         #
         # 2026-08-10, tracing QC-027's ETA at 93.3% (307/329, the only field
@@ -1502,6 +1508,15 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict],
             best["erd"] = erd_val
         best["detention_free"] = rt.get("detention_free")
         best["demurrage_free"] = rt.get("demurrage_free")
+        # EVERY option OL offered, not just the one that became the headline.
+        # 2026-08-21 (Michael "the numbers are wrong for $"): an OL reply
+        # routinely carries two sailings on two steamship lines at two prices.
+        # ol_rate is now the best of them and the rest were being thrown away
+        # at the parser; keeping them on the row is what lets the report say
+        # "$675, 1 other option" instead of quietly showing one number.
+        # Absent for a single-option quote, so nothing changes for those rows.
+        best["rate_options"] = rt.get("rate_options")
+        best["other_lane_pods"] = rt.get("other_lane_pods")
         # OL signer: only override if the body produced a real name. parse_signer
         # in core.py is strict-allowlist so any non-None here is a known OL person.
         body_signer = parsed.get("ol_responder_signer")

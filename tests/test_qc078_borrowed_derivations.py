@@ -44,7 +44,11 @@ def _run(rows):
 
 
 def _msgs(log):
-    return list(log.errors) + list(log.warnings) + list(log.oks)
+    # Log has fixes/warnings/errors and NO `oks` — log.ok only prints. This
+    # helper only ever runs inside a failing assert's message, so the missing
+    # attribute would have replaced a real QC-078 failure with an
+    # AttributeError at the exact moment the failure mattered.
+    return list(log.errors) + list(log.warnings) + list(log.fixes)
 
 
 def test_a_leaked_turnaround_is_an_error():
