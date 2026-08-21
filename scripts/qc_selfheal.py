@@ -4863,6 +4863,68 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-078: check failed with exception: {_e}")
 
+    # QC-079: THE STORED RATE IS THE BEST OF THE OPTIONS OL ACTUALLY OFFERED.
+    #
+    # 2026-08-21, Michael on the OL-USA RESPONSES table: "the numbers are
+    # wrong for $". They were. body_parser read the header and the FIRST data
+    # row of OL's grid and stopped, so a reply offering a choice was stored as
+    # whichever sailing Maria typed first. Measured on the week of 2026-08-17:
+    # Oakland->Xingang offered $810 ONE via Pusan AND $675 CMA direct;
+    # Oakland->Algeciras offered $4,938 CMA AND $4,201 Hapag. Both discarded
+    # options were cheaper AND faster, and nothing in the pipeline could see
+    # that they existed.
+    #
+    # rate_options now carries every option; ol_rate is the best of them. This
+    # check re-asserts that on the real dataset, because the selection lives in
+    # the parser and the row is written by ingest, patch_carriers PASS 2, the
+    # PDF fallback and the heals — five writers, one invariant. A row whose
+    # ol_rate is not the cheapest option it lists means one of them overwrote
+    # the headline without re-reading the choice.
+    #
+    # other_lane_pods is the second half: OL pastes more than one lane into one
+    # reply (the 2026-08-19 Haiphong answer also priced SHANGHAI at $740), and
+    # a row that saw one is worth naming even though the parser dropped it.
+    try:
+        _multi = [r for r in data.get("requests", [])
+                  if isinstance(r.get("rate_options"), list)
+                  and len(r["rate_options"]) > 1]
+        _wrong = []
+        for r in _multi:
+            _priced = [o.get("ol_rate") for o in r["rate_options"]
+                       if isinstance(o.get("ol_rate"), (int, float))]
+            _stored = r.get("ol_rate")
+            if not _priced or not isinstance(_stored, (int, float)):
+                continue
+            if abs(_stored - min(_priced)) > 0.01:
+                _wrong.append((r.get("request_id"), _stored, min(_priced)))
+        _foreign = [r for r in data.get("requests", [])
+                    if r.get("other_lane_pods")]
+        if _wrong:
+            _d = "; ".join(f"{rid}: stored ${s:,.0f}, best offered ${b:,.0f}"
+                           for rid, s, b in _wrong[:6])
+            log.error(
+                f"QC-079: {len(_wrong)} quoted row(s) store a rate that is NOT "
+                f"the best option OL offered on that lane. The report is "
+                f"showing the CEO a number OL beat in the same email: {_d}")
+        elif _multi:
+            log.ok(f"QC-079: {len(_multi)} row(s) came from an OL reply "
+                   f"offering more than one option, and each stores the best "
+                   f"rate offered on its lane")
+        else:
+            log.ok("QC-079: no multi-option OL reply in the dataset")
+        if _foreign:
+            _fl = "; ".join(
+                f"{r.get('request_id')} ({r.get('destination') or '?'}) also "
+                f"priced {', '.join(str(p) for p in r['other_lane_pods'][:3])}"
+                for r in _foreign[:4])
+            log.warn(
+                f"QC-079: {len(_foreign)} quoted row(s) came from an OL reply "
+                f"that ALSO priced a different destination. Those rows were "
+                f"dropped from the quote rather than averaged into it — "
+                f"confirm the lane is right: {_fl}")
+    except Exception as _e:
+        log.warn(f"QC-079: check failed with exception: {_e}")
+
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
     # On 2026-07-27 the fire was blocked, raised a FIRE-ALERT, and that alert

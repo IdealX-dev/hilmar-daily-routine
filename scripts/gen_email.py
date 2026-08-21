@@ -956,6 +956,38 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     )
 
     # ── 2. OL-USA RESPONSES (11 columns, full timing trio + offered dates) ───
+    def _rate_cell(r):
+        """The rate, and the options OL offered that it beat.
+
+        Michael, 2026-08-20: "the numbers are wrong for $". They were: the
+        parser read only the first row of OL's grid, so a reply offering
+        "$810 ONE via Pusan" and "$675 CMA direct" was reported as $810 with
+        the cheaper option discarded before anyone saw it. ol_rate is now the
+        best rate OL offered on the lane — and this cell shows what else was
+        on the table, because a single number that hides a choice is how the
+        first defect stayed invisible for so long.
+        """
+        rate = r.get("ol_rate")
+        head = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
+        opts = r.get("rate_options") or []
+        if len(opts) < 2:
+            return _esc(head)
+        rest, skipped_headline = [], False
+        for o in opts:
+            val = o.get("ol_rate")
+            if (not skipped_headline and isinstance(rate, (int, float))
+                    and isinstance(val, (int, float)) and abs(val - rate) < 0.01):
+                skipped_headline = True
+                continue
+            if not isinstance(val, (int, float)):
+                continue
+            carrier = o.get("carrier_quoted") or ""
+            rest.append(f"${val:,.0f}{(' ' + carrier) if carrier else ''}")
+        if not rest:
+            return _esc(head)
+        return (f'{_esc(head)}<div style="font-weight:400;font-size:10px;'
+                f'color:{B.DOC_MUTED}">also {_esc(", ".join(rest))}</div>')
+
     resp_rows = ""
     if ol_resp:
         for r in ol_resp:
@@ -963,8 +995,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             cont = r.get("containers") or "—"
             teu = _fmt_teu(r)
             carrier = r.get("carrier_quoted") or "—"
-            rate = r.get("ol_rate")
-            rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
+            rate_s = _rate_cell(r)
             signer = r.get("ol_responder_signer") or "—"
             lonny_t = _fmt_short_pt(r.get("request_timestamp"))
             ol_t = _fmt_short_et(r.get("response_timestamp"))
@@ -976,7 +1007,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{rate_s}</td>'
                 f'<td {_TD_STYLE}>{_esc(signer)}</td>'
                 f'<td {_TD_STYLE};font-size:11px>{_esc(lonny_t)}</td>'
                 f'<td {_TD_STYLE};font-size:11px>{_esc(ol_t)}</td>'
@@ -1144,8 +1175,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             cont = r.get("containers") or "—"
             teu = _fmt_teu(r)
             carrier = r.get("carrier_quoted") or "—"
-            rate = r.get("ol_rate")
-            rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
+            rate_s = _rate_cell(r)
             signer = r.get("ol_responder_signer") or "—"
             lonny_t = _fmt_short_pt(r.get("request_timestamp"))
             # A BORROWED minute is not a send time, and its age is not an age.
@@ -1167,7 +1197,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{rate_s}</td>'
                 f'<td {_TD_STYLE}>{_esc(signer)}</td>'
                 f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
                 f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(ol_t)}</td>'

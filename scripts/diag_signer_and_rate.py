@@ -150,6 +150,17 @@ def main() -> int:
         print(f"    carrier_quoted : {r.get('carrier_quoted')!r}")
         print(f"    ol_rate        : {rate!r}")
         print(f"    signer         : {signer!r}")
+        # THE SCHEDULE FIELDS, because Michael's 2026-08-20 screenshot showed
+        # a Shanghai row with "ETA Offered —" while the OL reply plainly
+        # carried an ETA column. A blank here with a populated cell below is a
+        # parse loss; a blank in both is OL leaving the column empty. The
+        # table alone cannot tell those apart, which is why they print side by
+        # side.
+        print(f"    etd_offered    : {r.get('etd_offered')!r}")
+        print(f"    eta_offered    : {r.get('eta_offered')!r}")
+        print(f"    vessel_voyage  : {r.get('vessel_voyage')!r}")
+        print(f"    rate_options   : "
+              f"{len(r.get('rate_options') or [])} option(s) stored")
         print(f"    source_imids   : {len(imids)}")
 
         if not signer:
@@ -199,6 +210,37 @@ def main() -> int:
                         if ln.count("|") >= 3 and any(
                                 c.isdigit() for c in ln):
                             print(f"        ROW | {ln.strip()[:150]}")
+            # WHAT THE PARSER GETS OUT OF THIS EXACT BODY, right next to what
+            # the row stored. A difference means something between the parse
+            # and the row dropped the value; agreement means the cell is
+            # genuinely absent from OL's email and no parser change can
+            # recover it.
+            try:
+                import body_parser as BP
+                live = BP.parse_rate_table(txt) or {}
+                print(f"    live parse     : rate={live.get('ol_rate')!r} "
+                      f"carrier={live.get('carrier_quoted')!r} "
+                      f"etd={live.get('etd_offered')!r} "
+                      f"eta={live.get('eta_offered')!r} "
+                      f"vessel={live.get('vessel')!r} "
+                      f"options={len(live.get('rate_options') or [])}")
+                for i, opt in enumerate(live.get("rate_options") or [], 1):
+                    print(f"        opt {i}: ${opt.get('ol_rate')} "
+                          f"{opt.get('carrier_quoted')} "
+                          f"{opt.get('vessel')} ETA {opt.get('eta_offered')}")
+                if live.get("other_lane_pods"):
+                    print(f"        *** dropped rows for another lane: "
+                          f"{live['other_lane_pods']} ***")
+                blk = BP._find_table_block(txt)
+                if blk:
+                    print(f"        header cells: {blk[0]}")
+                    for row_cells in blk[1:]:
+                        print(f"        data cells  : {row_cells}")
+                else:
+                    print("        no pipe grid matched — prose path")
+            except Exception as e:
+                print(f"    live parse FAILED: {type(e).__name__}: {e}")
+
             ols = sorted(set(OL_EMAIL.findall(txt)))
             if ols:
                 print(f"    ol-usa addresses in body: {ols[:4]}")

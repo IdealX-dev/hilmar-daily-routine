@@ -627,6 +627,10 @@ def main():
         # booking like the NUMIDIA samples (subject only says "1X40'HC"
         # for 3 containers — wrong count).
         "container_count", "teu_requested", "containers", "booking_ref",
+        # 2026-08-21: the option list travels with the fields it explains, so
+        # a row enriched from a sibling body carries that body's alternatives
+        # rather than an empty choice next to a backfilled rate.
+        "rate_options",
     )
 
     for r in requests:
