@@ -67,11 +67,34 @@ anywhere in the pipeline.
                       THAT SAME ROW, so a quote can never pair one sailing's
                       price with another sailing's schedule
 
-[ASSUMPTION, FLAGGED TO MICHAEL AND AWAITING HIS RULING] "What OL quoted" for
-a lane = the best price OL put on the table for it. This is a business call,
-not a parser detail, and it is stated rather than buried. What it replaces was
-not a rule at all — it was the order the rows were typed. If Michael wants the
-booked option to win instead, that is a one-function change in _pick_headline.
+MICHAEL RULED THE SAME DAY, and the assumption is retired. Asked which rate
+the report should call "the rate" on a multi-option reply, he said: "the
+booked one when there is a booking." So the ladder is evidence-first, and it
+is now two rungs:
+
+  1. THE BOOKED OPTION, when a booking confirmation exists. Once Hilmar has
+     booked, guessing is over — the option booked IS the transaction, and
+     reporting a cheaper one it declined would be as wrong as the row-order
+     rule both of these replaced. "There is a booking" means
+     core.is_confirmed_win: a WIN with an MDOLX reference, the same bar every
+     client-facing claim clears (QC-049). A send-signal WIN with no
+     confirmation is NOT a booking and will not move a row.
+  2. THE BEST RATE OFFERED on the lane, while the decision is still open.
+     That is the honest answer to "what did OL quote" before anyone has acted
+     on it, and it is what the parser picks.
+
+core.snap_quote_to_booked_option does rung 1, called from phase_3_entries so
+it runs in BOTH qc_selfheal passes — the post-patch pass sees carrier_won
+after patch_carriers has enriched it, and a row that only becomes bookable
+later does not wait a day to move. It is idempotent, which matters because
+phase 3 runs twice per fire.
+
+THE SCHEDULE MOVES WITH THE RATE, OR NOT AT ALL — a quote may never pair one
+sailing's price with another sailing's schedule. But a WIN's ETD/ETA may
+already have come from the booking PDF, which is better evidence than the rate
+sheet, so a field is rewritten only when it still holds the value of the
+option the row is LEAVING. Anything else was written by a stronger source and
+is left alone. Tested both ways.
 
 CROSS-SYSTEM IMPACT, STATED BEFORE THE CHANGE: parse_rate_table is read by
 fetch_bodies, patch_carriers (both passes), qc_selfheal and
@@ -139,7 +162,7 @@ has not run since. Michael's next daily report is the proof, and if any of
 these three still shows a gap, the diagnostic prints stored value beside live
 parse for every row and will say which.
 
-3,297 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
+3,308 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
 
 ### 2026-08-19 (fifth pass) — the undated-quote banner is off the report
 
