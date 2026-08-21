@@ -3,6 +3,112 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-21 — a signer is whoever signed, and OL offers more than one rate
+
+Michael, on the OL-USA RESPONSES table: "why are signors missing nothing
+should be missing.. also the numbers are wrong for $". Two separate defects,
+both confirmed against real message bodies pulled from the blob store (diag
+runs 32382040208 and 32413391384), neither inferred.
+
+#### 1. THE SIGNER ROSTER WAS A GATE, AND IT WAS SHORT
+
+core.parse_signer required every matched name to appear in
+_OL_INDIVIDUALS_FULL (14 entries) or _OL_FIRST_NAMES (14). Maria Machado signs
+nine of the twelve recent quotes and is on neither list, so her name was
+discarded and the cell rendered "—". Linda Echevarria survived only because
+her block carries an "email: First.Last@ol-usa.com" line matched by a separate
+rule; Maria's block has no email line.
+
+MICHAEL REJECTED THE DESIGN, not just the symptom: "a signor is a signor if
+new staff comes, new staff comes. if they change they change.. maria machado
+is staff then." A closed roster is a maintenance debt that fails silently on
+every new hire — which is exactly what happened.
+
+The roster is no longer a gate. Any person-shaped name in the signature block
+is accepted; the roster survives only as a preference when several candidates
+appear. The safe discriminator is the one Michael supplied — "lonny doesn't
+sign from an ol email address" — and it is structural, not a name blocklist:
+parse_signer only ever runs on the mbd_inbound / mbd_rate_response buckets
+(fetch_bodies.py:231), and refresh_stage.classify() only assigns those when
+the sender ends in @ol-usa.com. Verified, not assumed.
+
+#### 2. ONLY THE FIRST ROW OF OL'S RATE TABLE WAS EVER READ
+
+_find_table_rows returned [header, first_data_row] and stopped. An OL reply
+offering a CHOICE was stored as whichever sailing was typed first, and the
+rest was discarded before anything downstream could see it existed. The week
+of 2026-08-17, verbatim:
+
+  Oakland -> Xingang     $810 ONE via Pusan  |  $675 CMA direct    stored 810
+  Oakland -> Algeciras   $4,938 CMA          |  $4,201 Hapag       stored 4938
+  Oakland -> Shanghai    $430 YML            |  $566 OOCL          stored 430
+  Oakland -> Yokohama    two sailings, one carrier, one price
+  Oakland -> Haiphong    $555 ONE Haiphong   |  $740 CMA SHANGHAI  stored 555
+
+In two of the four multi-option bodies the discarded option was cheaper AND
+arrived sooner, so reading row one was not buying service quality. Michael
+diagnosed it before I did: "could be different rates for different steamship
+lines."
+
+THE HAIPHONG BODY IS THE ONE NOBODY EXPECTED — a row for a DIFFERENT
+DESTINATION pasted into the same reply. Today the Haiphong row happens to come
+first. Nothing in the parser guaranteed that, and if the order had flipped, a
+Shanghai price would have been reported as a Haiphong quote with no warning
+anywhere in the pipeline.
+
+  _find_table_block   reads every option row under the header, bounded so
+                      OL's pipe-shaped NRA footer ("… AMENDMENT. | | |") and
+                      rule rows cannot become options
+  _same_lane_options  drops rows quoting a different POD than the first and
+                      records them in other_lane_pods instead of dropping
+                      them silently
+  _pick_headline      the LOWEST rate offered on the lane — with carrier,
+                      vessel, voyage, ETD, ETA and free time all read from
+                      THAT SAME ROW, so a quote can never pair one sailing's
+                      price with another sailing's schedule
+
+[ASSUMPTION, FLAGGED TO MICHAEL AND AWAITING HIS RULING] "What OL quoted" for
+a lane = the best price OL put on the table for it. This is a business call,
+not a parser detail, and it is stated rather than buried. What it replaces was
+not a rule at all — it was the order the rows were typed. If Michael wants the
+booked option to win instead, that is a one-function change in _pick_headline.
+
+CROSS-SYSTEM IMPACT, STATED BEFORE THE CHANGE: parse_rate_table is read by
+fetch_bodies, patch_carriers (both passes), qc_selfheal and
+build_ops_flow_v2. Because the pipeline is rebuild-not-merge, historic rows
+with multi-option bodies WILL re-derive to the cheaper number on the next
+fire — win/loss economics, the carrier scoreboard, savings and the insights
+baseline all move with them. That is a correction, not damage, but it is a
+visible one and nobody should be surprised by it. rate_options and
+other_lane_pods are additive row keys; no migration script is required
+because nothing reads them yet that could break on their absence.
+
+NOTHING IS THROWN AWAY. rate_options rides on the row, and the daily report
+renders it in OL-USA RESPONSES and PENDING HILMAR as "$675 / also $810 ONE".
+A hidden choice can never again look like a single number.
+
+QC-079 (new) re-asserts the invariant on the real dataset, because the
+selection lives in the parser while the row is written by ingest,
+patch_carriers PASS 2, the PDF fallback and the heals — five writers, one
+rule, and a unit test only pins today's five. Its second half WARNs when a
+quote came from a reply that also priced another destination.
+
+#### ALSO FIXED
+
+_msgs in the QC-078 test read log.oks. Log has no such attribute (log.ok only
+prints — the lesson from 2026-08-19), and the helper only runs inside a
+failing assert's message. It would have replaced a real QC-078 failure with an
+AttributeError at the exact moment the failure mattered.
+
+#### STILL OPEN
+
+The Shanghai "ETA Offered —" in Michael's 2026-08-20 screenshot is NOT
+explained yet. The diagnostic now prints stored etd/eta/vessel beside a live
+re-parse of the same body, so the next run says whether the cell was lost in
+parsing or was never in OL's email. Not guessed at in the meantime.
+
+3,293 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
+
 ### 2026-08-19 (fifth pass) — the undated-quote banner is off the report
 
 Michael, on "⚠️ 1 recent quote has a rate or carrier but no response time, so
