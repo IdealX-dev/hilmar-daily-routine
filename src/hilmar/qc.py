@@ -335,13 +335,12 @@ def phase_3_entries(log: Log, data: dict) -> None:
             if not r.get("olusa_time_et"):
                 r["olusa_time_et"] = core.fmt_et(resp_dt, with_date=False)
 
-        if r.get("etd_fit_days") is None and r.get("quoted"):
-            lonny_ask = r.get("eta_requested") or r.get("requested_dates") or r.get("cutoff_requested")
-            ol_offer = r.get("eta_offered") or r.get("etd_offered")
-            if lonny_ask and ol_offer:
-                fit = core.etd_fit_days(lonny_ask, ol_offer)
-                if fit is not None:
-                    r["etd_fit_days"] = fit
+        # Mirrors scripts/qc_selfheal.py (2026-08-21): like-for-like only,
+        # and recomputed every pass so a wrong value cannot persist.
+        if r.get("quoted"):
+            fit, basis = core.requested_fit_days(r)
+            r["etd_fit_days"] = fit
+            r["etd_fit_basis"] = basis
 
         prior_status = r.get("status")
         decision = core.decide_status(

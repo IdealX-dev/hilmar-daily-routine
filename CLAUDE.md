@@ -26,6 +26,24 @@ ENGINEERING — non-negotiable
 4. End of every session: update CHANGELOG and docs so the next session starts
    current. Log every decision made or reversed, by name.
 
+LOOK IT UP — do not answer library questions from memory
+- Before writing or changing code that leans on a library, framework, SDK or
+  API — stdlib datetime/zoneinfo, msal, azure-storage-blob, pdfplumber,
+  jinja2, pytest, Microsoft Graph — query Context7 for that library FIRST and
+  cite what it says. Training data goes stale; this codebase has already paid
+  for confident-but-wrong recall.
+- Applies even when the answer seems obvious. The 2026-08-21 example: whether
+  `aware_dt + timedelta(hours=24)` measures wall-clock or absolute time
+  decides whether two aging windows agree across a DST change. Context7's
+  own docs example answers it in one line; memory would have guessed.
+- For a runtime failure in someone else's library or service, search the
+  developer index (Firecrawl `categories: ["developer"]`) over real issues
+  and PRs before theorising. The open Graph 404 on the shared mailbox is the
+  standing case: it has been guessed at twice and looked up zero times.
+- Do NOT use these for business logic, this repo's own code, or Michael's
+  operating decisions. They answer "what does this library do", never "what
+  should this pipeline do".
+
 WHEN UNSURE
 - Missing info: state [ASSUMPTION], ask for the real value, keep going where
   safe. Do not guess into production.

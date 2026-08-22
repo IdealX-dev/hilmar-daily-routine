@@ -113,12 +113,27 @@ def test_html_to_text_collapses_whitespace():
 # ── parse_eta_requested / etd_offered / eta_offered / origin_cutoff ────
 
 
-def test_parse_eta_requested_finds_date_near_anchor():
-    # parse_eta_requested anchors on "need to ship/sail/load/depart" or
-    # "target etd" / "requested etd" / "require by" — not bare "ETA".
+def test_a_departure_ask_is_not_a_requested_arrival():
+    """"Need to ship by" states a DEPARTURE, so it belongs to etd_requested.
+
+    This test used to assert the opposite — that parse_eta_requested picks up
+    "need to ship/sail/load/depart" — and it was pinning the defect. Michael,
+    2026-08-21: "compare like with like only". eta_requested is differenced
+    against OL's offered ARRIVAL to decide ETD_MISS, so filing a sail-by date
+    there made the computed "miss" the ocean transit time, and every
+    cutoff-style RFQ that lost was stamped "missed the requested ETD".
+    """
     text = "Need to ship by 5/15/2026"
-    got = BP.parse_eta_requested(text)
-    assert got, f"expected an ETA-requested date, got {got!r}"
+    assert BP.parse_eta_requested(text) is None, (
+        "a departure ask must not populate the requested ARRIVAL")
+    assert BP.parse_etd_requested(text) == "2026-05-15"
+
+
+def test_a_real_arrival_ask_still_parses():
+    """The other half — removing the departure anchors must not blind the
+    arrival side, which is the leg Lonny states most often."""
+    assert BP.parse_eta_requested("Oakland to Shanghai\nETA 9/15/2026") == "2026-09-15"
+    assert BP.parse_eta_requested("Deliver by 6/1/2026") == "2026-06-01"
 
 
 def test_parse_etd_offered_finds_etd():

@@ -149,6 +149,64 @@ def _report_label(report_date):
     return _fmt_date(datetime.combine(report_date, datetime.min.time()), "%A %B %-d, %Y")
 
 
+def _pending_as_of_note(as_of_label):
+    """The PENDING sections are LIVE, and the day box around them is not.
+
+    Michael, 2026-08-21, on the delivered Aug 20 report: "pending hilmar two
+    sections different number of open". STATUS CHANGES showed three lanes
+    moving INTO Pending Hilmar; the PENDING HILMAR section below it listed one
+    row, and that row was a different lane quoted the NEXT day.
+
+    Both numbers were right and the report could not say so. STATUS CHANGES is
+    the report day's history (_today_events windows it on the transition's ET
+    date); the PENDING lists are current state at render time with no date
+    filter at all — deliberately, because their job is "what is open right
+    now", which is the thing a reader can act on. Stacking a day's history and
+    a live list inside one box headed "What Happened — <day>" is what made
+    them read as a contradiction.
+
+    So the sections say which moment they describe. Michael chose this over
+    freezing the whole report to the report day: the pending list stays an
+    actionable to-do list rather than becoming a historical snapshot.
+    """
+    return (f'<p style="margin:0 0 6px;font-size:11px;color:{B.DOC_MUTED}">'
+            f'Open right now — as of {_esc(as_of_label)}. Not limited to the '
+            f'report day above, so it can include quotes from other days that '
+            f'are still open.</p>')
+
+
+def _left_pending_note(status_ch, pending_hil):
+    """Name the rows that moved INTO Pending Hilmar today and have since left.
+
+    Without this the reader has to reconcile two counts by hand and gets it
+    wrong — which is exactly the complaint. The 2026-08-13 fix appended
+    "— since aged to Q&L" to each STATUS CHANGES row, and Michael filed the
+    same complaint again eight days later: a per-row suffix does not answer
+    "why does this section say 3 and that one say 1".
+    """
+    open_ids = {r.get("request_id") for r in pending_hil}
+    gone, seen = [], set()
+    for r, h in status_ch:
+        rid = r.get("request_id")
+        if (h.get("to") or "").upper() != "QUOTED":
+            continue
+        if rid in open_ids or rid in seen:
+            continue
+        seen.add(rid)
+        gone.append(r)
+    if not gone:
+        return ""
+    lanes = ", ".join(
+        _esc(r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}")
+        for r in gone[:4])
+    more = f" +{len(gone) - 4} more" if len(gone) > 4 else ""
+    return (f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_MUTED}">'
+            f'{len(gone)} quote(s) shown in STATUS CHANGES as moving into '
+            f'Pending Hilmar are no longer in this list — they passed the '
+            f'{core.PENDING_HILMAR_LOSS_HOURS}h decision window and are now '
+            f'Quoted &amp; Lost: {lanes}{more}.</p>')
+
+
 def build_subject(data, cfg):
     report = _report_date()
     label = _fmt_date(datetime.combine(report, datetime.min.time()), "%b %-d, %Y")
@@ -693,7 +751,12 @@ def _status_change_pill(status, r, other_status=None):
     if s == "QUOTED":
         return V.pending_pill("PENDING_HILMAR")
     if s != "PENDING":
-        return V.status_pill(status)
+        # display_status, NOT the raw enum. Production stores LEGACY form
+        # (LOSS + quoted), so this rendered a pill reading "LOSS" while every
+        # count, KPI and rollup in the SAME email said "Q&L" — and a row
+        # stored in STRICT form ("Q&L") fell through to the grey unknown-status
+        # fallback. Two storage forms, one vocabulary on screen (QC-041).
+        return V.status_pill(core.display_status(r) or status)
     if o == "QUOTED":
         sub = "PENDING_OL"
     elif o in ("WIN", "LOSS", "BOOKING_CANCELED"):
@@ -824,7 +887,7 @@ def _undated_quotes_note(undated) -> str:
 
 
 def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
-                      undated_quotes=()):
+                      undated_quotes=(), as_of_label=""):
     """Render the 'What Happened on <day>' block. The label `report_label` is
     TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
     fire runs AFTER Lonny's PT office has closed for the day, so today's data
@@ -1258,10 +1321,13 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
   {sc_table}
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_WARN};font-size:13px">⏳ PENDING OL ({len(pending_ol)}) — awaiting OL quote</h3>
+  {_pending_as_of_note(as_of_label)}
   {pol_table}
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">⏳ PENDING HILMAR ({len(pending_hil)}) — awaiting Lonny decision</h3>
+  {_pending_as_of_note(as_of_label)}
   {pend_table}
+  {_left_pending_note(status_ch, pending_hil)}
 
   <p style="margin:14px 0 0;font-size:13px;color:{B.DOC_INK};font-weight:bold">{_esc(summary_line)}</p>
 </div>
@@ -2528,8 +2594,12 @@ def build_body(data, cfg):
     pend_rows = _pending_rows(data)
 
     html_body = _header_html(report_label, date_range, updated_label)
+    # updated_label is the render instant ("August 21, 2026 at 5:45 PM ET").
+    # The PENDING sections are live at THAT moment, not at the report day, and
+    # since 2026-08-21 they say so — see _pending_as_of_note.
     html_body += _today_block_html(report_label, new_req, ol_resp, status_ch,
-                                   pending, undated_q)
+                                   pending, undated_q,
+                                   as_of_label=updated_label)
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.

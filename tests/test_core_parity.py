@@ -377,38 +377,105 @@ def test_port_key_and_terminal_parity(dest):
 
 _DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _REF_RE = re.compile(r"#\d+|\b[0-9a-f]{7,40}\b")
-# 1-3 digits NOT followed by another digit, so "48h" is caught and "2026" is not.
-_NUM_RE = re.compile(r"\b(\d{1,3})(?!\d)")
+# An HOUR QUANTITY, not any number. "48h", "24 hours", "48 CLOCK hours",
+# "72 biz hours" are thresholds; "2026-07-14", "Tuesday 18:00", "1.05x" and
+# "5 days" are not.
+#
+# This narrowed from "any 1-3 digit number" on 2026-08-21, when _prose_lines
+# started joining wrapped comment BLOCKS. Joining is what lets the guard see a
+# phrase split across a line break, but it also puts every number in a long
+# comment on one line — and a guard that cries wolf on "supersedes the
+# 2026-06-04 Tuesday-18:00 carve-out" is a guard someone switches off.
+_NUM_RE = re.compile(
+    r"\b(\d{1,3})\s*(?:-\s*)?(?:CLOCK|clock|biz|business|wall|BIZ)?\s*"
+    r"(?:h\b|hrs?\b|hours?\b)", re.I)
+#: Write this in timer prose that intentionally names a SUPERSEDED value.
+_HISTORIC_MARKER = "[historic]"
+# A RANGE is a distribution bucket, not a threshold: the turnaround histogram
+# in core.py's timing-reset docstring reads "0-48h ~254" / "48h-7d 3". Those
+# 48s describe measured data, and flagging them would train a reader to
+# ignore this guard — which is how the drift it exists to catch shipped.
+_RANGE_RE = re.compile(
+    r"\b\d{1,3}\s*-\s*\d{1,3}\s*[hd]\b"
+    r"|\b\d{1,3}\s*[hd]\s*-\s*\d{1,3}\s*[hd]\b", re.I)
+# What counts as TIMER prose worth checking. Punctuation-tolerant since
+# 2026-08-21: the live defect read "within the 48h (biz-hours) cutoff", and
+# the old pattern demanded "hours" immediately followed by "cutoff", so the
+# ")" alone was enough to hide a wrong threshold that shipped in the CEO's
+# report. Over-triggering is cheap here — a match only becomes a failure when
+# the prose also carries an hour quantity no timer constant holds.
 _TIMER_LINE_RE = re.compile(
-    r"PENDING_(?:HILMAR|OL)_LOSS_HOURS|CLOCK hours|biz-?\s*hours? cutoff", re.I)
+    r"PENDING_(?:HILMAR|OL)_LOSS_HOURS|PENDING_WINDOW_HOURS"
+    r"|CLOCK\s*hours?|biz[-\s]*hours?|business\s*hours?"
+    r"|decision\s+window|aging\s+window", re.I)
 
 
 def _prose_lines(text: str) -> dict[int, str]:
-    """The COMMENT and DOCSTRING lines of a module, by line number.
+    """Timer PROSE of a module, by line number — comments, docstrings AND the
+    string literals the program prints at people.
 
-    Comments come from tokenize, docstrings from the AST. Code is excluded on
-    purpose: `weekday() == 4` is a weekday index, not an hour, and a scanner
-    that cannot tell prose from code is the exact mistake this repo has now
-    made four times in two days.
+    THREE SOURCES, and the third one is why this guard was green over two live
+    defects on 2026-08-21:
+
+      comments   — grouped into BLOCKS. A comment block wraps, so the trigger
+                   phrase routinely straddles a line break:
+                       # ... window (Michael 2026-07-14): 48 CLOCK
+                       # hours from the OL quote -> Q&L ...
+                   Matching line-by-line, "CLOCK hours" is on NEITHER line and
+                   the whole block was skipped. Consecutive comment lines are
+                   now joined before matching and reported at the block's
+                   first line.
+
+      docstrings — as before.
+
+      strings    — NEW. core.decide_status RETURNED the sentence "Send
+                   received but no MDOLX within the 48h (biz-hours) cutoff"
+                   as a StatusDecision reason_detail, which record_transition
+                   stores in status_history and gen_email renders into the
+                   Reason column of the daily report. A threshold the code
+                   has not used since 2026-07-26 was being PRINTED TO THE CEO,
+                   and a scanner that only reads comments could never see it.
+                   Prose the program shows a human is prose.
+
+    Executable code is still excluded on purpose: `weekday() == 4` is a
+    weekday index, not an hour, and a scanner that cannot tell prose from code
+    is the exact mistake this repo has now made four times in two days.
     """
     import ast as _ast
     import io as _io
     import tokenize as _tok
-    out = {}
+    lines = text.splitlines()
+    out: dict[int, str] = {}
+
+    # 1. COMMENTS, joined into blocks of consecutive lines.
+    comments: dict[int, str] = {}
     for t in _tok.generate_tokens(_io.StringIO(text).readline):
         if t.type == _tok.COMMENT:
-            out[t.start[0]] = t.string
+            comments[t.start[0]] = t.string
+    for ln in sorted(comments):
+        if ln - 1 in comments:
+            continue                      # not the start of a block
+        block, cur = [], ln
+        while cur in comments:
+            block.append(comments[cur].lstrip("# ").rstrip())
+            cur += 1
+        out[ln] = " ".join(block)
+
+    # 2. DOCSTRINGS and 3. every other string literal, including f-strings.
+    #    ast.JoinedStr covers f-strings, whose pieces tokenize splits apart on
+    #    Python 3.12+ — walking the AST keeps this working on 3.11 and 3.12
+    #    alike, which matters because CI is 3.12 and the box is 3.11.
     tree = _ast.parse(text)
     for node in _ast.walk(tree):
-        body = getattr(node, "body", None)
-        if not isinstance(body, list) or not body:
-            continue
-        first = body[0]
-        if isinstance(first, _ast.Expr) and isinstance(first.value, _ast.Constant) \
-                and isinstance(first.value.value, str):
-            lines = text.splitlines()
-            for ln in range(first.lineno, first.end_lineno + 1):
-                out.setdefault(ln, lines[ln - 1])
+        if isinstance(node, (_ast.Constant, _ast.JoinedStr)):
+            if isinstance(node, _ast.Constant) and not isinstance(node.value, str):
+                continue
+            start = getattr(node, "lineno", None)
+            end = getattr(node, "end_lineno", start)
+            if not start:
+                continue
+            seg = " ".join(lines[i - 1].strip() for i in range(start, end + 1))
+            out[start] = (out.get(start, "") + " " + seg).strip()
     return out
 
 
@@ -416,13 +483,25 @@ def _timer_prose_offenders(text: str, allowed: set[str]) -> list[str]:
     """Hour literals in timer PROSE that no timer constant holds.
 
     Dates and commit/issue refs are stripped first — a comment may cite
-    "2026-07-26" or "0c73c4b" without that reading as a threshold.
+    "2026-07-26" or "0c73c4b" without that reading as a threshold. What
+    remains must be an actual hour quantity (see _NUM_RE), so a threshold the
+    code no longer uses is caught while ordinary prose is not.
     """
     out = []
     for i, line in sorted(_prose_lines(text).items()):
         if not _TIMER_LINE_RE.search(line):
             continue
-        cleaned = _REF_RE.sub(" ", _DATE_RE.sub(" ", line))
+        # EXPLICIT OPT-OUT for prose that is deliberately recounting a
+        # superseded value ("Michael said 48h on <date> and then 24h on
+        # <date>"). That history is worth keeping — it is the reason nobody
+        # should "fix" the constant back — but a scanner cannot tell it from
+        # drift, and guessing from nearby words like "said"/"supersedes"
+        # would let real drift through on any comment that happened to use
+        # them. The author marks it, so silence is never the default: prose
+        # naming a stale threshold WITHOUT the marker still fails.
+        if _HISTORIC_MARKER in line:
+            continue
+        cleaned = _RANGE_RE.sub(" ", _REF_RE.sub(" ", _DATE_RE.sub(" ", line)))
         for n in _NUM_RE.findall(cleaned):
             if n not in allowed:
                 out.append(f"line {i}: {line.strip()[:100]}")

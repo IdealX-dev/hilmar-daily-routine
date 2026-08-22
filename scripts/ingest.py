@@ -79,16 +79,12 @@ def load_bodies_index() -> dict[str, dict]:
     return out
 
 
-def _etd_fit_days(eta_requested: str | None, eta_offered: str | None) -> int | None:
-    """Return int days difference (offered - requested). Negative = earlier than needed."""
-    if not eta_requested or not eta_offered:
-        return None
-    try:
-        req = datetime.fromisoformat(eta_requested).date()
-        off = datetime.fromisoformat(eta_offered).date()
-        return (off - req).days
-    except (ValueError, TypeError):
-        return None
+# _etd_fit_days was removed 2026-08-21. It parsed with datetime.fromisoformat
+# against fields that hold OL's raw cell text ("30-Sep-26"), so it returned
+# None on every table-parsed quote — dead in production while looking live —
+# and it compared whatever two dates it was handed regardless of leg. Both
+# jobs now belong to core.requested_fit_days, which refuses to cross an
+# arrival ask with a departure offer. One implementation, not two.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1523,7 +1519,16 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict],
         if body_signer:
             best["ol_responder_signer"] = body_signer
         # Compute ETD-fit if we now have both eta_requested and eta_offered
-        best["etd_fit_days"] = _etd_fit_days(best.get("eta_requested"), best.get("eta_offered"))
+        # LIKE FOR LIKE (2026-08-21). Two defects died on this line. The
+        # helper it used, _etd_fit_days, parsed with datetime.fromisoformat
+        # while production deliberately persists OL's RAW cell text
+        # ("30-Sep-26"), so it returned None on every table-parsed quote and
+        # this assignment was dead in production. And what it MEANT to do —
+        # difference a requested date against eta_offered whatever leg either
+        # one was — is the bug that stamped every cutoff RFQ ETD_MISS.
+        _fit, _basis = C.requested_fit_days(best)
+        best["etd_fit_days"] = _fit
+        best["etd_fit_basis"] = _basis
         # Capture conversation_id if fetched
         if rr.get("conversation_id") and not best.get("conversation_id"):
             best["conversation_id"] = rr.get("conversation_id")
