@@ -336,8 +336,12 @@ def phase_3_entries(log: Log, data: dict) -> None:
                 r["olusa_time_et"] = core.fmt_et(resp_dt, with_date=False)
 
         # Mirrors scripts/qc_selfheal.py (2026-08-21): like-for-like only,
-        # and recomputed every pass so a wrong value cannot persist.
-        if r.get("quoted"):
+        # recomputed every pass so a wrong value cannot persist — and placed
+        # below the manual_locked guard, because an unconditional writer must
+        # never outrank a human's lock.
+        if r.get("manual_locked"):
+            pass
+        elif r.get("quoted"):
             fit, basis = core.requested_fit_days(r)
             r["etd_fit_days"] = fit
             r["etd_fit_basis"] = basis

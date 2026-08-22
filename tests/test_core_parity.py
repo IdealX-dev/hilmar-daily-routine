@@ -491,17 +491,22 @@ def _timer_prose_offenders(text: str, allowed: set[str]) -> list[str]:
     for i, line in sorted(_prose_lines(text).items()):
         if not _TIMER_LINE_RE.search(line):
             continue
-        # EXPLICIT OPT-OUT for prose that is deliberately recounting a
-        # superseded value ("Michael said 48h on <date> and then 24h on
-        # <date>"). That history is worth keeping — it is the reason nobody
-        # should "fix" the constant back — but a scanner cannot tell it from
-        # drift, and guessing from nearby words like "said"/"supersedes"
-        # would let real drift through on any comment that happened to use
-        # them. The author marks it, so silence is never the default: prose
-        # naming a stale threshold WITHOUT the marker still fails.
-        if _HISTORIC_MARKER in line:
-            continue
         cleaned = _RANGE_RE.sub(" ", _REF_RE.sub(" ", _DATE_RE.sub(" ", line)))
+        # EXPLICIT OPT-OUT, SCOPED TO THE SENTENCE, for prose deliberately
+        # recounting a superseded value ("Michael said 48h [historic] on
+        # <date> and then 24h on <date>"). That history is worth keeping — it
+        # is the reason nobody should "fix" the constant back — but a scanner
+        # cannot tell it from drift, and guessing from nearby words like
+        # "said"/"supersedes" would let real drift through on any comment
+        # that happened to use them.
+        #
+        # SENTENCE, NOT BLOCK. Since comment blocks are joined before
+        # matching, a marker anywhere in a block would exempt the WHOLE block
+        # from the hour check — including pending_hilmar_stale's docstring,
+        # where this exact drift has already shipped twice. One marked
+        # sentence must not buy silence for the paragraph around it.
+        cleaned = " ".join(part for part in re.split(r"(?<=[.;])\s+", cleaned)
+                           if _HISTORIC_MARKER not in part)
         for n in _NUM_RE.findall(cleaned):
             if n not in allowed:
                 out.append(f"line {i}: {line.strip()[:100]}")

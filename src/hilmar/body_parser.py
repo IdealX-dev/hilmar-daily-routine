@@ -618,9 +618,29 @@ _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|doo
 
 def parse_eta_requested(text, ref_date=None):
     return _find_date_near(text or "", _ETA_REQ_ANCHORS, ref_date=ref_date)
-def parse_etd_offered(text):    return _find_date_near(text or "", _ETD_OFFER_ANCHORS)
-def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_ANCHORS)
-def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
+# ref_date ON THE OFFERED SIDE TOO (2026-08-21, second pass). The requested
+# parsers took the year-less fallback year from the message's send date while
+# these three still took it from the RUN clock. Before that split, both sides
+# shared the same wrong year at a year boundary and the difference cancelled
+# to roughly zero; afterwards they disagreed by a year, so a December ask
+# ("ETA 1/15" -> 2027-01-15) measured against a prose-parsed offer ("ETA 1/20"
+# -> 2026-01-20) came out ~360 days EARLY. Fixing one leg and not the other
+# turned a wash into a fabricated number, which is worse than the bug.
+#
+# The grid path is unaffected either way — OL's table cells carry explicit
+# years ("10-Oct-26") — so this only governs the prose fallback. Callers that
+# know the message's send date should pass it; the run year remains the
+# last resort for callers that genuinely have no date.
+def parse_etd_offered(text, ref_date=None):
+    return _find_date_near(text or "", _ETD_OFFER_ANCHORS, ref_date=ref_date)
+
+
+def parse_eta_offered(text, ref_date=None):
+    return _find_date_near(text or "", _ETA_OFFER_ANCHORS, ref_date=ref_date)
+
+
+def parse_origin_cutoff(text, ref_date=None):
+    return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS, ref_date=ref_date)
 
 
 # ─────────────────────────────────────────────────────────────────────

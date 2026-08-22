@@ -1955,7 +1955,7 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
 
     It is KEYWORD-ONLY on purpose. Positionally it would slide into `now`,
     which is the same class of mistake that once put a hardcoded 24h literal
-    in QC-007 while decide_status ran 48h+Friday.
+    in QC-007 while decide_status ran 48h+Friday [historic].
 
     Behaviour for existing 2-arg callers is unchanged: with request_dt
     defaulting to None the anchor is exactly resp_dt, including the None case.
@@ -2426,9 +2426,12 @@ def requested_fit_days(row: dict) -> tuple[int | None, str | None]:
     ocean freight to Asia is not a missed ETD.
 
     THE ARRIVAL LEG IS TRIED FIRST because it is the ask Lonny states most
-    often and the one OL's grid answers most completely. Neither leg falls
-    back to the other: a row with an arrival ask and no offered ETA yields
-    (None, None), not a departure comparison.
+    often and the one OL's grid answers most completely. If that PAIR is
+    incomplete the departure PAIR is tried — each leg is only ever compared
+    against itself, so falling through cannot cross them, and a row carrying
+    both an arrival ask and a departure ask/offer is measured on the leg it
+    can actually answer. What never happens is the mix: an arrival ask is
+    never differenced against a departure offer, or vice versa.
 
     ``requested_dates`` is deliberately NOT consulted. It is free text
     ("Cutoff next week or the following") with no stated leg, and guessing

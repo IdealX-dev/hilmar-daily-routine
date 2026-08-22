@@ -176,16 +176,23 @@ def _pending_as_of_note(as_of_label):
 
 
 def _left_pending_note(status_ch, pending_hil):
-    """Name the rows that moved INTO Pending Hilmar today and have since left.
+    """Name the rows that moved INTO Pending Hilmar today and have since left,
+    AND SAY WHERE EACH ONE WENT.
 
-    Without this the reader has to reconcile two counts by hand and gets it
-    wrong — which is exactly the complaint. The 2026-08-13 fix appended
-    "— since aged to Q&L" to each STATUS CHANGES row, and Michael filed the
-    same complaint again eight days later: a per-row suffix does not answer
-    "why does this section say 3 and that one say 1".
+    Without this the reader reconciles two counts by hand and gets it wrong —
+    which is the complaint. The 2026-08-13 fix appended "— since aged to Q&L"
+    to each STATUS CHANGES row and Michael filed the same complaint again
+    eight days later: a per-row suffix does not answer "why does this section
+    say 3 and that one say 1".
+
+    SPLIT BY OUTCOME, not lumped. The first version of this note called every
+    departed row "passed the decision window and are now Quoted & Lost",
+    which is a lie about any row that left because it WON. Announcing a
+    booking as a loss in the CEO's daily report is worse than the ambiguity
+    it was written to fix.
     """
     open_ids = {r.get("request_id") for r in pending_hil}
-    gone, seen = [], set()
+    lost, won, other, seen = [], [], [], set()
     for r, h in status_ch:
         rid = r.get("request_id")
         if (h.get("to") or "").upper() != "QUOTED":
@@ -193,18 +200,37 @@ def _left_pending_note(status_ch, pending_hil):
         if rid in open_ids or rid in seen:
             continue
         seen.add(rid)
-        gone.append(r)
-    if not gone:
+        disp = (core.display_status(r) or "").upper()
+        if disp in ("Q&L", "NQ"):
+            lost.append(r)
+        elif disp == "WIN":
+            won.append(r)
+        else:
+            other.append(r)
+    if not (lost or won or other):
         return ""
-    lanes = ", ".join(
-        _esc(r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}")
-        for r in gone[:4])
-    more = f" +{len(gone) - 4} more" if len(gone) > 4 else ""
+
+    def _lanes(rows):
+        names = ", ".join(
+            _esc(r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}")
+            for r in rows[:4])
+        return names + (f" +{len(rows) - 4} more" if len(rows) > 4 else "")
+
+    parts = []
+    if lost:
+        parts.append(f'{len(lost)} passed the '
+                     f'{core.PENDING_HILMAR_LOSS_HOURS}h decision window and '
+                     f'{"is" if len(lost) == 1 else "are"} now Quoted &amp; '
+                     f'Lost ({_lanes(lost)})')
+    if won:
+        parts.append(f'{len(won)} booked ({_lanes(won)})')
+    if other:
+        parts.append(f'{len(other)} moved on ({_lanes(other)})')
+    total = len(lost) + len(won) + len(other)
     return (f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_MUTED}">'
-            f'{len(gone)} quote(s) shown in STATUS CHANGES as moving into '
-            f'Pending Hilmar are no longer in this list — they passed the '
-            f'{core.PENDING_HILMAR_LOSS_HOURS}h decision window and are now '
-            f'Quoted &amp; Lost: {lanes}{more}.</p>')
+            f'{total} quote(s) shown in STATUS CHANGES as moving into '
+            f'Pending Hilmar {"is" if total == 1 else "are"} no longer in this '
+            f'list — {"; ".join(parts)}.</p>')
 
 
 def build_subject(data, cfg):
@@ -726,6 +752,24 @@ def _header_html(today_label, range_label, updated_label):
 """
 
 
+def _pill_colour_key(status):
+    """Palette key for a transition end. Q&L/NQ are DISPLAY words — the
+    palette is keyed on the storage enum, so map them back or the pill falls
+    through to the grey unknown-status fallback."""
+    s = (status or "").upper()
+    return "LOSS" if s in ("Q&L", "NQ") else s
+
+
+def _pill_text(status, r):
+    """The word the reader sees for THIS end of the transition, in the same
+    vocabulary as every count in the email (core.display_status)."""
+    s = (status or "").upper()
+    if s in ("LOSS", "Q&L", "NQ"):
+        return core.display_status({"status": "LOSS",
+                                    "quoted": s != "NQ" and bool(r.get("quoted"))})
+    return status
+
+
 def _status_change_pill(status, r, other_status=None):
     """Status-change pill in operational 'who do we chase' terms, so a
     transition reads as the real-world wait — not the internal enum.
@@ -751,12 +795,25 @@ def _status_change_pill(status, r, other_status=None):
     if s == "QUOTED":
         return V.pending_pill("PENDING_HILMAR")
     if s != "PENDING":
-        # display_status, NOT the raw enum. Production stores LEGACY form
-        # (LOSS + quoted), so this rendered a pill reading "LOSS" while every
-        # count, KPI and rollup in the SAME email said "Q&L" — and a row
-        # stored in STRICT form ("Q&L") fell through to the grey unknown-status
-        # fallback. Two storage forms, one vocabulary on screen (QC-041).
-        return V.status_pill(core.display_status(r) or status)
+        # COLOUR FROM THE ENUM, TEXT FROM THE VOCABULARY, AND BOTH FROM *THIS*
+        # END OF THE TRANSITION.
+        #
+        # The first attempt at this (2026-08-21, same day) passed
+        # core.display_status(r) as the pill's STATUS, and got two things
+        # wrong at once. display_status reads the row's CURRENT state, so both
+        # ends of a change rendered the same value — a stored LOSS→WIN came
+        # out "WIN → WIN", erasing the very transition this section exists to
+        # show. And "Q&L"/"NQ" are display words, not palette keys, so every
+        # loss pill fell through to the grey unknown-status fallback: a fix
+        # for greyness that made everything grey.
+        #
+        # viz.status_pill already separates the two — `status` selects the
+        # colour, `label` overrides the text — so the enum keeps driving the
+        # palette (LOSS stays red) while the reader sees the same word the
+        # counts and KPIs use. `quoted` is the row's, because whether a LOSS
+        # is Q&L or NQ is not recorded per transition; that is the honest
+        # limit of the data, not a guess.
+        return V.status_pill(_pill_colour_key(s), label=_pill_text(s, r))
     if o == "QUOTED":
         sub = "PENDING_OL"
     elif o in ("WIN", "LOSS", "BOOKING_CANCELED"):

@@ -1467,10 +1467,13 @@ def phase_3_entries(log: Log, data: dict):
         # later fire even after the parser improved. Recomputing each pass is
         # what lets rebuild-not-merge actually correct the record — and it is
         # idempotent, which matters because phase 3 runs twice per fire.
-        if r.get("quoted"):
-            fit, basis = core.requested_fit_days(r)
-            r["etd_fit_days"] = fit
-            r["etd_fit_basis"] = basis
+        # BELOW THE HARD LOCK, deliberately — see the manual_locked guard
+        # immediately after this comment. Making the recompute unconditional
+        # (2026-08-21) put it ABOVE that guard for an hour, which would have
+        # silently rewritten etd_fit_days on rows a human had locked, with no
+        # fix log. operator_corrections.json is the only durable human state
+        # in this pipeline; an unconditional writer that outranks it is the
+        # one thing that must never ship.
 
         # HARD LOCK: skip status decisions on manually-locked records (Michael's audit pass 2026-05-01)
         # Even on locked records: heal carrier_won (WIN only) + reclassify OTHER -> COVERED (LOSS only).
@@ -1497,6 +1500,19 @@ def phase_3_entries(log: Log, data: dict):
                 r["quoted"] = True
                 log.fix(f"{rid_label}: lonny_covered → LOSS/COVERED + quoted=True")
             continue
+        # Recomputed EVERY pass, not gated on `is None`. That gate made the
+        # value write-once, so a fit computed by the old cross-leg rule would
+        # persist in tracking-data-v2.json forever and re-stamp the row
+        # ETD_MISS on every later fire even after the parser improved.
+        # Recomputing is what lets rebuild-not-merge actually correct the
+        # record, and it is idempotent — which matters because phase 3 runs
+        # twice per fire. Locked and lonny_covered rows have already
+        # `continue`d above and are never touched.
+        if r.get("quoted"):
+            fit, basis = core.requested_fit_days(r)
+            r["etd_fit_days"] = fit
+            r["etd_fit_basis"] = basis
+
         prior_status = r.get("status")
         decision = core.decide_status(
             has_send=r.get("has_send", False),
