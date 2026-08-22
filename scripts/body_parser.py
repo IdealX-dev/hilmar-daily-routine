@@ -614,6 +614,18 @@ def _relative_date_in(chunk, ref_date):
     return None
 
 
+# Where the QUOTED CHAIN starts. Mirrors core._CHAIN_MARKER_RX; duplicated
+# rather than imported because body_parser deliberately does not depend on
+# core (core imports parsing helpers the other way in places).
+_CHAIN_MARKER_RX = re.compile(r"(?im)^\s*(?:from:|de:|von:|enviado el:|sent:)\s")
+
+
+def _top_message_end(text: str) -> int:
+    """Offset where the most-recent message ends and the quoted chain begins."""
+    m = _CHAIN_MARKER_RX.search(text or "")
+    return m.start() if m else len(text or "")
+
+
 def _find_date_near(text, anchor_rx, window=120, ref_date=None):
     """Find first plausible date after each anchor match. Reject candidates
     that look like demurrage/free-time ranges (e.g. '10-14 days free')
@@ -633,6 +645,7 @@ def _find_date_near(text, anchor_rx, window=120, ref_date=None):
     # what rebuild-not-merge assumes.
     now_year = (ref_date.year if ref_date is not None
                 else datetime.now(timezone.utc).year)
+    _top_end = _top_message_end(text)
     for am in anchor_rx.finditer(text):
         start = am.end()
         chunk = text[start:start+window]
@@ -644,7 +657,18 @@ def _find_date_near(text, anchor_rx, window=120, ref_date=None):
                 lead = chunk[max(0, dm.start()-4):dm.start()]
                 if _NOT_A_DATE_LEAD.search(lead):
                     continue
-                iso = _date_from_match(dm, now_year, ref_date)
+                # ROLL FORWARD ONLY IN THE TOP MESSAGE. A reply quotes the
+                # whole thread, so a re-ping sent in August carries Lonny's
+                # May "ETA 6/1" underneath it. Against ref_date=Aug 20 that
+                # date is 80 days past, and the roll-forward turned a
+                # June-2026 ask into June 2027 — an ask a year out, feeding
+                # ~-290d into avg_etd_fit_days. The date is still READ from
+                # the chain (losing it would be worse); it just is not
+                # re-dated against a clock that was not running when it was
+                # written.
+                _in_top = am.start() < _top_end
+                iso = _date_from_match(dm, now_year,
+                                       ref_date if _in_top else None)
                 if iso:
                     return iso
         rel = _relative_date_in(chunk, ref_date)

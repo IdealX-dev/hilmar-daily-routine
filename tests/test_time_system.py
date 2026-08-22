@@ -223,3 +223,85 @@ def test_a_strict_form_row_renders_the_same_way():
     legacy = GE._status_change_pill("LOSS", {"status": "LOSS", "quoted": True}, "QUOTED")
     strict = GE._status_change_pill("Q&L", {"status": "Q&L", "quoted": True}, "QUOTED")
     assert legacy == strict, "the two storage forms must render identically"
+
+
+# ── 5. What the two code-review passes caught, pinned so it cannot return ──
+
+def test_the_roll_forward_never_redates_a_quoted_chain():
+    """A reply carries the whole thread. A re-ping sent in August must not
+    re-date Lonny's May "ETA 6/1" against an August clock — that put the ask
+    a year out and fed ~-290d into avg_etd_fit_days."""
+    body = ("Any update on this?\n\n"
+            "From: Lonny Upfold\nSent: Monday, May 4, 2026\n\n"
+            "Oakland to Osaka\nETA 6/1 confirm please\n")
+    assert BP.parse_eta_requested(body, ref_date=date(2026, 8, 20)) == "2026-06-01"
+    assert HBP.parse_eta_requested(body, ref_date=date(2026, 8, 20)) == "2026-06-01"
+
+
+def test_both_legs_take_the_year_from_the_message():
+    """Fixing only the REQUESTED side turned a year-boundary wash into a
+    ~360-day fabricated miss: before, both sides shared the same wrong year
+    and cancelled."""
+    dec = date(2026, 12, 10)
+    ask = BP.parse_eta_requested("Oakland to X\nETA 1/15", ref_date=dec)
+    offer = BP.parse_eta_offered("we can offer ETA 1/20", ref_date=dec)
+    assert ask == "2027-01-15" and offer == "2027-01-20"
+    assert core.requested_fit_days(
+        {"eta_requested": ask, "eta_offered": offer}) == (5, "arrival")
+
+
+def test_the_offered_cell_reader_is_the_same_in_both_trees():
+    """The library tree returned None for "9-30-26" — a form OL really sends
+    — while production read it fine."""
+    row = {"eta_requested": "2026-09-15", "eta_offered": "9-30-26"}
+    assert core.requested_fit_days(row) == (15, "arrival")
+    assert HC.requested_fit_days(row) == core.requested_fit_days(row)
+
+
+def test_a_transition_never_renders_the_same_value_at_both_ends():
+    """Passing the row's CURRENT status as both ends made a stored LOSS→WIN
+    render "WIN → WIN", erasing the very change the section exists to show."""
+    row = {"status": "WIN", "quoted": True}
+    frm = GE._status_change_pill("LOSS", row, "WIN")
+    to = GE._status_change_pill("WIN", row, "LOSS")
+    strip = lambda h: re.sub(r"<[^>]+>", "", h).strip()  # noqa: E731
+    assert strip(frm) != strip(to), (frm, to)
+    assert "WIN" in strip(to)
+
+
+def test_a_loss_pill_is_red_not_the_grey_unknown_fallback():
+    """"Q&L"/"NQ" are display words, not palette keys — passing them as the
+    pill's STATUS turned every loss grey."""
+    pill = GE._status_change_pill("LOSS", {"status": "LOSS", "quoted": True}, "QUOTED")
+    assert "#f1f5f9" not in pill, "fell through to the grey unknown-status pill"
+
+
+def test_the_reconciliation_never_calls_a_booking_a_loss():
+    day = _report_day()
+    won = _row("w1", "Oakland → Keelung", "WIN", day)
+    won["mdolx_ref"] = "MDOLX260999"
+    html = _report_html([won, _row("p1", "Oakland → Durban", "PENDING", day)])
+    assert "booked" in html
+    assert "Quoted &amp; Lost (Oakland → Keelung)" not in html
+
+
+def test_a_locked_row_keeps_its_operator_value():
+    """operator_corrections.json is the only durable human state here. An
+    unconditional recompute must never outrank it."""
+    import qc_selfheal as QS
+    locked = {"request_id": "r_locked", "manual_locked": True, "quoted": True,
+              "status": "LOSS", "etd_fit_days": 99, "etd_fit_basis": "arrival",
+              "lane": "Oakland → Osaka", "eta_requested": "2026-09-15",
+              "eta_offered": "10-Oct-26", "status_history": []}
+    QS.phase_3_entries(QS.Log(), {"requests": [locked]})
+    assert locked["etd_fit_days"] == 99
+
+
+def test_a_cutoff_only_rfq_still_shows_its_date_to_the_reader():
+    """The like-for-like split moved cutoff asks into etd_requested; a
+    renderer reading only eta_requested prints "no ETA on request" for every
+    one of them."""
+    src = (ROOT / "scripts" / "gen_email.py").read_text(encoding="utf-8")
+    assert "r.get('eta_requested') or r.get('etd_requested')" in src
+    dash = (ROOT / "scripts" / "gen_dashboard.py").read_text(encoding="utf-8")
+    assert 'r.get("eta_requested") or r.get("etd_requested")' in dash

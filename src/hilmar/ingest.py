@@ -1373,6 +1373,10 @@ _RECOMPUTED_FIELDS = frozenset({
     # Timestamps in Michael-friendly TZ (clock walk, not wall clock)
     "request_date", "lonny_time_pt", "olusa_time_et",
     "turnaround_biz_hours", "turnaround_hours", "etd_fit_days",
+    # etd_fit_basis travels WITH etd_fit_days. Refreshing the number
+    # while freezing the leg label lets the pair contradict — a value
+    # measured arrival-to-arrival still labelled "departure".
+    "etd_fit_basis",
     # Rate-response signals — extracted by apply_rate_responses from the
     # MBD shared mailbox reply. Were stuck stale on disk pre-fix.
     "quoted", "response_timestamp",

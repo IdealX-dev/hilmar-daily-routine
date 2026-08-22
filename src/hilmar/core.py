@@ -1464,7 +1464,68 @@ def etd_fit_days(lonny_requested: str | None, ol_offered: str | None, fallback_y
 #: A quote is ETD_MISS when OL's offer misses Lonny's ask by this many days.
 #: Named once here because core.decide_status, the QC checks and the tests all
 #: have to agree on it — it was a bare `>= 5` in decide_status until 2026-08-21.
+#: Last-resort year for a date carrying none and no context to infer
+#: one from. Only reachable when the ASK itself is year-less, which our
+#: own parsers do not produce — kept so the helpers never crash.
+DEFAULT_FALLBACK_YEAR = 2026
+
 ETD_MISS_DAYS = 5
+
+
+# MIRRORED FROM scripts/core.py 2026-08-21. requested_fit_days is a
+# shared contract with a parity test, and it reads the OFFERED cell
+# through this function; without it here the library tree silently
+# returned None for a "9-30-26" cell that production reads fine, and
+# "silently different in the two trees" is the failure this repo keeps
+# paying for. Keep byte-identical.
+def offered_date(value, fallback_year: int | None = None) -> date | None:
+    """THE reader for an ETD/ETA that OL *offered*. Route every one through here.
+
+    An offered date is a free-text table cell copied out of a carrier's email —
+    NOT a timestamp. OL writes both forms, in the same dataset, on the same day:
+
+        stand_260769   etd=22-Apr-26   eta=26-May-26      <- d-Mmm-yy
+        req_5d2685f3…  etd=1-Jul-26    eta=2026-07-25     <- ISO
+
+    2026-08-10: three different parsers were reading this one field, and the
+    CLIENT-FACING one was the strict one —
+
+        share_intel.py:255        _parse_loose_date(...)   internal, loose
+        gen_client_email.py:326   _iso_date(...)           Lonny's email, STRICT
+        gen_client_weekly.py:184  _iso_date(...)           Lonny's weekly, STRICT
+
+    `_iso_date` is `strptime(s[:10], "%Y-%m-%d")`. So a `26-May-26` ETA is
+    truthy for QC-027 (the field IS populated, it counts toward 93.3%) and
+    invisible to "Currently in transit", which drops any row whose ETA will not
+    parse. The internal intel feed saw those shipments; the client's report did
+    not. One fact, three readers, and the one that mattered held the wrong one.
+
+    A bare "Jul 25" with no year still returns None rather than guessing the
+    year — the cell genuinely does not carry one, and inventing it would put a
+    fabricated sail date in front of the customer.
+    """
+    d = _parse_loose_date(value, fallback_year=fallback_year)
+    if d:
+        # "%b %d" ("Jul 25") carries no year, and strptime defaults it to 1900.
+        # Without a fallback_year that is a FABRICATED date, not a parse — and
+        # a 1900 sail date sorts to the front of the client's transit table.
+        # None is the honest answer; the cell really does not say which year.
+        if d.year == 1900 and fallback_year is None:
+            return None
+        return d
+    # Non-zero-padded M/D/YY(YY). share_intel carried this fallback and the
+    # client renderers did not — part of how the two came to disagree.
+    if isinstance(value, str):
+        m = re.match(r"\s*(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\s*$", value)
+        if m:
+            yr = int(m.group(3))
+            if yr < 100:
+                yr += 2000
+            try:
+                return date(yr, int(m.group(1)), int(m.group(2)))
+            except ValueError:
+                return None
+    return None
 
 
 def requested_fit_days(row: dict) -> tuple[int | None, str | None]:
@@ -1506,17 +1567,37 @@ def requested_fit_days(row: dict) -> tuple[int | None, str | None]:
     ("Cutoff next week or the following") with no stated leg, and guessing
     which one it means is exactly what this function exists to stop.
     """
-    eta_ask, eta_off = row.get("eta_requested"), row.get("eta_offered")
-    if eta_ask and eta_off:
-        fit = etd_fit_days(eta_ask, eta_off)
-        if fit is not None:
-            return fit, "arrival"
-    etd_ask = row.get("etd_requested") or row.get("cutoff_requested")
-    etd_off = row.get("etd_offered")
-    if etd_ask and etd_off:
-        fit = etd_fit_days(etd_ask, etd_off)
-        if fit is not None:
-            return fit, "departure"
+    def _leg(ask, offer, basis):
+        # THE OFFER GOES THROUGH offered_date, the module's declared single
+        # reader for a date OL wrote in a table cell. etd_fit_days' own loose
+        # parser is narrower: it returns None for "9-30-26", a form OL really
+        # sends, so the whole comparison silently vanished instead of
+        # reporting a miss. The ASK is our own parsers' output and is already
+        # ISO, so the loose reader is right for that side.
+        #
+        # The year context comes from the ASK, not from a hardcoded 2026.
+        # A bare "Sep 30" cell must resolve in the same year the ask is
+        # talking about, or the difference is a year wide.
+        a = _parse_loose_date(ask, DEFAULT_FALLBACK_YEAR)
+        if not a:
+            return None
+        # offered_date lives only in scripts/core.py — it is one of the
+        # symbols in the declared split between the two trees. Resolved at
+        # call time so the production tree gets the full OL-cell reader and
+        # the library tree degrades to the loose parser instead of raising.
+        _read_offer = globals().get("offered_date") or _parse_loose_date
+        b = _read_offer(offer, fallback_year=a.year)
+        if not b:
+            return None
+        return (b - a).days, basis
+
+    got = _leg(row.get("eta_requested"), row.get("eta_offered"), "arrival")
+    if got:
+        return got
+    got = _leg(row.get("etd_requested") or row.get("cutoff_requested"),
+               row.get("etd_offered"), "departure")
+    if got:
+        return got
     return None, None
 
 

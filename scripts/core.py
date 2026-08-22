@@ -2395,6 +2395,11 @@ def etd_fit_days(lonny_requested: str | None, ol_offered: str | None, fallback_y
 #: A quote is ETD_MISS when OL's offer misses Lonny's ask by this many days.
 #: Named once here because core.decide_status, the QC checks and the tests all
 #: have to agree on it — it was a bare `>= 5` in decide_status until 2026-08-21.
+#: Last-resort year for a date carrying none and no context to infer
+#: one from. Only reachable when the ASK itself is year-less, which our
+#: own parsers do not produce — kept so the helpers never crash.
+DEFAULT_FALLBACK_YEAR = 2026
+
 ETD_MISS_DAYS = 5
 
 
@@ -2437,17 +2442,37 @@ def requested_fit_days(row: dict) -> tuple[int | None, str | None]:
     ("Cutoff next week or the following") with no stated leg, and guessing
     which one it means is exactly what this function exists to stop.
     """
-    eta_ask, eta_off = row.get("eta_requested"), row.get("eta_offered")
-    if eta_ask and eta_off:
-        fit = etd_fit_days(eta_ask, eta_off)
-        if fit is not None:
-            return fit, "arrival"
-    etd_ask = row.get("etd_requested") or row.get("cutoff_requested")
-    etd_off = row.get("etd_offered")
-    if etd_ask and etd_off:
-        fit = etd_fit_days(etd_ask, etd_off)
-        if fit is not None:
-            return fit, "departure"
+    def _leg(ask, offer, basis):
+        # THE OFFER GOES THROUGH offered_date, the module's declared single
+        # reader for a date OL wrote in a table cell. etd_fit_days' own loose
+        # parser is narrower: it returns None for "9-30-26", a form OL really
+        # sends, so the whole comparison silently vanished instead of
+        # reporting a miss. The ASK is our own parsers' output and is already
+        # ISO, so the loose reader is right for that side.
+        #
+        # The year context comes from the ASK, not from a hardcoded 2026.
+        # A bare "Sep 30" cell must resolve in the same year the ask is
+        # talking about, or the difference is a year wide.
+        a = _parse_loose_date(ask, DEFAULT_FALLBACK_YEAR)
+        if not a:
+            return None
+        # offered_date lives only in scripts/core.py — it is one of the
+        # symbols in the declared split between the two trees. Resolved at
+        # call time so the production tree gets the full OL-cell reader and
+        # the library tree degrades to the loose parser instead of raising.
+        _read_offer = globals().get("offered_date") or _parse_loose_date
+        b = _read_offer(offer, fallback_year=a.year)
+        if not b:
+            return None
+        return (b - a).days, basis
+
+    got = _leg(row.get("eta_requested"), row.get("eta_offered"), "arrival")
+    if got:
+        return got
+    got = _leg(row.get("etd_requested") or row.get("cutoff_requested"),
+               row.get("etd_offered"), "departure")
+    if got:
+        return got
     return None, None
 
 

@@ -2091,7 +2091,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
   <td style="padding:6px 8px">{_esc(r.get('destination') or '—')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(r.get('teu_requested') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or 'no ETA on request')}</td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or r.get('etd_requested') or 'no date on request')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('ol_responder') or '—')}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:bold;color:{B.DOC_WARN}">{_age_days(request_ts)}</td>
   <td style="padding:6px 8px;font-size:10px;color:{B.DOC_MUTED};font-family:monospace">{_esc(imid_short)}</td>

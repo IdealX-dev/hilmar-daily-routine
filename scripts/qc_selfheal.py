@@ -1510,6 +1510,16 @@ def phase_3_entries(log: Log, data: dict):
         # `continue`d above and are never touched.
         if r.get("quoted"):
             fit, basis = core.requested_fit_days(r)
+            # LOG THE CHANGE. This recompute can flip a row's loss_reason
+            # from ETD_MISS to UNDIFFERENTIATED without the status string
+            # moving, so nothing else in the audit records that the row's
+            # stated cause of loss changed. A silent rewrite of a number the
+            # carrier scoreboard reads is the shape of defect this file
+            # exists to catch.
+            _was = r.get("etd_fit_days")
+            if _was != fit:
+                log.fix(f"{rid_label}: etd_fit_days {_was!r} → {fit!r}"
+                        f"{f' ({basis})' if basis else ' (legs not comparable)'}")
             r["etd_fit_days"] = fit
             r["etd_fit_basis"] = basis
 
