@@ -654,7 +654,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                 f'<td>{_safe(r.get("destination"))}</td>'
                 f'<td style="font-size:11px">{_safe(r.get("containers"))}</td>'
                 f'<td style="text-align:center">{r.get("teu_requested",0)}</td>'
-                f'<td style="font-size:11px">{_safe((r.get("eta_requested") or "no ETA on request") + (" · " + r["free_time_requested"] if r.get("free_time_requested") else ""))}</td>'
+                f'<td style="font-size:11px">{_safe((r.get("eta_requested") or r.get("etd_requested") or "no date on request") + (" · " + r["free_time_requested"] if r.get("free_time_requested") else ""))}</td>'
                 f'<td style="font-size:11px">{_safe(r.get("ol_responder"))}</td>'
                 f'<td style="text-align:center;font-weight:bold;color:#b45309">{aging}</td>'
                 f'<td style="font-size:10px;color:#64748b;font-family:monospace">{_safe(imid_short)}</td>'
@@ -894,7 +894,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         else:
             fit_cell = '<span class="badge badge-green">exact</span>'
         rate = r.get("ol_rate") or ("No offer made" if core.is_not_quoted(r) else "—")
-        html += f'<tr class="{_row_class(r)}"><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_status_badge(r)}</td><td class="{tc}">{biz_s}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("cutoff_requested"))}</td><td>{_safe(r.get("etd_offered"))}</td><td>{_safe(r.get("eta_offered"))}</td><td>{fit_cell}</td><td>{_safe(carrier)}</td><td>{_safe(rate)}</td></tr>\n'
+        html += f'<tr class="{_row_class(r)}"><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{_status_badge(r)}</td><td class="{tc}">{biz_s}</td><td>{_safe(r.get("eta_requested") or r.get("etd_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("etd_requested") or r.get("cutoff_requested"))}</td><td>{_safe(r.get("etd_offered"))}</td><td>{_safe(r.get("eta_offered"))}</td><td>{fit_cell}</td><td>{_safe(carrier)}</td><td>{_safe(rate)}</td></tr>\n'
     html += '</table></div></div>\n'
 
     # ── TAB: CARRIERS ──
@@ -988,7 +988,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
             # "—" for a row we cannot date, matching gen_email's PENDING
             # HILMAR table. Previously these rows were dropped entirely.
             _age = "—" if r.get("_hours_since") is None else f'{r["_hours_since"]}h'
-            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{_age}</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{B.doc_dot_html(r.get("carrier_quoted"))}{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
+            html += f'<tr class="pend-row {r["_severity"]}"><td><strong>{sev_label[r["_severity"]]}</strong></td><td>{wait_on}</td><td>{_age}</td><td>{_fmt_date(r.get("request_date") or r.get("date"))}</td><td>{_safe(r.get("lane"))}</td><td>{_safe(r.get("containers"))}</td><td>{B.doc_dot_html(r.get("carrier_quoted"))}{_safe(r.get("carrier_quoted"))}</td><td>{_safe(r.get("ol_rate"))}</td><td>{_safe(r.get("eta_requested") or r.get("etd_requested") or r.get("requested_dates"))}</td><td>{_safe(r.get("eta_offered"))}</td></tr>\n'
         html += '</table>'
     else:
         html += '<p class="dod-empty">Nothing pending right now.</p>'

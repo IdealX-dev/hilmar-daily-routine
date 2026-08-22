@@ -304,15 +304,13 @@ def guess_teu_from_preview(preview: str | None) -> tuple[int, int, str | None]:
     return count, teu, canonical
 
 
-def _etd_fit_days(eta_requested: str | None, eta_offered: str | None) -> int | None:
-    if not eta_requested or not eta_offered:
-        return None
-    try:
-        req = datetime.fromisoformat(eta_requested).date()
-        off = datetime.fromisoformat(eta_offered).date()
-        return (off - req).days
-    except (ValueError, TypeError):
-        return None
+# _etd_fit_days was retired 2026-08-21, together with its twin in
+# scripts/ingest.py. It parsed with fromisoformat against fields that hold
+# OL's raw cell text ("30-Sep-26"), so it returned None on every table-parsed
+# quote — dead in production while looking live — and it differenced whatever
+# two dates it was handed regardless of which leg each one described.
+# core.requested_fit_days owns both jobs now: one implementation, and it
+# refuses to cross an arrival ask with a departure offer.
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -344,6 +342,13 @@ def _parse_all(text_body: str, subject: str, bucket: str) -> dict[str, Any]:
     out["destination"] = dest
 
     out["eta_requested"] = BP.parse_eta_requested(text_body)
+    # THE DEPARTURE ASK. 2026-08-21: the departure anchors (cutoff, ship by,
+    # load by, need to sail) were removed from _ETA_REQ_ANCHORS so they stop
+    # masquerading as a requested ARRIVAL. In scripts/ they land in
+    # etd_requested, which fetch_bodies already parsed; this tree never called
+    # parse_etd_requested at all and build_requests hardcoded the field None,
+    # so here the removal really would have dropped them on the floor.
+    out["etd_requested"] = BP.parse_etd_requested(text_body)
     out["etd_offered"] = BP.parse_etd_offered(text_body)
     out["eta_offered"] = BP.parse_eta_offered(text_body)
     out["origin_cutoff"] = BP.parse_origin_cutoff(text_body)
@@ -530,7 +535,7 @@ def build_requests(lonny_out: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "has_send": False,
             "mdolx_ref": None,
             "mdolx_refs_all": [],
-            "etd_requested": None,
+            "etd_requested": parsed.get("etd_requested"),
             "etd_offered": None,
             "etd_fit_days": None,
             "eta_requested": eta_requested,
@@ -1149,7 +1154,13 @@ def apply_rate_responses(
         best["rate_expiry"] = rt.get("rate_expiry")
         best["detention_free"] = rt.get("detention_free")
         best["demurrage_free"] = rt.get("demurrage_free")
-        best["etd_fit_days"] = _etd_fit_days(best.get("eta_requested"), best.get("eta_offered"))
+        # LIKE FOR LIKE, mirroring scripts/ingest.py. The local _etd_fit_days
+        # compared whatever two dates it was handed regardless of leg, and
+        # parsed with fromisoformat against fields that hold OL's raw cell
+        # text — dead on every table-parsed quote while looking live.
+        _fit, _basis = C.requested_fit_days(best)
+        best["etd_fit_days"] = _fit
+        best["etd_fit_basis"] = _basis
         if rr.get("conversation_id") and not best.get("conversation_id"):
             best["conversation_id"] = rr.get("conversation_id")
         if req_dt:
@@ -1362,6 +1373,10 @@ _RECOMPUTED_FIELDS = frozenset({
     # Timestamps in Michael-friendly TZ (clock walk, not wall clock)
     "request_date", "lonny_time_pt", "olusa_time_et",
     "turnaround_biz_hours", "turnaround_hours", "etd_fit_days",
+    # etd_fit_basis travels WITH etd_fit_days. Refreshing the number
+    # while freezing the leg label lets the pair contradict — a value
+    # measured arrival-to-arrival still labelled "departure".
+    "etd_fit_basis",
     # Rate-response signals — extracted by apply_rate_responses from the
     # MBD shared mailbox reply. Were stuck stale on disk pre-fix.
     "quoted", "response_timestamp",

@@ -3,6 +3,113 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-21 (second pass) — the time system: which clock, and which leg
+
+Michael, on the delivered Aug 20 report: "pending hilmar two sections
+different number of open   fix time system with proper tools".
+
+#### FIRST, THE NON-DEFECT — because it nearly cost an operator decision
+
+PENDING_HILMAR_LOSS_HOURS is 24 because MICHAEL SET IT TO 24 (0c73c4b,
+2026-07-26, explicitly superseding the 48 he asked for twelve days earlier).
+The three Aug-20 quotes were 26-29h old and were aged to Quoted & Lost
+CORRECTLY. A stale comment directly above that branch still said "48 CLOCK
+hours", which made the constant look like the bug — one edit from reverting
+his own call. The constant's own docblock had warned in writing that reading
+that block "invites someone to fix an operator decision back to a value he
+had already rejected". It nearly did. A test now pins the constant WITH the
+reason, so the next session reads why before it reads the number.
+
+Also worth recording: the normal 8:07 AM fire would never have shown this.
+A prior-day quote cannot be 24h old at 8 AM. The contradiction surfaced
+because THIS session re-fired at 5:45 PM, off-cadence, to deliver the signer
+and rate fixes.
+
+#### WHAT WAS ACTUALLY WRONG
+
+1. A THRESHOLD THE CODE HAS NOT USED SINCE 2026-07-26 WAS PRINTED IN THE
+   REPORT. decide_status returned "no MDOLX within the 48h (biz-hours)
+   cutoff" as a reason_detail — stored in status_history, rendered into the
+   Reason column the CEO reads. Now interpolated from the constant.
+
+2. THE TIMER-DRIFT GUARD WAS GREEN OVER BOTH SITES. It matched line by line,
+   so a phrase wrapping across a comment break was on neither line; and it
+   scanned only comments and docstrings, never string literals — prose the
+   program SHOWS A HUMAN was exempt. It now joins comment blocks, reads
+   string and f-string literals, tolerates punctuation, ignores histogram
+   ranges ("0-48h"), and takes a sentence-scoped [historic] marker for prose
+   that deliberately names a superseded value.
+
+3. ETD_MISS WAS MEASURING THE OCEAN CROSSING. _ETA_REQ_ANCHORS matched
+   departure language — cutoff, ship by, load by, need to sail — and filed it
+   as a requested ARRIVAL, then differenced it against OL's offered ARRIVAL.
+   "Cutoff 8/28" vs OL ETA 30-Sep-26 = 33 days; "Need to sail by 8/25" = 36.
+   A month of ocean freight to Asia clears the 5-day gate every time, so
+   every cutoff-style RFQ that lost was stamped "missed the requested ETD" —
+   feeding loss analytics, avg_etd_fit_days and the carrier scoreboard.
+
+   MICHAEL'S RULING: "compare like with like only" — and where the legs do
+   not match, record no miss rather than a fabricated one. core.
+   requested_fit_days compares arrival-to-arrival or departure-to-departure,
+   records which leg in etd_fit_basis, and returns (None, None) otherwise.
+   NOT every ETD_MISS was wrong: Lonny asked "ETA 9/15" for Shanghai and OL
+   offered 10-Oct. That one is real and still reports as a 25-day miss.
+
+4. A YEAR-LESS DATE TOOK ITS YEAR FROM THE RUN CLOCK, so Lonny's December
+   "ETA 1/15" resolved into the year already ending and changed meaning at
+   midnight on 1 Jan (reprocess_bodies re-derives every body every fire). The
+   year now comes from the message's own send date, and a year-less date
+   already well past rolls forward — but ONLY in the top message, because a
+   reply quotes the whole thread and a re-ping must not re-date an ask
+   written months earlier.
+
+5. THE REPORT NOW SAYS WHICH MOMENT EACH SECTION DESCRIBES. STATUS CHANGES is
+   the report day's history; PENDING OL/HILMAR are current state at render
+   time — deliberately, since their job is "what is open right now". Michael
+   chose labelling over freezing the report, so the pending list stays
+   actionable: an "Open right now — as of <time>" stamp on both, plus a
+   reconciliation line naming what left the list and WHERE IT WENT (lost,
+   booked, moved on).
+
+#### DECISIONS MADE, BY NAME
+
+- Michael: keep the pending sections LIVE and label them, rather than
+  freezing the whole report to the report day.
+- Michael: like-for-like only on ETD_MISS; no miss beats a fabricated one.
+- Michael: Context7 for library behaviour and the developer index for
+  third-party runtime failures, as a STANDING rule — now in CLAUDE.md.
+  Context7 settled one question in this change: timedelta arithmetic on an
+  aware datetime is wall-clock, not absolute, which is why is_business_stale
+  and pending_hilmar_stale differ by an hour across a DST boundary.
+
+#### WHAT /code-review CAUGHT THAT I HAD SHIPPED
+
+Two passes, fourteen findings. Three were regressions from this same session:
+the status pill rendered the ROW'S CURRENT state at BOTH ends of a change
+("WIN → WIN"), and since "Q&L"/"NQ" are display words rather than palette
+keys it turned every loss pill grey — a fix for greyness that made everything
+grey. The reconciliation line called bookings losses. And making the
+etd_fit_days recompute unconditional put it ABOVE the manual_locked guard,
+where it would have silently rewritten rows a human had locked.
+
+Fixing one leg of the year roll-forward also made the other worse: before,
+both sides shared the same wrong year and cancelled; after, a December ask
+measured against a prose-parsed offer came out ~360 days early. Both legs now
+take the year from the message.
+
+core.offered_date was mirrored into src/hilmar so both trees read an OL cell
+identically — the library tree was returning None for "9-30-26", a form OL
+really sends.
+
+#### SCHEMA
+
+etd_fit_basis added to schema.json (additive; "arrival" | "departure" | null).
+No migration needed — rebuild-not-merge recomputes it every fire, and it is
+recomputed rather than write-once so a value from the old cross-leg rule
+cannot persist.
+
+3,330 passed / 1 skipped, ruff clean, src/hilmar coverage 91.08%.
+
 ### 2026-08-21 — a signer is whoever signed, and OL offers more than one rate
 
 Michael, on the OL-USA RESPONSES table: "why are signors missing nothing

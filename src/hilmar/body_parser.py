@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 
 
@@ -474,19 +474,39 @@ _DATE_RXES = [
     re.compile(r"\b(?P<mo>\d{1,2})[/-](?P<d>\d{1,2})(?:[/-](?P<y>\d{2,4}))?\b"),
 ]
 
-def _date_from_match(m, default_year: int):
+def _date_from_match(m, default_year: int, ref_date=None):
+    """ISO date from a matched date expression.
+
+    ROLL FORWARD ON A YEAR-LESS DATE (2026-08-21). When the writer gave no
+    year and the month/day lands BEFORE the email was sent, they meant next
+    year: Lonny writing "ETA 1/15" on 10 December means 15 January, not a
+    date five weeks in his past. Without this, a December RFQ's requested ETA
+    resolved into the past, and core.requested_fit_days then measured OL's
+    perfectly good January arrival as ~365 days late — an automatic ETD_MISS
+    on every year-end quote.
+
+    Only fires when BOTH the year is absent from the text AND ref_date (the
+    message's own send date) is known. An explicit year always wins, and a
+    date that is merely a few days stale is left alone by the 45-day grace —
+    Lonny does sometimes restate a cutoff that has just passed, and rolling
+    that a full year forward would be a worse lie than leaving it.
+    """
     try:
+        had_year = bool(m.group("y"))
         if "m" in m.groupdict() and m.group("m"):
             mon = _MONTHS.get(m.group("m").lower()[:3])
             d = int(m.group("d"))
-            y = int(m.group("y")) if m.group("y") else default_year
+            y = int(m.group("y")) if had_year else default_year
         else:
             mon = int(m.group("mo"))
             d = int(m.group("d"))
-            y = int(m.group("y")) if m.group("y") else default_year
+            y = int(m.group("y")) if had_year else default_year
         if y < 100:
             y += 2000
-        return date(y, mon, d).isoformat()
+        out = date(y, mon, d)
+        if not had_year and ref_date is not None and out < ref_date - timedelta(days=45):
+            out = out.replace(year=out.year + 1)
+        return out.isoformat()
     except (ValueError, TypeError):
         return None
 
@@ -526,17 +546,51 @@ def _relative_date_in(chunk, ref_date):
     return None
 
 
+# Where the QUOTED CHAIN starts. Mirrors core._CHAIN_MARKER_RX; duplicated
+# rather than imported because body_parser deliberately does not depend on
+# core (core imports parsing helpers the other way in places).
+_CHAIN_MARKER_RX = re.compile(r"(?im)^\s*(?:from:|de:|von:|enviado el:|sent:)\s")
+
+
+def _top_message_end(text: str) -> int:
+    """Offset where the most-recent message ends and the quoted chain begins."""
+    m = _CHAIN_MARKER_RX.search(text or "")
+    return m.start() if m else len(text or "")
+
+
 def _find_date_near(text, anchor_rx, window=120, ref_date=None):
     if not text:
         return None
-    now_year = datetime.utcnow().year
+    # THE EMAIL'S YEAR, NOT THE RUN'S. A bare "ETA 1/15" carries no year, and
+    # this used datetime.utcnow().year — the year the PIPELINE happened to
+    # run. Because reprocess_bodies re-derives every cached body on every
+    # fire, Lonny's December "ETA 1/15" (meaning January) resolved to 15 Jan
+    # of the OLD year while he was still in December, and silently changed
+    # meaning at midnight on 1 Jan. ref_date is the message's own send date
+    # and is already threaded in for the relative-phrase resolver below;
+    # using it here makes the same body parse the same way forever, which is
+    # what rebuild-not-merge assumes.
+    now_year = (ref_date.year if ref_date is not None
+                else datetime.now(timezone.utc).year)
+    _top_end = _top_message_end(text)
     for am in anchor_rx.finditer(text):
         start = am.end()
         chunk = text[start:start+window]
         for drx in _DATE_RXES:
             dm = drx.search(chunk)
             if dm:
-                iso = _date_from_match(dm, now_year)
+                # ROLL FORWARD ONLY IN THE TOP MESSAGE. A reply quotes the
+                # whole thread, so a re-ping sent in August carries Lonny's
+                # May "ETA 6/1" underneath it. Against ref_date=Aug 20 that
+                # date is 80 days past, and the roll-forward turned a
+                # June-2026 ask into June 2027 — an ask a year out, feeding
+                # ~-290d into avg_etd_fit_days. The date is still READ from
+                # the chain (losing it would be worse); it just is not
+                # re-dated against a clock that was not running when it was
+                # written.
+                _in_top = am.start() < _top_end
+                iso = _date_from_match(dm, now_year,
+                                       ref_date if _in_top else None)
                 if iso:
                     return iso
         rel = _relative_date_in(chunk, ref_date)
@@ -546,10 +600,29 @@ def _find_date_near(text, anchor_rx, window=120, ref_date=None):
 
 
 _ETA_REQ_ANCHORS = re.compile(
-    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:sail|ship|load|depart|leave|arrive|deliver)"
-    r"|target\s+et[ad]|requested\s+et[ad]|require(?:d)?\s+by"
-    r"|sailing\s+by|ship\s+by|load(?:ing)?\s+by|cutoff"
-    r"|prefer(?:red)?\s+et[ad]"
+    # ARRIVAL-SIDE ONLY. 2026-08-21, Michael: "compare like with like".
+    #
+    # Until today this pattern also matched DEPARTURE language — "cutoff",
+    # "ship by", "load by", "sailing by", "need to sail/ship/load/depart/
+    # leave" — and filed whatever it found as a requested ARRIVAL. That date
+    # was then differenced against OL's offered ARRIVAL to produce
+    # etd_fit_days, so on any cutoff-style RFQ the "miss" it computed was the
+    # OCEAN TRANSIT TIME. Measured 2026-08-21:
+    #     "Cutoff 8/28"          -> eta_requested 2026-08-28
+    #                               vs OL ETA 30-Sep-26 = 33 days -> ETD_MISS
+    #     "Need to sail by 8/25" -> 36 days -> ETD_MISS
+    # A month of ocean freight to Asia clears the 5-day ETD_MISS threshold
+    # every single time, so every cutoff RFQ was auto-stamped "missed the
+    # requested ETD" and that reason fed the loss analytics and the carrier
+    # scoreboard.
+    #
+    # Every one of those anchors already lives in _ETD_REQ_ANCHORS below,
+    # which populates etd_requested — the departure-side ask. Nothing is lost
+    # by removing them here; the date now lands in the field that means what
+    # it says, and core.requested_fit_days refuses to cross the two legs.
+    r"(?:need(?:s|ed)?\s+(?:to\s+)?(?:arrive|deliver)"
+    r"|target\s+eta|requested\s+eta|require(?:d)?\s+by"
+    r"|prefer(?:red)?\s+eta"
     # 2026-06-16 (Michael, Lonny's real RFQ "ETA 8/7"): Lonny states his
     # target arrival as a BARE "ETA <date>" / "arrival" / "deliver by" — no
     # "target"/"requested" prefix. On the request side that IS the requested
@@ -569,9 +642,29 @@ _ORIGIN_CUTOFF_ANCHORS = re.compile(r"(?:origin\s+cutoff|erd|pickup\s+cutoff|doo
 
 def parse_eta_requested(text, ref_date=None):
     return _find_date_near(text or "", _ETA_REQ_ANCHORS, ref_date=ref_date)
-def parse_etd_offered(text):    return _find_date_near(text or "", _ETD_OFFER_ANCHORS)
-def parse_eta_offered(text):    return _find_date_near(text or "", _ETA_OFFER_ANCHORS)
-def parse_origin_cutoff(text):  return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS)
+# ref_date ON THE OFFERED SIDE TOO (2026-08-21, second pass). The requested
+# parsers took the year-less fallback year from the message's send date while
+# these three still took it from the RUN clock. Before that split, both sides
+# shared the same wrong year at a year boundary and the difference cancelled
+# to roughly zero; afterwards they disagreed by a year, so a December ask
+# ("ETA 1/15" -> 2027-01-15) measured against a prose-parsed offer ("ETA 1/20"
+# -> 2026-01-20) came out ~360 days EARLY. Fixing one leg and not the other
+# turned a wash into a fabricated number, which is worse than the bug.
+#
+# The grid path is unaffected either way — OL's table cells carry explicit
+# years ("10-Oct-26") — so this only governs the prose fallback. Callers that
+# know the message's send date should pass it; the run year remains the
+# last resort for callers that genuinely have no date.
+def parse_etd_offered(text, ref_date=None):
+    return _find_date_near(text or "", _ETD_OFFER_ANCHORS, ref_date=ref_date)
+
+
+def parse_eta_offered(text, ref_date=None):
+    return _find_date_near(text or "", _ETA_OFFER_ANCHORS, ref_date=ref_date)
+
+
+def parse_origin_cutoff(text, ref_date=None):
+    return _find_date_near(text or "", _ORIGIN_CUTOFF_ANCHORS, ref_date=ref_date)
 
 
 # ─────────────────────────────────────────────────────────────────────

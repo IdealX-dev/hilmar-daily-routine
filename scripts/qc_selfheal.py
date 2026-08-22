@@ -1454,13 +1454,26 @@ def phase_3_entries(log: Log, data: dict):
             log.fix(f"{rid_label}: implausible turnaround ({_tabh:.1f} biz-hrs "
                     ">40) cleared — response_timestamp mis-paired, no reliable timing")
 
-        if r.get("etd_fit_days") is None and r.get("quoted"):
-            lonny_ask = r.get("eta_requested") or r.get("requested_dates") or r.get("cutoff_requested")
-            ol_offer = r.get("eta_offered") or r.get("etd_offered")
-            if lonny_ask and ol_offer:
-                fit = core.etd_fit_days(lonny_ask, ol_offer)
-                if fit is not None:
-                    r["etd_fit_days"] = fit
+        # LIKE FOR LIKE (2026-08-21, Michael: "compare like with like only").
+        # This backfill used to pair `eta_requested or requested_dates or
+        # cutoff_requested` against `eta_offered or etd_offered` — a
+        # DEPARTURE ask could be differenced against an ARRIVAL offer, which
+        # measures ocean transit, not a miss. On a cutoff RFQ to Asia that is
+        # ~30 days and clears the 5-day ETD_MISS gate every time.
+        #
+        # NOT gated on `is None` any more. That gate made the value
+        # write-once, so a wrong fit computed by the old rule would persist in
+        # tracking-data-v2.json forever and re-stamp the row ETD_MISS on every
+        # later fire even after the parser improved. Recomputing each pass is
+        # what lets rebuild-not-merge actually correct the record — and it is
+        # idempotent, which matters because phase 3 runs twice per fire.
+        # BELOW THE HARD LOCK, deliberately — see the manual_locked guard
+        # immediately after this comment. Making the recompute unconditional
+        # (2026-08-21) put it ABOVE that guard for an hour, which would have
+        # silently rewritten etd_fit_days on rows a human had locked, with no
+        # fix log. operator_corrections.json is the only durable human state
+        # in this pipeline; an unconditional writer that outranks it is the
+        # one thing that must never ship.
 
         # HARD LOCK: skip status decisions on manually-locked records (Michael's audit pass 2026-05-01)
         # Even on locked records: heal carrier_won (WIN only) + reclassify OTHER -> COVERED (LOSS only).
@@ -1487,6 +1500,29 @@ def phase_3_entries(log: Log, data: dict):
                 r["quoted"] = True
                 log.fix(f"{rid_label}: lonny_covered → LOSS/COVERED + quoted=True")
             continue
+        # Recomputed EVERY pass, not gated on `is None`. That gate made the
+        # value write-once, so a fit computed by the old cross-leg rule would
+        # persist in tracking-data-v2.json forever and re-stamp the row
+        # ETD_MISS on every later fire even after the parser improved.
+        # Recomputing is what lets rebuild-not-merge actually correct the
+        # record, and it is idempotent — which matters because phase 3 runs
+        # twice per fire. Locked and lonny_covered rows have already
+        # `continue`d above and are never touched.
+        if r.get("quoted"):
+            fit, basis = core.requested_fit_days(r)
+            # LOG THE CHANGE. This recompute can flip a row's loss_reason
+            # from ETD_MISS to UNDIFFERENTIATED without the status string
+            # moving, so nothing else in the audit records that the row's
+            # stated cause of loss changed. A silent rewrite of a number the
+            # carrier scoreboard reads is the shape of defect this file
+            # exists to catch.
+            _was = r.get("etd_fit_days")
+            if _was != fit:
+                log.fix(f"{rid_label}: etd_fit_days {_was!r} → {fit!r}"
+                        f"{f' ({basis})' if basis else ' (legs not comparable)'}")
+            r["etd_fit_days"] = fit
+            r["etd_fit_basis"] = basis
+
         prior_status = r.get("status")
         decision = core.decide_status(
             has_send=r.get("has_send", False),

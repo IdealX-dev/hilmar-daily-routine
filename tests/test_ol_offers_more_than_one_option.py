@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import body_parser as BP  # noqa: E402
+import core  # noqa: E402
 
 from hilmar import body_parser as HBP  # noqa: E402
 
@@ -178,9 +179,21 @@ def test_find_table_rows_still_shows_only_the_first_row():
 # ── The choice has to reach Michael's screen, not just the JSON ──────────────
 
 def _quoted_row(**over):
-    """A row shaped the way ingest writes an OL response, dated today so it
-    lands in the report's own window."""
-    sent = datetime.now(timezone.utc) - timedelta(hours=3)
+    """A row shaped the way ingest writes an OL response, stamped on the day
+    the report actually covers.
+
+    ANCHORED TO _report_date, NOT TO "now". The first version of this helper
+    used `now - 3h`, which lands on the report day only when the suite happens
+    to run during ET business hours — it passed when written on a Friday
+    afternoon and failed the same evening once the clock rolled past midnight
+    ET into the next report window. A test whose result depends on the wall
+    clock is not a test; it is a coin flip that reports as green most of the
+    time, which is worse than red.
+    """
+    import gen_email as _GE
+    _rd = _GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+    sent = datetime(_rd.year, _rd.month, _rd.day, 14, 0,
+                    tzinfo=timezone.utc)   # midday ET on the reported day
     row = {
         "request_id": "req_multi", "lane": "Oakland → Xingang",
         "origin": "Oakland", "destination": "Xingang",

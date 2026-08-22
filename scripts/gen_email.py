@@ -149,6 +149,90 @@ def _report_label(report_date):
     return _fmt_date(datetime.combine(report_date, datetime.min.time()), "%A %B %-d, %Y")
 
 
+def _pending_as_of_note(as_of_label):
+    """The PENDING sections are LIVE, and the day box around them is not.
+
+    Michael, 2026-08-21, on the delivered Aug 20 report: "pending hilmar two
+    sections different number of open". STATUS CHANGES showed three lanes
+    moving INTO Pending Hilmar; the PENDING HILMAR section below it listed one
+    row, and that row was a different lane quoted the NEXT day.
+
+    Both numbers were right and the report could not say so. STATUS CHANGES is
+    the report day's history (_today_events windows it on the transition's ET
+    date); the PENDING lists are current state at render time with no date
+    filter at all — deliberately, because their job is "what is open right
+    now", which is the thing a reader can act on. Stacking a day's history and
+    a live list inside one box headed "What Happened — <day>" is what made
+    them read as a contradiction.
+
+    So the sections say which moment they describe. Michael chose this over
+    freezing the whole report to the report day: the pending list stays an
+    actionable to-do list rather than becoming a historical snapshot.
+    """
+    return (f'<p style="margin:0 0 6px;font-size:11px;color:{B.DOC_MUTED}">'
+            f'Open right now — as of {_esc(as_of_label)}. Not limited to the '
+            f'report day above, so it can include quotes from other days that '
+            f'are still open.</p>')
+
+
+def _left_pending_note(status_ch, pending_hil):
+    """Name the rows that moved INTO Pending Hilmar today and have since left,
+    AND SAY WHERE EACH ONE WENT.
+
+    Without this the reader reconciles two counts by hand and gets it wrong —
+    which is the complaint. The 2026-08-13 fix appended "— since aged to Q&L"
+    to each STATUS CHANGES row and Michael filed the same complaint again
+    eight days later: a per-row suffix does not answer "why does this section
+    say 3 and that one say 1".
+
+    SPLIT BY OUTCOME, not lumped. The first version of this note called every
+    departed row "passed the decision window and are now Quoted & Lost",
+    which is a lie about any row that left because it WON. Announcing a
+    booking as a loss in the CEO's daily report is worse than the ambiguity
+    it was written to fix.
+    """
+    open_ids = {r.get("request_id") for r in pending_hil}
+    lost, won, other, seen = [], [], [], set()
+    for r, h in status_ch:
+        rid = r.get("request_id")
+        if (h.get("to") or "").upper() != "QUOTED":
+            continue
+        if rid in open_ids or rid in seen:
+            continue
+        seen.add(rid)
+        disp = (core.display_status(r) or "").upper()
+        if disp in ("Q&L", "NQ"):
+            lost.append(r)
+        elif disp == "WIN":
+            won.append(r)
+        else:
+            other.append(r)
+    if not (lost or won or other):
+        return ""
+
+    def _lanes(rows):
+        names = ", ".join(
+            _esc(r.get("lane") or f"{r.get('origin','?')} → {r.get('destination','?')}")
+            for r in rows[:4])
+        return names + (f" +{len(rows) - 4} more" if len(rows) > 4 else "")
+
+    parts = []
+    if lost:
+        parts.append(f'{len(lost)} passed the '
+                     f'{core.PENDING_HILMAR_LOSS_HOURS}h decision window and '
+                     f'{"is" if len(lost) == 1 else "are"} now Quoted &amp; '
+                     f'Lost ({_lanes(lost)})')
+    if won:
+        parts.append(f'{len(won)} booked ({_lanes(won)})')
+    if other:
+        parts.append(f'{len(other)} moved on ({_lanes(other)})')
+    total = len(lost) + len(won) + len(other)
+    return (f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_MUTED}">'
+            f'{total} quote(s) shown in STATUS CHANGES as moving into '
+            f'Pending Hilmar {"is" if total == 1 else "are"} no longer in this '
+            f'list — {"; ".join(parts)}.</p>')
+
+
 def build_subject(data, cfg):
     report = _report_date()
     label = _fmt_date(datetime.combine(report, datetime.min.time()), "%b %-d, %Y")
@@ -668,6 +752,24 @@ def _header_html(today_label, range_label, updated_label):
 """
 
 
+def _pill_colour_key(status):
+    """Palette key for a transition end. Q&L/NQ are DISPLAY words — the
+    palette is keyed on the storage enum, so map them back or the pill falls
+    through to the grey unknown-status fallback."""
+    s = (status or "").upper()
+    return "LOSS" if s in ("Q&L", "NQ") else s
+
+
+def _pill_text(status, r):
+    """The word the reader sees for THIS end of the transition, in the same
+    vocabulary as every count in the email (core.display_status)."""
+    s = (status or "").upper()
+    if s in ("LOSS", "Q&L", "NQ"):
+        return core.display_status({"status": "LOSS",
+                                    "quoted": s != "NQ" and bool(r.get("quoted"))})
+    return status
+
+
 def _status_change_pill(status, r, other_status=None):
     """Status-change pill in operational 'who do we chase' terms, so a
     transition reads as the real-world wait — not the internal enum.
@@ -693,7 +795,25 @@ def _status_change_pill(status, r, other_status=None):
     if s == "QUOTED":
         return V.pending_pill("PENDING_HILMAR")
     if s != "PENDING":
-        return V.status_pill(status)
+        # COLOUR FROM THE ENUM, TEXT FROM THE VOCABULARY, AND BOTH FROM *THIS*
+        # END OF THE TRANSITION.
+        #
+        # The first attempt at this (2026-08-21, same day) passed
+        # core.display_status(r) as the pill's STATUS, and got two things
+        # wrong at once. display_status reads the row's CURRENT state, so both
+        # ends of a change rendered the same value — a stored LOSS→WIN came
+        # out "WIN → WIN", erasing the very transition this section exists to
+        # show. And "Q&L"/"NQ" are display words, not palette keys, so every
+        # loss pill fell through to the grey unknown-status fallback: a fix
+        # for greyness that made everything grey.
+        #
+        # viz.status_pill already separates the two — `status` selects the
+        # colour, `label` overrides the text — so the enum keeps driving the
+        # palette (LOSS stays red) while the reader sees the same word the
+        # counts and KPIs use. `quoted` is the row's, because whether a LOSS
+        # is Q&L or NQ is not recorded per transition; that is the honest
+        # limit of the data, not a guess.
+        return V.status_pill(_pill_colour_key(s), label=_pill_text(s, r))
     if o == "QUOTED":
         sub = "PENDING_OL"
     elif o in ("WIN", "LOSS", "BOOKING_CANCELED"):
@@ -824,7 +944,7 @@ def _undated_quotes_note(undated) -> str:
 
 
 def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
-                      undated_quotes=()):
+                      undated_quotes=(), as_of_label=""):
     """Render the 'What Happened on <day>' block. The label `report_label` is
     TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
     fire runs AFTER Lonny's PT office has closed for the day, so today's data
@@ -1258,10 +1378,13 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
   {sc_table}
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_WARN};font-size:13px">⏳ PENDING OL ({len(pending_ol)}) — awaiting OL quote</h3>
+  {_pending_as_of_note(as_of_label)}
   {pol_table}
 
   <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">⏳ PENDING HILMAR ({len(pending_hil)}) — awaiting Lonny decision</h3>
+  {_pending_as_of_note(as_of_label)}
   {pend_table}
+  {_left_pending_note(status_ch, pending_hil)}
 
   <p style="margin:14px 0 0;font-size:13px;color:{B.DOC_INK};font-weight:bold">{_esc(summary_line)}</p>
 </div>
@@ -1968,7 +2091,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
   <td style="padding:6px 8px">{_esc(r.get('destination') or '—')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(r.get('teu_requested') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or 'no ETA on request')}</td>
+  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or r.get('etd_requested') or 'no date on request')}</td>
   <td style="padding:6px 8px;font-size:11px">{_esc(r.get('ol_responder') or '—')}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:bold;color:{B.DOC_WARN}">{_age_days(request_ts)}</td>
   <td style="padding:6px 8px;font-size:10px;color:{B.DOC_MUTED};font-family:monospace">{_esc(imid_short)}</td>
@@ -2528,8 +2651,12 @@ def build_body(data, cfg):
     pend_rows = _pending_rows(data)
 
     html_body = _header_html(report_label, date_range, updated_label)
+    # updated_label is the render instant ("August 21, 2026 at 5:45 PM ET").
+    # The PENDING sections are live at THAT moment, not at the report day, and
+    # since 2026-08-21 they say so — see _pending_as_of_note.
     html_body += _today_block_html(report_label, new_req, ol_resp, status_ch,
-                                   pending, undated_q)
+                                   pending, undated_q,
+                                   as_of_label=updated_label)
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.

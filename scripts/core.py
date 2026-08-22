@@ -1937,7 +1937,7 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
     >= PENDING_HILMAR_LOSS_HOURS → Q&L, or >= PENDING_HILMAR_LOSS_HOURS_FRIDAY
     when OL quoted on a Friday (ET) so the weekend lands Lonny on Monday.
 
-    Michael said 48h on 2026-07-14 and then 24h on 2026-07-26 (0c73c4b,
+    Michael said 48h [historic] on 2026-07-14 and then 24h on 2026-07-26 (0c73c4b,
     "supersedes"). This docstring quoted the FIRST instruction for eleven days
     after the second one shipped. Naming the constants instead of spelling a
     number is what stops that recurring. Distinct from the SEND-
@@ -1955,7 +1955,7 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
 
     It is KEYWORD-ONLY on purpose. Positionally it would slide into `now`,
     which is the same class of mistake that once put a hardcoded 24h literal
-    in QC-007 while decide_status ran 48h+Friday.
+    in QC-007 while decide_status ran 48h+Friday [historic].
 
     Behaviour for existing 2-arg callers is unchanged: with request_dt
     defaulting to None the anchor is exactly resp_dt, including the None case.
@@ -1981,7 +1981,7 @@ def pending_ol_stale(request_dt, now=None) -> bool:
     definition). Pure CLOCK hours, mirroring pending_hilmar_stale:
     >= PENDING_OL_LOSS_HOURS, or >= PENDING_OL_LOSS_HOURS_FRIDAY when Lonny
     asked on a Friday (ET) so the weekend lands OL on Monday. Named rather
-    than spelled: this docstring said "48h" while the constant was 24 from
+    than spelled: this docstring said "48h" [historic] while the constant was 24 from
     2026-07-26 to 2026-08-06.
 
     request_dt None → STALE (True). We cannot measure a window without a
@@ -2051,7 +2051,8 @@ def decide_status(
     permanent phantom WINs from send-signals that never booked). A send
     with no MDOLX stages as PENDING(AWAITING_MDOLX) and auto-promotes to
     WIN when the booking lands; if it goes stale (see send_signal_stale —
-    real wins confirm within ~48h biz) it demotes to LOSS(SEND_NO_BOOKING),
+    real wins confirm within PENDING_WINDOW_HOURS biz) it demotes to
+    LOSS(SEND_NO_BOOKING),
     which the audit displays as Q&L.
 
     PRICE determination (Q&L sub-classification, 2026-06-02 rewrite):
@@ -2145,8 +2146,9 @@ def decide_status(
             # pass1 SEND_NO_BOOKING/has_send=False -> pass2 UNDIFFERENTIATED.
             return StatusDecision(
                 "LOSS", True, True, "SEND_NO_BOOKING",
-                "Send received but no MDOLX within the 48h (biz-hours) cutoff — "
-                "booking never confirmed (real wins confirm same/next business day)")
+                f"Send received but no MDOLX within the "
+                f"{PENDING_WINDOW_HOURS}h (biz-hours) cutoff — booking never "
+                f"confirmed (real wins confirm same/next business day)")
         return StatusDecision("PENDING", True, True, "AWAITING_MDOLX",
                               "Lonny replied Send — awaiting MDOLX booking confirmation")
 
@@ -2216,11 +2218,16 @@ def decide_status(
             "is past the decision window")
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
-    # PENDING-Hilmar quote-decision window (Michael 2026-07-14): 48 CLOCK
-    # hours from the OL quote → Q&L, 72 when OL quoted on a Friday (ET) so the
-    # weekend lands Lonny on Monday, not Sunday. Supersedes the prior
-    # 24h-biz + Tuesday-18:00 carve-out (which left 73–78h Friday quotes stuck
-    # PENDING). SEND-signal aging above still uses is_business_stale.
+    # PENDING-Hilmar quote-decision window. The numbers live in
+    # PENDING_HILMAR_LOSS_HOURS / _FRIDAY and are interpolated below rather
+    # than restated here — this comment named the SUPERSEDED 2026-07-14
+    # figure until 2026-08-21, eleven days after Michael set the current one
+    # in 0c73c4b, and it sat directly above the branch a reader lands on when
+    # chasing exactly this behaviour. On 2026-08-21 it cost a session: three
+    # Aug-20 quotes aged out correctly and the stale prose made the CONSTANT
+    # look like the bug, one edit away from reverting an operator decision he
+    # had already made. Measured against the constant, never prose.
+    # SEND-signal aging above still uses is_business_stale.
     if not pending_hilmar_stale(resp_dt, now):
         _win = PENDING_HILMAR_LOSS_HOURS_FRIDAY if resp_dt.astimezone(ET).weekday() == 4 else PENDING_HILMAR_LOSS_HOURS
         return StatusDecision("PENDING", True, False, None,
@@ -2232,7 +2239,7 @@ def decide_status(
 
     # ETD-miss wins first — a missed ETD is a concrete signal regardless
     # of price competitiveness.
-    if etd_fit_days is not None and etd_fit_days >= 5:
+    if etd_fit_days is not None and etd_fit_days >= ETD_MISS_DAYS:
         reason = "ETD_MISS"
         detail += f" (ETD missed Lonny's ask by {etd_fit_days}d)"
         return StatusDecision("LOSS", True, False, reason, detail)
@@ -2383,6 +2390,90 @@ def etd_fit_days(lonny_requested: str | None, ol_offered: str | None, fallback_y
     if not a or not b:
         return None
     return (b - a).days
+
+
+#: A quote is ETD_MISS when OL's offer misses Lonny's ask by this many days.
+#: Named once here because core.decide_status, the QC checks and the tests all
+#: have to agree on it — it was a bare `>= 5` in decide_status until 2026-08-21.
+#: Last-resort year for a date carrying none and no context to infer
+#: one from. Only reachable when the ASK itself is year-less, which our
+#: own parsers do not produce — kept so the helpers never crash.
+DEFAULT_FALLBACK_YEAR = 2026
+
+ETD_MISS_DAYS = 5
+
+
+def requested_fit_days(row: dict) -> tuple[int | None, str | None]:
+    """Days by which OL's offer misses Lonny's ask — LIKE FOR LIKE ONLY.
+
+    Returns ``(days, basis)`` where basis is "arrival" or "departure", or
+    ``(None, None)`` when the two legs cannot honestly be compared. Positive
+    means OL offered a LATER date than Lonny asked for.
+
+    2026-08-21, Michael, asked whether a cutoff ask may be measured against an
+    arrival offer: "compare like with like only" — and, on what to do when
+    they don't match, record no miss rather than a fabricated one.
+
+    THE DEFECT THIS REPLACES. Both writers (ingest and the qc_selfheal
+    backfill) paired ``eta_requested or requested_dates or cutoff_requested``
+    against ``eta_offered or etd_offered`` — an arrival ask could be
+    differenced against a departure offer and, far worse, a DEPARTURE ask
+    against an ARRIVAL offer. Because _ETA_REQ_ANCHORS also matched "cutoff",
+    "ship by" and "need to sail", a cutoff RFQ produced a "miss" that was
+    really the ocean transit time. Measured on real Aug-2026 asks:
+
+        "Cutoff 8/28"          -> ask 2026-08-28 vs OL ETA 30-Sep-26 = 33d
+        "Need to sail by 8/25" -> ask 2026-08-25 vs OL ETA 30-Sep-26 = 36d
+
+    Both cleared the 5-day ETD_MISS gate, so every cutoff-style RFQ that lost
+    was stamped "missed the requested ETD" — a reason that then fed
+    loss analytics, avg_etd_fit_days and the carrier scoreboard. A month of
+    ocean freight to Asia is not a missed ETD.
+
+    THE ARRIVAL LEG IS TRIED FIRST because it is the ask Lonny states most
+    often and the one OL's grid answers most completely. If that PAIR is
+    incomplete the departure PAIR is tried — each leg is only ever compared
+    against itself, so falling through cannot cross them, and a row carrying
+    both an arrival ask and a departure ask/offer is measured on the leg it
+    can actually answer. What never happens is the mix: an arrival ask is
+    never differenced against a departure offer, or vice versa.
+
+    ``requested_dates`` is deliberately NOT consulted. It is free text
+    ("Cutoff next week or the following") with no stated leg, and guessing
+    which one it means is exactly what this function exists to stop.
+    """
+    def _leg(ask, offer, basis):
+        # THE OFFER GOES THROUGH offered_date, the module's declared single
+        # reader for a date OL wrote in a table cell. etd_fit_days' own loose
+        # parser is narrower: it returns None for "9-30-26", a form OL really
+        # sends, so the whole comparison silently vanished instead of
+        # reporting a miss. The ASK is our own parsers' output and is already
+        # ISO, so the loose reader is right for that side.
+        #
+        # The year context comes from the ASK, not from a hardcoded 2026.
+        # A bare "Sep 30" cell must resolve in the same year the ask is
+        # talking about, or the difference is a year wide.
+        a = _parse_loose_date(ask, DEFAULT_FALLBACK_YEAR)
+        if not a:
+            return None
+        # offered_date lives only in scripts/core.py — it is one of the
+        # symbols in the declared split between the two trees. Resolved at
+        # call time so the production tree gets the full OL-cell reader and
+        # the library tree degrades to the loose parser instead of raising.
+        _read_offer = globals().get("offered_date") or _parse_loose_date
+        b = _read_offer(offer, fallback_year=a.year)
+        if not b:
+            return None
+        return (b - a).days, basis
+
+    got = _leg(row.get("eta_requested"), row.get("eta_offered"), "arrival")
+    if got:
+        return got
+    got = _leg(row.get("etd_requested") or row.get("cutoff_requested"),
+               row.get("etd_offered"), "departure")
+    if got:
+        return got
+    return None, None
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -466,12 +466,35 @@ def test_guess_teu_from_preview_no_spec_returns_no_canonical():
 # ─────────────────────────────────────────────────────────────────────
 
 def test_etd_fit_days_computes_delta():
-    assert ingest._etd_fit_days("2026-05-10", "2026-05-13") == 3
-    assert ingest._etd_fit_days("2026-05-10", "2026-05-08") == -2
+    """Now via core.requested_fit_days — ingest._etd_fit_days was retired
+    2026-08-21. It parsed with fromisoformat against fields holding OL's raw
+    cell text ("30-Sep-26"), so it returned None on every table-parsed quote
+    while these ISO-only fixtures kept it looking healthy."""
+    import core as C
+    assert C.requested_fit_days(
+        {"eta_requested": "2026-05-10", "eta_offered": "2026-05-13"}) == (3, "arrival")
+    assert C.requested_fit_days(
+        {"eta_requested": "2026-05-10", "eta_offered": "2026-05-08"}) == (-2, "arrival")
+
+
+def test_etd_fit_days_handles_the_raw_cell_text_production_actually_stores():
+    """The case the retired helper could never do — and the reason it was dead."""
+    import core as C
+    assert C.requested_fit_days(
+        {"eta_requested": "2026-09-15", "eta_offered": "10-Oct-26"}) == (25, "arrival")
 
 
 def test_etd_fit_days_none_on_missing_or_bad_input():
-    assert ingest._etd_fit_days(None, "2026-05-13") is None
-    assert ingest._etd_fit_days("2026-05-10", None) is None
-    assert ingest._etd_fit_days("garbage", "2026-05-13") is None
+    import core as C
+    assert C.requested_fit_days({"eta_offered": "2026-05-13"}) == (None, None)
+    assert C.requested_fit_days({"eta_requested": "2026-05-10"}) == (None, None)
+    assert C.requested_fit_days(
+        {"eta_requested": "garbage", "eta_offered": "2026-05-13"}) == (None, None)
+
+
+def test_etd_fit_days_refuses_to_cross_the_legs():
+    """A cutoff ask against an arrival offer measures the ocean crossing."""
+    import core as C
+    assert C.requested_fit_days(
+        {"etd_requested": "2026-08-28", "eta_offered": "30-Sep-26"}) == (None, None)
 

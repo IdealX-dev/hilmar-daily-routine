@@ -169,9 +169,13 @@ def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = 
             _ref_date = C.parse_iso(sent_ts).date()
     out["eta_requested"]  = BP.parse_eta_requested(text_body, ref_date=_ref_date)
     out["etd_requested"]  = BP.parse_etd_requested(text_body, ref_date=_ref_date)  # 2026-05-19 NEW
-    out["etd_offered"]    = BP.parse_etd_offered(text_body)
-    out["eta_offered"]    = BP.parse_eta_offered(text_body)
-    out["origin_cutoff"]  = BP.parse_origin_cutoff(text_body)
+    # SAME ref_date AS THE REQUESTED SIDE. A year-less prose date must take
+    # its year from the MESSAGE, not the run clock, on both legs — see the
+    # note above parse_etd_offered. Fixing only the requested side turned a
+    # year-boundary wash into a ~360-day fabricated miss.
+    out["etd_offered"]    = BP.parse_etd_offered(text_body, ref_date=_ref_date)
+    out["eta_offered"]    = BP.parse_eta_offered(text_body, ref_date=_ref_date)
+    out["origin_cutoff"]  = BP.parse_origin_cutoff(text_body, ref_date=_ref_date)
     # NOTE: body_parser does NOT export standalone parse_vessel /
     # parse_transshipment — vessel + transshipment come exclusively from the
     # OL rate-table (the column extraction inside parse_rate_table). Older
@@ -223,12 +227,14 @@ def _parse_all(text_body: str, subject: str, bucket: str, sent_ts: str | None = 
         _ol_only = C._strip_chain(text_body) if text_body else ""
         if rt:
             out["etd_offered"] = (rt.get("etd_offered") or rt.get("etd")
-                                  or BP.parse_etd_offered(_ol_only))
+                                  or BP.parse_etd_offered(_ol_only,
+                                                          ref_date=_ref_date))
             out["eta_offered"] = (rt.get("eta_offered") or rt.get("eta")
-                                  or BP.parse_eta_offered(_ol_only))
+                                  or BP.parse_eta_offered(_ol_only,
+                                                          ref_date=_ref_date))
         else:
-            out["etd_offered"] = BP.parse_etd_offered(_ol_only)
-            out["eta_offered"] = BP.parse_eta_offered(_ol_only)
+            out["etd_offered"] = BP.parse_etd_offered(_ol_only, ref_date=_ref_date)
+            out["eta_offered"] = BP.parse_eta_offered(_ol_only, ref_date=_ref_date)
 
         # Bubble up individual fields for convenience
         if rt:
