@@ -923,6 +923,26 @@ def et_date_of(ts) -> str | None:
     return dt.astimezone(ET).date().isoformat()
 
 
+
+def booking_count(r) -> int:
+    """How many BOOKINGS a won row represents.
+
+    Michael, 2026-08-24, asked whether an RFQ booked as three shipments is one
+    win or three: "no it would be three requests to three wins". Multiple
+    MDOLX refs live on ONE row (ingest.py:1044 unions them into
+    mdolx_refs_all), and every count in the reports was row-based, so a
+    three-shipment RFQ reported as a single win. That understated wins and,
+    with them, the win rate.
+
+    Returns 0 for a row that is not a win, so callers can sum this directly.
+    Returns 1 for a win with no MDOLX recorded — the booking happened even if
+    its reference did not reach us; dropping it would lose a real shipment.
+    """
+    if (r.get("status") or "").upper() != "WIN":
+        return 0
+    refs = {x for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])] if x}
+    return len(refs) or 1
+
 def win_event_date(r) -> str | None:
     """THE ET calendar date a WIN happened — the ONE clock every report must
     credit a booking to.
@@ -958,6 +978,15 @@ def win_event_date(r) -> str | None:
     """
     if (r.get("status") or "").upper() != "WIN":
         return None
+    # booking_timestamp FIRST (2026-08-21). It is the booking's own clock —
+    # the confirmation email's send time, or the date an operator supplied
+    # when back-entering one from OL's transaction report. The transition
+    # stamp is only ever a proxy for it, and for a back-entered booking the
+    # proxy is the day the tracker was TOLD, which is how 49 Jan-Apr bookings
+    # were all credited to one week in August.
+    booked = et_date_of(r.get("booking_timestamp"))
+    if booked:
+        return booked
     dated = [d for d in (et_date_of(h.get("at"))
                          for h in (r.get("status_history") or [])
                          if h.get("to") == "WIN" and h.get("from") != "WIN") if d]

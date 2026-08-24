@@ -5005,6 +5005,52 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-079: check failed with exception: {_e}")
 
+    # QC-080: A WIN IS DATED WHEN IT WAS BOOKED, NOT WHEN WE WERE TOLD.
+    #
+    # 2026-08-24. Michael, on the 4-week trend showing 12 requests against 17
+    # wins for Aug 10-14: "how more wins then requests" / "that's unusual and
+    # sounds like bad parse". It was. The operator-corrections applier stamped
+    # every status flip with C.now_utc(), so 18 real bookings back-entered
+    # from OL's transaction report on 2026-08-13 — MDOLX 260896 and the
+    # 261025-261047 batch — were all credited to that week, and 49 more
+    # carried genuine Jan-Apr booking dates that win_event_date ignored in
+    # favour of the same fire-time stamp.
+    #
+    # The tell is a CLUSTER: real bookings do not all land on one calendar
+    # day. This flags any day holding an implausible share of the dataset's
+    # wins, which is what a re-dating bug looks like from the outside and what
+    # nothing was watching for.
+    try:
+        _wins = [r for r in data.get("requests", []) if core.is_win(r)]
+        _by_day = {}
+        for r in _wins:
+            d = core.win_event_date(r)
+            if d:
+                _by_day.setdefault(d, []).append(r)
+        if len(_wins) >= 20 and _by_day:
+            _day, _rows = max(_by_day.items(), key=lambda kv: len(kv[1]))
+            _share = len(_rows) / len(_wins)
+            # A third of every win in the dataset on ONE day is not a busy
+            # Tuesday. The Aug-13 flush was 54 of them.
+            if _share >= 0.30:
+                _undated = sum(1 for r in _rows if not r.get("booking_timestamp"))
+                log.error(
+                    f"QC-080: {len(_rows)} of {len(_wins)} wins "
+                    f"({_share:.0%}) are dated {_day} — a single day holding "
+                    f"that share is the signature of a re-dating bug, not a "
+                    f"real booking cluster. {_undated} of them carry no "
+                    f"booking_timestamp, so win_event_date is falling back to "
+                    f"the status transition, which for a back-entered booking "
+                    f"is the day the tracker was TOLD.")
+            else:
+                log.ok(f"QC-080: wins spread across {len(_by_day)} day(s); "
+                       f"busiest is {_day} with {len(_rows)} "
+                       f"({_share:.0%}) — no re-dating cluster")
+        else:
+            log.ok(f"QC-080: {len(_wins)} win(s) — too few to judge clustering")
+    except Exception as _e:
+        log.warn(f"QC-080: check failed with exception: {_e}")
+
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
     # On 2026-07-27 the fire was blocked, raised a FIRE-ALERT, and that alert

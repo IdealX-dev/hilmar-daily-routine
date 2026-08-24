@@ -186,17 +186,33 @@ def test_teu_won_moves_with_the_win():
     assert (a["teu_won"], b["teu_won"]) == (0, 4)
 
 
-def test_the_intake_still_belongs_to_the_week_the_rfq_arrived():
-    """Only the WIN moves. `total` counts what came in, so the Friday RFQ
-    stays in week A's intake — otherwise the week's request count silently
-    drops rows that got booked late."""
+def test_a_shipment_is_counted_once_in_the_week_it_resolved():
+    """CONTRACT CHANGED 2026-08-24, by Michael's direction.
+
+    This used to assert that `total` follows INTAKE — a Friday RFQ booked
+    Monday stayed in week A's request count while its win moved to week B.
+    That split is exactly what produced "16 requests, 9 wins, 10 losses" and a
+    125% quote rate: outcomes counted in one population, requests in another.
+
+    Michael: "how are there 16 requests with 9 wins and 10 losses  that would
+    be 19 requests", and on the fix, "you show those just as a request also as
+    they are wins and had a quote". So total is now DERIVED — wins + Q&L + NQ
+    + pending — and every shipment is counted exactly once, in the week its
+    outcome landed.
+
+    The cost is stated rather than hidden: a week's "Requests" is what
+    RESOLVED or is still open that week, not what arrived in the post that
+    week. The benefit is that the tiles add up and no rate can exceed 100%.
+    """
     rows = [_friday_rfq_booked_monday()]
     a = GWS.analyze_week(GWS._filter_rows(rows, *WEEK_A),
                          GWS._filter_wins(rows, *WEEK_A))
     b = GWS.analyze_week(GWS._filter_rows(rows, *WEEK_B),
                          GWS._filter_wins(rows, *WEEK_B))
-    assert a["total"] == 1, "the week that received the RFQ lost it from intake"
-    assert b["total"] == 0, "the booking week invented an RFQ it never received"
+    assert (a["total"], b["total"]) == (0, 1)
+    assert a["total"] + b["total"] == 1, "the shipment must be counted once"
+    for wk in (a, b):
+        assert wk["total"] == wk["wins"] + wk["ql"] + wk["nq"] + wk["pending"]
 
 
 def test_win_rate_cannot_exceed_100_percent_with_a_carried_win():
