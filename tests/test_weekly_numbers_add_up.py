@@ -145,3 +145,57 @@ def test_qc080_quiet_when_wins_are_spread(capsys):
     out = _qc(spread, capsys)
     assert "QC-080" in out
     assert "no re-dating cluster" in out
+
+
+# ── One shipment is one line, so the section ties to requests ──────────────
+
+def _quote_then_book(rd):
+    """The real shape from Michael's 2026-08-24 screenshot: quoted and booked
+    on the same day, which stamps TWO transitions on ONE row."""
+    from datetime import datetime, timezone
+    at = datetime(rd.year, rd.month, rd.day, 14, 0, tzinfo=timezone.utc).isoformat()
+    return {"request_id": "r1", "lane": "Oakland → Yokohama", "origin": "Oakland",
+            "destination": "Yokohama", "containers": "1-40' HC", "teu_requested": 2,
+            "status": "WIN", "quoted": True, "mdolx_ref": "261129",
+            "carrier_quoted": "CMA CGM", "carrier_won": "CMA CGM", "ol_rate": 3010.0,
+            "request_timestamp": at, "response_timestamp": at,
+            "booking_timestamp": at,
+            "status_history": [
+                {"at": at, "from": "PENDING", "to": "QUOTED",
+                 "reason": "MBD rate response — carrier=CMA CGM, rate=3010.0"},
+                {"at": at, "from": "QUOTED", "to": "WIN",
+                 "reason": "MDOLX261129 booking confirmed"}]}
+
+
+def test_one_shipment_is_one_status_change_line():
+    """Michael: "were there two bookings? ... then it should all tie out to
+    requests remember?" There was one booking, MDOLX261129."""
+    from datetime import datetime, timezone
+
+    import gen_email as GE
+    rd = GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+    _, _, status_ch, _ = GE._today_events({"requests": [_quote_then_book(rd)]}, rd)
+    assert len(status_ch) == 1, "the same shipment was listed once per transition"
+
+
+def test_the_surviving_line_is_where_the_shipment_ended_up():
+    from datetime import datetime, timezone
+
+    import gen_email as GE
+    rd = GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+    _, _, status_ch, _ = GE._today_events({"requests": [_quote_then_book(rd)]}, rd)
+    _, h = status_ch[0]
+    assert h["to"] == "WIN"
+    assert h["_collapsed_from"] == "PENDING", "the earlier step must be recorded"
+
+
+def test_a_booked_row_never_reads_as_aged():
+    """"since aged to WIN" — aging means the decision window ran out, which is
+    the opposite of a booking."""
+    from datetime import datetime, timezone
+
+    import gen_email as GE
+    rd = GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+    html = GE.build_body({"requests": [_quote_then_book(rd)]}, {})
+    assert "aged to WIN" not in html
+    assert "261129" in html

@@ -354,13 +354,34 @@ def _today_events(data, today_date):
         if (resp_d == today_date and not _is_standalone
                 and core.response_time_is_evidenced(r)):
             ol_responses.append(r)
-        # status changes today
-        for h in (r.get("status_history") or []):
-            at = h.get("at")
-            if (at and _et_date(at) == today_date and h.get("from")
-                    and h.get("to") and h["from"] != h["to"]
-                    and _is_current_status_change(r, h)):
-                status_changes.append((r, h))
+        # STATUS CHANGES TODAY — ONE LINE PER SHIPMENT, NOT PER TRANSITION.
+        #
+        # Michael, 2026-08-24, on two Oakland->Yokohama lines with the same
+        # lane, date, carrier and $3,010: "were there two bookings? did lonny
+        # ask for two same bookings on same vessel  then it should all tie out
+        # to requests remember?"
+        #
+        # There was ONE booking, MDOLX261129. status_history holds a
+        # transition per step, and a quote that booked the same day produces
+        # two — PENDING OL -> PENDING HILMAR, then PENDING HILMAR -> WIN — so
+        # the section listed the same shipment twice and its count could not
+        # be reconciled against the day's requests.
+        #
+        # The LAST transition of the day wins: it is where the shipment
+        # actually ended up. The earlier steps are not lost — the quote itself
+        # is in OL-USA RESPONSES, and _collapsed_from records what was folded
+        # in so the reason line can still say OL quoted before it booked.
+        _today_hist = [h for h in (r.get("status_history") or [])
+                       if (h.get("at") and _et_date(h["at"]) == today_date
+                           and h.get("from") and h.get("to")
+                           and h["from"] != h["to"]
+                           and _is_current_status_change(r, h))]
+        if _today_hist:
+            _final = _today_hist[-1]
+            if len(_today_hist) > 1:
+                _final = dict(_final)
+                _final["_collapsed_from"] = _today_hist[0].get("from")
+            status_changes.append((r, _final))
         if r.get("status") == "PENDING":
             pending_today.append(r)
     return new_requests, ol_responses, status_changes, pending_today
@@ -1216,10 +1237,18 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             # which is the one thing that section exists to record.
             elif (h.get("to") or "").upper() == "QUOTED" and \
                     (r.get("status") or "").upper() != "PENDING":
+                # "AGED TO" ONLY WHEN IT AGED. This said "since aged to WIN"
+                # on a booked row (Michael's 2026-08-24 screenshot) — aging
+                # means the decision window ran out, which is the opposite of
+                # what a booking is.
                 _now_is = core.display_status(r) or (r.get("status") or "?")
                 _why = r.get("loss_reason") or ""
-                reason = (f"{reason} — since aged to {_now_is}"
-                          f"{(' (' + str(_why)[:60] + ')') if _why else ''}").strip(" —")
+                if str(_now_is).upper() == "WIN":
+                    reason = f"{reason} — since booked".strip(" —")
+                else:
+                    reason = (f"{reason} — since aged to {_now_is}"
+                              f"{(' (' + str(_why)[:60] + ')') if _why else ''}"
+                              ).strip(" —")
             req_date = r.get('request_date') or '—'
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
