@@ -74,11 +74,14 @@ holding.
 
 #### STILL OPEN
 
-- 4 of the 18 refs (260358, 260370, 260896, 261068) appear in NO cached body.
-  The evidence is not in the mailbox; those dates have to come from Michael or
-  OL, not from this pipeline.
-- 4 of the 18 refs appear in NO cached body. That one is real: the evidence is
-  not in the mailbox and those dates must come from Michael or OL.
+- 8 of the 18 refs still carry no booked date, and are meant to.
+  `261031` has only a CMA CGM carrier notification cached, not an OL booking;
+  `260469` is a 'DRAFT RATED FOR HILMAR' rating email; `261072` and `260433`
+  appear ONLY inside our own daily-tracker emails, which is circular — dating
+  a booking from our own report proves nothing. And `260358`, `260370`,
+  `260896`, `261068` are in no cached body at all: that evidence is not in the
+  mailbox and must come from Michael or OL, not from this pipeline.
+  A date for any of the eight would be fabricated.
 
 #### AND THE REASON THE OTHER 14 LOOKED HOPELESS WAS A TYPO
 
@@ -147,8 +150,40 @@ whose `sent_ts` happened to be the booking date. On the real body `sent_ts` is
 2026-08-13. Right number, wrong mechanism, and the mechanism is what a reader
 would have reused.
 
-Replacing the inferred dates in `operator_corrections.json` is a data change
-and needs Michael's approval, so it is NOT done here.
+#### AND THEN THE DATES WERE APPLIED
+
+That paragraph originally ended "Replacing the inferred dates in
+`operator_corrections.json` is a data change and needs Michael's approval, so
+it is NOT done here." Michael then said: "YOU JUST DO IT.. I'M BUSY". So it was
+done here, and the note above would have been false left standing — flagged by
+Copilot on the PR, which was right.
+
+The ten evidenced refs now carry a `booking_timestamp` read from the QUOTED
+Outlook header and converted ET→UTC:
+
+    261025  2026-08-04T13:23:00Z     261030  2026-08-03T22:09:00Z
+    261026  2026-08-03T21:43:00Z     261032  2026-08-03T22:19:00Z
+    261027  2026-08-03T21:51:00Z     261033  2026-08-03T22:24:00Z
+    261028  2026-08-03T21:57:00Z     261046  2026-08-05T22:12:00Z
+    261029  2026-08-03T22:03:00Z     261047  2026-08-05T22:11:00Z
+
+The DST conversion is ASSERTED, not assumed: August in America/New_York is EDT
+(UTC-4) and the offset is checked before each stamp is written, so a zone
+surprise fails loudly rather than shifting a booking across midnight. The
+`replace(tzinfo=ZoneInfo)` → `astimezone(utc)` pattern was confirmed against
+the CPython docs rather than recalled, per the LOOK IT UP rule.
+
+`core.win_event_date` prefers `booking_timestamp`, so each win is now credited
+to the day it was BOOKED rather than the day the tracker was told — the rule
+already documented in that function.
+
+`scripts/operator_corrections.json` records its own provenance in
+`_booked_dates_source`, naming which field was read and which was rejected.
+`tests/test_booked_dates_are_sourced.py` holds both halves shut: the ten must
+carry their exact stamps and route through `win_event_date` to the right day,
+the eight must stay empty, and NO stored `booking_timestamp` may fall on
+2026-08-13 — so a future re-derivation from `sent_ts` fails loudly instead of
+silently clustering ten wins onto one day.
 
 ### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
 

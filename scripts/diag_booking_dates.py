@@ -95,6 +95,34 @@ def main() -> int:
                 return v
         return ""
 
+    _QUOTED_SENT_RE = re.compile(
+        r"Sent:\s*[A-Za-z]+day,\s*([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})")
+    _MONTHS = {m: i for i, m in enumerate(
+        ["january", "february", "march", "april", "may", "june", "july",
+         "august", "september", "october", "november", "december"], 1)}
+
+    def _quoted_sent_date(txt):
+        """The ORIGINAL message's date, off the quoted Outlook header.
+
+        A cached body's own sent_ts is when THAT message was sent — which for
+        a FORWARD is the day someone forwarded it, not the day the booking
+        happened. Measured on this dataset 2026-08-26 (diag-blob run
+        33019186551): ten booking confirmations carry sent_ts between 19:59
+        and 20:23 on 2026-08-13, one batch forward, while the quoted headers
+        inside them read Aug 3 (x7), Aug 4 (x1) and Aug 5 (x2).
+
+        Taking sent_ts as the booked date would stamp ten separate bookings
+        onto a single day — which QC-080 (win-date clustering) exists to
+        catch. Returns None when there is no quoted header to read.
+        """
+        m = _QUOTED_SENT_RE.search(txt or "")
+        if not m:
+            return None
+        mon = _MONTHS.get(m.group(1).lower())
+        if not mon:
+            return None
+        return f"{int(m.group(3)):04d}-{mon:02d}-{int(m.group(2)):02d}"
+
     # 1. WHICH BODIES MENTION THESE REFS AT ALL — not just the named recap.
     #    The note points at Linda's 2026-08-12 email, but a booking
     #    confirmation for the same MDOLX may also be cached and would carry a
@@ -133,11 +161,21 @@ def main() -> int:
             # `_text` worked only because "text_body" happens to head its
             # own fallback list. The old names stay last as a fallback in
             # case an older row used them.
-            sent = (rec.get("sent_ts") or rec.get("received_ts")
-                    or rec.get("sent") or rec.get("received") or "?")
+            # sent and received are printed SEPARATELY. They used to share one
+            # fallback chain, so a body with no sent_ts printed its received
+            # time under the label "sent=" — a mislabelled clock in the one
+            # diagnostic whose entire job is deciding which clock to trust.
+            sent = rec.get("sent_ts") or rec.get("sent") or "?"
+            recv = rec.get("received_ts") or rec.get("received") or "?"
             frm = (rec.get("sender_email") or rec.get("from")
                    or rec.get("sender") or "?")
-            print(f"  · sent={sent}  from={frm}")
+            _orig = _quoted_sent_date(_text(rec))
+            print(f"  · sent={sent}  received={recv}  from={frm}")
+            if _orig and _orig != str(sent)[:10]:
+                print(f"    >>> QUOTED ORIGINAL SENT {_orig} — THIS is the "
+                      f"booked date; the stamp above is the FORWARD")
+            elif _orig:
+                print(f"    quoted original sent {_orig} (not a forward)")
             print(f"    subject: {subj!r}")
             txt = _text(rec)
             # the LINE carrying the ref, plus every date token on it

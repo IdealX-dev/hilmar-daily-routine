@@ -73,13 +73,28 @@ FORWARD_DAY = "2026-08-13"
 
 
 def _by_ref():
+    """Index the corrections by MDOLX ref, refusing to hide a duplicate.
+
+    A dict build silently keeps the LAST entry for a repeated ref, so two
+    corrections claiming the same booking would leave these tests asserting
+    against whichever came second — passing while the other one carried a
+    contradictory date. Two rows for one booking is itself the defect this
+    file exists to catch, so it fails here rather than being papered over.
+    """
     doc = json.loads(CORRECTIONS.read_text(encoding="utf-8"))
-    out = {}
+    out, dupes = {}, []
     for entry in doc["corrections"]:
         changes = entry.get("set") or {}
         ref = str(changes.get("mdolx_ref") or "")
-        if ref:
-            out[ref] = entry
+        if not ref:
+            continue
+        if ref in out:
+            dupes.append(ref)
+        out[ref] = entry
+    assert not dupes, (
+        f"operator_corrections.json carries more than one correction for "
+        f"MDOLX {sorted(set(dupes))} — one booking, two overrides, and the "
+        f"later one silently wins on every ingest")
     return out
 
 
