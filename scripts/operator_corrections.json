@@ -1,5 +1,6 @@
 {
   "_comment": "Operator corrections for the Hilmar tracker. Authoritative human overrides, applied by ingest.apply_operator_corrections() AFTER all automatic classification and on EVERY run, so a verdict survives re-ingest (which otherwise rebuilds the row from the staged email and re-promotes it). qc_selfheal imports and re-applies the same function as a self-heal backstop. Add an entry when an operator (OL ops / Lonny / Michael) authoritatively corrects a row the pipeline classified wrong; match by request_id; `set` lists the fields to overwrite.",
+  "_booked_dates_source": "The booking_timestamp on MDOLX 261025-261033, 261046 and 261047 is OL's OWN booking confirmation for that shipment, read off the QUOTED Outlook header inside the cached body ('Sent: Monday, August 3, 2026 5:51 PM' and so on, ET), recovered by diag_booking_dates in diag-blob run 33019186551 on 2026-08-26. It is NOT the cached body's own sent_ts: those bodies are FORWARDS and all ten carry a stamp between 19:59 and 20:23 on 2026-08-13, so using sent_ts would credit ten separate bookings to one day. The real spread is Aug 3 (x7), Aug 4 (x1), Aug 5 (x2). The other eight back-entered refs (261031, 261072, 260433, 260469, 260358, 260370, 260896, 261068) carry NO booking_timestamp on purpose - no booking confirmation for them exists in the cached bodies, and a date without evidence would be fabricated. tests/test_booked_dates_are_sourced.py holds both halves of this shut.",
   "corrections": [
     {
       "request_id": "req_37936a4d93d12ea1",
@@ -57,7 +58,8 @@
         "status": "WIN",
         "mdolx_ref": "261025",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-04T13:23:00Z"
       },
       "note": "MDOLX261025 booked (CMA CGM, booking NAM8588529) — Oakland → Singapore. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -68,7 +70,8 @@
         "status": "WIN",
         "mdolx_ref": "261026",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T21:43:00Z"
       },
       "note": "MDOLX261026 booked (CMA CGM, booking NAM8624880) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -79,7 +82,8 @@
         "status": "WIN",
         "mdolx_ref": "261027",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T21:51:00Z"
       },
       "note": "MDOLX261027 booked (CMA CGM, booking NAM8664237) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -90,7 +94,8 @@
         "status": "WIN",
         "mdolx_ref": "261028",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T21:57:00Z"
       },
       "note": "MDOLX261028 booked (CMA CGM, booking NAM8663637) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -101,7 +106,8 @@
         "status": "WIN",
         "mdolx_ref": "261029",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T22:03:00Z"
       },
       "note": "MDOLX261029 booked (CMA CGM, booking NAM8664234) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -112,7 +118,8 @@
         "status": "WIN",
         "mdolx_ref": "261030",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T22:09:00Z"
       },
       "note": "MDOLX261030 booked (CMA CGM, booking NAM8664235) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -134,7 +141,8 @@
         "status": "WIN",
         "mdolx_ref": "261032",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T22:19:00Z"
       },
       "note": "MDOLX261032 booked (CMA CGM, booking NAM8664233) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -145,7 +153,8 @@
         "status": "WIN",
         "mdolx_ref": "261033",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-03T22:24:00Z"
       },
       "note": "MDOLX261033 booked (CMA CGM, booking NAM8664226) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -156,7 +165,8 @@
         "status": "WIN",
         "mdolx_ref": "261046",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-05T22:12:00Z"
       },
       "note": "MDOLX261046 booked (CMA CGM, booking NAM8669658) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
@@ -167,7 +177,8 @@
         "status": "WIN",
         "mdolx_ref": "261047",
         "carrier_won": "CMA CGM",
-        "carrier_quoted": "CMA CGM"
+        "carrier_quoted": "CMA CGM",
+        "booking_timestamp": "2026-08-05T22:11:00Z"
       },
       "note": "MDOLX261047 booked (CMA CGM, booking NAM8669537) — Oakland → Yokohama. Source: OL operational booking recap sent by Linda Echevarria 2026-08-12 covering Jun 1 - Aug 12. The confirmation never reached the tracked mailbox (sent To: Lonny, Cc: the group), so this win cannot be derived from email and is recorded from OL's system of record.",
       "source": "ol-booking-recap-2026-08-12"
