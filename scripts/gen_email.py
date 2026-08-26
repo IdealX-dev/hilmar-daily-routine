@@ -352,6 +352,10 @@ STATUS_CHANGE_CURRENT_DAYS = 2
 #: are stamped the day the tracker acted, so they pile onto whatever day the
 #: work was done — 11 of Aug 12's 16 "status changes" were the MDOLX bookings
 #: reconciled out of his .xls, none of which were booked that day.
+#: Sort floor for a transition whose `at` will not parse — such a row
+#: sorts first rather than crashing the comparison.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 _RECONCILIATION_REASONS = ("Operator correction:", "Prior-build WIN restored")
 
 
@@ -457,6 +461,15 @@ def _today_events(data, today_date):
                            and h.get("from") and h.get("to")
                            and h["from"] != h["to"]
                            and _is_current_status_change(r, h))]
+        # SORTED BY TIME, NOT BY LIST ORDER (Copilot review on #224,
+        # verified). Taking _today_hist[-1] assumed status_history is
+        # chronological. It is not, and the change that broke it is in this
+        # same body of work: apply_operator_corrections now stamps a
+        # back-entered booking with its OWN clock (ingest.py:1904), which is
+        # deliberately in the past, so an appended entry can predate ones
+        # already in the list. List-last would then pick the wrong "final"
+        # state and the row would render where it did not end up.
+        _today_hist.sort(key=lambda h: core.parse_iso(h.get("at")) or _EPOCH)
         if _today_hist:
             _final = _today_hist[-1]
             if len(_today_hist) > 1:
@@ -2789,10 +2802,8 @@ def build_body(data, cfg):
     # of them, and a weekly or monthly caller may want them again — this is a
     # decision about what belongs in the DAILY email, not about whether the
     # analysis is worth computing.
-    _ANALYSIS_MOVED_TO_DASHBOARD = (
-        "_loss_reason_mix_html", "_week_block_html", "_carrier_block_html",
-        "_trade_region_html", "_winning_lanes_html", "_losing_lanes_html",
-    )
+    #   _loss_reason_mix_html  _week_block_html      _carrier_block_html
+    #   _trade_region_html     _winning_lanes_html   _losing_lanes_html
     html_body += _current_week_block_html(
         _current_week_day_rows(data, report_date), report_date)
     html_body += _nq_html(nq_rows, total_nq=nq_total_count, teu_total=nq_total_teu)

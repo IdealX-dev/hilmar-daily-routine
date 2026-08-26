@@ -140,14 +140,23 @@ def analyze_week(rows, win_rows=None):
     of exceeding 100%. QC-080 asserts that on the real dataset.
     """
     win_rows = rows if win_rows is None else win_rows
-    won_ids = {id(r) for r in win_rows}
 
     wins = sum(core.booking_count(r) for r in win_rows if core.is_win(r))
     teu_won = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                   for r in win_rows if core.is_win(r))
-    # Intake rows that are NOT already counted as this week's wins. A row that
-    # came in this week AND booked this week must be counted once, as a win.
-    rest = [r for r in rows if id(r) not in won_ids and not core.is_win(r)]
+    # Intake rows that are not wins. A win is counted once, from win_rows, in
+    # the week its booking landed; everything else is counted from intake.
+    #
+    # NO id()-BASED DE-DUPE (Copilot review on #224, verified). It was meant
+    # to stop a row that both arrived and booked this week being counted
+    # twice, but `not core.is_win(r)` already does that — every member of
+    # win_rows is a win, because _filter_wins only keeps rows with a
+    # win_event_date and that requires status == WIN. Worse, the id() check
+    # BROKE the documented win_rows=None path: win_rows defaulted to `rows`,
+    # so every id was in won_ids, `rest` came out empty, and Q&L / NQ /
+    # pending all read 0 with total == wins. Measured on a 3-row set
+    # (1 win, 1 loss, 1 pending): total=1 instead of 3.
+    rest = [r for r in rows if not core.is_win(r)]
     ql = sum(1 for r in rest if core.is_quoted_and_lost(r))
     teu_ql = sum(int(r.get("teu_requested") or 0)
                  for r in rest if core.is_quoted_and_lost(r))
