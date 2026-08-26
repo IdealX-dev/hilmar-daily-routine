@@ -1435,14 +1435,40 @@ def _table_options(block: list, text: str):
     """
     header, data_rows = block[0], block[1:]
     options = []
-    for data in data_rows:
+    for idx, data in enumerate(data_rows):
         cells = _table_cells(header, data)
         opt = _rate_table_from_cells(cells)
         if "carrier_quoted" not in opt:
             opt.update(_carrier_fallback(data, text or ""))
         opt.update(_table_date_fields(cells))
-        if opt:
-            options.append(opt)
+        if not opt:
+            continue
+        # AN OPTION ROW MUST NAME A SHIP OR A LINE (2026-08-26).
+        #
+        # When OL's grid wraps, the tail cells form their own pipe line, and
+        # reading EVERY row under the header — the 2026-08-21 multi-option
+        # change — accepted that tail as an option. Its cells land under
+        # whatever headers they happen to line up with, so free-time text
+        # became a POD: QC-079 reported req_811913d0bdd8e1d1 (Osaka) as also
+        # pricing "ORIGIN FREE DAYS, 3 DETENTION + 4 DEMURRAGE FREE DAYS".
+        #
+        # Mostly the lane guard below then drops it, which is why this looked
+        # like noise. It is not. A tail whose POD cell is BLANK has no lane to
+        # disagree with, so it survives — and if it carries any $ figure it
+        # becomes a priced option and WINS the lowest-rate pick. Measured:
+        #
+        #     OAKLAND | OSAKA | ... | $3,210 | CMA
+        #     SUBJECT TO |  | SPACE AND EQUIPMENT | ... | $99 |
+        #     -> ol_rate 99.0 instead of 3210.0
+        #
+        # Every real option row OL sends carries a vessel AND a carrier (all
+        # five multi-option bodies in diag run 32493969967 do). Boilerplate
+        # and wrapped tails carry neither. The FIRST row is exempt: a narrow
+        # grid can legitimately omit the carrier column, and _carrier_fallback
+        # exists for exactly that.
+        if idx and not (opt.get("carrier_quoted") or opt.get("vessel")):
+            continue
+        options.append(opt)
     return _same_lane_options(options)
 
 
