@@ -353,3 +353,74 @@ def test_fetch_bodies_never_reads_the_offered_eta_out_of_the_quoted_ask():
     assert parsed.get("eta_offered") is None, (
         f"Lonny's requested ETA came back as OL's offered ETA: "
         f"{parsed.get('eta_offered')!r}")
+
+
+# ── A wrapped row is not an option (the Osaka misalignment, 2026-08-26) ─────
+#
+# Michael asked what would make the win/loss numbers and the parsers more
+# reliable. This is the answer that had a named row behind it: QC-079 had been
+# reporting req_811913d0bdd8e1d1 (Osaka) as "also priced ORIGIN FREE DAYS,
+# 3 DETENTION + 4 DEMURRAGE FREE DAYS" — free-time text sitting in a POD cell.
+#
+# Cause: reading EVERY row under the header (the 2026-08-21 multi-option
+# change, shipped in #220) accepts a WRAPPED row's tail as a data row. Its
+# cells land under whatever headers they line up with.
+
+_WRAP_HDR = ("POL | POD | Container Size | Vessel | Voyage | ERD | Doc Cut | "
+             "Port Cut | ETD | ETA | RATE | CARRIER")
+_REAL_ROW = ("OAKLAND | OSAKA | 4x40'HC | NYK RIGEL | 011W | 28-Aug-26 | "
+             "2-Sep-26 | 4-Sep-26 | 9-Sep-26 | 2-Oct-26 | $3,210 | CMA")
+
+
+def test_a_priced_boilerplate_tail_cannot_win_the_rate():
+    """THE ONE THAT MATTERED. A tail with a BLANK pod has no lane to disagree
+    with, so _same_lane_options keeps it — and any $ figure on it then wins
+    the lowest-rate pick. Measured before the fix: ol_rate 99.0 instead of
+    3210.0, which is a wrong rate in the CEO's report and in win/loss."""
+    body = (f"{_WRAP_HDR}\n{_REAL_ROW}\n"
+            "SUBJECT TO |  | SPACE AND EQUIPMENT | | | | | | | | $99 | \n")
+    out = BP.parse_rate_table(body)
+    assert out["ol_rate"] == 3210.0, out.get("ol_rate")
+    assert "rate_options" not in out
+
+
+def test_a_free_time_tail_is_not_a_destination():
+    """The shape QC-079 actually reported."""
+    body = (f"{_WRAP_HDR}\n{_REAL_ROW}\n"
+            "ORIGIN FREE DAYS | 3 DETENTION + 4 DEMURRAGE FREE DAYS | "
+            "10 DETENTION + 3 DEMURRAGE\n")
+    out = BP.parse_rate_table(body)
+    assert out["pod"] == "OSAKA"
+    assert out["ol_rate"] == 3210.0
+    assert not out.get("other_lane_pods"), out.get("other_lane_pods")
+
+
+def test_a_real_second_option_still_survives_the_guard():
+    """The guard must not cost us the thing multi-option parsing was for.
+    Every real option row in diag run 32493969967 carried a vessel AND a
+    carrier; boilerplate carries neither."""
+    body = (f"{_WRAP_HDR}\n"
+            "OAKLAND | XINGANG | 1x40'HC | HMM TURQUOISE | 011W | 28-Aug-26 | "
+            "2-Sep-26 | 4-Sep-26 | 9-Sep-26 | 2-Oct-26 | $810 | ONE\n"
+            "OAKLAND | XINGANG | 1x40'HC | EVER LEGACY | 0TBOGW1MA | 2-Sep-26 | "
+            "4-Sep-26 | 5-Sep-26 | 7-Sep-26 | 22-Sep-26 | $675 | CMA\n")
+    out = BP.parse_rate_table(body)
+    assert out["ol_rate"] == 675.0
+    assert [o["ol_rate"] for o in out["rate_options"]] == [810.0, 675.0]
+
+
+def test_a_narrow_grid_with_no_carrier_column_still_parses():
+    """The FIRST row is exempt from the guard — a narrow grid can legitimately
+    omit the carrier column, which is what _carrier_fallback is for."""
+    body = ("POL | POD | Container Size | RATE\n"
+            "OAKLAND | OSAKA | 4x40'HC | $3,210\n")
+    out = BP.parse_rate_table(body)
+    assert out["ol_rate"] == 3210.0
+    assert out["pod"] == "OSAKA"
+
+
+def test_both_trees_reject_the_tail_identically():
+    body = (f"{_WRAP_HDR}\n{_REAL_ROW}\n"
+            "SUBJECT TO |  | SPACE AND EQUIPMENT | | | | | | | | $99 | \n")
+    assert BP.parse_rate_table(body)["ol_rate"] == \
+        HBP.parse_rate_table(body)["ol_rate"] == 3210.0
