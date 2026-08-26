@@ -3,6 +3,188 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-26 (later) — the diagnostic nobody had read, read
+
+Michael approved dispatching diag-blob after PR #226 flagged an assumption it
+could settle. Run `33018399015` on `main`, all ten steps green. Three answers,
+none of them guesses.
+
+#### THE SHARED-MAILBOX 404 — LOOKED UP AT LAST
+
+CLAUDE.md names this as the standing case: "it has been guessed at twice and
+looked up zero times." Re-probed today, twelve days after 2026-08-14, and the
+five lines come back byte-for-byte identical:
+
+    directory object : PASS — 'MBD Ocean Export Booking (Shared)' Member
+    folder list      : 404 ErrorItemNotFound  Default folder Root not found
+    inbox read       : 404 ErrorItemNotFound  Default folder Inbox not found
+    sentitems read   : 404 ErrorItemNotFound  Default folder SentItems not found
+    /messages        : 404 ErrorItemNotFound  Default folder AllItems not found
+    inbox delta      : 404 ErrorItemNotFound  Default folder Inbox not found
+
+Mail.Read.Shared token ACQUIRED. Nothing has changed; no grant has been made.
+
+The theory standing in `daily.yml` — Exchange answers 404 rather than 403 for a
+mailbox the caller has no Full Access on — turns out to be RIGHT, and is now
+[Likely] on documentary evidence rather than on reasoning. The developer index
+carries this exact string as the standard symptom of missing delegation, and
+Microsoft's own "About shared mailboxes in Microsoft 365" states that "Delegate
+access must be done through the delegate's own mailbox", which is that Full
+Access grant. No correction needed to what was written on 2026-08-14; the
+confidence marker is upgraded and the source recorded.
+
+ONE RIVAL READING SURVIVES and is now written down, because it points at a
+different owner: the identical error is what Graph returns for a mailbox with
+NO STORE behind it — a user mailbox Exchange disconnected after its licence was
+removed. Nothing reachable from this repo separates the two. One command in
+OL's Exchange admin does: `Get-Mailbox` on the address — no result means no
+store, a result means the grant is missing. That question goes to OL alongside
+the OWA "Open another mailbox" test already documented.
+
+OWNER: OL IT. Not a code defect and not fixable from here.
+
+#### THE MULTI-BOOKING ASSUMPTION BEHIND #226
+
+[Likely] the 18 back-entered bookings are ONE MDOLX PER ROW. Every daily-tracker
+row recovered from the cached bodies names a single ref —
+`Oakland → Yokohama | CMA CGM | 261026 | PRESIDENT LB JOHNSON 0DBP2W1MA` — and
+261027, 261030 and 261032 each appear as their own row despite sharing one
+vessel, voyage, lane and carrier.
+
+So Michael's scenario is REAL — several bookings against one vessel and lane do
+exist in this data — but they are held as separate rows, not folded onto one.
+`shipment_count` therefore returns 1 for each and #226 changes no number on
+today's dataset. It is a guard against a shape the data can take, not a
+correction to a number now being printed. Stated plainly because the PR said
+the fix was correct either way, and this is which way it turned out.
+
+Not proven for the whole dataset: the diagnostic lists refs, not rows.
+
+#### THE #225 FIX, ON REAL DATA
+
+`stored rate in NO linked body: 0` across 12 rows — every rate traces to an OL
+email. The Osaka row reads `ol_rate 3210.0` with the live parse agreeing, and
+the grid it came from carries the free-time columns that used to be misread:
+
+    header: [... 'RATE', 'CARRIER', 'TRANSSHIPMENT', 'ORIGIN FREE TIME', 'DESTINATION FREE TIME']
+    data  : [... '$3210', 'CMA', 'Via KOBE', '5 DETENTION + 4 DEMURRAGE FREE DAYS', ...]
+
+Blank signers: 0. Maria Machado is named on every row — the closed-roster fix
+holding.
+
+#### STILL OPEN
+
+- 8 of the 18 refs still carry no booked date, and are meant to.
+  `261031` has only a CMA CGM carrier notification cached, not an OL booking;
+  `260469` is a 'DRAFT RATED FOR HILMAR' rating email; `261072` and `260433`
+  appear ONLY inside our own daily-tracker emails, which is circular — dating
+  a booking from our own report proves nothing. And `260358`, `260370`,
+  `260896`, `261068` are in no cached body at all: that evidence is not in the
+  mailbox and must come from Michael or OL, not from this pipeline.
+  A date for any of the eight would be fabricated.
+
+#### AND THE REASON THE OTHER 14 LOOKED HOPELESS WAS A TYPO
+
+The first draft of this entry said the remaining 14 "carry no send time, so a
+booking confirmation's own timestamp cannot be used as the booked date". That
+was WRONG, and wrong in the same shape as everything else fixed today: a claim
+read off a symptom without checking the thing underneath it.
+
+`diag_booking_dates` printed `sent=?  from=?` on all 3,437 cached bodies
+because it read `rec["sent"]`, `rec["received"]`, `rec["from"]` and
+`rec["sender"]` — and `fetch_bodies.py:27` defines the schema as **`sent_ts`,
+`received_ts`, `sender_email`**. None of the four names it looked under exist.
+Its sibling `_text()` worked only because `"text_body"` happens to head its own
+fallback list.
+
+The send times were in the cache the whole time. Measured on a record built to
+the documented schema:
+
+    BEFORE : sent=?  from=?
+    AFTER  : sent=2026-08-03T21:51:00Z  from=MBD_OceanExportBookingShared@ol-usa.com
+
+Fixed; the real schema keys go first and the old names stay last as a fallback
+for any older row.
+
+#### AND THE RE-RUN IMMEDIATELY SHOWED THE FIX WAS NOT ENOUGH
+
+Dispatched again with the key fix (run `33019186551`). The metadata prints —
+and it says something the first reading of it got wrong.
+
+`sent_ts` is NOT the booked date for these rows. It is when THAT message was
+sent, and most of these are FORWARDS. Measured, verbatim off the run:
+
+    ref      cached sent_ts (the FORWARD)   quoted Sent: (the BOOKING)
+    261025   2026-08-13T20:23Z              Tuesday, August 4, 2026 9:23 AM
+    261026   2026-08-13T20:12Z              Monday, August 3, 2026 5:43 PM
+    261027   2026-08-13T20:05Z              Monday, August 3, 2026 5:51 PM
+    261028   2026-08-13T20:14:12Z           Monday, August 3, 2026 5:57 PM
+    261029   2026-08-13T20:11:15Z           Monday, August 3, 2026 6:03 PM
+    261030   2026-08-13T20:09:24Z           Monday, August 3, 2026 6:09 PM
+    261032   2026-08-13T19:59:04Z           Monday, August 3, 2026 6:19 PM
+    261033   2026-08-13T20:16:16Z           Monday, August 3, 2026 6:24 PM
+    261046   2026-08-13T20:18:20Z           Wednesday, August 5, 2026 6:12 PM
+    261047   2026-08-13T20:01:53Z           Wednesday, August 5, 2026 6:11 PM
+
+Ten confirmations inside a 24-minute window on 2026-08-13 — one batch forward.
+Using `sent_ts` would have dated **all ten bookings to 2026-08-13**. The real
+spread is Aug 3 (x7), Aug 4 (x1), Aug 5 (x2).
+
+That is exactly the failure QC-080 (win-date clustering, ≥30% on one day) was
+added this session to catch, and it would have caught it — but the right answer
+is not to trip a check, it is to read the correct field.
+
+`_quoted_sent_date` now reads the original off the quoted Outlook header, and
+the run prints BOTH, labelled, flagging any body whose quoted date differs from
+its own stamp. The script's own "HOW TO READ THIS" footer said *"that email's
+`sent` IS the booked date — use it, no inference needed"*; that instruction was
+wrong and is replaced, because it is what a future session would have followed.
+
+Verified against all five real shapes from the run, including the CMA CGM
+notification (genuinely 2026-08-13) and a daily-tracker row with no quoted
+header at all (correctly returns None).
+
+MDOLX261027 was booked **2026-08-03**. That figure was right in the first draft
+of this entry, but for the wrong reason — it came from a fabricated test record
+whose `sent_ts` happened to be the booking date. On the real body `sent_ts` is
+2026-08-13. Right number, wrong mechanism, and the mechanism is what a reader
+would have reused.
+
+#### AND THEN THE DATES WERE APPLIED
+
+That paragraph originally ended "Replacing the inferred dates in
+`operator_corrections.json` is a data change and needs Michael's approval, so
+it is NOT done here." Michael then said: "YOU JUST DO IT.. I'M BUSY". So it was
+done here, and the note above would have been false left standing — flagged by
+Copilot on the PR, which was right.
+
+The ten evidenced refs now carry a `booking_timestamp` read from the QUOTED
+Outlook header and converted ET→UTC:
+
+    261025  2026-08-04T13:23:00Z     261030  2026-08-03T22:09:00Z
+    261026  2026-08-03T21:43:00Z     261032  2026-08-03T22:19:00Z
+    261027  2026-08-03T21:51:00Z     261033  2026-08-03T22:24:00Z
+    261028  2026-08-03T21:57:00Z     261046  2026-08-05T22:12:00Z
+    261029  2026-08-03T22:03:00Z     261047  2026-08-05T22:11:00Z
+
+The DST conversion is ASSERTED, not assumed: August in America/New_York is EDT
+(UTC-4) and the offset is checked before each stamp is written, so a zone
+surprise fails loudly rather than shifting a booking across midnight. The
+`replace(tzinfo=ZoneInfo)` → `astimezone(utc)` pattern was confirmed against
+the CPython docs rather than recalled, per the LOOK IT UP rule.
+
+`core.win_event_date` prefers `booking_timestamp`, so each win is now credited
+to the day it was BOOKED rather than the day the tracker was told — the rule
+already documented in that function.
+
+`scripts/operator_corrections.json` records its own provenance in
+`_booked_dates_source`, naming which field was read and which was rejected.
+`tests/test_booked_dates_are_sourced.py` holds both halves shut: the ten must
+carry their exact stamps and route through `win_event_date` to the right day,
+the eight must stay empty, and NO stored `booking_timestamp` may fall on
+2026-08-13 — so a future re-derivation from `sent_ts` fails loudly instead of
+silently clustering ten wins onto one day.
+
 ### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
 
 Review findings on #224, verified against `main` before acting on any of them.

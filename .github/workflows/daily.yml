@@ -402,8 +402,31 @@ jobs:
       # "they use exchange online... we do not run on our own servers at ol",
       # which kills the on-prem/hybrid theory that briefly stood here.
       #
-      # The remaining explanation that fits EVERYTHING observed [Likely, not
-      # yet verified]: Exchange Online answers 404 "not found" instead of 403
+      # RE-PROBED 2026-08-26, run 33018399015 — twelve days on, byte-for-byte
+      # the same five lines. Nothing has changed; no grant has been made.
+      #
+      # AND LOOKED UP, for the first time (CLAUDE.md names this as the
+      # standing case: "guessed at twice and looked up zero times"). The
+      # developer index and Microsoft's own docs both carry this exact
+      # string as the standard symptom of a shared mailbox the caller has
+      # no delegation on — Zammad's Graph troubleshooting page states it
+      # outright, and "About shared mailboxes in Microsoft 365" says
+      # "Delegate access must be done through the delegate's own mailbox",
+      # which is the Full Access grant described below. So the theory below
+      # is [Likely] on evidence rather than on reasoning alone.
+      #
+      # ONE RIVAL READING SURVIVES, and it matters because it points at a
+      # different owner: the identical error is also what Graph returns for
+      # a mailbox with NO STORE behind it — a user mailbox disconnected
+      # after its licence was removed, which Exchange does automatically.
+      # Both produce ErrorItemNotFound on Root. Nothing reachable from this
+      # repo tells them apart; one command in OL's Exchange admin does
+      # (Get-Mailbox on the address: no result = no store, a result = the
+      # grant is missing). Ask for that alongside the OWA test below.
+      #
+      # The remaining explanation that fits EVERYTHING observed [Likely,
+      # now with documentation behind it]: Exchange Online answers 404
+      # "not found" instead of 403
       # "access denied" for a mailbox the signed-in user lacks FULL ACCESS to
       # — it hides the mailbox rather than admit it exists. Being on the
       # group's DISTRIBUTION (which is why /me receives the mail) grants no
