@@ -199,3 +199,60 @@ def test_a_booked_row_never_reads_as_aged():
     html = GE.build_body({"requests": [_quote_then_book(rd)]}, {})
     assert "aged to WIN" not in html
     assert "261129" in html
+
+
+# ── No shipment is lost between weeks (Seer review on #224) ────────────────
+
+def test_a_cross_week_win_is_counted_once_not_dropped():
+    """Seer flagged analyze_week for "silently dropping" a WIN whose request
+    week and booking week differ: it is absent from `wins` (win_rows is
+    filtered by booking date) and excluded from `rest` by `not is_win(r)`.
+
+    The local reading is correct; the conclusion is not. The row is counted in
+    the week its booking landed, which is the contract Michael chose — count
+    shipments, and count each one once, in the week its outcome landed. What
+    would be a real defect is the shipment vanishing from BOTH weeks, so that
+    is what this pins.
+    """
+    from datetime import date
+    row = {"request_id": "x1", "status": "WIN", "quoted": True,
+           "mdolx_ref": "A", "teu_won": 4, "teu_requested": 4,
+           "request_date": "2026-08-18",
+           "request_timestamp": "2026-08-18T12:00:00+00:00",
+           "booking_timestamp": "2026-08-25T12:00:00+00:00",
+           "status_history": [{"at": "2026-08-25T12:00:00+00:00",
+                               "from": "PENDING", "to": "WIN"}]}
+    rfq_week = (date(2026, 8, 17), date(2026, 8, 21))
+    booked_week = (date(2026, 8, 24), date(2026, 8, 28))
+    totals = [GWS.analyze_week(GWS._filter_rows([row], s, e),
+                               GWS._filter_wins([row], s, e))["total"]
+              for s, e in (rfq_week, booked_week)]
+    assert totals == [0, 1], totals
+    assert sum(totals) == 1, "the shipment was lost between the two weeks"
+
+
+def test_a_win_with_no_booking_clock_still_lands_in_a_week():
+    """The case Seer's reasoning WOULD break. core.win_event_date falls back
+    to request_date, so a WIN carrying no booking_timestamp and no transition
+    is still dated and still counted."""
+    from datetime import date
+    row = {"request_id": "x2", "status": "WIN", "quoted": True,
+           "mdolx_ref": "B", "teu_won": 2, "teu_requested": 2,
+           "request_date": "2026-08-18",
+           "request_timestamp": "2026-08-18T12:00:00+00:00",
+           "status_history": []}
+    assert core.win_event_date(row) == "2026-08-18"
+    s, e = date(2026, 8, 17), date(2026, 8, 21)
+    m = GWS.analyze_week(GWS._filter_rows([row], s, e),
+                         GWS._filter_wins([row], s, e))
+    assert (m["total"], m["wins"]) == (1, 1)
+
+
+def test_a_totally_undated_win_is_in_no_intake_either():
+    """The remaining hole is not a hole: a WIN with no dates at all has no
+    request_date, so it is in no week's intake and cannot be dropped from a
+    total it was never in. It is QC-077/QC-027's problem, not this one's."""
+    row = {"request_id": "x3", "status": "WIN", "quoted": True, "mdolx_ref": "C"}
+    assert core.win_event_date(row) is None
+    from datetime import date
+    assert GWS._filter_rows([row], date(2026, 8, 17), date(2026, 8, 21)) == []
