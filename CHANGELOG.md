@@ -77,11 +77,39 @@ holding.
 - 4 of the 18 refs (260358, 260370, 260896, 261068) appear in NO cached body.
   The evidence is not in the mailbox; those dates have to come from Michael or
   OL, not from this pipeline.
-- The remaining 14 have bodies, but every one prints `sent=?  from=?` — the
-  cached bodies carry no send time, so a booking confirmation's own timestamp
-  cannot be used as the booked date the way `diag_booking_dates` intends. The
-  diagnostic finds the evidence and then cannot date it. That is the next fix
-  if the 18 inferred dates are to be replaced with real ones.
+- 4 of the 18 refs appear in NO cached body. That one is real: the evidence is
+  not in the mailbox and those dates must come from Michael or OL.
+
+#### AND THE REASON THE OTHER 14 LOOKED HOPELESS WAS A TYPO
+
+The first draft of this entry said the remaining 14 "carry no send time, so a
+booking confirmation's own timestamp cannot be used as the booked date". That
+was WRONG, and wrong in the same shape as everything else fixed today: a claim
+read off a symptom without checking the thing underneath it.
+
+`diag_booking_dates` printed `sent=?  from=?` on all 3,437 cached bodies
+because it read `rec["sent"]`, `rec["received"]`, `rec["from"]` and
+`rec["sender"]` — and `fetch_bodies.py:27` defines the schema as **`sent_ts`,
+`received_ts`, `sender_email`**. None of the four names it looked under exist.
+Its sibling `_text()` worked only because `"text_body"` happens to head its own
+fallback list.
+
+The send times were in the cache the whole time. Measured on a record built to
+the documented schema:
+
+    BEFORE : sent=?  from=?
+    AFTER  : sent=2026-08-03T21:51:00Z  from=MBD_OceanExportBookingShared@ol-usa.com
+
+So MDOLX261027's booked date is 2026-08-03, and has been readable since the
+body was cached. Michael asked for exactly this on 2026-08-24 — "then read them
+again" — and the script that was written to do it has been silently looking
+under the wrong names ever since.
+
+Fixed; the real schema keys go first and the old names stay last as a fallback
+for any older row. The next dispatch of diag-blob names the booked date for the
+14 refs that have bodies, at which point the inferred dates in
+`operator_corrections.json` can be replaced with real ones. That replacement is
+a data change and needs Michael's approval, so it is NOT done here.
 
 ### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
 

@@ -120,8 +120,20 @@ def main() -> int:
         print(f"MDOLX{ref}  — {len(hits[ref])} body(ies)")
         for rec in hits[ref][:3]:
             subj = (rec.get("subject") or "")[:78]
-            sent = rec.get("sent") or rec.get("received") or "?"
-            frm = rec.get("from") or rec.get("sender") or "?"
+            # THE SCHEMA'S OWN KEY NAMES (2026-08-26). This read "sent" /
+            # "received" / "from" / "sender" — none of which exist on a
+            # stage_emails_bodies row. fetch_bodies.py:27 defines the schema
+            # as sent_ts / received_ts / sender_email, so every one of the
+            # 3,437 cached bodies printed `sent=?  from=?` and the run
+            # concluded the send times were missing from the cache. They
+            # were never missing; this was looking under the wrong names.
+            # `_text` worked only because "text_body" happens to head its
+            # own fallback list. The old names stay last as a fallback in
+            # case an older row used them.
+            sent = (rec.get("sent_ts") or rec.get("received_ts")
+                    or rec.get("sent") or rec.get("received") or "?")
+            frm = (rec.get("sender_email") or rec.get("from")
+                   or rec.get("sender") or "?")
             print(f"  · sent={sent}  from={frm}")
             print(f"    subject: {subj!r}")
             txt = _text(rec)
