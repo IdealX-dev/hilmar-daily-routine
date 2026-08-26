@@ -119,6 +119,27 @@ had quoted it that morning — the one thing that section exists to record.
 FIX: the status-change pill now renders the day's ARC, `PENDING OL → WIN`,
 using the collapsed origin when present.
 
+#### 6. COPILOT ON THE PR — FOUR MORE, ALL MINE, ALL VERIFIED
+
+- `src/hilmar/core.aggregate_carriers` was left at `+= 1` while the library's
+  `aggregate_summary` moved to shipments. `src/hilmar/qc.py` reads both, so a
+  multi-MDOLX row would have made the carrier stats disagree with the summary
+  printed beside them — the same defect, in the tree I had just claimed to
+  mirror. Both `quotes` and `wins` now expand together.
+- The dashboard's Confirmed Wins heading counts bookings, but the table under
+  it rendered only `mdolx_ref`. A three-booking row showed ONE number beneath a
+  heading claiming three; a reader who scrolled down to check the tile found it
+  contradicted. The cell now names every distinct ref, de-duped the same way
+  `booking_count` counts them.
+- A comment I wrote pointed at `tests/test_report_design.py` for the cell-HTML
+  guard. That guard is in `tests/test_email_cells_are_valid_html.py`. A comment
+  naming the wrong file is a claim that fails silently.
+- The money-alignment test built a `money` list that could never match (it
+  searched attribute VALUES for a `$` that is in the cell text) and ended on
+  `assert money is not None`, which is true of every list. Removed, and the
+  real assertions tightened to also reject a doubled `style` and trailing
+  declarations.
+
 #### WHAT WAS NOT DONE
 
 - `_pending_html`, `_pending_ol_html`, `_week_block_html`,
@@ -132,7 +153,7 @@ using the collapsed origin when present.
   vessel. The fix is correct either way — with no multi-ref rows every count
   above is unchanged.
 
-Suite: 3,393 passed / 1 skipped. `src/hilmar` coverage 91.08% (gate 90%).
+Suite: 3,400 passed / 1 skipped. `src/hilmar` coverage 91.15% (gate 90%).
 ruff clean across scripts/, src/, tests/, deploy/.
 
 ### 2026-08-24 — the weekly numbers did not add up, and one of them was a bad parse

@@ -163,3 +163,48 @@ def test_the_library_tree_counts_the_same_way():
     s = lib.aggregate_summary([strict, dict(ONE_LOSS, status=lib.STATUS_Q_AND_L)])
     assert s["wins"] == 3 and s["total_entries"] == 4
     assert 0 <= s["win_rate"] <= 100
+
+
+# ── COPILOT ON #226, BOTH VERIFIED ──────────────────────────────────────
+#
+# The first pass at this fix routed scripts/core's rollups through
+# shipment_count but left the LIBRARY tree's aggregate_carriers at += 1,
+# and left the dashboard's wins drill-in rendering only mdolx_ref under a
+# heading that now counts bookings. Both are the same defect the whole
+# change is about — a number that disagrees with the number beside it —
+# so both get a test rather than a fix alone.
+
+def test_library_carriers_reconcile_to_the_library_summary():
+    from hilmar import core as lib
+    win = dict(THREE_BOOKINGS, status=lib.STATUS_WIN)
+    loss = dict(ONE_LOSS, status=lib.STATUS_Q_AND_L)
+    s = lib.aggregate_summary([win, loss])
+    car = lib.aggregate_carriers([win, loss])
+    assert sum(c["wins"] for c in car.values()) == s["wins"] == 3
+    for c in car.values():
+        assert c["quotes"] >= c["wins"], "quotes must expand with wins"
+        assert 0 <= c["win_rate"] <= 100
+    lanes = lib.aggregate_lanes([win, loss])
+    assert sum(m["wins"] for m in lanes.values()) == s["wins"]
+    assert sum(m["requests"] for m in lanes.values()) == s["total_entries"]
+
+
+def test_dashboard_wins_drill_in_shows_every_booking_it_counts():
+    # The heading says "N bookings"; the table under it must name N of them,
+    # or a reader who scrolls down to verify the tile finds it contradicted.
+    import json
+    import re
+
+    import gen_dashboard
+    cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    data = {"version": cfg["version"], "requests": [THREE_BOOKINGS],
+            "summary": core.aggregate_summary([THREE_BOOKINGS]),
+            "last_updated": core.now_utc().isoformat()}
+    html = gen_dashboard.render(cfg, data)
+    heading = re.search(r"Confirmed Wins — (\d+) bookings", html)
+    assert heading, "wins section heading not rendered"
+    section = html.split('id="sec-wins"')[1].split("</table>")[0]
+    shown = set(re.findall(r"MDOLX\d+", section))
+    assert int(heading.group(1)) == 3
+    assert len(shown) == 3, (
+        f"heading counts 3 bookings, drill-in names {sorted(shown)}")

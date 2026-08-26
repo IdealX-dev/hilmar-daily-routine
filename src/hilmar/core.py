@@ -1932,7 +1932,14 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 # in the carrier scoreboard.
                 "loss_reasons": {},
             })
-            cm["quotes"] += 1
+            # Shipments, not rows — the same rule aggregate_summary counts
+            # by (shipment_count). Copilot on #226, verified: this was left
+            # at += 1 while the summary above moved to shipments, so a
+            # multi-MDOLX row made src/hilmar/qc.py's carrier stats
+            # disagree with the summary printed beside them. `quotes`
+            # expands with `wins` or win_rate exceeds 100%.
+            _n = shipment_count(r)
+            cm["quotes"] += _n
             cm["_lanes"].add(r.get("destination", "Unknown"))
 
             # Same timing reset as summarize().
@@ -1943,7 +1950,7 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 cm["_etd_fit_samples"].append(r["etd_fit_days"])
 
             if r.get("status") == STATUS_WIN and r.get("carrier_won") == c:
-                cm["wins"] += 1
+                cm["wins"] += _n
                 cm["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
             elif r.get("status") == STATUS_Q_AND_L and r.get("carrier_quoted") == c:
                 cm["losses"] += 1

@@ -134,9 +134,8 @@ def test_money_columns_are_right_aligned_under_their_headers():
     rows = _sample_rows()
     html = "".join(GE._today_block_html("Aug 19, 2026", rows, rows, [], rows,
                                         [], as_of_label="now"))
-    money = [attrs.get("style", "") for tag, attrs, _n in _parse(html).cells
-             if tag == "td" and "$" in "".join(str(v) for v in attrs.values())]
-    # Find the rendered rate cells by their text instead — attrs don't carry it.
+    # Find the rate cells by their TEXT — the money is in the cell body, not
+    # in any attribute, so a parser walking attrs alone can never see it.
     rate_cells = re.findall(r"<td ([^>]*)>\$[\d,]+</td>", html)
     assert rate_cells, "no rate cell rendered — fixture no longer covers this"
     for attr in rate_cells:
@@ -144,4 +143,8 @@ def test_money_columns_are_right_aligned_under_their_headers():
             f"a money cell is not right-aligned: {attr!r}")
         assert "font-weight:600" in attr, (
             f"a money cell lost its weight to the quoting bug: {attr!r}")
-    assert money is not None
+        # One style attribute carrying all of it — not two, and nothing
+        # trailing outside the quotes.
+        assert attr.count("style=") == 1, f"doubled style on a money cell: {attr!r}"
+        assert not attr.rstrip().endswith(";"), (
+            f"declarations trailing outside the attribute: {attr!r}")

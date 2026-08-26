@@ -614,9 +614,24 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     if wins:
         html += '<table data-filterable="wins"><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
         for i, w in enumerate(sorted(wins, key=lambda x: x.get("request_date") or x.get("date","")), 1):
-            _mdolx = w.get("mdolx_ref")
-            if _mdolx:
-                mdolx_cell = f'<code>{_safe(_mdolx)}</code>'
+            # EVERY booking on the row, not just the first. Copilot on
+            # #226, verified: the heading above now says "N bookings"
+            # counted by core.shipment_count, while this cell rendered
+            # only mdolx_ref — so a row carrying three refs showed ONE
+            # number under a heading claiming three, and a reader who
+            # scrolled down to check the tile found it contradicted.
+            # Same de-dupe and ordering as core.booking_count, which is
+            # what produced the number in the heading.
+            _refs = [x for x in [w.get("mdolx_ref"),
+                                 *(w.get("mdolx_refs_all") or [])] if x]
+            _seen, _mdolx_all = set(), []
+            for _r in _refs:
+                if _r not in _seen:
+                    _seen.add(_r)
+                    _mdolx_all.append(_r)
+            if _mdolx_all:
+                mdolx_cell = " ".join(f'<code>{_safe(x)}</code>'
+                                      for x in _mdolx_all)
             else:
                 mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
             html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{B.doc_dot_html(w.get("carrier_won"))}{_safe(w.get("carrier_won"))}</td></tr>\n'

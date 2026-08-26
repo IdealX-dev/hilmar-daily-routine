@@ -1125,8 +1125,9 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     #     The rate column was neither bold nor sized.
     #
     # `_cell(...)` below is the only correct way to build one of these;
-    # tests/test_report_design.py parses the rendered email and fails on a
-    # <td> carrying an unrecognised attribute or a mis-aligned money column.
+    # tests/test_email_cells_are_valid_html.py parses the rendered email and
+    # fails on a <td> carrying an unrecognised attribute, a doubled style, or
+    # a mis-aligned money column.
     _TD_CSS = (f'padding:5px 8px;font-size:12px;color:{DOC_INK};'
                f'border-bottom:1px solid {DOC_LINE}')
 
