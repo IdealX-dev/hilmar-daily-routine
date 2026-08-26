@@ -54,28 +54,131 @@ def test_live_config_values_propagate():
     assert str(len(cfg["distribution"]["full_list"])) + "-person" in html
 
 
-def test_email_section_catalog_tracks_real_renderers():
-    # Every cataloged section must name a renderer that still exists in
-    # gen_email — the drift guard that keeps the manual honest.
+def _reachable_from_build_body():
+    """Every gen_email function build_body can actually reach.
+
+    A renderer that is merely DEFINED tells you nothing — that is the hole
+    this closes. On 2026-08-26 six sections were removed from build_body,
+    their eight renderers stayed defined and uncalled, the old
+    `hasattr(gen_email, fn)` guard stayed green, and the manual attached to
+    every daily email went on describing sections nobody could find.
+
+    Walks the call graph by NAME (ast.Name and ast.Attribute), which is
+    coarse enough to include a function referenced but not called — the
+    safe direction for a guard that must not fail on healthy code.
+    """
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(gen_email))
+    defs = {n.name: n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def _names(fn):
+        out = set()
+        for n in ast.walk(defs[fn]):
+            if isinstance(n, ast.Name):
+                out.add(n.id)
+            elif isinstance(n, ast.Attribute):
+                out.add(n.attr)
+        return out & set(defs)
+
+    seen, stack = set(), ["build_body"]
+    while stack:
+        fn = stack.pop()
+        if fn in seen:
+            continue
+        seen.add(fn)
+        stack.extend(_names(fn) - seen)
+    return seen, {f for f in defs if f.endswith("_html")}
+
+
+def test_every_cataloged_section_is_reachable_from_build_body():
+    reachable, _all_html = _reachable_from_build_body()
     for title, fn_name, _desc in gen_manual.EMAIL_SECTIONS:
         assert hasattr(gen_email, fn_name), (
             f"manual catalogs '{title}' via gen_email.{fn_name}, which no "
             f"longer exists — update gen_manual.EMAIL_SECTIONS")
-    # And the catalog must COVER the email: every section renderer invoked in
-    # build_body appears in the catalog (footer/header/kpi variants aside).
-    import inspect
-    body_src = inspect.getsource(gen_email.build_body)
+        assert fn_name in reachable, (
+            f"manual catalogs '{title}' via gen_email.{fn_name}, which "
+            f"build_body cannot reach — the section is described to every "
+            f"staff member and appears in nobody's email. Either wire it "
+            f"back into build_body or move the entry to "
+            f"gen_manual.MOVED_TO_DASHBOARD.")
+
+
+def test_moved_out_sections_really_are_out_of_the_email():
+    # The other direction: a section listed as "find it in the dashboard"
+    # must not also be in the email, or the manual sends readers away from
+    # something sitting in front of them.
+    reachable, _ = _reachable_from_build_body()
     cataloged = {fn for _t, fn, _d in gen_manual.EMAIL_SECTIONS}
-    import re
-    invoked = set(re.findall(r"_(?:[a-z_]+)_html", body_src))
-    invoked = {f"_{m}" if not m.startswith("_") else m for m in invoked}
-    exempt = {"_header_html", "_kpi_block_html"}  # kpi cataloged, header is chrome
+    for title, _home, _desc in gen_manual.MOVED_TO_DASHBOARD:
+        assert title not in {t for t, _f, _d in gen_manual.EMAIL_SECTIONS}, (
+            f"'{title}' is listed as moved out AND as an email section")
+    # And nothing build_body renders is undescribed (the direction the old
+    # guard had). Read the AST, not the source text: build_body carries a
+    # comment block NAMING the six moved-out renderers, and a regex over the
+    # source counts those names as calls — which is part of why the old
+    # guard never noticed they had stopped being called.
+    import ast
+    import inspect
+    import textwrap
+    body_ast = ast.parse(textwrap.dedent(inspect.getsource(gen_email.build_body)))
+    invoked = set()
+    for n in ast.walk(body_ast):
+        if isinstance(n, ast.Call):
+            f = n.func
+            nm = getattr(f, "id", None) or getattr(f, "attr", None)
+            if nm and nm.endswith("_html"):
+                invoked.add(nm)
+    exempt = {"_header_html"}          # chrome, not a section
     missing = {fn for fn in invoked
-               if fn not in cataloged and fn not in exempt
-               and fn.endswith("_html")}
+               if fn not in cataloged and fn not in exempt}
     assert not missing, (
         f"gen_email.build_body renders sections the manual doesn't describe: "
         f"{sorted(missing)} — add them to gen_manual.EMAIL_SECTIONS")
+    assert reachable, "call-graph walk found nothing — the guard is broken"
+
+
+def test_moved_out_sections_are_produced_somewhere():
+    """A section the manual sends readers to the dashboard for must be IN
+    the dashboard. This is the check that was missing: Loss-Reason Mix was
+    moved out of the email on the claim that the dashboard already had it,
+    and for a few hours it was rendered by nothing at all.
+    """
+    dash_src = Path(gen_dashboard.__file__).read_text(encoding="utf-8")
+    pdf_src = (Path(gen_dashboard.__file__).parent / "gen_pdf.py").read_text(
+        encoding="utf-8")
+    # Each moved-out section names the renderer/heading that proves it ships.
+    proof = {
+        "Week over Week":        ["Week-over-Week"],
+        "Carrier Performance":   ["Carrier Performance"],
+        "Volume by Trade Region": ["Volume by Trade Region", "trade_region"],
+        "Top Winning Lanes":     ["Top Winning Lanes"],
+        "Top Losing Lanes":      ["Top Losing Lanes"],
+        "Loss-Reason Mix":       ["_loss_reason_mix_html"],
+    }
+    for title, home, _desc in gen_manual.MOVED_TO_DASHBOARD:
+        needles = proof.get(title)
+        assert needles, (
+            f"'{title}' is listed in MOVED_TO_DASHBOARD with no proof that "
+            f"anything renders it — add one to this test's `proof` map")
+        hay = dash_src if home == "gen_dashboard.py" else pdf_src
+        assert any(n in hay for n in needles), (
+            f"the manual tells readers '{title}' is in {home}, and {home} "
+            f"does not mention {needles}. Either restore the section there "
+            f"or stop telling people where to find it.")
+
+
+def test_the_reachability_guard_catches_a_planted_orphan():
+    # The guard must fail on a section that exists but is unreachable —
+    # otherwise it is the same guard that already missed this once.
+    reachable, all_html = _reachable_from_build_body()
+    orphans = all_html - reachable
+    assert orphans, (
+        "expected at least one defined-but-unreachable _html renderer to "
+        "prove the walk discriminates; found none")
+    assert "build_body" in reachable and "_today_block_html" in reachable
 
 
 def test_dashboard_tab_catalog_tracks_gen_dashboard():

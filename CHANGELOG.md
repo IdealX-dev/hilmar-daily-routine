@@ -3,6 +3,138 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
+
+Review findings on #224, verified against `main` before acting on any of them.
+All four were real. One was worse than reported, and chasing it turned up a
+section of the report that had stopped being produced by anything at all.
+
+#### 1. THE COUNTING RULE WAS IMPLEMENTED IN ONE PLACE OUT OF SEVEN
+
+Michael's rule from 2026-08-24 — count shipments, not emails; "no it would be
+three requests to three wins"; "there are no bookings without rfqs" — shipped
+in #223 wired into exactly ONE function, `gen_weekly_summary.analyze_week`.
+
+Measured on `main` at 8d53fc9, one row carrying three MDOLX refs read:
+
+    weekly KPI tile ................ 3 wins    core.booking_count
+    weekly Top Winning Lanes ....... 1 win     by_lane[lane]["wins"] += 1
+    weekly Carrier of the Week ..... 1 win     by_c[c]["wins"] += 1
+    daily email win tile ........... 1 win     len(day_wins)
+    period-to-date summary ......... 1 win     len(wins)
+    dashboard "Confirmed Wins" ..... 1 booking len(wins)
+    trade region / lane / carrier .. 1 win     += 1
+
+One booking, six numbers, in reports read side by side — the same
+self-contradiction that produced the 175% quote rate, one level down.
+
+FIX: `core.shipment_count(r)` is now THE rule, in one place, in both trees. A
+win is worth its distinct MDOLX refs; every other row is worth 1. Every counter
+above routes through it — `aggregate_summary`, `aggregate_lanes`,
+`aggregate_carriers`, `aggregate_trade_regions`, both weekly rollups, the daily
+tile, both dashboard bucket loops, and the dashboard win tiles.
+
+THE DENOMINATOR EXPANDS WITH THE NUMERATOR. Requests are counted with the same
+function, not with `len()`. Counting wins by shipment against requests by row
+is precisely how a rate above 100% gets printed. `aggregate_carriers` expands
+`quotes` alongside `wins` for the same reason.
+
+`total_entries` counts every row by shipment rather than summing the four
+buckets: a floored NQ row (NQ_VALID_FROM) is excluded from `not_quoted` but has
+to stay in the total, or QC-075's trade-region reconciliation fires on healthy
+data.
+
+Verified on a three-booking row: PTD summary, weekly, lanes, carriers and trade
+regions all now read 4 requests / 3 wins / 1 Q&L / 75% win rate.
+
+#### 2. THE MANUAL DESCRIBED SIX SECTIONS NOBODY COULD FIND
+
+#224 moved six analysis sections out of the daily email. `gen_manual.py`'s
+`EMAIL_SECTIONS` still catalogued all six, and that manual is attached to every
+daily email — so staff received a guide to sections that were in nobody's inbox.
+
+The drift guard did not catch it because it asserted the renderer still
+EXISTED. All six functions still exist; they are simply never called. Existence
+was never the property worth guarding.
+
+FIX: the catalog now describes the email that actually ships, plus a new
+`MOVED_TO_DASHBOARD` list printed in the manual so a reader who misses a
+section is told where it went. The guard now walks gen_email's call graph and
+fails if a catalogued renderer is UNREACHABLE from `build_body` — and a second
+test fails if a section listed as living in the dashboard is not in it.
+
+#### 3. A COMMENT I WROTE IN #224 WAS FALSE, AND ONE SECTION HAD NO HOME
+
+That comment said the seven moved sections "already exist in the attached
+dashboard HTML and the 6-page PDF" and that "gen_dashboard and gen_pdf import
+several of them". Neither was checked before it was written. No file outside
+gen_email.py references those functions at all.
+
+Checked afterwards, section by section: Week over Week, Carrier Performance,
+Volume by Trade Region, Top Winning Lanes and Top Losing Lanes are all in the
+dashboard — built from its own code, not by importing these. **Loss-Reason Mix
+was in neither the dashboard nor the PDF.** Removing it from the email deleted
+the "why we lost" breakdown from every artifact this system produces.
+
+FIX: restored to the dashboard's Summary tab, rendered by calling
+`gen_email._loss_reason_mix_html` — the same function, so the two cannot give
+different answers. The comment now states what was verified, including that it
+was asserted rather than checked. Two tests pin the caller and the render.
+
+#### 4. EVERY MONEY COLUMN IN THE EMAIL WAS MIS-ALIGNED, AND NOT BOLD
+
+Found while confirming a reported duplicate-`style` nit. Two defects in the
+cell helper, both silent, both predating #224:
+
+  - `_TD_STYLE.replace("text-align:left", "text-align:right")` — used 11 times
+    — was a NO-OP. `_TD_STYLE` never contained `text-align:left`; only
+    `_TH_STYLE` did. Every rate, TEU, wait-hours and Time-to-Quote cell has been
+    left-aligned under a centered or right-aligned header for as long as the
+    helper has existed.
+  - `<td {_TD_STYLE};font-weight:600;font-size:14px>` appended declarations
+    AFTER the attribute's closing quote. `html.parser` reads that as
+    `[('style', 'padding:...'), (';font-weight:600;font-size:14px', None)]` — a
+    garbage attribute NAME, not CSS. The rate column was neither bold nor sized,
+    in the email whose stated design goal that week was that the number be
+    findable in ten seconds on a phone.
+
+The reported nit was real too: the edge column's `<th>` carried two `style`
+attributes, of which only the first is honored, so the header kept full padding
+while every body row's edge cell was a 6px sliver.
+
+FIX: `_cell(*extra, align=...)` builds every data cell with all declarations
+inside one attribute; `_edge_th()` merges the edge header instead of stacking.
+`tests/test_email_cells_are_valid_html.py` parses the rendered email and fails
+on an unrecognised attribute, a doubled `style`, or a money cell that is not
+right-aligned and bold — plus two source-shape guards so the pattern cannot
+return in a table the fixture does not happen to render.
+
+#### 5. `_collapsed_from` WAS WRITTEN AND NEVER READ
+
+Its own comment said it existed "so the reason line can still say OL quoted
+before it booked". Nothing read it, so the reason line said no such thing. A
+quote that booked the same day rendered "PENDING HILMAR → WIN", hiding that OL
+had quoted it that morning — the one thing that section exists to record.
+
+FIX: the status-change pill now renders the day's ARC, `PENDING OL → WIN`,
+using the collapsed origin when present.
+
+#### WHAT WAS NOT DONE
+
+- `_pending_html`, `_pending_ol_html`, `_week_block_html`,
+  `_carrier_block_html`, `_trade_region_html`, `_winning_lanes_html` and
+  `_losing_lanes_html` are defined and called by nothing. Left in place, not
+  deleted — deleting seven renderers is a destructive change nobody asked for,
+  and the reachability guard now makes their status visible rather than silent.
+- No live-data check that any row actually carries multiple MDOLX refs. State
+  is in blob and nothing meaningful runs locally; `[ASSUMPTION]` that such rows
+  exist, based on Michael's 2026-08-24 question about two bookings on one
+  vessel. The fix is correct either way — with no multi-ref rows every count
+  above is unchanged.
+
+Suite: 3,393 passed / 1 skipped. `src/hilmar` coverage 91.08% (gate 90%).
+ruff clean across scripts/, src/, tests/, deploy/.
+
 ### 2026-08-24 — the weekly numbers did not add up, and one of them was a bad parse
 
 Michael, on the Aug 17-21 executive summary: "how are there 16 requests with 9

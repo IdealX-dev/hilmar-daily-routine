@@ -232,3 +232,55 @@ def test_undifferentiated_does_not_inflate_push_carriers_tag():
     am_30 = core_mod.aggregate_loss_reasons(data["requests"], window_days=30)
     assert am_30["actionable_mix"]["rate_driven"] == 0
     assert am_30["actionable_mix"]["other"] == 3
+
+
+# ── WHERE THIS SECTION LIVES NOW ────────────────────────────────────────
+#
+# 2026-08-26: removed from the daily email in the design proof, on the
+# stated grounds that it "already exists in the attached dashboard HTML and
+# the 6-page PDF". It did not. gen_dashboard and gen_pdf had never
+# referenced it, so for the hours between that change and its restoration
+# the "why we lost" breakdown was rendered by NOTHING — and every test in
+# this file kept passing, because they all call the renderer directly and
+# none of them asked whether anybody calls it.
+#
+# These two close that gap: one pins the caller, one pins the render.
+
+def test_the_dashboard_calls_this_renderer():
+    import gen_dashboard
+    src = Path(gen_dashboard.__file__).read_text(encoding="utf-8")
+    assert "_loss_reason_mix_html" in src, (
+        "nothing renders the loss-reason mix — it is in the daily email's "
+        "moved-out list, so the dashboard has to be its home")
+
+
+def test_the_dashboard_actually_renders_it_with_losses_present():
+    import json
+
+    import core as core_prod
+    import gen_dashboard
+    cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    ts = datetime.now(timezone.utc) - timedelta(days=5)
+    iso, day = ts.isoformat(), ts.date().isoformat()
+
+    def _row(**kw):
+        return {"request_date": day, "date": day, "request_timestamp": iso,
+                "response_timestamp": iso, "origin": "Oakland", **kw}
+
+    rows = [
+        _row(status="LOSS", quoted=True, loss_reason="PRICE",
+             destination="Osaka", lane="Oakland → Osaka", teu_requested=2,
+             carrier_quoted="ONE", ol_rate=3400.0),
+        _row(status="LOSS", quoted=True, loss_reason="ETD_MISS",
+             destination="Kobe", lane="Oakland → Kobe", teu_requested=2,
+             carrier_quoted="CMA CGM", ol_rate=3100.0),
+    ]
+    data = {"version": cfg["version"], "requests": rows,
+            "summary": core_prod.aggregate_summary(rows),
+            "last_updated": core_prod.now_utc().isoformat()}
+    html = gen_dashboard.render(cfg, data)
+    assert 'id="sec-loss-reasons"' in html
+    assert "Price (rate-driven)" in html
+    assert "ETD missed" in html
+    # The section must not unbalance the tab it was inserted into.
+    assert html.count("<div") == html.count("</div>")
