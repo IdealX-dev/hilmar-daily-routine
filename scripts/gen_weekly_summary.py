@@ -181,7 +181,11 @@ def top_lanes_by_teu_won(rows, n=3):
         if r["status"] != "WIN":
             continue
         lane = r.get("lane") or "?"
-        by_lane[lane]["wins"] += 1
+        # SHIPMENTS, NOT ROWS (core.shipment_count). This said `+= 1` while
+        # analyze_week — five tiles up the same email — counted the same row
+        # by core.booking_count, so a three-booking RFQ read "3 wins" in the
+        # KPI strip and "1" in Top Winning Lanes underneath it.
+        by_lane[lane]["wins"] += core.shipment_count(r)
         by_lane[lane]["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
         if r.get("carrier_won"):
             by_lane[lane]["carriers"].add(r["carrier_won"])
@@ -238,10 +242,13 @@ def carrier_of_week(rows, win_rows=None):
             or r.get("carrier_quoted") or r.get("carrier_won")
         if not c:
             continue
+        # Shipments, not rows — and quotes expands with wins so the
+        # win_rate this returns cannot exceed 100%. See core.shipment_count.
+        n = core.shipment_count(r)
         if quoted_here or won:
-            by_c[c]["quotes"] += 1
+            by_c[c]["quotes"] += n
         if won:
-            by_c[c]["wins"] += 1
+            by_c[c]["wins"] += n
             by_c[c]["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
     if not by_c:
         return None

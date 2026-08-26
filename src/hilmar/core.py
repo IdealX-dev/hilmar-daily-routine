@@ -1627,6 +1627,35 @@ def response_time_is_evidenced(r: dict) -> bool:
     return r.get("response_time_source") != BORROWED_RESPONSE_TIME
 
 
+def booking_count(r) -> int:
+    """How many BOOKINGS a won row represents — its distinct MDOLX refs.
+
+    Mirrors scripts/core.booking_count. Michael, 2026-08-24, on an RFQ
+    booked as three shipments: "no it would be three requests to three
+    wins". This tree stores STRICT status, so the win test is STATUS_WIN
+    rather than production's "WIN"; the counting rule is identical.
+
+    Returns 0 for a row that is not a win, so callers can sum it directly,
+    and 1 for a win with no MDOLX recorded — the booking happened even if
+    its reference never reached us.
+    """
+    if (r or {}).get("status") != STATUS_WIN:
+        return 0
+    refs = {x for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])] if x}
+    return len(refs) or 1
+
+
+def shipment_count(r) -> int:
+    """How many SHIPMENTS one row represents. THE counting rule.
+
+    Mirrors scripts/core.shipment_count. A win is worth its bookings;
+    every other row is worth 1. Callers count REQUESTS with this too — the
+    denominator has to expand with the numerator, or a three-booking row
+    prints a rate above 100%.
+    """
+    return booking_count(r) or 1
+
+
 def aggregate_summary(requests: list[dict]) -> dict:
     # Bucket by the status field directly (post 2026-04-27 four-state
     # classifier). The legacy code derived ql/nq from a single LOSS
@@ -1644,9 +1673,14 @@ def aggregate_summary(requests: list[dict]) -> dict:
     # silently suppresses the win-rate number on the daily client email.
     # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
     # NQ rate is reported as its own separate metric ("not_quoted").
-    win_rate_denom = len(wins) + len(ql)
-    total = len(requests)
-    total_quoted = len(wins) + len(ql) + len(pending)
+    # SHIPMENTS, NOT ROWS (2026-08-26) — see shipment_count. A row carrying
+    # three MDOLX refs is three wins AND three requests, so the numerator
+    # and denominator move together and no rate can exceed 100%.
+    n_wins = _sum(shipment_count(r) for r in wins)
+    n_ql, n_nq, n_pending = len(ql), len(nq), len(pending)
+    win_rate_denom = n_wins + n_ql
+    total = _sum(shipment_count(r) for r in requests)
+    total_quoted = n_wins + n_ql + n_pending
 
     # TIMING RESET (Michael 2026-08-13, see TIMING_VALID_FROM). A sample from
     # before the floor measures a clock that was started and never stopped.
@@ -1665,11 +1699,11 @@ def aggregate_summary(requests: list[dict]) -> dict:
 
     return {
         "total_entries": total,
-        "wins": len(wins),
-        "quoted_lost": len(ql),
-        "not_quoted": len(nq),
-        "pending_hilmar": len(pending),
-        "win_rate": round(len(wins) / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
+        "wins": n_wins,
+        "quoted_lost": n_ql,
+        "not_quoted": n_nq,
+        "pending_hilmar": n_pending,
+        "win_rate": round(n_wins / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
         "quote_rate": round(total_quoted / total * 100, 1) if total else 0.0,
         "teu_requested": _sum(r.get("teu_requested", 0) for r in requests),
         "teu_won": _sum(r.get("teu_won", 0) or r.get("teu_requested", 0) for r in wins),
@@ -1697,14 +1731,15 @@ def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
             "_winning_carriers": set(),
             "_equipment": set(),
         })
-        lm["requests"] += 1
+        _n = shipment_count(r)          # shipments, not rows
+        lm["requests"] += _n
         lm["teu_requested"] += r.get("teu_requested", 0) or 0
         if r.get("containers"):
             lm["_equipment"].add(r["containers"])
 
         s = r.get("status")
         if s == STATUS_WIN:
-            lm["wins"] += 1
+            lm["wins"] += _n
             lm["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
             if r.get("carrier_won"):
                 lm["_winning_carriers"].add(r["carrier_won"])
@@ -1897,7 +1932,14 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 # in the carrier scoreboard.
                 "loss_reasons": {},
             })
-            cm["quotes"] += 1
+            # Shipments, not rows — the same rule aggregate_summary counts
+            # by (shipment_count). Copilot on #226, verified: this was left
+            # at += 1 while the summary above moved to shipments, so a
+            # multi-MDOLX row made src/hilmar/qc.py's carrier stats
+            # disagree with the summary printed beside them. `quotes`
+            # expands with `wins` or win_rate exceeds 100%.
+            _n = shipment_count(r)
+            cm["quotes"] += _n
             cm["_lanes"].add(r.get("destination", "Unknown"))
 
             # Same timing reset as summarize().
@@ -1908,7 +1950,7 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 cm["_etd_fit_samples"].append(r["etd_fit_days"])
 
             if r.get("status") == STATUS_WIN and r.get("carrier_won") == c:
-                cm["wins"] += 1
+                cm["wins"] += _n
                 cm["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
             elif r.get("status") == STATUS_Q_AND_L and r.get("carrier_quoted") == c:
                 cm["losses"] += 1

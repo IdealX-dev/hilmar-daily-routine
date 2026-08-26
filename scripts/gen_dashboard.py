@@ -161,6 +161,12 @@ def render(cfg: dict, data: dict) -> str:
     # KPIs — READ from summary, never recompute
     total = summary["total_entries"]
     wins = [r for r in requests if core.is_win(r)]
+    # BOOKINGS, NOT ROWS. Both places below say the word "bookings" and both
+    # said len(wins). `total` beside them is summary.total_entries, which
+    # core.aggregate_summary now counts by shipment, so len() here would put
+    # "1 booking" next to a request count that included all three.
+    # Equals summary["wins"] — same rows, same rule (core.shipment_count).
+    n_wins = sum(core.shipment_count(r) for r in wins)
     ql = [r for r in requests if core.is_quoted_and_lost(r)]
     nq = [r for r in requests if core.is_not_quoted(r)]
     pending = [r for r in requests if core.is_pending(r)]
@@ -527,7 +533,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — PTD"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click → all rows</div></a>
-  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — PTD ({len(wins)} bookings)"><div class="value">{len(wins)}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
+  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — PTD ({n_wins} bookings)"><div class="value">{n_wins}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
   <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — PTD ({len(ql)} rows)"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
   <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — PTD ({len(nq)} rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
   <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
@@ -604,13 +610,28 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     _awaiting_label = (f' <span style="font-size:13px;color:{B.DOC_WARN};font-weight:500">'
                        f'· {_awaiting} awaiting MDOLX (send-signal wins without booking confirmation yet)</span>'
                        if _awaiting else '')
-    html += f'<div id="sec-wins" class="section"><h2>✅ Confirmed Wins — {len(wins)} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
+    html += f'<div id="sec-wins" class="section"><h2>✅ Confirmed Wins — {n_wins} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
     if wins:
         html += '<table data-filterable="wins"><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
         for i, w in enumerate(sorted(wins, key=lambda x: x.get("request_date") or x.get("date","")), 1):
-            _mdolx = w.get("mdolx_ref")
-            if _mdolx:
-                mdolx_cell = f'<code>{_safe(_mdolx)}</code>'
+            # EVERY booking on the row, not just the first. Copilot on
+            # #226, verified: the heading above now says "N bookings"
+            # counted by core.shipment_count, while this cell rendered
+            # only mdolx_ref — so a row carrying three refs showed ONE
+            # number under a heading claiming three, and a reader who
+            # scrolled down to check the tile found it contradicted.
+            # Same de-dupe and ordering as core.booking_count, which is
+            # what produced the number in the heading.
+            _refs = [x for x in [w.get("mdolx_ref"),
+                                 *(w.get("mdolx_refs_all") or [])] if x]
+            _seen, _mdolx_all = set(), []
+            for _r in _refs:
+                if _r not in _seen:
+                    _seen.add(_r)
+                    _mdolx_all.append(_r)
+            if _mdolx_all:
+                mdolx_cell = " ".join(f'<code>{_safe(x)}</code>'
+                                      for x in _mdolx_all)
             else:
                 mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
             html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{B.doc_dot_html(w.get("carrier_won"))}{_safe(w.get("carrier_won"))}</td></tr>\n'
@@ -830,7 +851,25 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         html += '</table>'
     else:
         html += '<p class="dod-empty">No losing lanes.</p>'
-    html += '</div></div>\n'
+    html += '</div>\n'
+
+    # ── LOSS-REASON MIX ──
+    # RESTORED 2026-08-26. This section was removed from the daily email the
+    # same day on the stated grounds that "it already exists in the attached
+    # dashboard HTML and the 6-page PDF". Verified after the fact: it did
+    # not. gen_dashboard and gen_pdf never referenced it, so between that
+    # change and this one the "why we lost" breakdown was produced by
+    # NOTHING — the one section of the seven whose new home was asserted
+    # rather than checked.
+    #
+    # Rendered by gen_email._loss_reason_mix_html, the same function the
+    # email used, so the two cannot drift into two different answers. It is
+    # Outlook-safe plain HTML (no SVG, no flexbox) which renders here fine,
+    # and it returns "" when there are no losses in the 30/60-day windows.
+    _lrm = GE._loss_reason_mix_html(data)
+    if _lrm:
+        html += f'<div id="sec-loss-reasons" class="section">{_lrm}</div>\n'
+    html += '</div>\n'
 
     # ── TAB: TURNAROUND ──
     html += '<div id="tab-turnaround" class="tab-content">\n'

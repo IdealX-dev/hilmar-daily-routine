@@ -421,13 +421,17 @@ def aggregate_trade_regions(requests: list[dict],
             "teu_requested": 0, "teu_won": 0, "teu_quoted_lost": 0, "teu_not_quoted": 0,
             "destinations": set(),
         })
-        m["requests"] += 1
+        # SHIPMENTS, NOT ROWS — see shipment_count. requests and wins move
+        # together on a multi-booking row, which is what keeps QC-075's
+        # "reconciles to summary" line balanced against aggregate_summary.
+        _n = shipment_count(r)
+        m["requests"] += _n
         teu = r.get("teu_requested") or 0
         m["teu_requested"] += teu
         m["destinations"].add(r.get("destination") or "Unknown")
         st = r.get("status")
         if st == "WIN":
-            m["wins"] += 1
+            m["wins"] += _n
             m["teu_won"] += r.get("teu_won") or teu
         # SAME predicate as aggregate_summary — is_not_quoted, not a
         # loss_reason test. This branch used `loss_reason == "NO_RESPONSE"`,
@@ -942,6 +946,37 @@ def booking_count(r) -> int:
         return 0
     refs = {x for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])] if x}
     return len(refs) or 1
+
+
+def shipment_count(r) -> int:
+    """How many SHIPMENTS one tracker row represents. THE counting rule.
+
+    Michael, 2026-08-24: "count shipments, not emails ... no it would be
+    three requests to three wins". `booking_count` said what a WIN row is
+    worth; this says what ANY row is worth, and it exists because saying it
+    in only one place is what broke.
+
+    #223 wired booking_count into gen_weekly_summary.analyze_week and
+    NOWHERE else. The result, verified on main 2026-08-26: an RFQ booked as
+    three shipments counts 3 in the weekly KPI tile, 1 in the same email's
+    Top Winning Lanes (`by_lane[lane]["wins"] += 1`), 1 in Carrier of the
+    Week, 1 in the daily email's win tile, and 1 in the period-to-date
+    summary every renderer reads. One booking, five numbers, in reports
+    Michael reads side by side — the exact shape of the 2026-08-24
+    complaint ("how are there 16 requests with 9 wins and 10 losses"),
+    one level down.
+
+    A WIN row is worth its distinct MDOLX refs. Every other row is worth 1:
+    a quote that lost is one request and one loss, and a pending row is one
+    request, whatever it may later book as.
+
+    THE DENOMINATOR EXPANDS WITH THE NUMERATOR. Michael, on the same day:
+    "there are no bookings without rfqs" — three bookings are three
+    requests. So callers must count REQUESTS with this function too, never
+    with len(). Counting wins by shipment and requests by row is how a
+    175% quote rate gets printed.
+    """
+    return booking_count(r) or 1
 
 def win_event_date(r) -> str | None:
     """THE ET calendar date a WIN happened — the ONE clock every report must
@@ -2534,9 +2569,21 @@ def aggregate_summary(requests: list[dict]) -> dict:
     # silently suppresses the win-rate number on the daily client email.
     # Bug discovered 2026-06-02 audit (track 03 Critical finding C-1).
     # NQ rate is reported as its own separate metric ("not_quoted").
-    win_rate_denom = len(wins) + len(ql)
-    total = len(requests)
-    total_quoted = len(wins) + len(ql) + len(pending)
+    # SHIPMENTS, NOT ROWS (2026-08-26). Every count below goes through
+    # shipment_count, so a row carrying three MDOLX refs is three wins AND
+    # three requests. Counting the numerator by shipment and the denominator
+    # by row is what produces a win rate above 100%; see shipment_count.
+    n_wins = _sum(shipment_count(r) for r in wins)
+    n_ql, n_nq, n_pending = len(ql), len(nq), len(pending)
+    win_rate_denom = n_wins + n_ql
+    # total counts EVERY row by shipment — not the sum of the four buckets.
+    # A floored NQ row (NQ_VALID_FROM) is excluded from `not_quoted` but
+    # stays in total_entries and teu_requested, which is what QC-075's
+    # trade-region reconciliation balances against; deriving total from the
+    # buckets would silently drop it and make that check fire on healthy
+    # data. Same reason a status outside WIN/LOSS/PENDING still counts.
+    total = _sum(shipment_count(r) for r in requests)
+    total_quoted = n_wins + n_ql + n_pending
 
     # TIMING RESET (Michael 2026-08-13, see TIMING_VALID_FROM). A sample from
     # before the floor measures a clock that was started and never stopped,
@@ -2564,13 +2611,13 @@ def aggregate_summary(requests: list[dict]) -> dict:
 
     return {
         "total_entries": total,
-        "wins": len(wins),
-        "quoted_lost": len(ql),
-        "not_quoted": len(nq),
+        "wins": n_wins,
+        "quoted_lost": n_ql,
+        "not_quoted": n_nq,
         "not_quoted_excluded": nq_excluded,
         "nq_valid_from": NQ_VALID_FROM,
-        "pending_hilmar": len(pending),
-        "win_rate": round(len(wins) / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
+        "pending_hilmar": n_pending,
+        "win_rate": round(n_wins / win_rate_denom * 100, 1) if win_rate_denom else 0.0,
         "quote_rate": round(total_quoted / total * 100, 1) if total else 0.0,
         "teu_requested": _sum(r.get("teu_requested", 0) for r in requests),
         "teu_won": _sum(r.get("teu_won", 0) or r.get("teu_requested", 0) for r in wins),
@@ -2600,14 +2647,15 @@ def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
             "_winning_carriers": set(),
             "_equipment": set(),
         })
-        lm["requests"] += 1
+        _n = shipment_count(r)          # shipments, not rows
+        lm["requests"] += _n
         lm["teu_requested"] += r.get("teu_requested", 0) or 0
         if r.get("containers"):
             lm["_equipment"].add(r["containers"])
 
         s = r.get("status")
         if s == "WIN":
-            lm["wins"] += 1
+            lm["wins"] += _n
             lm["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
             if r.get("carrier_won"):
                 lm["_winning_carriers"].add(r["carrier_won"])
@@ -2772,7 +2820,11 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 "teu_won": 0, "teu_lost": 0, "_lanes": set(),
                 "_turnaround_samples": [], "_etd_fit_samples": [],
             })
-            cm["quotes"] += 1
+            # quotes expands with wins on a multi-booking row, or win_rate
+            # (wins/quotes) exceeds 100% the moment one lands. See
+            # shipment_count: the denominator moves with the numerator.
+            _n = shipment_count(r)
+            cm["quotes"] += _n
             cm["_lanes"].add(r.get("destination", "Unknown"))
 
             # Same timing reset as summarize(): a per-carrier average built
@@ -2792,7 +2844,7 @@ def aggregate_carriers(requests: list[dict]) -> dict[str, dict]:
                 cm["_etd_fit_samples"].append(r["etd_fit_days"])
 
             if r.get("status") == "WIN" and r.get("carrier_won") == c:
-                cm["wins"] += 1
+                cm["wins"] += _n
                 cm["teu_won"] += r.get("teu_won", 0) or r.get("teu_requested", 0) or 0
             elif r.get("status") == "LOSS" and r.get("quoted") and r.get("carrier_quoted") == c:
                 cm["losses"] += 1

@@ -186,6 +186,21 @@ def _edge_cell(colour):
             f'border:0;line-height:0;font-size:0">&nbsp;</td>')
 
 
+def _edge_th(th_style_css):
+    """The edge column's HEADER cell — ONE style attribute.
+
+    This was `<th {_TH_STYLE} style="width:6px;padding:0">`: two style
+    attributes on one tag, of which a browser honors only the first. So the
+    header kept _TH_STYLE's full padding while every body row's edge cell was
+    a 6px sliver, and the header row sat wider than the table under it.
+
+    Takes the header CSS as declarations (not a built attribute) so the two
+    can be merged instead of stacked.
+    """
+    return (f'<th style="{th_style_css};width:6px;padding:0;'
+            f'border:0;line-height:0;font-size:0"></th>')
+
+
 def _action_first(pending_hil, pending_ol, as_of_label, status_ch,
                   pend_table, pol_table):
     """WHAT YOU OWE SOMEONE, ABOVE EVERYTHING ELSE.
@@ -1095,12 +1110,35 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     _TH_STYLE = (
         f'style="{TH_STYLE};text-align:left"'
     )
-    _TD_STYLE = (
-        f'style="padding:5px 8px;font-size:12px;color:{DOC_INK};'
-        f'border-bottom:1px solid {DOC_LINE}"'
-    )
+    # _TD_CSS is the DECLARATIONS; _TD_STYLE wraps them in the attribute.
+    # They were one string, and it cost two silent defects at once:
+    #
+    #  1. `_TD_STYLE.replace("text-align:left", "text-align:right")` — used
+    #     11 times — was a NO-OP, because _TD_STYLE never contained
+    #     text-align:left (only _TH_STYLE did). Every rate, TEU, waiting-hours
+    #     and Time-to-Quote cell in the daily email has been left-aligned
+    #     under its centered header for as long as the helper has existed.
+    #  2. `<td {_TD_STYLE};font-weight:600>` appended declarations AFTER
+    #     the attribute's closing quote. Parsed:
+    #       <td style="padding:..." ;font-weight:600;font-size:14px>
+    #     — a garbage attribute NAME, not CSS. Verified with html.parser.
+    #     The rate column was neither bold nor sized.
+    #
+    # `_cell(...)` below is the only correct way to build one of these;
+    # tests/test_email_cells_are_valid_html.py parses the rendered email and
+    # fails on a <td> carrying an unrecognised attribute, a doubled style, or
+    # a mis-aligned money column.
+    _TD_CSS = (f'padding:5px 8px;font-size:12px;color:{DOC_INK};'
+               f'border-bottom:1px solid {DOC_LINE}')
+
+    def _cell(*extra, align="left"):
+        """One data cell's style attribute, with every declaration INSIDE it."""
+        decls = [_TD_CSS, f"text-align:{align}", *[e for e in extra if e]]
+        return 'style="' + ";".join(decls) + '"'
+
+    _TD_STYLE = _cell()
     _EMPTY_ROW = (
-        f'<tr><td colspan="99" {_TD_STYLE.replace("text-align:left", "text-align:center")}>'
+        f'<tr><td colspan="99" {_cell(align="center")}>'
         f'<em style="color:{B.DOC_MUTED}">No activity</em></td></tr>'
     )
 
@@ -1170,11 +1208,11 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             new_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
                 f'<td {_TD_STYLE}>{_esc(cont)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
+                f'<td {_cell(align="center")}>{_esc(teu)}</td>'
                 f'<td {_TD_STYLE}>{_esc(product)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(temp)}</td>'
+                f'<td {_cell(align="center")}>{_esc(temp)}</td>'
                 f'<td {_TD_STYLE}>{_esc(requested_eta)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap>{_esc(time_pt)}</td></tr>'
+                f'<td {_cell("white-space:nowrap")}>{_esc(time_pt)}</td></tr>'
             )
     else:
         new_rows = _EMPTY_ROW
@@ -1260,9 +1298,9 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 f' · {_esc(teu)} TEU</div></td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}'
                 f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(signer)}</div></td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600;font-size:14px>{rate_s}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
-                f'<td {_TD_STYLE};font-size:12px>{_sails}</td></tr>'
+                f'<td {_cell("font-weight:600", "font-size:14px", align="right")}>{rate_s}</td>'
+                f'<td {_cell("font-weight:600", f"color:{ttq_color}", align="center")}>{_esc(ttq_s)}</td>'
+                f'<td {_cell("font-size:12px")}>{_sails}</td></tr>'
             )
     else:
         resp_rows = _EMPTY_ROW
@@ -1271,7 +1309,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
         f'{_TABLE_OPEN_FIXED}'
         f'{_colgroup(1.5, 30, 20, 14, 12, 22.5)}'
         f'<thead><tr>'
-        f'<th {_TH_STYLE} style="width:6px;padding:0"></th>'
+        f'{_edge_th(TH_STYLE)}'
         f'<th {_TH_STYLE}>Lane · Equipment</th>'
         f'<th {_TH_STYLE}>Carrier · Who quoted</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate /container</th>'
@@ -1353,18 +1391,28 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                               f"{(' (' + str(_why)[:60] + ')') if _why else ''}"
                               ).strip(" —")
             req_date = r.get('request_date') or '—'
+            _sc_from = h.get("_collapsed_from") or h["from"]
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
             sc_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:13px>{_esc(str(cont_label))} / {teu} TEU</td>'
+                f'<td {_cell("font-size:13px")}>{_esc(str(cont_label))} / {teu} TEU</td>'
                 f'<td {_TD_STYLE}>{_esc(req_date)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>'
-                f'{_sc_pill(h["from"], r, h["to"])} → {_sc_pill(h["to"], r, h["from"])}</td>'
+                # THE DAY'S ARC, not just its last leg. When a shipment
+                # made several transitions today they are collapsed to one
+                # row (see _collapsed_from, set in _today_events) — a quote
+                # that booked the same day goes PENDING OL → PENDING HILMAR
+                # → WIN. Rendering only the final transition showed
+                # "PENDING HILMAR → WIN" and hid that OL quoted it that
+                # morning, which is the one thing this section exists to
+                # record. _collapsed_from was written for exactly this and
+                # then never read; this is the read.
+                f'<td {_cell(align="center")}>'
+                f'{_sc_pill(_sc_from, r, h["to"])} → {_sc_pill(h["to"], r, _sc_from)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
-                f'<td {_TD_STYLE};font-size:13px;white-space:normal;word-break:break-word>{_esc(reason)}</td></tr>'
+                f'<td {_cell("font-weight:600", align="right")}>{_esc(rate_s)}</td>'
+                f'<td {_cell("font-size:13px", "white-space:normal", "word-break:break-word")}>{_esc(reason)}</td></tr>'
             )
     else:
         sc_rows = _EMPTY_ROW
@@ -1403,10 +1451,10 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 wait_s = f"{(datetime.now(timezone.utc) - req_dt).total_seconds() / 3600.0:.1f}h"
             pol_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:13px>{_esc(cont)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:13px>{_esc(lonny_t)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600>{_esc(wait_s)}</td></tr>'
+                f'<td {_cell("font-size:13px")}>{_esc(cont)}</td>'
+                f'<td {_cell(align="center")}>{_esc(teu)}</td>'
+                f'<td {_cell("white-space:nowrap", "font-size:13px")}>{_esc(lonny_t)}</td>'
+                f'<td {_cell("font-weight:600", align="center")}>{_esc(wait_s)}</td></tr>'
             )
     else:
         pol_rows = _EMPTY_ROW
@@ -1460,14 +1508,14 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 f' · {_esc(teu)} TEU</div></td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}'
                 f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(signer)}</div></td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600;font-size:15px>{rate_s}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;font-size:14px>{_esc(hrs_s)}</td></tr>'
+                f'<td {_cell("font-weight:600", "font-size:15px", align="right")}>{rate_s}</td>'
+                f'<td {_cell("font-weight:600", "font-size:14px", align="center")}>{_esc(hrs_s)}</td></tr>'
             )
     else:
         pend_rows = _EMPTY_ROW
     pend_table = (
         f'{_TABLE_OPEN}<thead><tr>'
-        f'<th {_TH_STYLE} style="width:6px;padding:0"></th>'
+        f'{_edge_th(TH_STYLE)}'
         f'<th {_TH_STYLE}>Lane · Equipment</th>'
         f'<th {_TH_STYLE}>Carrier · Who quoted</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate</th>'
@@ -1645,15 +1693,22 @@ def _today_summary(requests, report_date=None):
     won_later = [r for r in day_reqs
                  if r.get("status") == "WIN" and _has_dated_win(r) and not _won_on(r)]
 
+    # SHIPMENTS, NOT ROWS — core.shipment_count, the same rule
+    # gen_weekly_summary.analyze_week counts by. This said len(day_wins)
+    # while the weekly said 3 for the identical booking, so the daily tile
+    # and Monday's summary disagreed about a row carrying three MDOLX refs.
+    # `total` expands with it: three bookings are three requests ("there are
+    # no bookings without rfqs"), and a numerator that grows against a
+    # row-counted denominator is how a >100% rate gets printed.
     return {
-        "wins":         len(day_wins),
+        "wins":         sum(core.shipment_count(r) for r in day_wins),
         "teu_won":      sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                             for r in day_wins),
         "quoted_lost":  sum(1 for r in day_reqs if core.is_quoted_and_lost(r)),
         "not_quoted":   sum(1 for r in day_reqs if core.is_not_quoted(r)),
         "pending":      sum(1 for r in day_reqs if core.is_pending(r)),
-        "won_later":    len(won_later),
-        "total":        len(day_reqs),
+        "won_later":    sum(core.shipment_count(r) for r in won_later),
+        "total":        sum(core.shipment_count(r) for r in day_reqs),
         "as_of_label":  f"{rd_iso} (ET)",
         "report_date":  rd_iso,
     }
@@ -1824,10 +1879,14 @@ def _current_week_day_rows(data, report_date):
             continue
         b = by_day.setdefault(d, {"requests": 0, "won": 0, "ql": 0, "nq": 0,
                                   "pending": 0, "teu_req": 0, "teu_won": 0})
-        b["requests"] += 1
+        # Shipments, not rows (core.shipment_count) — the WEEK TO DATE foot
+        # of this table has to add up to the same wins the KPI strip above
+        # it prints, and that strip now counts a three-MDOLX row as three.
+        _n = core.shipment_count(r)
+        b["requests"] += _n
         b["teu_req"] += int(r.get("teu_requested") or 0)
         if core.is_win(r):
-            b["won"] += 1
+            b["won"] += _n
             b["teu_won"] += int(r.get("teu_won") or r.get("teu_requested") or 0)
         elif core.is_pending(r):
             b["pending"] += 1
@@ -2798,10 +2857,31 @@ def build_body(data, cfg):
     # 6-page PDF, which are interactive and sortable and are the right home
     # for a question that starts with "how are we doing on...".
     #
-    # The functions are NOT deleted. gen_dashboard and gen_pdf import several
-    # of them, and a weekly or monthly caller may want them again — this is a
-    # decision about what belongs in the DAILY email, not about whether the
-    # analysis is worth computing.
+    # CORRECTION, 2026-08-26 (same day). This comment originally said the
+    # seven sections "already exist in the attached dashboard HTML and the
+    # 6-page PDF" and that "gen_dashboard and gen_pdf import several of
+    # them". Neither was checked before it was written, and the second is
+    # simply false: no file outside this one references these functions.
+    # Verified afterwards, section by section:
+    #
+    #   Week over Week          → gen_dashboard "Week-over-Week"      ✓
+    #   Carrier Performance     → gen_dashboard Carriers tab, PDF p3  ✓
+    #   Volume by Trade Region  → gen_dashboard, PDF p4               ✓
+    #   Top Winning Lanes       → gen_dashboard, PDF p5               ✓
+    #   Top Losing Lanes        → gen_dashboard, PDF p5               ✓
+    #   Loss-Reason Mix         → NOWHERE. Produced by nothing.
+    #
+    # The dashboard builds its five from its own code, not by importing
+    # these. Loss-Reason Mix had no other home at all, so removing it here
+    # deleted the "why we lost" breakdown from every artifact. It is now
+    # rendered by gen_dashboard, which calls THIS function so the two cannot
+    # give different answers — see gen_dashboard's LOSS-REASON MIX block.
+    # tests/test_gen_manual.py::test_moved_out_sections_are_produced_somewhere
+    # now fails if a section is described as living somewhere it does not.
+    #
+    # The functions below stay defined: this was a decision about what
+    # belongs in the DAILY email, not about whether the analysis is worth
+    # computing, and _loss_reason_mix_html is called from gen_dashboard.
     #   _loss_reason_mix_html  _week_block_html      _carrier_block_html
     #   _trade_region_html     _winning_lanes_html   _losing_lanes_html
     html_body += _current_week_block_html(

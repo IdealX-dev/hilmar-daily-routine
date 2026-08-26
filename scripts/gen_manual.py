@@ -29,53 +29,81 @@ import core  # noqa: E402
 
 NAVY = "#1e3a5f"
 
-#: Staff-email section catalog. `renderer` names the gen_email function that
-#: draws the section — the drift-guard test asserts it still exists, so this
-#: catalog cannot silently rot when the email changes.
+#: Staff-email section catalog — WHAT THE DAILY EMAIL ACTUALLY RENDERS.
+#:
+#: `renderer` names the gen_email function that draws the section. The drift
+#: guard asserts the renderer is REACHABLE FROM build_body, not merely that
+#: it still exists, because "still exists" is what let this catalog rot: on
+#: 2026-08-26 six sections moved out of the email to the dashboard, their
+#: renderers stayed defined and uncalled, the guard stayed green, and every
+#: staff member kept receiving a manual describing sections that were no
+#: longer in their email. See MOVED_TO_DASHBOARD below.
 EMAIL_SECTIONS = [
     ("What Happened Today", "_today_block_html",
      "The day's events in four tables: new requests from Lonny, OL-USA rate "
      "responses (with carrier, rate, OL signer and color-coded Time to "
-     "Quote), status changes, and items that went pending."),
+     "Quote), status changes, and items that went pending. Since 2026-08-26 "
+     "this block leads the email and carries the two PENDING tables, so the "
+     "open decisions are above everything else."),
     ("KPIs — Today + Period to Date", "_kpi_block_html",
      "Tiles for requests, wins (with TEU), Quoted & Lost, Not Quoted and "
      "Pending — plus period Win Rate, No-Response Rate and average "
-     "business-hours from Lonny's ask to OL's quote."),
-    ("Loss-Reason Mix", "_loss_reason_mix_html",
-     "Why we lost: the breakdown of loss reasons over the recent windows. "
-     "Hidden automatically on days with no losses."),
+     "business-hours from Lonny's ask to OL's quote. Wins and requests are "
+     "counted in SHIPMENTS: an RFQ booked as three shipments is three "
+     "requests and three wins, so the tiles agree with the weekly summary."),
+    ("Pending — OL Quote", "_today_block_html",
+     "Requests waiting on OUR rate desk. Chase these internally. Rendered "
+     "inside the What Happened Today block since 2026-08-26 — it used to "
+     "have its own renderer AND a second copy further down the email, and "
+     "the same open quote appeared four times in one message."),
+    ("Pending — Hilmar Response", "_today_block_html",
+     "Quotes waiting on Lonny's decision, with hours-since-quote so you know "
+     "when to nudge. Five columns, not ten: lane, carrier, rate and how long "
+     "it has been waiting. The two raw clocks and Time to Quote describe how "
+     "fast OL answered, which is settled history on a row whose question is "
+     "'do we book this?' — those are in the dashboard."),
     ("This Week, Day by Day", "_current_week_block_html",
      "The current week broken out one row per weekday, with a WEEK TO DATE "
-     "tally at the foot. Answers 'what happened Tuesday' — the Week-over-Week "
-     "table below shows the same week as a single line, which is a trend, not "
-     "a day. Days the week has not reached yet are omitted rather than shown "
-     "as zeros."),
-    ("Week over Week", "_week_block_html",
-     "Volume and wins per week (count and TEU) so you can see the trend "
-     "without opening the dashboard."),
-    ("Carrier Performance", "_carrier_block_html",
-     "Per-carrier wins / losses / pending and TEU offered — the scoreboard "
-     "behind carrier negotiations."),
-    ("Volume by Trade Region", "_trade_region_html",
-     "Requests, wins and win rate rolled up by trade region."),
-    ("Top Winning Lanes", "_winning_lanes_html",
-     "Lanes ranked by TEU won, with Offered (# · TEU) so percentages have a "
-     "denominator."),
-    ("Top Losing Lanes", "_losing_lanes_html",
-     "Lanes ranked by TEU lost, including which carriers are beating us "
-     "there."),
+     "tally at the foot. Answers 'what happened Tuesday'. Days the week has "
+     "not reached yet are omitted rather than shown as zeros."),
     ("Not Quoted (last 14 days)", "_nq_html",
      "Requests we never priced — with the full TEU tally, the volume-leverage "
      "number for rate negotiations."),
-    ("Pending — OL Quote", "_pending_ol_html",
-     "Requests waiting on OUR rate desk. Chase these internally."),
-    ("Pending — Hilmar Response", "_pending_html",
-     "Quotes waiting on Lonny's decision, with hours-since-quote so you know "
-     "when to nudge."),
     ("AI Insights — Business", "_ai_insights_business_html",
      "Strategy bullets generated daily by the AI insights engine — carrier "
      "plays, lane opportunities, win-rate movers. Appears only when the "
      "narrative was generated the same day; omitted on skipped days."),
+]
+
+#: Sections that USED to be in the daily email and are not any more — where
+#: to look for them instead. Michael approved the move on 2026-08-26 (design
+#: proof: the email carried fifteen sections, seven of them analysis over the
+#: whole dataset, none of which answer "what happened yesterday and what do I
+#: owe anyone"). The manual prints this list so a reader who misses a section
+#: is told where it went rather than assuming the number stopped being kept.
+#:
+#: `home` is verified by the drift guard against the file that renders it, so
+#: this list cannot claim a section lives somewhere it does not.
+MOVED_TO_DASHBOARD = [
+    ("Week over Week", "gen_dashboard.py",
+     "Volume and wins per week, count and TEU — the Summary tab."),
+    ("Carrier Performance", "gen_dashboard.py",
+     "Per-carrier wins / losses / pending and TEU, plus the per-carrier "
+     "drill-down — the Carriers tab, and page 3 of the PDF."),
+    ("Volume by Trade Region", "gen_dashboard.py",
+     "Requests, wins and win rate rolled up by trade region — the Summary "
+     "tab, and page 4 of the PDF."),
+    ("Top Winning Lanes", "gen_dashboard.py",
+     "Lanes ranked by TEU won, with the offered denominator — the Summary "
+     "tab, and page 5 of the PDF."),
+    ("Top Losing Lanes", "gen_dashboard.py",
+     "Lanes ranked by TEU lost, including which carriers are beating us "
+     "there — the Summary tab, and page 5 of the PDF."),
+    ("Loss-Reason Mix", "gen_dashboard.py",
+     "Why we lost, over the recent windows — the Summary tab. This one was "
+     "restored to the dashboard on 2026-08-26: the move out of the email "
+     "was made on the stated grounds that it already existed there, and it "
+     "did not. For a few hours it was produced by nothing."),
 ]
 
 #: Dashboard tab catalog — labels must match gen_dashboard's tabs (drift-guarded).
@@ -197,6 +225,15 @@ def build_manual(cfg: dict) -> str:
         f'{_esc(t)}</b> — {_esc(d)}</p>'
         for t, _fn, d in EMAIL_SECTIONS)
     html += _section("How to read the daily email", secs)
+
+    # Where the analysis went. Printed so a reader who misses a section is
+    # told where to look rather than concluding the number stopped being kept.
+    moved = "".join(
+        f'<p style="margin:7px 0;font-size:13px"><b style="color:{NAVY}">'
+        f'{_esc(t)}</b> — {_esc(d)}</p>'
+        for t, _home, d in MOVED_TO_DASHBOARD)
+    html += _section("Moved out of the email on 2026-08-26 — find these in "
+                     "the dashboard", moved)
 
     tabs = "".join(
         f'<p style="margin:7px 0;font-size:13px"><b style="color:{NAVY}">'
