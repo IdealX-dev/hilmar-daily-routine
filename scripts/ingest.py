@@ -1887,8 +1887,25 @@ def apply_operator_corrections(requests: list[dict]) -> int:
         # (diag-weekly, run 31611357523).
         new_status = changes.get("status", prior_status)
         if new_status != prior_status:
+            # WHEN THE BOOKING HAPPENED, NOT WHEN WE LEARNED OF IT.
+            #
+            # This was C.now_utc(), so a correction back-entering a real
+            # booking stamped it "today". On 2026-08-13 that put 18 bookings
+            # — MDOLX 260896 and the 261025-261047 batch out of OL's
+            # transaction report — into the week of Aug 10-14, and the weekly
+            # summary reported 17 wins against 12 requests. Michael, seeing
+            # it: "that's unusual and sounds like bad parse". It was: the
+            # bookings are real, the DATE was manufactured by the applier.
+            #
+            # Same preference order the prior-WIN restore already uses
+            # (_restore_prior_win): the booking's own time, then the reply
+            # that carried it, then the ask. now() only when the row carries
+            # no clock at all, and then it is the honest answer.
+            _at = (changes.get("booking_timestamp") or corr.get("at")
+                   or row.get("booking_timestamp") or row.get("response_timestamp")
+                   or row.get("request_timestamp") or C.now_utc().isoformat())
             row.setdefault("status_history", []).append({
-                "at": C.now_utc().isoformat(),
+                "at": _at,
                 "from": prior_status,
                 "to": new_status,
                 "reason": "Operator correction: " + (corr.get("note") or corr.get("source") or ""),

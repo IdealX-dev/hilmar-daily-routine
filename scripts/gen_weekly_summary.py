@@ -104,32 +104,57 @@ def _filter_wins(rows, start_date, end_date):
 
 
 def analyze_week(rows, win_rows=None):
-    """Compute headline metrics for a week.
+    """Compute headline metrics for a week — ONE POPULATION, PARTS THAT SUM.
 
-    `rows` is the week's INTAKE — rows whose request_date falls in the week —
-    and drives total / Q&L / NQ / pending, because those describe what came
-    in and where it currently stands. `win_rows` is the separately-filtered
-    set of wins whose EVENT landed in the week (see `_filter_wins`); when it
-    is None the rows are treated as their own win set, which is what a caller
-    passing one pre-filtered list means.
+    Michael, 2026-08-24, on the Aug 17-21 summary: "how are there 16 requests
+    with 9 wins and 10 losses   that would be 19 requests", and on the trend
+    table: "how more wins then requests".
 
-    win_rate mixes the two on purpose: `wins / (wins + ql)`, event-dated
-    numerator over an intake-dated Q&L. That is the identical formula and the
-    identical mix the daily email's KPI block uses, and matching it is the
-    whole point — a second, "cleaner" rule here would just recreate the
-    disagreement this fix removes. Since every win in `win_rows` is also in
-    the denominator, the rate cannot exceed 100%.
+    He was right, and the cause was two different populations divided by each
+    other. `rows` is INTAKE — rows whose request_date falls in the week.
+    `win_rows` is EVENT — bookings that landed in the week, whenever the RFQ
+    came in. Requests/Q&L/NQ counted the first, Wins counted the second, and
+    the ratios mixed them:
+
+        win_rate   = 9 / (9 + 10) = 47.4%   <- 19 outcomes on 16 requests
+        quote_rate = (19 + 1) / 16 = 125.0%
+
+    The old docstring asserted the rate "cannot exceed 100%" because "every
+    win in win_rows is also in the denominator". That was simply false, and
+    saying so is what stopped anyone checking.
+
+    THE RULE NOW, in Michael's words: count shipments, not emails. Every
+    booking is one request and one win. A quote that lost is one request and
+    one loss. So TOTAL IS DERIVED — the sum of its parts — and can never be
+    smaller than what it contains:
+
+        total = wins + ql + nq + pending
+
+    A row carrying several MDOLX refs is several bookings ("no it would be
+    three requests to three wins"), so wins and total both expand by
+    core.booking_count. And back-entered bookings from OL's transaction
+    report count as requests too — Michael: "there are no bookings without
+    rfqs ... each one had a quote".
+
+    Both rates are now inside one population and are arithmetically incapable
+    of exceeding 100%. QC-080 asserts that on the real dataset.
     """
     win_rows = rows if win_rows is None else win_rows
-    total = len(rows)
-    wins = sum(1 for r in win_rows if core.is_win(r))
+    won_ids = {id(r) for r in win_rows}
+
+    wins = sum(core.booking_count(r) for r in win_rows if core.is_win(r))
     teu_won = sum(int(r.get("teu_won") or r.get("teu_requested") or 0)
                   for r in win_rows if core.is_win(r))
-    ql = sum(1 for r in rows if core.is_quoted_and_lost(r))
+    # Intake rows that are NOT already counted as this week's wins. A row that
+    # came in this week AND booked this week must be counted once, as a win.
+    rest = [r for r in rows if id(r) not in won_ids and not core.is_win(r)]
+    ql = sum(1 for r in rest if core.is_quoted_and_lost(r))
     teu_ql = sum(int(r.get("teu_requested") or 0)
-                 for r in rows if core.is_quoted_and_lost(r))
-    nq = sum(1 for r in rows if core.is_not_quoted(r))
-    pending = sum(1 for r in rows if core.is_pending(r))
+                 for r in rest if core.is_quoted_and_lost(r))
+    nq = sum(1 for r in rest if core.is_not_quoted(r))
+    pending = sum(1 for r in rest if core.is_pending(r))
+
+    total = wins + ql + nq + pending
     quoted = wins + ql
     win_rate = (wins / quoted * 100) if quoted else 0
     quote_rate = ((quoted + pending) / total * 100) if total else 0

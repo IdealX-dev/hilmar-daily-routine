@@ -95,6 +95,17 @@ jobs:
           [ "$rc" -ne 0 ] && echo "::error::diag_signer_and_rate exited $rc"
           exit 0
 
+      - name: Find the real booked dates for back-entered wins (read-only)
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
+        run: |
+          python3 scripts/diag_booking_dates.py
+          rc=$?
+          [ "$rc" -ne 0 ] && echo "::error::diag_booking_dates exited $rc"
+          exit 0
+
       - name: Probe the shared mailbox endpoint by endpoint (read-only)
         # 2026-08-14, Michael: "you did get the authorizaton you needed.. you
         # are wrong." This settles whether the shared mailbox is unreadable or

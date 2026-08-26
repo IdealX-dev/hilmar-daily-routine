@@ -3,6 +3,86 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-24 — the weekly numbers did not add up, and one of them was a bad parse
+
+Michael, on the Aug 17-21 executive summary: "how are there 16 requests with 9
+wins and 10 losses   that would be 19 requests". And on the 4-week trend, where
+Aug 10-14 read 12 requests / 17 wins / 175% quote rate: "how more wins then
+requests" ... "that's unusual and sounds like bad parse".
+
+Both correct. Two separate defects wearing one symptom.
+
+#### 1. TWO POPULATIONS DIVIDED BY EACH OTHER
+
+analyze_week counted Requests/Q&L/NQ from INTAKE (rows whose request_date fell
+in the week) and Wins from EVENT (bookings that landed in the week, whenever
+the RFQ came in). Then it divided one by the other:
+
+    win_rate   = 9 / (9 + 10)  = 47.4%     19 outcomes against 16 requests
+    quote_rate = (19 + 1) / 16 = 125.0%
+
+The function's own docstring asserted the rate "cannot exceed 100%" because
+"every win in win_rows is also in the denominator". That was false, and stating
+it is what stopped anyone checking.
+
+MICHAEL'S RULE, in his words: count shipments, not emails. Every booking is one
+request and one win. A quote that lost is one request and one loss. So total is
+now DERIVED — wins + Q&L + NQ + pending — and cannot be smaller than what it
+contains. Both rates sit inside one population and are arithmetically incapable
+of exceeding 100%.
+
+A row carrying several MDOLX refs is several bookings ("no it would be three
+requests to three wins"), so core.booking_count expands wins and total
+together. Until now multiple bookings lived on ONE row and every count was
+row-based, so a three-shipment RFQ reported as a single win — the opposite
+error, understating wins and TEU.
+
+COST, STATED RATHER THAN HIDDEN: a week's "Requests" is now what RESOLVED or is
+still open that week, not what arrived in the post that week. A Friday RFQ
+booked Monday counts once, in Monday's week. The old contract had a test
+pinning the opposite; it was rewritten with the reasoning, not deleted.
+
+I ALSO GOT THE CAUSE WRONG FIRST. I told Michael one driver was "bookings with
+no RFQ" — the stand_*/ol_* rows from OL's transaction report. He corrected it:
+"there are no bookings without rfqs ... each one had a quote so that's fine".
+They count as requests too. Recorded because the wrong version was said out
+loud.
+
+#### 2. THE BAD PARSE HE SPOTTED — 17 WINS IN ONE WEEK
+
+apply_operator_corrections stamped every status flip with C.now_utc(). So a
+correction back-entering a REAL booking dated it "today". On 2026-08-13 that
+put 18 bookings — MDOLX 260896 and the sequential 261025-261047 batch out of
+OL's transaction report — into the week of Aug 10-14. Worse, 49 more
+corrections carried a genuine booking_timestamp spanning January to April, and
+win_event_date ignored it in favour of the same fire-time transition stamp.
+
+Jan-Apr bookings, all credited to one week in August. The bookings are real;
+the DATE was manufactured by the applier.
+
+  - the applier now stamps the booking's own clock: booking_timestamp → the
+    correction's `at` → the row's booking/response/request time → now() only
+    when the row carries no clock at all. That is the same preference order
+    _restore_prior_win has always used; this path just never learned it.
+  - core.win_event_date prefers booking_timestamp over the transition. The
+    transition was only ever a proxy, and for a back-entered booking the proxy
+    is the day the tracker was TOLD.
+
+QC-080 (new) watches this from the outside, because the fix is in two writers
+and a unit test only pins today's two: real bookings do not all land on one
+calendar day, so any single day holding >=30% of the dataset's wins is an
+ERROR, reported with how many of them lack a booking_timestamp.
+
+#### STILL OPEN
+
+The 18 corrections in the 261025-261047 batch carry no booking date at all, so
+their wins now fall back to the row's own request/response time rather than
+Aug 13. That is closer to true but still inferred. If Michael can supply the
+real booked dates from OL's transaction report, they should go into
+operator_corrections.json as booking_timestamp and the inference disappears.
+
+3,349 passed / 1 skipped, ruff clean, src/hilmar coverage 91.07%.
+
 ### 2026-08-21 (second pass) — the time system: which clock, and which leg
 
 Michael, on the delivered Aug 20 report: "pending hilmar two sections
