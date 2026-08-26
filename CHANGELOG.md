@@ -3,6 +3,86 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-26 (later) — the diagnostic nobody had read, read
+
+Michael approved dispatching diag-blob after PR #226 flagged an assumption it
+could settle. Run `33018399015` on `main`, all ten steps green. Three answers,
+none of them guesses.
+
+#### THE SHARED-MAILBOX 404 — LOOKED UP AT LAST
+
+CLAUDE.md names this as the standing case: "it has been guessed at twice and
+looked up zero times." Re-probed today, twelve days after 2026-08-14, and the
+five lines come back byte-for-byte identical:
+
+    directory object : PASS — 'MBD Ocean Export Booking (Shared)' Member
+    folder list      : 404 ErrorItemNotFound  Default folder Root not found
+    inbox read       : 404 ErrorItemNotFound  Default folder Inbox not found
+    sentitems read   : 404 ErrorItemNotFound  Default folder SentItems not found
+    /messages        : 404 ErrorItemNotFound  Default folder AllItems not found
+    inbox delta      : 404 ErrorItemNotFound  Default folder Inbox not found
+
+Mail.Read.Shared token ACQUIRED. Nothing has changed; no grant has been made.
+
+The theory standing in `daily.yml` — Exchange answers 404 rather than 403 for a
+mailbox the caller has no Full Access on — turns out to be RIGHT, and is now
+[Likely] on documentary evidence rather than on reasoning. The developer index
+carries this exact string as the standard symptom of missing delegation, and
+Microsoft's own "About shared mailboxes in Microsoft 365" states that "Delegate
+access must be done through the delegate's own mailbox", which is that Full
+Access grant. No correction needed to what was written on 2026-08-14; the
+confidence marker is upgraded and the source recorded.
+
+ONE RIVAL READING SURVIVES and is now written down, because it points at a
+different owner: the identical error is what Graph returns for a mailbox with
+NO STORE behind it — a user mailbox Exchange disconnected after its licence was
+removed. Nothing reachable from this repo separates the two. One command in
+OL's Exchange admin does: `Get-Mailbox` on the address — no result means no
+store, a result means the grant is missing. That question goes to OL alongside
+the OWA "Open another mailbox" test already documented.
+
+OWNER: OL IT. Not a code defect and not fixable from here.
+
+#### THE MULTI-BOOKING ASSUMPTION BEHIND #226
+
+[Likely] the 18 back-entered bookings are ONE MDOLX PER ROW. Every daily-tracker
+row recovered from the cached bodies names a single ref —
+`Oakland → Yokohama | CMA CGM | 261026 | PRESIDENT LB JOHNSON 0DBP2W1MA` — and
+261027, 261030 and 261032 each appear as their own row despite sharing one
+vessel, voyage, lane and carrier.
+
+So Michael's scenario is REAL — several bookings against one vessel and lane do
+exist in this data — but they are held as separate rows, not folded onto one.
+`shipment_count` therefore returns 1 for each and #226 changes no number on
+today's dataset. It is a guard against a shape the data can take, not a
+correction to a number now being printed. Stated plainly because the PR said
+the fix was correct either way, and this is which way it turned out.
+
+Not proven for the whole dataset: the diagnostic lists refs, not rows.
+
+#### THE #225 FIX, ON REAL DATA
+
+`stored rate in NO linked body: 0` across 12 rows — every rate traces to an OL
+email. The Osaka row reads `ol_rate 3210.0` with the live parse agreeing, and
+the grid it came from carries the free-time columns that used to be misread:
+
+    header: [... 'RATE', 'CARRIER', 'TRANSSHIPMENT', 'ORIGIN FREE TIME', 'DESTINATION FREE TIME']
+    data  : [... '$3210', 'CMA', 'Via KOBE', '5 DETENTION + 4 DEMURRAGE FREE DAYS', ...]
+
+Blank signers: 0. Maria Machado is named on every row — the closed-roster fix
+holding.
+
+#### STILL OPEN
+
+- 4 of the 18 refs (260358, 260370, 260896, 261068) appear in NO cached body.
+  The evidence is not in the mailbox; those dates have to come from Michael or
+  OL, not from this pipeline.
+- The remaining 14 have bodies, but every one prints `sent=?  from=?` — the
+  cached bodies carry no send time, so a booking confirmation's own timestamp
+  cannot be used as the booked date the way `diag_booking_dates` intends. The
+  diagnostic finds the evidence and then cannot date it. That is the next fix
+  if the 18 inferred dates are to be replaced with real ones.
+
 ### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
 
 Review findings on #224, verified against `main` before acting on any of them.
