@@ -98,7 +98,10 @@ def main() -> int:
     # 1. WHICH BODIES MENTION THESE REFS AT ALL — not just the named recap.
     #    The note points at Linda's 2026-08-12 email, but a booking
     #    confirmation for the same MDOLX may also be cached and would carry a
-    #    send date that IS the booked date.
+    #    send date that IS the booked date — but ONLY when that body is the
+    #    confirmation itself. Most of these are FORWARDS, whose own stamp is
+    #    the forward date; _quoted_sent_date reads the original off the
+    #    quoted Outlook header instead.
     hits = {}
     for rec in recs:
         txt = _text(rec)
@@ -151,8 +154,14 @@ def main() -> int:
     print("=" * 74)
     print("  A ref whose only body is Linda's recap: the booked date must come")
     print("  off that row, if the recap carries one at all.")
-    print("  A ref that ALSO appears in a booking confirmation: that email's")
-    print("  `sent` IS the booked date — use it, no inference needed.")
+    print("  A ref that ALSO appears in a booking confirmation: use the")
+    print("  QUOTED ORIGINAL SENT line, NOT the cached stamp. This used to")
+    print("  read \"that email's `sent` IS the booked date\", and that is")
+    print("  wrong for a FORWARDED confirmation, which is what most of")
+    print("  these are: on 2026-08-26 ten shared one cached stamp inside a")
+    print("  24-minute window on 2026-08-13 while their quoted headers")
+    print("  spanned Aug 3-5. The old instruction would have clustered ten")
+    print("  bookings onto a single day.")
     print("  A ref found NOWHERE: the evidence is not in the mailbox and the")
     print("  date has to come from Michael or OL, not from this pipeline.")
     return 0

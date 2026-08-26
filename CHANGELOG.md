@@ -100,16 +100,55 @@ the documented schema:
     BEFORE : sent=?  from=?
     AFTER  : sent=2026-08-03T21:51:00Z  from=MBD_OceanExportBookingShared@ol-usa.com
 
-So MDOLX261027's booked date is 2026-08-03, and has been readable since the
-body was cached. Michael asked for exactly this on 2026-08-24 — "then read them
-again" — and the script that was written to do it has been silently looking
-under the wrong names ever since.
-
 Fixed; the real schema keys go first and the old names stay last as a fallback
-for any older row. The next dispatch of diag-blob names the booked date for the
-14 refs that have bodies, at which point the inferred dates in
-`operator_corrections.json` can be replaced with real ones. That replacement is
-a data change and needs Michael's approval, so it is NOT done here.
+for any older row.
+
+#### AND THE RE-RUN IMMEDIATELY SHOWED THE FIX WAS NOT ENOUGH
+
+Dispatched again with the key fix (run `33019186551`). The metadata prints —
+and it says something the first reading of it got wrong.
+
+`sent_ts` is NOT the booked date for these rows. It is when THAT message was
+sent, and most of these are FORWARDS. Measured, verbatim off the run:
+
+    ref      cached sent_ts (the FORWARD)   quoted Sent: (the BOOKING)
+    261025   2026-08-13T20:23Z              Tuesday, August 4, 2026 9:23 AM
+    261026   2026-08-13T20:12Z              Monday, August 3, 2026 5:43 PM
+    261027   2026-08-13T20:05Z              Monday, August 3, 2026 5:51 PM
+    261028   2026-08-13T20:14:12Z           Monday, August 3, 2026 5:57 PM
+    261029   2026-08-13T20:11:15Z           Monday, August 3, 2026 6:03 PM
+    261030   2026-08-13T20:09:24Z           Monday, August 3, 2026 6:09 PM
+    261032   2026-08-13T19:59:04Z           Monday, August 3, 2026 6:19 PM
+    261033   2026-08-13T20:16:16Z           Monday, August 3, 2026 6:24 PM
+    261046   2026-08-13T20:18:20Z           Wednesday, August 5, 2026 6:12 PM
+    261047   2026-08-13T20:01:53Z           Wednesday, August 5, 2026 6:11 PM
+
+Ten confirmations inside a 24-minute window on 2026-08-13 — one batch forward.
+Using `sent_ts` would have dated **all ten bookings to 2026-08-13**. The real
+spread is Aug 3 (x7), Aug 4 (x1), Aug 5 (x2).
+
+That is exactly the failure QC-080 (win-date clustering, ≥30% on one day) was
+added this session to catch, and it would have caught it — but the right answer
+is not to trip a check, it is to read the correct field.
+
+`_quoted_sent_date` now reads the original off the quoted Outlook header, and
+the run prints BOTH, labelled, flagging any body whose quoted date differs from
+its own stamp. The script's own "HOW TO READ THIS" footer said *"that email's
+`sent` IS the booked date — use it, no inference needed"*; that instruction was
+wrong and is replaced, because it is what a future session would have followed.
+
+Verified against all five real shapes from the run, including the CMA CGM
+notification (genuinely 2026-08-13) and a daily-tracker row with no quoted
+header at all (correctly returns None).
+
+MDOLX261027 was booked **2026-08-03**. That figure was right in the first draft
+of this entry, but for the wrong reason — it came from a fabricated test record
+whose `sent_ts` happened to be the booking date. On the real body `sent_ts` is
+2026-08-13. Right number, wrong mechanism, and the mechanism is what a reader
+would have reused.
+
+Replacing the inferred dates in `operator_corrections.json` is a data change
+and needs Michael's approval, so it is NOT done here.
 
 ### 2026-08-26 — one booking, one number; and a manual describing an email nobody got
 
