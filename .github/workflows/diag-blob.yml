@@ -96,15 +96,19 @@ jobs:
           exit 0
 
       - name: Find the real booked dates for back-entered wins (read-only)
+        # continue-on-error, NOT `exit 0` (Copilot review on #224, and it is
+        # right). Swallowing the exit code made the STEP green over a real
+        # failure — the exact shape of the 2026-08-20 defect where a
+        # diagnostic died on its first line and the step reported success in
+        # zero seconds. continue-on-error keeps the remaining diag steps
+        # running, which is why `exit 0` was there, while letting this step
+        # show RED when the script actually fails.
+        continue-on-error: true
         env:
           AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
           PYTHONIOENCODING: utf-8
           PYTHONUTF8: "1"
-        run: |
-          python3 scripts/diag_booking_dates.py
-          rc=$?
-          [ "$rc" -ne 0 ] && echo "::error::diag_booking_dates exited $rc"
-          exit 0
+        run: python3 scripts/diag_booking_dates.py
 
       - name: Probe the shared mailbox endpoint by endpoint (read-only)
         # 2026-08-14, Michael: "you did get the authorizaton you needed.. you

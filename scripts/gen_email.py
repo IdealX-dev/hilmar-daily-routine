@@ -149,6 +149,87 @@ def _report_label(report_date):
     return _fmt_date(datetime.combine(report_date, datetime.min.time()), "%A %B %-d, %Y")
 
 
+# ── The colour edge ────────────────────────────────────────────────────────
+#
+# Design proof, 2026-08-26: every section rendered in the same weight, so
+# nothing on the page said "this one needs you". The reader had to READ to
+# find out. A 6px coloured bar down the left of each row lets urgency be
+# pattern-matched while thumb-scrolling — the actual mechanism of a
+# ten-second read.
+#
+# It reuses the palette already in use for the status pills rather than
+# inventing a second colour language: red = lost or overdue, green = booked,
+# amber = waiting on OL, violet = waiting on Lonny, grey = informational.
+# Table-cell background, no images, no CSS classes — Outlook renders it.
+
+def _edge_for(r):
+    """Palette colour for a row's state, or None for no edge."""
+    disp = (core.display_status(r) or "").upper()
+    if disp == "WIN":
+        return B.DOC_GOOD
+    if disp in ("Q&L", "NQ"):
+        return B.DOC_BAD
+    if disp == "PENDING":
+        sub = core.pending_substate(r)
+        if sub == "PENDING_HILMAR":
+            return B.DOC_PENDING
+        if sub == "PENDING_OL":
+            return B.DOC_WARN
+    return None
+
+
+def _edge_cell(colour):
+    """The bar itself. Renders an empty spacer when there is no state to
+    signal, so every row in a table keeps the same column count."""
+    bg = colour or "transparent"
+    return (f'<td style="width:6px;padding:0;background:{bg};'
+            f'border:0;line-height:0;font-size:0">&nbsp;</td>')
+
+
+def _action_first(pending_hil, pending_ol, as_of_label, status_ch,
+                  pend_table, pol_table):
+    """WHAT YOU OWE SOMEONE, ABOVE EVERYTHING ELSE.
+
+    Design proof, 2026-08-26. The open decisions sat at positions 6 and 7 of
+    fifteen, behind three history sections and — on a quiet day — two empty
+    tables. They are the only part of this email that asks the reader to DO
+    something, and on a phone they were below the fold every single morning.
+
+    They lead now, and the two waits stay visually distinct because they are
+    different jobs: amber PENDING OL means chase OL for a quote, violet
+    PENDING HILMAR means OL answered and Lonny has to decide. That colour
+    split predates this change and is kept deliberately.
+
+    A section with nothing in it collapses to one grey line rather than
+    rendering an empty grid with a full header row. An empty 10-column table
+    is the same height as a populated one and reads as something broken, not
+    as "nothing to do".
+    """
+    out = []
+    if pending_hil:
+        out.append(
+            f'<h3 style="margin:0 0 4px;color:{B.DOC_PENDING};font-size:15px">'
+            f'⏳ AWAITING LONNY\'S DECISION ({len(pending_hil)})</h3>'
+            f'{_pending_as_of_note(as_of_label)}{pend_table}'
+            f'{_left_pending_note(status_ch, pending_hil)}')
+    else:
+        out.append(_nothing_line("Awaiting Lonny's decision", "nothing open"))
+    if pending_ol:
+        out.append(
+            f'<h3 style="margin:16px 0 4px;color:{B.DOC_WARN};font-size:15px">'
+            f'⏳ AWAITING AN OL QUOTE ({len(pending_ol)})</h3>'
+            f'{_pending_as_of_note(as_of_label)}{pol_table}')
+    else:
+        out.append(_nothing_line("Awaiting an OL quote", "nothing outstanding"))
+    return "\n".join(out)
+
+
+def _nothing_line(label, detail):
+    """One grey line in place of an empty table."""
+    return (f'<p style="margin:8px 0 0;font-size:12px;color:{B.DOC_MUTED}">'
+            f'<strong>{_esc(label)}:</strong> {_esc(detail)}.</p>')
+
+
 def _pending_as_of_note(as_of_label):
     """The PENDING sections are LIVE, and the day box around them is not.
 
@@ -169,7 +250,7 @@ def _pending_as_of_note(as_of_label):
     freezing the whole report to the report day: the pending list stays an
     actionable to-do list rather than becoming a historical snapshot.
     """
-    return (f'<p style="margin:0 0 6px;font-size:11px;color:{B.DOC_MUTED}">'
+    return (f'<p style="margin:0 0 6px;font-size:13px;color:{B.DOC_MUTED}">'
             f'Open right now — as of {_esc(as_of_label)}. Not limited to the '
             f'report day above, so it can include quotes from other days that '
             f'are still open.</p>')
@@ -227,7 +308,7 @@ def _left_pending_note(status_ch, pending_hil):
     if other:
         parts.append(f'{len(other)} moved on ({_lanes(other)})')
     total = len(lost) + len(won) + len(other)
-    return (f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_MUTED}">'
+    return (f'<p style="margin:4px 0 0;font-size:13px;color:{B.DOC_MUTED}">'
             f'{total} quote(s) shown in STATUS CHANGES as moving into '
             f'Pending Hilmar {"is" if total == 1 else "are"} no longer in this '
             f'list — {"; ".join(parts)}.</p>')
@@ -271,6 +352,10 @@ STATUS_CHANGE_CURRENT_DAYS = 2
 #: are stamped the day the tracker acted, so they pile onto whatever day the
 #: work was done — 11 of Aug 12's 16 "status changes" were the MDOLX bookings
 #: reconciled out of his .xls, none of which were booked that day.
+#: Sort floor for a transition whose `at` will not parse — such a row
+#: sorts first rather than crashing the comparison.
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 _RECONCILIATION_REASONS = ("Operator correction:", "Prior-build WIN restored")
 
 
@@ -376,6 +461,15 @@ def _today_events(data, today_date):
                            and h.get("from") and h.get("to")
                            and h["from"] != h["to"]
                            and _is_current_status_change(r, h))]
+        # SORTED BY TIME, NOT BY LIST ORDER (Copilot review on #224,
+        # verified). Taking _today_hist[-1] assumed status_history is
+        # chronological. It is not, and the change that broke it is in this
+        # same body of work: apply_operator_corrections now stamps a
+        # back-entered booking with its OWN clock (ingest.py:1904), which is
+        # deliberately in the past, so an appended entry can predate ones
+        # already in the list. List-last would then pick the wrong "final"
+        # state and the row would render where it did not end up.
+        _today_hist.sort(key=lambda h: core.parse_iso(h.get("at")) or _EPOCH)
         if _today_hist:
             _final = _today_hist[-1]
             if len(_today_hist) > 1:
@@ -689,7 +783,7 @@ DOC_TH_BG = B.DOC_TH_BG
 # section rules. This is the one element where the loud version was doing a
 # job the quiet version does not.
 TH_STYLE = ("padding:6px 8px;background-color:#1e3a5f;background:#1e3a5f;"
-            "color:#ffffff;font-size:11px;font-weight:600;text-align:left;"
+            "color:#ffffff;font-size:13px;font-weight:600;text-align:left;"
             "border-bottom:1px solid #1e3a5f")
 # Section rule: ink text over an INK rule — the same 2px ink rule TH_STYLE
 # uses, so a section head and a table head are the same landmark at two
@@ -946,7 +1040,7 @@ def _undated_quotes_note(undated) -> str:
     where = (f'{"It appears" if n == 1 else "They appear"} '
              + ", ".join(parts) + ". ") if parts else ""
     return (
-        f'<p style="margin:4px 0 0;font-size:11px;color:{B.DOC_WARN};'
+        f'<p style="margin:4px 0 0;font-size:13px;color:{B.DOC_WARN};'
         f'background:{B.DOC_WARN_BG};border-left:3px solid {B.DOC_WARN};padding:6px 9px">'
         # "not counted above" USED TO SIT HERE and it was the misleading half.
         # It meant "absent from the dated OL-USA RESPONSES table"; it read as
@@ -1126,7 +1220,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             rest.append(f"${val:,.0f}{(' ' + carrier) if carrier else ''}")
         if not rest:
             return _esc(head)
-        return (f'{_esc(head)}<div style="font-weight:400;font-size:10px;'
+        return (f'{_esc(head)}<div style="font-weight:400;font-size:12px;'
                 f'color:{B.DOC_MUTED}">also {_esc(", ".join(rest))}</div>')
 
     resp_rows = ""
@@ -1138,42 +1232,51 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             carrier = r.get("carrier_quoted") or "—"
             rate_s = _rate_cell(r)
             signer = r.get("ol_responder_signer") or "—"
-            lonny_t = _fmt_short_pt(r.get("request_timestamp"))
-            ol_t = _fmt_short_et(r.get("response_timestamp"))
+            # The two raw clocks stopped rendering when this table went from
+            # eleven columns to six: the reader was subtracting them by hand
+            # to get Time to Quote, which is its own column. Both remain in
+            # the dashboard and the PDF for anyone auditing the SLA.
             ttq_s, ttq_color = _ttq_cell(r)
             etd_off = r.get("etd_offered") or "—"
             eta_off = r.get("eta_offered") or "—"
+            # SIX COLUMNS, NOT ELEVEN (design proof 2026-08-26). At eleven,
+            # a 375px phone gives each column ~34px and the section the CEO
+            # most needs became the least readable one in the email.
+            #
+            # WHAT WENT, AND WHY EACH IS SAFE: the OL signer is an
+            # attribution field — it matters when chasing a person, which is
+            # an ops task in the dashboard, not a go/no-go read. "Lonny Sent"
+            # and "OL Quoted" are two raw clocks in two timezones that the
+            # reader was subtracting by hand to get Time to Quote, which is
+            # already its own column. ETD and ETA are not dropped, they are
+            # merged into one "Sails" cell, because a sailing is one fact.
+            # Every one of them is still in the attached dashboard and PDF.
+            _sails = (f'{_esc(etd_off)} → {_esc(eta_off)}'
+                      if (etd_off != "—" or eta_off != "—") else "—")
             resp_rows += (
-                f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
-                f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{rate_s}</td>'
-                f'<td {_TD_STYLE}>{_esc(signer)}</td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(lonny_t)}</td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(ol_t)}</td>'
+                f'<tr>{_edge_cell(_edge_for(r))}'
+                f'<td {_TD_STYLE}><strong>{_esc(lane)}</strong>'
+                f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(cont)}'
+                f' · {_esc(teu)} TEU</div></td>'
+                f'<td {_TD_STYLE}>{_esc(carrier)}'
+                f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(signer)}</div></td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600;font-size:14px>{rate_s}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(etd_off)}</td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(eta_off)}</td></tr>'
+                f'<td {_TD_STYLE};font-size:12px>{_sails}</td></tr>'
             )
     else:
         resp_rows = _EMPTY_ROW
     resp_table = (
-        # 11 cols: Lane Equip TEU Carrier Rate Signer LonnyPT OLet TTQ ETD ETA
+        # 6 cols: edge | Lane+equip | Carrier+signer | Rate | TTQ | Sails
         f'{_TABLE_OPEN_FIXED}'
-        f'{_colgroup(15, 8, 5, 11, 9, 11, 11, 11, 6, 6.5, 6.5)}'
+        f'{_colgroup(1.5, 30, 20, 14, 12, 22.5)}'
         f'<thead><tr>'
-        f'<th {_TH_STYLE}>Lane</th>'
-        f'<th {_TH_STYLE}>Equipment</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
-        f'<th {_TH_STYLE}>Carrier Quoted</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate ($/container)</th>'
-        f'<th {_TH_STYLE}>Who Responded (OL signer)</th>'
-        f'<th {_TH_STYLE} title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>'
-        f'<th {_TH_STYLE} title="When OL responded with the rate (Eastern Time)">OL Quoted (ET)</th>'
+        f'<th {_TH_STYLE} style="width:6px;padding:0"></th>'
+        f'<th {_TH_STYLE}>Lane · Equipment</th>'
+        f'<th {_TH_STYLE}>Carrier · Who quoted</th>'
+        f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate /container</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Biz-hours from Lonny RFQ to OL response. Green ≤4h, amber 4-24h, red >24h.">Time to Quote</th>'
-        f'<th {_TH_STYLE} title="OL\'s offered ETD (sailing date)">ETD Offered</th>'
-        f'<th {_TH_STYLE} title="OL\'s offered ETA (arrival date)">ETA Offered</th>'
+        f'<th {_TH_STYLE} title="OL\'s offered sailing: ETD → ETA">Sails (ETD → ETA)</th>'
         f'</tr></thead><tbody>{resp_rows}</tbody></table>'
     )
 
@@ -1255,13 +1358,13 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
             sc_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(str(cont_label))} / {teu} TEU</td>'
+                f'<td {_TD_STYLE};font-size:13px>{_esc(str(cont_label))} / {teu} TEU</td>'
                 f'<td {_TD_STYLE}>{_esc(req_date)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>'
                 f'{_sc_pill(h["from"], r, h["to"])} → {_sc_pill(h["to"], r, h["from"])}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{_esc(rate_s)}</td>'
-                f'<td {_TD_STYLE};font-size:11px;white-space:normal;word-break:break-word>{_esc(reason)}</td></tr>'
+                f'<td {_TD_STYLE};font-size:13px;white-space:normal;word-break:break-word>{_esc(reason)}</td></tr>'
             )
     else:
         sc_rows = _EMPTY_ROW
@@ -1300,9 +1403,9 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 wait_s = f"{(datetime.now(timezone.utc) - req_dt).total_seconds() / 3600.0:.1f}h"
             pol_rows += (
                 f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
+                f'<td {_TD_STYLE};font-size:13px>{_esc(cont)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
+                f'<td {_TD_STYLE};white-space:nowrap;font-size:13px>{_esc(lonny_t)}</td>'
                 f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600>{_esc(wait_s)}</td></tr>'
             )
     else:
@@ -1333,39 +1436,41 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
             # so before 2026-08-19 it printed the copied minute, a
             # time-to-quote and an "hours since" on the staff report, for a
             # row no email supports. Rate, carrier and lane are real and stay.
+            # The quote minute and time-to-quote no longer render in this
+            # section (five columns now, see below), but the EVIDENCE gate
+            # still governs "Waiting": a borrowed minute is not a send time
+            # and its age is not an age.
             _evidenced = core.response_time_is_evidenced(r)
-            ol_t = _fmt_short_et(r.get("response_timestamp")) if _evidenced else "—"
-            ttq_s, ttq_color = _ttq_cell(r) if _evidenced else ("—", B.DOC_MUTED)
             resp_dt = core.parse_iso(r.get("response_timestamp")) if _evidenced else None
             hrs_s = "—"
             if resp_dt:
                 delta_h = (datetime.now(timezone.utc) - resp_dt).total_seconds() / 3600.0
                 hrs_s = f"{delta_h:.1f}h"
+            # FIVE COLUMNS, NOT TEN. This is the action list, so it carries
+            # only what a decision needs: which lane, who is offering what,
+            # at what price, and how long it has been sitting. The two raw
+            # clocks and Time to Quote all describe how fast OL ANSWERED —
+            # settled history on a row whose question is "do we book this?".
+            # "Waiting" is the only clock still running, and it is the one
+            # that decides whether to chase. The rest is in the dashboard.
             pend_rows += (
-                f'<tr><td {_TD_STYLE}><strong>{_esc(lane)}</strong></td>'
-                f'<td {_TD_STYLE};font-size:11px>{_esc(cont)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")}>{_esc(teu)}</td>'
-                f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600>{rate_s}</td>'
-                f'<td {_TD_STYLE}>{_esc(signer)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(lonny_t)}</td>'
-                f'<td {_TD_STYLE};white-space:nowrap;font-size:11px>{_esc(ol_t)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;color:{ttq_color}>{_esc(ttq_s)}</td>'
-                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600>{_esc(hrs_s)}</td></tr>'
+                f'<tr>{_edge_cell(_edge_for(r))}'
+                f'<td {_TD_STYLE}><strong>{_esc(lane)}</strong>'
+                f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(cont)}'
+                f' · {_esc(teu)} TEU</div></td>'
+                f'<td {_TD_STYLE}>{_esc(carrier)}'
+                f'<div style="font-size:13px;color:{B.DOC_MUTED}">{_esc(signer)}</div></td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:right")};font-weight:600;font-size:15px>{rate_s}</td>'
+                f'<td {_TD_STYLE.replace("text-align:left","text-align:center")};font-weight:600;font-size:14px>{_esc(hrs_s)}</td></tr>'
             )
     else:
         pend_rows = _EMPTY_ROW
     pend_table = (
         f'{_TABLE_OPEN}<thead><tr>'
-        f'<th {_TH_STYLE}>Lane</th>'
-        f'<th {_TH_STYLE}>Equipment</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")}>TEU</th>'
-        f'<th {_TH_STYLE}>Carrier Quoted</th>'
+        f'<th {_TH_STYLE} style="width:6px;padding:0"></th>'
+        f'<th {_TH_STYLE}>Lane · Equipment</th>'
+        f'<th {_TH_STYLE}>Carrier · Who quoted</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:right")}>Rate</th>'
-        f'<th {_TH_STYLE}>Who Quoted (OL signer)</th>'
-        f'<th {_TH_STYLE} title="When Lonny sent the RFQ (Pacific Time)">Lonny Sent (PT)</th>'
-        f'<th {_TH_STYLE} title="When OL responded with the rate (Eastern Time)">OL Quoted (ET)</th>'
-        f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Biz-hours OL took to respond on this row. Green ≤4h, amber 4-24h, red >24h.">Time to Quote</th>'
         f'<th {_TH_STYLE.replace("text-align:left","text-align:center")} title="Hours since OL quoted — chase if >24h">Waiting</th>'
         f'</tr></thead><tbody>{pend_rows}</tbody></table>'
     )
@@ -1395,25 +1500,18 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     return f"""
 <div style="background:{B.DOC_INFO_BG};border:2px solid {B.DOC_INFO};border-radius:8px;padding:20px;margin-bottom:24px">
   <h2 style="margin:0 0 8px;color:{B.DOC_INFO};font-size:18px">📋 What Happened — {_esc(report_label)}</h2>
-  <p style="margin:0 0 14px;font-size:11px;color:{B.DOC_MUTED}">Activity for {_esc(report_label)} — the prior business day. The tracker runs ~8 AM ET the next business morning, after that day's California (PT) business is complete, so its quotes and bookings are final.</p>
+  <p style="margin:0 0 14px;font-size:13px;color:{B.DOC_MUTED}">Activity for {_esc(report_label)} — the prior business day. The tracker runs ~8 AM ET the next business morning, after that day's California (PT) business is complete, so its quotes and bookings are final.</p>
 
-  <h3 style="margin:14px 0 4px;color:{B.DOC_INFO};font-size:13px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
+  {_action_first(pending_hil, pending_ol, as_of_label, status_ch, pend_table, pol_table)}
+
+  <h3 style="margin:16px 0 4px;color:{B.DOC_INFO};font-size:14px">📥 NEW REQUESTS FROM LONNY ({len(new_req)})</h3>
   {new_table}
 
-  <h3 style="margin:14px 0 4px;color:{B.DOC_INFO};font-size:13px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
+  <h3 style="margin:16px 0 4px;color:{B.DOC_INFO};font-size:14px">📤 OL-USA RESPONSES ({len(ol_resp)})</h3>
   {resp_table}
 
-  <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
+  <h3 style="margin:16px 0 4px;color:{B.DOC_PENDING};font-size:14px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
   {sc_table}
-
-  <h3 style="margin:14px 0 4px;color:{B.DOC_WARN};font-size:13px">⏳ PENDING OL ({len(pending_ol)}) — awaiting OL quote</h3>
-  {_pending_as_of_note(as_of_label)}
-  {pol_table}
-
-  <h3 style="margin:14px 0 4px;color:{B.DOC_PENDING};font-size:13px">⏳ PENDING HILMAR ({len(pending_hil)}) — awaiting Lonny decision</h3>
-  {_pending_as_of_note(as_of_label)}
-  {pend_table}
-  {_left_pending_note(status_ch, pending_hil)}
 
   <p style="margin:14px 0 0;font-size:13px;color:{B.DOC_INK};font-weight:bold">{_esc(summary_line)}</p>
 </div>
@@ -1480,15 +1578,15 @@ def _kpi_card(value, label, bg, width="25%", sublabel=""):
     # The figure goes mono so the six values line up with each other and
     # with the table columns underneath.
     sub_html = (
-        f'<div style="font-size:10px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">{_esc(sublabel)}</div>'
+        f'<div style="font-size:12px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">{_esc(sublabel)}</div>'
         if sublabel else
-        f'<div style="font-size:10px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">&nbsp;</div>'
+        f'<div style="font-size:12px;color:{DOC_MUTED};margin-top:3px;line-height:1.25">&nbsp;</div>'
     )
     return f"""
 <td class="hx-kpi" style="padding:4px;width:{width};vertical-align:top">
   <div class="hx-kpi-card" style="background-color:{DOC_CARD};border:1px solid {DOC_LINE};border-top:3px solid {bg};border-radius:8px;padding:13px 10px 15px;text-align:center;min-height:88px;height:88px;box-sizing:border-box">
     <div style="font-size:22px;font-weight:bold;line-height:1.1;color:{bg};font-family:{EMAIL_MONO_STACK}">{_esc(value)}</div>
-    <div style="font-size:11px;color:{DOC_MUTED};margin-top:4px;line-height:1.25;text-transform:uppercase;letter-spacing:0.03em">{_esc(label)}</div>
+    <div style="font-size:13px;color:{DOC_MUTED};margin-top:4px;line-height:1.25;text-transform:uppercase;letter-spacing:0.03em">{_esc(label)}</div>
     {sub_html}
   </div>
 </td>
@@ -1654,8 +1752,8 @@ def _kpi_block_html(summary, requests=None, report_date=None):
     spark_pend = V.sparkline_svg([s['pending'] for s in trend_days], width=80, height=18, color=B.DOC_PENDING)
 
     return f"""
-<h2 style="{H2_STYLE}">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:11px;color:{B.DOC_MUTED};font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:{B.DOC_MUTED}">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
+<h2 style="{H2_STYLE}">📊 KPIs — {_esc(day_short)} (ET) <span style="font-size:13px;color:{B.DOC_MUTED};font-weight:400;margin-left:8px">7-day trend ↓</span></h2>
+<p style="margin:-8px 0 8px;font-size:13px;color:{B.DOC_MUTED}">Activity for the prior business day. "Won" counts bookings CONFIRMED that day (any request date, matching Status Changes); the other tiles bucket that day's incoming requests by current status.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
   <tr>
     {_kpi_card(day['total'], f"Requests — {day_short}", B.DOC_INFO, "20%", sublabel=(f"{day.get('total',0)} entries" + (f" · {day['won_later']} booked a later day" if day.get('won_later') else "")))}
@@ -1673,7 +1771,7 @@ def _kpi_block_html(summary, requests=None, report_date=None):
   </tr>
 </table>
 <h2 style="{H2_STYLE}">📊 KPIs — All requests {_esc(period_str_kpi)}</h2>
-<p style="margin:-8px 0 8px;font-size:11px;color:{B.DOC_MUTED}">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
+<p style="margin:-8px 0 8px;font-size:13px;color:{B.DOC_MUTED}">Cumulative over the period shown above — used for win-rate negotiation depth, NOT "today". 'Won' = WIN rows. 'Quoted & Lost' = OL quoted but Lonny chose elsewhere. 'Not Quoted' = OL never responded or had no rate. 'Pending' = awaiting Lonny's decision.</p>
 <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
   <tr>
     {_kpi_card(total, "Total Requests", B.DOC_INFO, sublabel="(all statuses)")}
@@ -1767,8 +1865,8 @@ def _current_week_block_html(rows, report_date):
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px;font-weight:600;white-space:nowrap">{_esc(day)}</td>
-  <td style="padding:6px 8px;text-align:center">{b['requests']}<div style="font-size:10px;color:{B.DOC_MUTED}">{b['teu_req']} TEU</div></td>
-  <td style="padding:6px 8px;text-align:center">{b['won']}<div style="font-size:10px;color:{B.DOC_MUTED}">{b['teu_won']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{b['requests']}<div style="font-size:12px;color:{B.DOC_MUTED}">{b['teu_req']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{b['won']}<div style="font-size:12px;color:{B.DOC_MUTED}">{b['teu_won']} TEU</div></td>
   <td style="padding:6px 8px;text-align:center">{b['ql']}</td>
   <td style="padding:6px 8px;text-align:center">{b['nq']}</td>
   <td style="padding:6px 8px;text-align:center">{b['pending']}</td>
@@ -1777,8 +1875,8 @@ def _current_week_block_html(rows, report_date):
     body += f"""
 <tr style="background:{B.DOC_LINE};font-weight:bold;border-top:2px solid {DOC_INK}">
   <td style="padding:6px 8px">WEEK TO DATE</td>
-  <td style="padding:6px 8px;text-align:center">{tot['requests']}<div style="font-size:10px;font-weight:normal">{tot['teu_req']} TEU</div></td>
-  <td style="padding:6px 8px;text-align:center">{tot['won']}<div style="font-size:10px;font-weight:normal">{tot['teu_won']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{tot['requests']}<div style="font-size:12px;font-weight:normal">{tot['teu_req']} TEU</div></td>
+  <td style="padding:6px 8px;text-align:center">{tot['won']}<div style="font-size:12px;font-weight:normal">{tot['teu_won']} TEU</div></td>
   <td style="padding:6px 8px;text-align:center">{tot['ql']}</td>
   <td style="padding:6px 8px;text-align:center">{tot['nq']}</td>
   <td style="padding:6px 8px;text-align:center">{tot['pending']}</td>
@@ -1786,7 +1884,7 @@ def _current_week_block_html(rows, report_date):
 """
     return f"""
 <h2 style="{H2_STYLE}">🗓️ This Week, Day by Day — {_esc(label)}</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Every weekday of the current week so far, bucketed by the day Lonny sent the request. Days not yet reached are omitted. WEEK TO DATE is the running tally.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Every weekday of the current week so far, bucketed by the day Lonny sent the request. Days not yet reached are omitted. WEEK TO DATE is the running tally.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr>
     <th style="{TH_STYLE}">Day</th>
@@ -1839,22 +1937,22 @@ def _week_block_html(rows):
             wk_code, date_range = label, ""
         week_cell = (
             f'<strong>{_esc(wk_code)}</strong>'
-            + (f'<br><span style="font-size:10px;color:{B.DOC_MUTED};font-weight:400">{_esc(date_range)}</span>' if date_range else '')
+            + (f'<br><span style="font-size:12px;color:{B.DOC_MUTED};font-weight:400">{_esc(date_range)}</span>' if date_range else '')
         )
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px;white-space:nowrap">{week_cell}</td>
-  <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:10px;color:{B.DOC_MUTED}">{teu_req} TEU</span></td>
-  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};font-weight:bold">{b['won']}<br><span style="font-size:10px;color:{B.DOC_GOOD};opacity:0.75">{teu_won} TEU</span></td>
+  <td style="padding:6px 8px;text-align:center">{b['requests']}<br><span style="font-size:12px;color:{B.DOC_MUTED}">{teu_req} TEU</span></td>
+  <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};font-weight:bold">{b['won']}<br><span style="font-size:12px;color:{B.DOC_GOOD};opacity:0.75">{teu_won} TEU</span></td>
   <td style="padding:6px 8px;text-align:center;color:{B.DOC_BAD}">{b['ql']}</td>
   <td style="padding:6px 8px;text-align:center;color:{B.DOC_WARN}">{b['nq']}</td>
   <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING}">{b['pending']}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(mdolx)}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(mdolx)}</td>
 </tr>
 """
     return f"""
 <h2 style="{H2_STYLE}">📅 This Week vs Last Week</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Counts are number of REQUESTS / WINS / etc. — TEU is shown below each count in muted grey. All weeks are ISO weeks (Mon-Sun) in ET.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left" title="ISO week range (Mon-Sun) in ET">Week</th>
@@ -1938,7 +2036,7 @@ def _carrier_block_html(rows):
 """
     return f"""
 <h2 style="{H2_STYLE}">🚢 Carrier Performance — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Per-carrier rollup across EVERY request currently in tracking-data-v2.json. Counts (#) are number of request rows. TEU columns sum the containers on those rows. <strong>Math reconciliation:</strong> TEU Offered = TEU Won + TEU Lost + TEU Pending (on every row).</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left">Carrier</th>
@@ -1973,7 +2071,7 @@ def _winning_lanes_html(rows):
     max_teu = max((b['teu_won'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
-    _MICRO = f'style="font-size:9px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
+    _MICRO = f'style="font-size:12px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
         bg = B.DOC_CARD if alt else B.DOC_GOOD_BG
         alt = not alt
@@ -1998,7 +2096,7 @@ def _winning_lanes_html(rows):
   <td style="padding:6px 8px;text-align:center;color:{B.DOC_PENDING};vertical-align:top">{pend_count}<div {_MICRO}>Pending</div></td>
   <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Won</div></td>
   <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
-  <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(carriers)}<div {_MICRO}>Winning Carriers</div></td>
+  <td style="padding:6px 8px;font-size:13px;vertical-align:top">{_esc(carriers)}<div {_MICRO}>Winning Carriers</div></td>
 </tr>
 """
     # 2026-05-19 PM 4th pass (Michael "still no column headers for these
@@ -2008,7 +2106,7 @@ def _winning_lanes_html(rows):
     # solid #059669 (winning) / #7f1d1d (losing) which Outlook honors.
     return f"""
 <h2 style="{H2_STYLE}">📈 Top Winning Lanes — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Sorted by TEU won (descending). "Wins" = WIN rows on this lane. "Q&amp;L" / "NQ" / "Pending" break out the other statuses so you see the full mix. "Win Rate" = Wins / (Wins + Q&amp;L + NQ), Pending excluded. A lane can ALSO appear in Top Losing Lanes when high-volume on both sides.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
@@ -2033,7 +2131,7 @@ def _losing_lanes_html(rows):
     max_teu = max((b['teu_lost'] for _, b in rows), default=1) or 1
     body = ""
     alt = True
-    _MICRO = f'style="font-size:9px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
+    _MICRO = f'style="font-size:12px;color:{B.DOC_MUTED};font-weight:400;letter-spacing:0.3px;text-transform:uppercase"'
     for lane, b in rows:
         bg = B.DOC_CARD if alt else B.DOC_BAD_BG
         alt = not alt
@@ -2056,13 +2154,13 @@ def _losing_lanes_html(rows):
   <td style="padding:6px 8px;text-align:center;color:{B.DOC_GOOD};vertical-align:top">{won_count}<div {_MICRO}>Wins</div></td>
   <td style="padding:6px 8px;text-align:left;vertical-align:top">{teu_bar}<div {_MICRO}>TEU Lost</div></td>
   <td style="padding:6px 8px;text-align:center;background:{wr_bg};font-weight:600;vertical-align:top">{win_rate:.1f}%<div {_MICRO}>Win Rate</div></td>
-  <td style="padding:6px 8px;font-size:11px;vertical-align:top">{_esc(winning_carriers)}<div {_MICRO}>Winning Carriers</div></td>
+  <td style="padding:6px 8px;font-size:13px;vertical-align:top">{_esc(winning_carriers)}<div {_MICRO}>Winning Carriers</div></td>
 </tr>
 """
     # 2026-05-19 PM 4th pass: solid bg for Outlook (was gradient → invisible).
     return f"""
 <h2 style="{H2_STYLE}">📉 Top Losing Lanes — All requests in current dataset</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Sorted by TEU lost (descending). "Q&amp;L" = OL quoted but Lonny chose elsewhere. "NQ" = OL didn't respond. "Wins" shown for context (a lane often has BOTH wins and losses). "Win Rate" same definition as Winning Lanes — same number on the same lane.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="{TH_STYLE};text-align:left">Lane (origin → destination)</th>
@@ -2115,15 +2213,15 @@ def _nq_html(rows, total_nq=None, teu_total=None):
         body += f"""
 <tr style="background:{bg};border-bottom:1px solid {B.DOC_WARN_BG}">
   <td style="padding:6px 8px;white-space:nowrap">{_esc(r.get('request_date') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px;color:{B.DOC_MUTED}">{_esc(r.get('lonny_time_pt') or '—')}</td>
+  <td style="padding:6px 8px;font-size:13px;color:{B.DOC_MUTED}">{_esc(r.get('lonny_time_pt') or '—')}</td>
   <td style="padding:6px 8px">{_esc(r.get('origin') or '—')}</td>
   <td style="padding:6px 8px">{_esc(r.get('destination') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(r.get('teu_requested') or '—')}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('eta_requested') or r.get('etd_requested') or 'no date on request')}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('ol_responder') or '—')}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('eta_requested') or r.get('etd_requested') or 'no date on request')}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('ol_responder') or '—')}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:bold;color:{B.DOC_WARN}">{_age_days(request_ts)}</td>
-  <td style="padding:6px 8px;font-size:10px;color:{B.DOC_MUTED};font-family:monospace">{_esc(imid_short)}</td>
+  <td style="padding:6px 8px;font-size:12px;color:{B.DOC_MUTED};font-family:monospace">{_esc(imid_short)}</td>
 </tr>
 """
     # Build header with both visible-window count + total tally for rate-negotiation context
@@ -2134,7 +2232,7 @@ def _nq_html(rows, total_nq=None, teu_total=None):
                   f"but counted in volume tally for rate negotiation") if older_count > 0 else ""
     return f"""
 <h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN};padding-bottom:8px">⚠️ Not Quoted — Last {NQ_DISPLAY_WINDOW_DAYS} Days ({len(rows)} listed • {_esc(total_label)}{_esc(teu_label)})</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Full request audit — every field needed to root-cause why OL did not respond.{_esc(older_note)}</p>
 {_nq_reset_banner()}
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_WARN};color:white">
@@ -2201,10 +2299,10 @@ def _pending_ol_html(rows):
         body += f"""
 <tr style="border-bottom:1px solid {B.DOC_LINE}">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{_esc(str(r.get('teu_requested') or '—'))}</td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('product') or '—')}</td>
-  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(_fmt_pt(r.get('request_timestamp')))}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('product') or '—')}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:13px">{_esc(_fmt_pt(r.get('request_timestamp')))}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:600;color:{wait_color}">{_esc(wait_s)}</td>
 </tr>
 """
@@ -2217,7 +2315,7 @@ def _pending_ol_html(rows):
 """
     return f"""
 <h2 style="color:{B.DOC_WARN};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_WARN};padding-bottom:8px">⏳ Pending OL Quote ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">RFQs Lonny has sent that OL has NOT yet quoted — the wait is on OL, not Hilmar. "Waiting on OL" is BUSINESS hours since the RFQ (ET 8:30–5:30 Mon–Fri, the same clock as Time to Quote). OL's response SLA is {core.PENDING_OL_SLA_BIZ_HOURS}h: red ⚠ rows have BLOWN the SLA and are chase candidates with the OL desk. These stay open until the {core.PENDING_OL_LOSS_HOURS}h win/loss timer resolves them.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_WARN};color:white">
     <th style="padding:8px;text-align:left;background-color:{B.DOC_WARN};color:{B.DOC_CARD}">Lane</th>
@@ -2323,13 +2421,13 @@ def _pending_html(rows):
         body += f"""
 <tr style="background:{bg}">
   <td style="padding:6px 8px"><strong>{_esc(r.get('lane') or '—')}</strong></td>
-  <td style="padding:6px 8px;font-size:11px">{_esc(r.get('containers') or '—')}</td>
+  <td style="padding:6px 8px;font-size:13px">{_esc(r.get('containers') or '—')}</td>
   <td style="padding:6px 8px;text-align:center">{teu}</td>
   <td style="padding:6px 8px">{_esc(r.get('carrier_quoted') or '—')}</td>
   <td style="padding:6px 8px;text-align:right;font-weight:600">{_esc(rate_s)}</td>
   <td style="padding:6px 8px">{_esc(signer)}</td>
-  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(lonny_t)}</td>
-  <td style="padding:6px 8px;white-space:nowrap;font-size:11px">{_esc(ol_t)}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:13px">{_esc(lonny_t)}</td>
+  <td style="padding:6px 8px;white-space:nowrap;font-size:13px">{_esc(ol_t)}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:600;color:{ttq_color}">{_esc(ttq_s)}</td>
   <td style="padding:6px 8px;text-align:center;font-weight:600">{_esc(_hours_since(r.get('response_timestamp')) if _evidenced else "—")}</td>
 </tr>
@@ -2344,7 +2442,7 @@ def _pending_html(rows):
 """
     return f"""
 <h2 style="color:{B.DOC_PENDING};font-size:16px;margin:20px 0 12px;border-bottom:2px solid {B.DOC_PENDING};padding-bottom:8px">⏳ Pending Hilmar Response ({len(rows)} requests · {total_teu} TEU)</h2>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">Rows where OL has quoted but Lonny hasn't yet decided. Columns show the full clock: when Lonny asked → when OL quoted → how long that took (biz-hours) → how long it's been waiting. "Time to Quote" is OL's response speed on this row (sub-4h green / 4–24h amber / &gt;24h red). "Hours since OL quote" is the chase metric — candidates &gt;24h need follow-up.</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr style="background:{B.DOC_PENDING};color:white">
     <th style="padding:8px;text-align:left;background-color:{B.DOC_PENDING};color:{B.DOC_CARD}">Lane</th>
@@ -2462,12 +2560,12 @@ def _loss_reason_mix_html(data) -> str:
             chunks.append(
                 f'<span style="display:inline-block;margin:4px 8px 0 0;'
                 f'padding:2px 8px;background:{color};color:#fff;border-radius:3px;'
-                f'font-size:11px;font-variant-numeric:tabular-nums">'
+                f'font-size:13px;font-variant-numeric:tabular-nums">'
                 f'{_esc(tag_label)}: {am[key]} ({pct:.0f}%)</span>'
             )
         if chunks:
             out += (
-                f'<div style="margin:8px 0 0 0;font-size:11px;color:{B.DOC_MUTED};'
+                f'<div style="margin:8px 0 0 0;font-size:13px;color:{B.DOC_MUTED};'
                 f'line-height:1.8">{ "".join(chunks) }</div>'
             )
         return out
@@ -2520,7 +2618,7 @@ def _trade_region_html(data, summary):
                 if len(_dests) > 6:
                     _shown += f" +{len(_dests) - 6} more"
                 label += (
-                    f'<div style="font-size:9px;color:{B.DOC_MUTED};'
+                    f'<div style="font-size:12px;color:{B.DOC_MUTED};'
                     f'font-weight:400;letter-spacing:.01em;margin-top:2px">'
                     f'{_shown}</div>'
                 )
@@ -2570,16 +2668,16 @@ def _trade_region_html(data, summary):
     period_str = f"{dates[0]} – {dates[-1]}" if dates else "all time"
     return f"""
 <h2 style="{H2_STYLE}">🌐 Volume by Trade Region — {_esc(period_str)}</h2>
-<p style="margin:0 0 4px;font-size:11px;color:{B.DOC_MUTED}">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
-<p style="margin:0 0 8px;font-size:11px;color:{B.DOC_MUTED}">{_esc(recon)}</p>
+<p style="margin:0 0 4px;font-size:13px;color:{B.DOC_MUTED}">Destinations grouped by trade region. All counts and TEU are cumulative across the period shown above. Totals reconcile to summary KPIs.</p>
+<p style="margin:0 0 8px;font-size:13px;color:{B.DOC_MUTED}">{_esc(recon)}</p>
 <table class="hx-data" style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
   <tr>
     <th style="padding:8px;text-align:left">Region</th>
-    <th style="padding:8px;text-align:center" title="Number of distinct requests from Lonny">Requests<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
-    <th style="padding:8px;text-align:center" title="Wins — booked + confirmed via MDOLX">Wins<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
-    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost — OL gave a rate, Lonny went elsewhere">Q&amp;L<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
-    <th style="padding:8px;text-align:center" title="Not Quoted — OL never responded or had no rate">NQ<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
-    <th style="padding:8px;text-align:center" title="Pending — awaiting Lonny's decision">Pending<br><span style="font-weight:400;font-size:10px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Number of distinct requests from Lonny">Requests<br><span style="font-weight:400;font-size:12px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Wins — booked + confirmed via MDOLX">Wins<br><span style="font-weight:400;font-size:12px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Quoted &amp; Lost — OL gave a rate, Lonny went elsewhere">Q&amp;L<br><span style="font-weight:400;font-size:12px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Not Quoted — OL never responded or had no rate">NQ<br><span style="font-weight:400;font-size:12px;opacity:0.85">(#)</span></th>
+    <th style="padding:8px;text-align:center" title="Pending — awaiting Lonny's decision">Pending<br><span style="font-weight:400;font-size:12px;opacity:0.85">(#)</span></th>
     <th style="padding:8px;text-align:center" title="Sum of TEU requested by Lonny (all statuses)">TEU<br>Requested</th>
     <th style="padding:8px;text-align:center" title="Sum of TEU on confirmed WIN rows only">TEU<br>Won</th>
     <th style="padding:8px;text-align:center" title="Win Rate = Wins / Requests">Win<br>Rate</th>
@@ -2644,8 +2742,8 @@ FOOTER_HTML = f"""
   <p style="margin:4px 0;font-size:12px">• 🔍 <b>QC</b> — Data quality checks and warnings</p>
 </div>
 <div style="border-top:1px solid {DOC_LINE};padding-top:12px;margin-top:20px;text-align:center">
-  <p style="font-size:11px;color:{DOC_MUTED}">Auto-generated from the Hilmar Shipment Tracker</p>
-  <p style="font-size:11px;color:{DOC_MUTED}">Files also on OneDrive: IdealX → Hilmar folder</p>
+  <p style="font-size:13px;color:{DOC_MUTED}">Auto-generated from the Hilmar Shipment Tracker</p>
+  <p style="font-size:13px;color:{DOC_MUTED}">Files also on OneDrive: IdealX → Hilmar folder</p>
 </div>
 """
 
@@ -2669,15 +2767,14 @@ def build_body(data, cfg):
 
     new_req, ol_resp, status_ch, pending = _today_events(data, report_date)
     undated_q = undated_quotes(data)
-    week_rows = _week_rows(data)
-    carrier_rows = _carrier_rows(data)
-    winning_lanes = _winning_lane_rows(data)
-    losing_lanes = _losing_lane_rows(data)
+    # week_rows / carrier_rows / winning_lanes / losing_lanes are no longer
+    # computed here: their sections moved to the dashboard and the PDF
+    # (see _ANALYSIS_MOVED_TO_DASHBOARD below). The row-builders survive and
+    # are still called by gen_dashboard and gen_pdf.
     nq_rows = _not_quoted_rows(data)  # 14-day display window only
     nq_all = _not_quoted_aggregate(data)  # full tally for rate-negotiation context
     nq_total_count = len(nq_all)
     nq_total_teu = sum(int(r.get("teu_requested") or 0) for r in nq_all)
-    pend_rows = _pending_rows(data)
 
     html_body = _header_html(report_label, date_range, updated_label)
     # updated_label is the render instant ("August 21, 2026 at 5:45 PM ET").
@@ -2689,19 +2786,34 @@ def build_body(data, cfg):
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.
-    html_body += _loss_reason_mix_html(data)
+    # ── SECTIONS THAT MOVED OUT, 2026-08-26 ────────────────────────────────
+    #
+    # Michael asked for a design proof of the report. The finding that drove
+    # this: the daily email carried fifteen sections, of which seven were
+    # ANALYSIS over the whole dataset — all-time KPIs, day-by-day, week vs
+    # week, carrier performance, trade region, top winning and losing lanes.
+    # None of them answer "what happened yesterday and what do I owe anyone",
+    # which is the job of a report read on a phone in ten seconds before
+    # 8 AM. All seven already exist in the attached dashboard HTML and the
+    # 6-page PDF, which are interactive and sortable and are the right home
+    # for a question that starts with "how are we doing on...".
+    #
+    # The functions are NOT deleted. gen_dashboard and gen_pdf import several
+    # of them, and a weekly or monthly caller may want them again — this is a
+    # decision about what belongs in the DAILY email, not about whether the
+    # analysis is worth computing.
+    #   _loss_reason_mix_html  _week_block_html      _carrier_block_html
+    #   _trade_region_html     _winning_lanes_html   _losing_lanes_html
     html_body += _current_week_block_html(
         _current_week_day_rows(data, report_date), report_date)
-    html_body += _week_block_html(week_rows)
-    html_body += _carrier_block_html(carrier_rows)
-    html_body += _trade_region_html(data, data.get("summary", {}) or {})
-    html_body += _winning_lanes_html(winning_lanes)
-    html_body += _losing_lanes_html(losing_lanes)
     html_body += _nq_html(nq_rows, total_nq=nq_total_count, teu_total=nq_total_teu)
-    html_body += _pending_ol_html(
-        [r for r in pend_rows if core.pending_substate(r) == "PENDING_OL"])
-    html_body += _pending_html(
-        [r for r in pend_rows if core.pending_substate(r) == "PENDING_HILMAR"])
+    # PENDING OL / PENDING HILMAR are rendered ONCE, inside the day block.
+    # They used to be rendered there AND again here, applying the identical
+    # filter — core.pending_substate(r) == "PENDING_HILMAR" — to the same
+    # list. Measured on a one-row dataset: the same open quote appeared four
+    # times in one email, in two full detail tables. Two renderings of one
+    # fact cannot disagree today, but they can the moment either call site
+    # changes, and a report that contradicts itself is one nobody trusts.
     html_body += _ai_insights_business_html(cfg)
     html_body += FOOTER_HTML
     # Three closes: .hx-pad, .hx-wrap, and the paper-ground div the header

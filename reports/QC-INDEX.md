@@ -4,7 +4,7 @@ Source of truth for every QC check in the pipeline. Each row pairs a check
 with the failure mode that triggered it (per Michael's standing rule:
 "every new code pattern ships with QC + self-heal in the same commit").
 
-Generated 2026-05-13, updated 2026-08-21. Total active checks: **76**
+Generated 2026-05-13, updated 2026-08-24. Total active checks: **76**
 (QC-001 through QC-080, including the QC-014a/b and QC-020a/b sub-variants;
 QC-038 retired). Last commit: see `git log scripts/qc_selfheal.py`.
 The newest checks are QC-055..QC-063 (added 2026-06-25), QC-064

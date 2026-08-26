@@ -199,3 +199,146 @@ def test_a_booked_row_never_reads_as_aged():
     html = GE.build_body({"requests": [_quote_then_book(rd)]}, {})
     assert "aged to WIN" not in html
     assert "261129" in html
+
+
+# ── No shipment is lost between weeks (Seer review on #224) ────────────────
+
+def test_a_cross_week_win_is_counted_once_not_dropped():
+    """Seer flagged analyze_week for "silently dropping" a WIN whose request
+    week and booking week differ: it is absent from `wins` (win_rows is
+    filtered by booking date) and excluded from `rest` by `not is_win(r)`.
+
+    The local reading is correct; the conclusion is not. The row is counted in
+    the week its booking landed, which is the contract Michael chose — count
+    shipments, and count each one once, in the week its outcome landed. What
+    would be a real defect is the shipment vanishing from BOTH weeks, so that
+    is what this pins.
+    """
+    from datetime import date
+    row = {"request_id": "x1", "status": "WIN", "quoted": True,
+           "mdolx_ref": "A", "teu_won": 4, "teu_requested": 4,
+           "request_date": "2026-08-18",
+           "request_timestamp": "2026-08-18T12:00:00+00:00",
+           "booking_timestamp": "2026-08-25T12:00:00+00:00",
+           "status_history": [{"at": "2026-08-25T12:00:00+00:00",
+                               "from": "PENDING", "to": "WIN"}]}
+    rfq_week = (date(2026, 8, 17), date(2026, 8, 21))
+    booked_week = (date(2026, 8, 24), date(2026, 8, 28))
+    totals = [GWS.analyze_week(GWS._filter_rows([row], s, e),
+                               GWS._filter_wins([row], s, e))["total"]
+              for s, e in (rfq_week, booked_week)]
+    assert totals == [0, 1], totals
+    assert sum(totals) == 1, "the shipment was lost between the two weeks"
+
+
+def test_a_win_with_no_booking_clock_still_lands_in_a_week():
+    """The case Seer's reasoning WOULD break. core.win_event_date falls back
+    to request_date, so a WIN carrying no booking_timestamp and no transition
+    is still dated and still counted."""
+    from datetime import date
+    row = {"request_id": "x2", "status": "WIN", "quoted": True,
+           "mdolx_ref": "B", "teu_won": 2, "teu_requested": 2,
+           "request_date": "2026-08-18",
+           "request_timestamp": "2026-08-18T12:00:00+00:00",
+           "status_history": []}
+    assert core.win_event_date(row) == "2026-08-18"
+    s, e = date(2026, 8, 17), date(2026, 8, 21)
+    m = GWS.analyze_week(GWS._filter_rows([row], s, e),
+                         GWS._filter_wins([row], s, e))
+    assert (m["total"], m["wins"]) == (1, 1)
+
+
+def test_a_totally_undated_win_is_in_no_intake_either():
+    """The remaining hole is not a hole: a WIN with no dates at all has no
+    request_date, so it is in no week's intake and cannot be dropped from a
+    total it was never in. It is QC-077/QC-027's problem, not this one's."""
+    row = {"request_id": "x3", "status": "WIN", "quoted": True, "mdolx_ref": "C"}
+    assert core.win_event_date(row) is None
+    from datetime import date
+    assert GWS._filter_rows([row], date(2026, 8, 17), date(2026, 8, 21)) == []
+
+
+# ── Copilot review on #224 ─────────────────────────────────────────────────
+
+def test_analyze_week_still_sums_when_win_rows_is_omitted():
+    """The documented win_rows=None path was broken by an id()-based de-dupe.
+
+    win_rows defaulted to `rows`, so every id was in won_ids, `rest` came out
+    empty, and Q&L / NQ / pending all read 0 with total == wins. The de-dupe
+    was redundant anyway: every member of win_rows is a win, because
+    _filter_wins only keeps rows with a win_event_date, and that requires
+    status == WIN — so `not core.is_win(r)` already excluded them.
+    """
+    rows = [{"request_id": "w", "status": "WIN", "quoted": True,
+             "mdolx_ref": "A", "teu_won": 2, "teu_requested": 2},
+            {"request_id": "l", "status": "LOSS", "quoted": True,
+             "teu_requested": 2},
+            {"request_id": "p", "status": "PENDING", "quoted": True,
+             "teu_requested": 2}]
+    m = GWS.analyze_week(rows)
+    assert (m["total"], m["wins"], m["ql"], m["pending"]) == (3, 1, 1, 1)
+    assert m["total"] == m["wins"] + m["ql"] + m["nq"] + m["pending"]
+
+
+def test_a_row_that_arrived_and_booked_in_one_week_counts_once():
+    """What the de-dupe was there for — still true without it."""
+    from datetime import date
+    row = {"request_id": "w1", "status": "WIN", "quoted": True,
+           "mdolx_ref": "A", "teu_won": 2, "teu_requested": 2,
+           "request_date": "2026-08-19",
+           "request_timestamp": "2026-08-19T12:00:00+00:00",
+           "booking_timestamp": "2026-08-20T12:00:00+00:00",
+           "status_history": [{"at": "2026-08-20T12:00:00+00:00",
+                               "from": "PENDING", "to": "WIN"}]}
+    s, e = date(2026, 8, 17), date(2026, 8, 21)
+    m = GWS.analyze_week(GWS._filter_rows([row], s, e),
+                         GWS._filter_wins([row], s, e))
+    assert (m["total"], m["wins"]) == (1, 1), "counted twice in its own week"
+
+
+def test_status_changes_pick_the_chronologically_last_transition():
+    """status_history is NOT chronological. apply_operator_corrections stamps
+    a back-entered booking with its own clock, which is deliberately in the
+    past, so an appended entry can predate ones already in the list —
+    list-last would pick the wrong final state."""
+    from datetime import datetime, timezone
+
+    import gen_email as GE
+    rd = GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+
+    def _at(h):
+        return datetime(rd.year, rd.month, rd.day, h, 0,
+                        tzinfo=timezone.utc).isoformat()
+
+    row = {"request_id": "r1", "lane": "Oakland → Yokohama", "origin": "Oakland",
+           "destination": "Yokohama", "containers": "1-40' HC",
+           "teu_requested": 2, "status": "WIN", "quoted": True,
+           "mdolx_ref": "261129", "carrier_quoted": "CMA CGM",
+           "carrier_won": "CMA CGM", "ol_rate": 3010.0,
+           "request_timestamp": _at(10), "response_timestamp": _at(12),
+           "booking_timestamp": _at(16),
+           # OUT OF ORDER on purpose: the WIN is appended first, the earlier
+           # QUOTED second, exactly as a back-dated correction produces.
+           "status_history": [
+               {"at": _at(16), "from": "QUOTED", "to": "WIN",
+                "reason": "MDOLX261129 booking confirmed"},
+               {"at": _at(12), "from": "PENDING", "to": "QUOTED",
+                "reason": "MBD rate response"}]}
+    _, _, status_ch, _ = GE._today_events({"requests": [row]}, rd)
+    assert len(status_ch) == 1
+    _, h = status_ch[0]
+    assert h["to"] == "WIN", f"picked list-last, not time-last: {h}"
+
+
+def test_an_unparseable_transition_time_does_not_crash_the_sort():
+    from datetime import datetime, timezone
+
+    import gen_email as GE
+    rd = GE._report_date(datetime.now(timezone.utc).astimezone(core.ET))
+    at = datetime(rd.year, rd.month, rd.day, 14, 0, tzinfo=timezone.utc).isoformat()
+    row = {"request_id": "r2", "lane": "Oakland → Osaka", "origin": "Oakland",
+           "destination": "Osaka", "status": "LOSS", "quoted": True,
+           "teu_requested": 2, "request_timestamp": at, "response_timestamp": at,
+           "status_history": [{"at": at, "from": "PENDING", "to": "QUOTED",
+                               "reason": "MBD rate response"}]}
+    GE._today_events({"requests": [row]}, rd)   # must not raise

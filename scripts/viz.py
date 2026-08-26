@@ -219,7 +219,7 @@ def status_pill(status: str, icon: str = "", label: str | None = None) -> str:
     return (
         f'<span style="display:inline-block;background:{bg};color:{txt};'
         f'border:1px solid {border};border-radius:10px;padding:2px 8px;'
-        f'font-size:10px;font-weight:600;letter-spacing:0.3px">{icon_part}{_esc(text)}</span>'
+        f'font-size:11px;font-weight:600;letter-spacing:0.3px">{icon_part}{_esc(text)}</span>'
     )
 
 
