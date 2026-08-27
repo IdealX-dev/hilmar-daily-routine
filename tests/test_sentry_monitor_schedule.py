@@ -22,7 +22,7 @@ def test_monitor_config_rest_shape():
     c = SS._monitor_config_rest()
     # REST shape = flat schedule string + schedule_type (not the SDK's nested form)
     assert c["schedule_type"] == "crontab"
-    assert c["schedule"] == "7 8 * * 1-5"
+    assert c["schedule"] == "30 6 * * 1-5"
     assert c["timezone"] == "America/New_York"
     assert c["checkin_margin"] == 290
     assert c["max_runtime"] == 60
@@ -46,7 +46,7 @@ def test_update_monitor_put_then_post_fallback(monkeypatch):
     body = calls[0][2]
     assert body["type"] == "cron_job"
     assert body["slug"] == "hilmar-daily-pipeline"
-    assert body["config"]["schedule"] == "7 8 * * 1-5"
+    assert body["config"]["schedule"] == "30 6 * * 1-5"
     assert body["config"]["checkin_margin"] == 290
 
 

@@ -73,9 +73,25 @@ on:
   # sparse for roughly Jun-Aug. OL's replies went To: Lonny, Cc: the group
   # and never reached this mailbox; forwarding was fixed 2026-08-12, so the
   # section fills from here forward. Michael, above.
+  # MOVED EARLIER 2026-08-27 (Michael: "blast did not go out today" then
+  # "move cron earlier"). On 08-27 GitHub dropped the 12:07 tick entirely and
+  # started the run at 15:54 UTC — 3h47m late — so the blast landed at
+  # 12:12 PM ET instead of ~8 AM. Nothing failed; the scheduler simply
+  # slipped, which the note above already says it can do by 2-4h.
+  #
+  # 6:30 AM ET, NOT EARLIER, AND THE 30 MINUTES ARE LOAD-BEARING.
+  # core.report_business_day treats ANY fire before 6:00 AM ET as belonging
+  # to the PRIOR business day (the wee-hours rule, core.py). Combined with
+  # window=previous, a 5 AM Thursday fire would report TUESDAY and skip
+  # Wednesday — every day, silently, forever. Verified before moving:
+  #     05:07 ET -> business day 2026-08-26   (WRONG: skips a day)
+  #     06:07 ET -> business day 2026-08-27   (correct)
+  # GitHub cron only ever fires LATE, never early, so 6:30 keeps a 30-minute
+  # cushion above the cliff. tests/test_cron_respects_the_wee_hours_cutoff.py
+  # fails if any cron here is ever set below it.
   schedule:
-    - cron: "7 12 * * 1-5"    # ~8:07 AM EDT, Mon-Fri
-    - cron: "7 13 * * 1-5"    # ~8:07 AM EST, Mon-Fri (gated out in EDT)
+    - cron: "30 10 * * 1-5"   # ~6:30 AM EDT, Mon-Fri
+    - cron: "30 11 * * 1-5"   # ~6:30 AM EST, Mon-Fri (gated out in EDT)
   workflow_dispatch:
     inputs:
       mode:
@@ -159,7 +175,7 @@ env:
 
 jobs:
   gate:
-    name: Schedule gate (8 AM Mon-Fri ET, reports the prior business day)
+    name: Schedule gate (6:30 AM Mon-Fri ET, reports the prior business day)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:

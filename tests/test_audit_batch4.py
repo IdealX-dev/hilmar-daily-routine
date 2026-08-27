@@ -297,10 +297,57 @@ def test_kpi_tile_and_what_happened_agree_on_a_reversed_win():
 
 def test_a_reversed_win_is_not_rendered_as_a_win():
     """The transition is still shown — it happened — but it must not read as
-    a win, or the table contradicts the count above it."""
+    a win, or the table contradicts the count above it.
+
+    THESE TWO ASSERTIONS WERE THE WHOLE TEST, AND THEY PASSED GREEN WHILE THE
+    ROW SHIPPED A GREEN "WIN" BADGE. Michael found it in the report on
+    2026-08-27, not here: an Oakland → Tokyo row reading "PENDING HILMAR →
+    WIN" beside the reason "REVERSED, now LOSS (SEND_NO_BOOKING)" — "why is
+    it still win with no further change to loss". Checking that the REASON
+    text is present says nothing about the PILL, which is the thing a reader
+    actually looks at. The assertions below are the ones that had teeth.
+    """
     _summary, block, _ = _render([_reversed_win_row()])
     assert "REVERSED" in block
     assert "SEND_NO_BOOKING" in block
+
+
+def test_a_reversed_win_does_not_wear_a_win_badge():
+    """The pill, not just the prose. A →WIN transition that did not stick
+    must render the row's REAL status at the TO end."""
+    import re
+    _summary, block, block_wins = _render([_reversed_win_row()])
+    assert block_wins == 0, "precondition: this row is counted as zero wins"
+    # No pill anywhere in the block may read WIN.
+    assert not re.search(r">\s*WIN\s*</span>", block), (
+        "a row counted as ZERO wins is still wearing a WIN badge — the pill "
+        "is built from the transition target instead of the row's status")
+    # And it must say what it actually is, in the same vocabulary as the
+    # counts: core.display_status of a quoted LOSS is Q&L.
+    assert "Q&amp;L" in block or "Q&L" in block, (
+        "the reversed end must name the row's real status, not vanish")
+
+
+def test_the_pill_and_the_win_count_can_never_disagree():
+    """The invariant behind both tests above, stated once: if the block
+    counts zero wins, no pill in it may read WIN — and if it counts one, one
+    must."""
+    import re
+
+    def _win_badges(block):
+        return len(re.findall(r">\s*WIN\s*</span>", block))
+
+    _s, reversed_block, reversed_wins = _render([_reversed_win_row()])
+    assert reversed_wins == 0 and _win_badges(reversed_block) == 0
+
+    real = _reversed_win_row()
+    real["status"] = "WIN"
+    real["loss_reason"] = None
+    real["teu_won"] = 2
+    _s2, real_block, real_wins = _render([real])
+    assert real_wins == 1 and _win_badges(real_block) >= 1, (
+        "a win that STUCK must still show its WIN badge — the fix must not "
+        "suppress real wins")
 
 
 def test_a_real_win_still_counts_on_both_surfaces():
