@@ -71,15 +71,40 @@ def _ps_triggers_hm() -> set[tuple[int, int]]:
     return out
 
 
-def test_cloud_pc_has_only_the_morning_fire_trigger():
-    triggers = _ps_triggers_hm()
-    assert MORNING_ET in triggers, (
-        f"Cloud-PC is missing the Mon-Fri {MORNING_ET[0]:02d}:{MORNING_ET[1]:02d} "
-        f"ET trigger; found {sorted(triggers)}"
-    )
-    assert FRIDAY_WRAPUP not in triggers, (
-        "the Friday 4:30 PM wrap-up trigger is retired — it must not be on the box"
-    )
+def test_the_cloud_pc_is_not_a_live_fire_surface():
+    """THE CLOUD PC IS GONE — decommissioned 2026-08-07, and RUNBOOK.md opens
+    with a banner saying so.
+
+    This test used to assert that deploy/setup_cloudpc.ps1's Task Scheduler
+    trigger equalled MORNING_ET, which coupled the LIVE fire time to a
+    machine that does not exist. On 2026-08-27 that coupling did real harm:
+    moving the cron to 6:30 forced an edit to the dead box's setup script,
+    and I then warned Michael that "the live Cloud-PC task still fires at
+    8:07" — a caveat about a machine he had retired months earlier. He
+    corrected me: "we are not using the cloud pc anymore rememebr?"
+
+    That is exactly the drift the RUNBOOK banner exists to stop, and a test
+    was enforcing it. The .ps1 is kept as history — it explains why the
+    deploy code looks the way it does — but nothing live may be pinned to
+    it, so the fire time is no longer required to agree with it.
+    """
+    ps1 = ROOT / "deploy" / "setup_cloudpc.ps1"
+    if not ps1.exists():
+        return          # deleted outright is also fine
+    text = ps1.read_text(encoding="utf-8", errors="replace")
+    assert "HISTORY" in text[:2000].upper() or "DECOMMISSIONED" in text[:2000].upper(), (
+        "deploy/setup_cloudpc.ps1 configures a machine that was retired on "
+        "2026-08-07 but does not say so in its header. Anyone reaching for "
+        "it during an incident — which is when they will — has to be told "
+        "up front, exactly as RUNBOOK.md's banner does.")
+    # And it must NOT be invoked by anything that runs.
+    for wf in (ROOT / ".github" / "workflows").glob("*.yml"):
+        body = wf.read_text(encoding="utf-8")
+        for line in body.splitlines():
+            st = line.strip()
+            if "setup_cloudpc.ps1" in st and not st.startswith("#"):
+                assert "run:" not in st, (
+                    f"{wf.name} executes the retired Cloud-PC setup script")
 
 
 # --- Surface 2: Sentry cron monitor (Mon-Fri 8 AM) --------------------------

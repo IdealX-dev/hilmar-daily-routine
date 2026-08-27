@@ -160,7 +160,7 @@ jobs:
           gh label list --search box-env-drift --json name -q '.[].name' 2>/dev/null \
             | grep -Fxq box-env-drift \
             || gh label create box-env-drift --color D93F0B \
-                 --description "Cloud PC fired on a drifted environment" || true
+                 --description "Fire ran on a drifted runner environment" || true
           if [ -z "$drift" ]; then
             echo "✅ Box environment healthy ($envfp) — closing any open drift issue."
             for n in $(gh issue list --label box-env-drift --state open --json number -q '.[].number' 2>/dev/null); do
@@ -171,14 +171,14 @@ jobs:
           fi
           echo "::warning::Box environment DRIFT — $drift"
           body=$(printf '%s\n' \
-            "**The daily fire shipped, but the Cloud PC ran on a DRIFTED environment.**" \
+            "**The daily fire shipped, but the RUNNER environment has DRIFTED.**" \
             "" \
             "- Fingerprint: \`$envfp\`" \
             "- Drift: $drift" \
             "- Pinned (.python-version): \`$pinned\`" \
             "- When: $(date -u +%FT%TZ)" \
             "" \
-            "The report still went out, but on an environment no test validates — fix it BEFORE it degrades into a silent failure (the 2026-06 root cause). On the Cloud PC: install Python \`$pinned\`, re-run \`deploy/setup_cloudpc.ps1\`, then confirm \`py -$pinned scripts/preflight_env.py\` is green. See docs/RELIABILITY.md." \
+            "The report still went out, but on an environment no test validates — fix it BEFORE it degrades into a silent failure (the 2026-06 root cause). The fire runs on a GitHub Actions runner: pin the interpreter in \`.python-version\` and in daily.yml's setup-python step, then confirm \`python3 scripts/preflight_env.py\` is green on the next run. See docs/RELIABILITY.md." \
             "" \
             "_Auto-closes when the next fire reports a healthy environment._")
           today=$(date -u +%F)
