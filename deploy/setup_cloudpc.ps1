@@ -1,3 +1,25 @@
+# ============================================================================
+# HISTORY - THE CLOUD PC WAS DECOMMISSIONED 2026-08-07. DO NOT RUN THIS.
+#
+# Everything live runs in GitHub Actions (.github/workflows/daily.yml).
+# There is no Windows 365 box, no Task Scheduler entry, and no RDP session
+# to open. This file is kept because it explains why the deploy code and
+# the environment pins look the way they do - it is NOT procedure.
+#
+# RUNBOOK.md opens with the same warning, for the same reason: its FIRST
+# recovery step said "RDP into Cloud PC" for weeks after the machine was
+# gone, which is the worst possible place for a stale instruction since it
+# is what you reach for when something is already broken.
+#
+# It happened again on 2026-08-27. Moving the daily fire from 8:07 to
+# 6:30 AM ET forced an edit HERE, because tests/test_fire_time_consistency
+# .py pinned the live fire time to this dead script's -At trigger; I then
+# warned Michael that "the live Cloud-PC task still fires at 8:07". His
+# reply: "we are not using the cloud pc anymore rememebr? you turned it off
+# months ago and migrated system". The coupling is now cut - nothing live
+# is pinned to this file, and a test asserts this header stays here.
+# ============================================================================
+#
 # Hilmar daily - one-shot setup on the Windows 365 Cloud PC.
 #
 # Purpose: move the scheduler off Michael's physical laptop (MBD-TRAVEL,
