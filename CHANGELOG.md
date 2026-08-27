@@ -3,6 +3,177 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-27 — a green WIN badge on a loss, thirteen buttons that never filtered, and a cron with a cliff under it
+
+Four things Michael found in the live artifacts, all real, none of them the
+defect they first looked like.
+
+#### 1. A REVERSED WIN WAS STILL WEARING A GREEN "WIN" BADGE
+
+Michael, on an Oakland → Tokyo row reading "PENDING HILMAR → WIN" beside the
+reason "Lonny replied Send — REVERSED, now LOSS (SEND_NO_BOOKING)": *"why is
+it still win with no further change to loss"*.
+
+Every other surface already called it a loss — the KPI tile, the footer's
+"1 wins", the carrier table, both lane tables, the weekly. The pill was the
+only thing disagreeing, because it was built from the TRANSITION's target and
+never from the row. `h["to"] == "WIN"` fell past `_pill_colour_key` and
+`_pill_text` (which remap only LOSS/Q&L/NQ) and took the good-green palette.
+Measured on his row shape: footer "0 wins", `display_status` "Q&L",
+`_win_landed` False — and a green WIN badge shipped anyway.
+
+`_win_landed` knew all along. It gates the reason string and the win count,
+and was never asked about the pill. Now it is: the TO end renders the row's
+real status, so his row reads **PENDING HILMAR → Q&L** in red.
+
+**AND THE SECOND HALF OF HIS QUESTION HAS A WORSE ANSWER.** The reversal did
+happen — it just cannot ever appear. Two clocks: the promotion is stamped
+with Lonny's send email (`ingest.py`, `at=sent_dt`, the report day), the
+reversal with the pipeline's own clock (`at=now`, the fire day).
+`_today_events` keeps only report-day history, so WIN→LOSS is outside the
+window by construction. And it never catches up: every fire rebuilds
+`status_history: []` and re-creates the reversal at that morning's `now`, so
+it walks forward with the window forever. It is not late — it never arrives.
+Not fixed here; it needs a decision about which clock a derived reversal
+should carry, and that is Michael's call, not a silent change to how history
+is stamped.
+
+**A COMMENT IS WHY THIS LOOKED CLOSED.** Above `wins_in_day`, the code said
+the STATUS CHANGES table "applies it too, so a transition the KPI refuses to
+count is never rendered as a win." False about its own file — the table
+applied `_win_landed` to the REASON STRING only. Corrected, and now true.
+
+**AND THE TEST PASSED GREEN THROUGHOUT.**
+`test_a_reversed_win_is_not_rendered_as_a_win` asserted only that the strings
+"REVERSED" and "SEND_NO_BOOKING" appear in the block. Checking the prose says
+nothing about the pill, which is the thing a reader looks at. Two tests added
+that assert the badge itself; both fail on the old code (verified by planting
+it back) and pass on the new.
+
+#### 2. WERE THE TWO TOKYO ROWS ONE SHIPMENT? THE CODE CANNOT SAY — AND HIS TWO BEST CLUES ARE NOT USABLE
+
+Same lane, equipment, TEU, carrier and rate, one day apart. **Same carrier
+and same rate is not independent evidence**: the pipeline manufactures that
+agreement across days — `ingest.py` backfills `carrier_won` from a same-lane
+sibling within 30 days, and `qc_selfheal` copies a carrier from a same-lane,
+same-rate-to-the-cent sibling within ±45 days and a response timestamp under
+the same fingerprint. Row A's "Wan Hai / $2,884" may be row D's, copied.
+
+[Likely] one shipment, by a named mechanism: booking linking runs before
+send-signal matching; the send matcher skips rows already WIN and takes the
+latest remaining same-lane candidate within 7 days. D won on MDOLX261145, so
+one Tokyo "Send" cascades onto row A, manufacturing its `has_send` and hence
+SEND_NO_BOOKING. `ingest.py`'s own comment names this failure verbatim: "the
+row Lonny actually confirmed stayed open and aged out as a loss."
+
+The audit is structurally blind to it: QC-069 pairs WINs against PENDINGs
+(row A is LOSS), QC-074 needs an MDOLX (row A has none), QC-051 needs
+matching request dates (08-25 ≠ 08-26). Settling it needs the blob — the
+diagnostic and its decision rule are specified but NOT yet run.
+
+#### 3. THIRTEEN DASHBOARD BUTTONS, AND THE FILTER WORKED ON NONE OF THEM
+
+Michael: *"in portal if you notice filter active.. it still lists every move
+ever won"*, then *"so all buttons need checking"*. All thirteen were.
+
+- **No date existed anywhere.** Tiles carried only a status string and NO row
+  carried a date attribute at all, so "Wins — Wed Aug 26" showed every win
+  since January. The day filter was not broken, it was absent.
+- **The selector was document-wide.** The Pending tile opens the Pending TAB,
+  yet its filter reached across and dimmed every row of the Confirmed Wins
+  table on the Summary tab — invisibly, persisting until Clear Filter. The
+  only tile that did damage rather than nothing.
+- **QL, NQ and `quoted` had no branch at all**, so three tiles lit a banner
+  naming a scope and filtered nothing.
+- Clicking Wins dimmed exactly one thing: the table's own HEADER row, because
+  the table opened with no `<thead>` so the header landed in the implicit
+  tbody and faded to 25%. That faint header was the entire visible effect.
+
+**THE TRAP IN THE OBVIOUS FIX**, and the reason this took a real
+investigation: the day "Won" tile counts bookings CONFIRMED that day whatever
+day the RFQ came in — the dashboard's own header says so — while the table
+DISPLAYS Req Date. Filtering on the displayed column would have dimmed the
+very row booked that day and shown an empty table under a tile reading 2.
+The attribute is `win_event_date`.
+
+Fixed: `data-win-date` from the booking date, `data-filter-date` on the day
+Wins tile, the selector scoped to the clicked section, `<thead>` around the
+header, and every label that named a scope nothing could enforce rewritten to
+describe what you actually land on.
+
+#### 4. "STILL SHOWS THINGS UNMAPPED" — ONE ROW, TWO DIFFERENT BUGS
+
+`Unmapped | 2 requests | Huangpu, Jpyok`. Two destinations, two requests, so
+one row each — one is the win, the other the Q&L.
+
+**Huangpu is a genuine map gap**: a real port near Guangzhou, simply absent
+from `_TRADE_REGION_MAP` and from `KNOWN_DESTINATIONS`. Added to both, and to
+`src/hilmar`'s corpus twin (the parity test requires them byte-identical).
+
+**Jpyok is our own parser.** `body_parser._norm` title-cases any all-caps
+token longer than three characters, so the UN/LOCODE `JPYOK` becomes the
+port name `Jpyok`. Nothing in this repo knows what a LOCODE is — zero hits
+for the word anywhere. Adding `jpyok` to the map would turn the row green and
+split Yokohama across two spellings **forever**: separate lane keys, separate
+win-rate denominators, separate `request_id`, and `same_port('Yokohama',
+'Jpyok')` is False so an OL booking naming JPYOK would never link to Lonny's
+Yokohama RFQ. It would also delete the only detector currently pointing at
+it. **Deliberately NOT mapped**, with a test pinning that it stays Unmapped.
+
+The real fix — a table-gated LOCODE normalizer at the parse boundary — is
+NOT done here: it changes stored destinations, hence `request_id`, hence any
+`operator_corrections.json` entry keyed to those rows goes stale silently.
+That is a migration and needs approval. It also needs the source subject line
+read out of blob first: JPYOK=Yokohama is an external reading, not something
+this code proves.
+
+Latent, same family, measured: `trade_region_for` never routes through
+`canonical_port_key`, so nine spellings the alias table already resolves are
+Unmapped today — pusan, hongkong, saigon, cat lai port, cai mep port, manila
+north, manila south, lad krabang, ho chi minh city. The next pink row is
+already loaded.
+
+#### 5. THE CRON MOVED — AND THERE IS A CLIFF 90 MINUTES BELOW IT
+
+Michael: *"blast did not go out today"*, then *"move cron earlier"*.
+
+It HAD gone out. GitHub dropped the 12:07 UTC tick and started the run at
+15:54 UTC — 3h47m late — so the email landed 12:12 PM ET instead of ~8 AM.
+Nothing failed; the scheduler slipped, which `daily.yml` already documented
+as a 2-4h possibility. (A manual dispatch at 01:31 UTC had also sent, keyed
+to report-day Aug 26; today's keyed Aug 27, so no double-send.)
+
+**MOVING IT EARLIER IS NOT A ONE-LINE CHANGE.**
+`core.report_business_day` treats any fire before **6:00 AM ET** as belonging
+to the prior business day. With `window=previous`, a 5 AM Thursday fire would
+report TUESDAY and skip Wednesday — every day, silently, with nothing red.
+Verified before moving: 05:07 ET → business day 08-26; 06:07 ET → 08-27.
+
+Moved to **6:30 AM ET**, the earliest slot with a real cushion above the
+cliff (GitHub fires late, never early). `tests/test_cron_respects_the_wee_
+hours_cutoff.py` now fails if any report-sending cron is ever set below it,
+reading the cutoff out of `core.py` rather than hardcoding it.
+
+**The fire time is pinned in SEVEN places** and the suite caught every one:
+`daily.yml` crons, `RUNBOOK.md` prose, `deploy/setup_cloudpc.ps1`'s scheduled
+task, `scripts/sentry_setup.py`'s cron monitor, and three tests. All moved
+together — leaving the Sentry monitor at 8:07 would have paged every weekday
+for a check-in arriving 97 minutes early.
+
+NOTE: `setup_cloudpc.ps1` is the SETUP script. The live Cloud-PC task keeps
+firing at 8:07 until someone re-runs it. Michael's standing instruction is
+not to touch that box, so this is flagged, not done.
+
+**And the guard found a pre-existing surprise**: `weekly.yml` fires 5:07 AM
+ET, below the cutoff. That one is CORRECT — `gen_weekly_summary._fire_day_et`
+has its own rule with no wee-hours rollback ("5 AM Monday IS Monday") and
+never calls `report_business_day`. The exemption is now asserted rather than
+assumed: a test fails if the weekly is ever routed through the rollback while
+keeping that cron.
+
+Suite: 3,422 passed / 1 skipped. Coverage 91.15% (gate 90%). ruff clean.
+Isolated-import check: 0 failures.
+
 ### 2026-08-26 (later) — the diagnostic nobody had read, read
 
 Michael approved dispatching diag-blob after PR #226 flagged an assumption it

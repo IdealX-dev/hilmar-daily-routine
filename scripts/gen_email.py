@@ -1392,6 +1392,13 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                               ).strip(" —")
             req_date = r.get('request_date') or '—'
             _sc_from = h.get("_collapsed_from") or h["from"]
+            # The word the TO end shows. Normally the transition's own
+            # target; for a →WIN that did NOT stick, the row's real current
+            # status, so the badge cannot contradict the reason beside it or
+            # the win count below it. See the comment on the cell below.
+            _sc_to_display = h["to"]
+            if h.get("to") == "WIN" and not _win_landed(r, h):
+                _sc_to_display = core.display_status(r) or r.get("status") or h["to"]
             carrier = r.get("carrier_won") or r.get("carrier_quoted") or "—"
             rate = r.get("ol_rate")
             rate_s = f"${rate:,.0f}" if isinstance(rate, (int, float)) else "—"
@@ -1408,8 +1415,28 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
                 # morning, which is the one thing this section exists to
                 # record. _collapsed_from was written for exactly this and
                 # then never read; this is the read.
+                # A REVERSED WIN MUST NOT WEAR A GREEN WIN BADGE.
+                #
+                # Michael, 2026-08-27, on an Oakland → Tokyo row reading
+                # "PENDING HILMAR → WIN" beside the reason "Lonny replied
+                # Send — REVERSED, now LOSS (SEND_NO_BOOKING)": "why is it
+                # still win with no further change to loss".
+                #
+                # Because the pill was built from the TRANSITION's target and
+                # never from the row. `h["to"] == "WIN"` fell straight past
+                # _pill_colour_key/_pill_text (which remap only LOSS/Q&L/NQ)
+                # and took the good-green palette. Measured on his row:
+                # footer "0 wins", core.display_status "Q&L", _win_landed
+                # False — and a green WIN badge shipped anyway. Every other
+                # surface in the email already called it a loss; this pill
+                # was the only thing disagreeing.
+                #
+                # _win_landed knew all along: it gates the reason string
+                # above and the win count below, and was never asked here.
+                # Now it is, and the TO end renders the row's real status.
                 f'<td {_cell(align="center")}>'
-                f'{_sc_pill(_sc_from, r, h["to"])} → {_sc_pill(h["to"], r, _sc_from)}</td>'
+                f'{_sc_pill(_sc_from, r, h["to"])} → '
+                f'{_sc_pill(_sc_to_display, r, _sc_from)}</td>'
                 f'<td {_TD_STYLE}>{_esc(carrier)}</td>'
                 f'<td {_cell("font-weight:600", align="right")}>{_esc(rate_s)}</td>'
                 f'<td {_cell("font-size:13px", "white-space:normal", "word-break:break-word")}>{_esc(reason)}</td></tr>'
@@ -1535,9 +1562,16 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
     # flagged this shape repeatedly ("CHECK YOUR REPORT"); it is the report
     # disagreeing with itself about whether the day had a win.
     #
-    # `_win_landed` is the single rule both surfaces now use, and the STATUS
-    # CHANGES table below applies it too, so a transition the KPI refuses to
-    # count is never rendered as a win.
+    # `_win_landed` is the single rule both surfaces now use.
+    #
+    # THIS COMMENT USED TO CLAIM the STATUS CHANGES table "applies it too, so
+    # a transition the KPI refuses to count is never rendered as a win." That
+    # was FALSE about its own file, and it is why the case looked closed for
+    # weeks. The table applied _win_landed to the REASON STRING only; the
+    # pill was built from h["to"] and shipped a green WIN badge on a row this
+    # very line counted as zero. Michael found it on 2026-08-27, in the
+    # report, not in the code. Fixed at the pill (see the STATUS CHANGES cell
+    # above) — and the claim is now true, which is why it can stay written.
     wins_in_day = sum(1 for (r, h) in status_ch if _win_landed(r, h))
     summary_line = (
         f"📊 {len(new_req)} new requests · {len(ol_resp)} new quotes received · "

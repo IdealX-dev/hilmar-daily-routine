@@ -27,7 +27,7 @@ inherits this system.
 
 ---
 
-## Daily fire (8:07 AM ET, Mon–Fri)
+## Daily fire (6:30 AM ET, Mon–Fri)
 
 **Trigger**: GitHub Actions `.github/workflows/daily.yml`, cron `7 12 * * 1-5`
 (EDT) / `7 13 * * 1-5` (EST, gated). Reports the **prior business day**.
@@ -452,7 +452,7 @@ python scripts/qc_selfheal.py      # post-run validation
 ```
 Cloud PC (CPC-micha-E552L, always on)
     │
-    │ 8:07 AM ET Mon-Fri — GitHub Actions (daily.yml)
+    │ 6:30 AM ET Mon-Fri — GitHub Actions (daily.yml)
     ▼
 deploy/run_daily_laptop.cmd
     ├── Step 0: git pull (sync Codespaces edits)

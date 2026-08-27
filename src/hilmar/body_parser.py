@@ -135,6 +135,7 @@ KNOWN_ORIGINS = tuple(_KNOWN_ORIGINS)
 _KNOWN_DESTINATIONS = [
     # Far East
     "Shanghai", "Xingang", "Tianjin", "Qingdao", "Ningbo", "Dalian",
+    "Huangpu",
     "Yokohama", "Tokyo", "Osaka", "Kobe", "Nagoya", "Busan", "Incheon",
     "Keelung", "Kaohsiung", "Taichung", "Hong Kong",
     # SE Asia

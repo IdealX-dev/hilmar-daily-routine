@@ -10,7 +10,7 @@ He was right, and the worst instance was the worst possible place. RUNBOOK.md
     **If no emails by 6:30 PM ET**:
     1. RDP into Cloud PC via windows.cloud.microsoft
 
-Every line of that is false. The fire moved to GitHub Actions at 8:07 AM ET in
+Every line of that is false. The fire moved to GitHub Actions at 6:30 AM ET in
 the 2026-06 cutover and the Cloud PC was deliberately retired. The token
 re-auth procedure pointed at the same dead machine, which meant the documented
 recovery for an expired credential was impossible to perform.
@@ -110,12 +110,12 @@ def test_the_runbook_states_the_real_fire_time():
     late, which is most of a business day of missed quotes."""
     rb = (ROOT / "RUNBOOK.md").read_text(encoding="utf-8")
     head = rb.split("## [HISTORY", 1)[0]
-    assert "8:07 AM ET" in head, "the runbook does not state the real fire time"
+    assert "6:30 AM ET" in head, "the runbook does not state the real fire time"
     assert "6:07 PM ET weekdays" not in head, (
         "the runbook still leads with the pre-cutover schedule")
 
     daily = (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
-    assert 'cron: "7 12 * * 1-5"' in daily, (
+    assert 'cron: "30 10 * * 1-5"' in daily, (
         "the fire schedule changed — RUNBOOK.md's stated time is now wrong "
         "again, and this test is the only thing that will tell you")
 

@@ -184,7 +184,7 @@ $action = New-ScheduledTaskAction -Execute $wrapperPath
 # One trigger (2026-07-21): a single fire Mon-Fri 8:07 AM ET that reports the
 # PRIOR business day. No wrap-up, no weekend trigger. The wrapper always sets
 # HILMAR_REPORT_WINDOW=previous to match daily.yml's gate.
-$triggerMorning = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 8:07am
+$triggerMorning = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 6:30am
 $trigger = @($triggerMorning)
 # -WakeToRun nudges the box if it ever sleeps at fire time.
 # ExecutionTimeLimit raised 15 -> 50 min (2026-06-26): run_pipeline's per-step

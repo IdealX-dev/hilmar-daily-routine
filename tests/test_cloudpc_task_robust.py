@@ -61,13 +61,13 @@ def test_settings_are_resilient():
 
 
 def test_triggers_are_the_canonical_fire_times():
-    # 2026-07-21: ONE trigger, no weekend — a single fire Mon-Fri 8:07 AM ET that
+    # 2026-07-21: ONE trigger, no weekend — a single fire Mon-Fri 6:30 AM ET that
     # reports the prior business day. No wrap-up. See
     # tests/test_fire_time_consistency.py for the cross-surface guard.
     assert re.search(
-        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Monday,Tuesday,Wednesday,Thursday,Friday[^\n]*-At\s+8:07am",
+        r"New-ScheduledTaskTrigger[^\n]*-DaysOfWeek\s+Monday,Tuesday,Wednesday,Thursday,Friday[^\n]*-At\s+6:30am",
         PS1,
-    ), "missing the Mon-Fri 8:07am fire trigger"
+    ), "missing the Mon-Fri 6:30am fire trigger"
     assert "4:30pm" not in PS1, "the Friday 4:30pm wrap-up trigger is retired — remove it"
 
 

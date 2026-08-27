@@ -389,10 +389,14 @@ _MONITOR_CONFIG = {
     # lands harmlessly). No weekend fire, so the schedule is dow 1-5. The margin
     # absorbs GitHub's cron jitter (observed 30min-4.5h) AND the late-morning
     # liveness backstop (~11:30 AM ET last tick → check-in ~11:45 AM ET). 290 min
-    # (08:07 → ~12:57 PM ET) means the alert fires ONLY when the 8 AM cron AND
+    # (06:30 → ~11:20 AM ET) means the alert fires ONLY when the morning cron AND
     # every liveness recovery failed — a true "pipeline never ran today", which
     # is exactly when a page is warranted.
-    "schedule": {"type": "crontab", "value": "7 8 * * 1-5"},
+    # MOVED WITH THE FIRE 2026-08-27 (8:07 -> 6:30 AM ET). This monitor and
+    # daily.yml's crons are one setting in two files: leave it at 8:07 and
+    # Sentry pages every weekday for a check-in that now arrives 97 minutes
+    # earlier. tests/test_fire_time_consistency.py pins them together.
+    "schedule": {"type": "crontab", "value": "30 6 * * 1-5"},
     "schedule_type": "crontab",
     "timezone": "America/New_York",
     "checkin_margin": 290,   # alert ~12:57 PM ET — only after the full backstop fails

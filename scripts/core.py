@@ -255,6 +255,15 @@ _TRADE_REGION_MAP = {
     # 2026-08-16; confirmed present in the real book as ol_260291
     # (Oakland → Shekou), where it had been sitting Unmapped.
     "shekou": "Far East", "shenzhen": "Far East", "yantian": "Far East",
+    # Huangpu (Guangzhou) — added 2026-08-27. Michael: "still shows things
+    # unmapped". This one is a GENUINE map gap: a real port name OL wrote
+    # that simply was not here, which is the "extend the map" signal doing
+    # its job. Its neighbour in that same Unmapped row, "Jpyok", is NOT —
+    # that is a UN/LOCODE our own parser title-cased into a fake port name
+    # (body_parser._norm), and adding it here would turn the row green while
+    # splitting Yokohama across two spellings forever. Fix that one at the
+    # parser, never here.
+    "huangpu": "Far East",
     # Southeast Asia
     "hcmc": "SE Asia", "ho chi minh": "SE Asia", "cat lai": "SE Asia",
     "cai mep": "SE Asia", "haiphong": "SE Asia", "manila": "SE Asia",

@@ -241,6 +241,10 @@ def render(cfg: dict, data: dict) -> str:
     report_date = core.report_business_day(_now_et_dt)
     _now_et = _now_et_dt.date()
     report_iso  = report_date.isoformat()
+    # HOISTED 2026-08-27 so the NQ tile's banner can name the real window
+    # instead of carrying a second hardcoded 14. Defined once, read by both
+    # the tile label above and the NQ section below.
+    NQ_DISPLAY_WINDOW_DAYS = 14
     _is_today = report_date == _now_et
     report_label = report_date.strftime("%a %b %d (today)" if _is_today else "%a %b %d (last full biz day)")
     today_reqs = [r for r in requests
@@ -524,21 +528,21 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
 
 <h3 style="margin:14px 0 6px;font-size:13px;color:#475569;font-weight:600">📅 {report_label} (ET) — prior-business-day activity. Won counts bookings CONFIRMED that day (any request date); other tiles bucket that day's incoming requests by current status. <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
-  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — {report_label}"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU{f" · {tdy_won_later} booked a later day" if tdy_won_later else ""}</div><div class="kpi-hint">click → all rows</div></a>
-  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
-  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — {report_label}"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — {report_label}"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
-  <a class="kpi" style="background:{B.DOC_PENDING};color:white;border-top-color:{B.DOC_PENDING}" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar — {report_label}"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
+  <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="Confirmed Wins — period to date (that day's requests: {tdy_total})"><div class="value">{tdy_total}</div><div class="label">Requests — {report_label}</div><div class="sub">{tdy_teu} TEU{f" · {tdy_won_later} booked a later day" if tdy_won_later else ""}</div><div class="kpi-hint">click → all rows</div></a>
+  <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-date="{report_iso}" data-filter-label="Wins — {report_label}"><div class="value">{tdy_wins}</div><div class="label">Won — {report_label}</div><div class="sub">{tdy_teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
+  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="all" data-filter-label="Top Losing Lanes — period to date (that day's Q&amp;L: {tdy_ql})"><div class="value">{tdy_ql}</div><div class="label">Quoted &amp; Lost — {report_label}</div><div class="sub">{tdy_teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="all" data-filter-label="Not Quoted — last {NQ_DISPLAY_WINDOW_DAYS} days (that day's NQ: {tdy_nq})"><div class="value">{tdy_nq}</div><div class="label">Not Quoted — {report_label}</div><div class="sub">{tdy_teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi" style="background:{B.DOC_PENDING};color:white;border-top-color:{B.DOC_PENDING}" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="all" data-filter-label="Pending watchlist — live now (that day's new pending: {tdy_pend})"><div class="value">{tdy_pend}</div><div class="label">Pending — {report_label}</div><div class="sub">{tdy_teu_pend} TEU</div><div class="kpi-hint" style="color:rgba(255,255,255,0.7)">click → Pending rows</div></a>
 </div>
 <h3 style="margin:18px 0 6px;font-size:13px;color:#475569;font-weight:600">📊 Period to Date — cumulative since {data_start_date} <span style="color:#64748b;font-weight:400">· click any tile to drill in ↓</span></h3>
 <div class="kpi-grid">
   <a class="kpi blue" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="All requests — PTD"><div class="value">{total}</div><div class="label">Total Requests — PTD</div><div class="sub">{teu_requested} TEU</div><div class="kpi-hint">click → all rows</div></a>
   <a class="kpi green" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="WIN" data-filter-label="Wins — PTD ({n_wins} bookings)"><div class="value">{n_wins}</div><div class="label">Won — PTD</div><div class="sub">{teu_won} TEU</div><div class="kpi-hint">click → Wins only</div></a>
-  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="QL" data-filter-label="Quoted &amp; Lost — PTD ({len(ql)} rows)"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
-  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="NQ" data-filter-label="Not Quoted — PTD ({len(nq)} rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
-  <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="PENDING" data-filter-label="Pending Hilmar ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
+  <a class="kpi red" href="#tab-summary" data-tab="tb-summary" data-target="sec-losing-lanes" data-filter="all" data-filter-label="Top Losing Lanes — PTD ({len(ql)} Q&amp;L rows)"><div class="value">{len(ql)}</div><div class="label">Quoted &amp; Lost — PTD</div><div class="sub">{teu_ql} TEU</div><div class="kpi-hint">click → Losing Lanes</div></a>
+  <a class="kpi amber" href="#tab-summary" data-tab="tb-summary" data-target="sec-nq" data-filter="all" data-filter-label="Not Quoted — last {NQ_DISPLAY_WINDOW_DAYS} days ({len(nq)} PTD rows)"><div class="value">{len(nq)}</div><div class="label">Not Quoted — PTD</div><div class="sub">{teu_nq} TEU</div><div class="kpi-hint">click → NQ rows</div></a>
+  <a class="kpi purple" href="#tab-pending" data-tab="tb-pending" data-target="sec-pending" data-filter="all" data-filter-label="Pending watchlist — live now ({len(pending)} rows)"><div class="value">{len(pending)}</div><div class="label">Pending Hilmar</div><div class="sub">{teu_pending} TEU</div><div class="kpi-hint">click → Pending rows</div></a>
   <a class="kpi green" href="#tab-carriers" data-tab="tb-carriers" data-target="sec-carriers" data-filter="all" data-filter-label="Per-carrier Win Rate breakdown"><div class="value">{win_rate}%</div><div class="label">Win Rate — PTD</div><div class="sub">of decided</div><div class="kpi-hint">click → Carriers tab</div></a>
-  <a class="kpi teal" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="quoted" data-filter-label="Quote Rate detail — {quote_rate}% of all RFQs got a quote"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">click → quoted rows</div></a>
+  <a class="kpi teal" href="#tab-summary" data-tab="tb-summary" data-target="sec-wins" data-filter="all" data-filter-label="Confirmed Wins — PTD (quote rate {quote_rate}% of all RFQs)"><div class="value">{quote_rate}%</div><div class="label">Quote Rate — PTD</div><div class="sub">OL responded</div><div class="kpi-hint">click → quoted rows</div></a>
   <a class="kpi slate" href="#tab-turnaround" data-tab="tb-turnaround" data-target="sec-turnaround" data-filter="all" data-filter-label="Turnaround analysis"><div class="value">{avg_biz_tile}</div><div class="label">Avg Biz-Hrs Response</div><div class="sub">{avg_biz_sub}</div><div class="kpi-hint">click → Turnaround tab</div></a>
 </div>
 
@@ -612,7 +616,12 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                        if _awaiting else '')
     html += f'<div id="sec-wins" class="section"><h2>✅ Confirmed Wins — {n_wins} bookings, {teu_won} TEU{_awaiting_label}</h2>\n'
     if wins:
-        html += '<table data-filterable="wins"><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr>\n'
+        # <thead> IS LOad-BEARING, not cosmetic. Without it the browser puts
+        # this header <tr> in the implicit <tbody>, where the filter's
+        # "tbody tr" selector matches it, finds no data-status, and fades the
+        # header to 25%. That faint header was the ENTIRE visible effect of
+        # clicking the Wins tile.
+        html += '<table data-filterable="wins"><thead><tr><th>#</th><th title="MDOLX booking number; amber badge = send-signal win, OL booking confirmation not yet received">MDOLX</th><th>Req Date</th><th>Lane</th><th>Equipment</th><th>TEU</th><th>Carrier</th></tr></thead><tbody>\n'
         for i, w in enumerate(sorted(wins, key=lambda x: x.get("request_date") or x.get("date","")), 1):
             # EVERY booking on the row, not just the first. Copilot on
             # #226, verified: the heading above now says "N bookings"
@@ -634,8 +643,15 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
                                       for x in _mdolx_all)
             else:
                 mdolx_cell = '<span class="awaiting-mdolx" title="Lonny send-signal promoted this PENDING → WIN. OL has not yet issued the MDOLX booking confirmation in our inbox. The win is real; the number is pending.">Awaiting MDOLX</span>'
-            html += f'<tr class="win-row" data-status="WIN"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{B.doc_dot_html(w.get("carrier_won"))}{_safe(w.get("carrier_won"))}</td></tr>\n'
-        html += '</table>'
+            # THE BOOKING DATE, NOT THE REQUEST DATE. The day "Won" tile
+            # counts bookings CONFIRMED that day, whatever day the RFQ came
+            # in — the header above these tiles says so in as many words.
+            # The column this table DISPLAYS is Req Date. Filtering on the
+            # displayed column would dim the very row booked that day and
+            # show an empty table under a tile reading 2.
+            _win_day = core.win_event_date(w) or ""
+            html += f'<tr class="win-row" data-status="WIN" data-win-date="{_win_day}"><td>{i}</td><td>{mdolx_cell}</td><td>{_fmt_date(w.get("request_date") or w.get("date"))}</td><td>{_safe(w.get("lane"))}</td><td>{_safe(w.get("containers"))}</td><td>{w.get("teu_won",0)}</td><td>{B.doc_dot_html(w.get("carrier_won"))}{_safe(w.get("carrier_won"))}</td></tr>\n'
+        html += '</tbody></table>'
     else:
         html += '<p class="dod-empty">No wins yet in this period.</p>'
     html += '</div>\n'
@@ -645,7 +661,6 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
     # that have no reply just remove them from system that says not quoted
     # but keep it on the talley of volumes that hilmar moves for rate
     # negotiation'. Aggregates (len(nq), teu_nq) stay unchanged.
-    NQ_DISPLAY_WINDOW_DAYS = 14
     from datetime import datetime as _dt2
     from datetime import timedelta as _td2
     from datetime import timezone as _tz
@@ -1115,6 +1130,7 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
       var tabId = kpi.getAttribute('data-tab');
       var targetId = kpi.getAttribute('data-target');
       var filter = kpi.getAttribute('data-filter') || 'all';
+      var filterDate = kpi.getAttribute('data-filter-date') || '';
       var label = kpi.getAttribute('data-filter-label') || '';
 
       // 1. Switch tab — click the corresponding radio input
@@ -1147,12 +1163,40 @@ tbody tr.kpi-row-dim{{opacity:0.25}}
         }, 50);
       }
 
-      // 4. Filter rows in any filterable tables that have data-status
+      // 4. Filter rows — SCOPED TO THE SECTION YOU CLICKED INTO.
+      //
+      // Michael, 2026-08-27: "in portal if you notice filter active.. it
+      // still lists every move ever won", and then "so all buttons need
+      // checking". All thirteen were checked. Three defects lived here:
+      //
+      //  a. The selector was document-wide, so the Pending tile — which
+      //     opens the Pending TAB — reached across and dimmed every row of
+      //     the Confirmed Wins table on the Summary tab, invisibly, and it
+      //     stayed dimmed until Clear Filter. The only tile that did damage.
+      //  b. No date was ever compared. The day tiles carried only a status
+      //     string, so "Wins — Wed Aug 26" showed every win since January.
+      //  c. QL, NQ and `quoted` had no branch at all, so those tiles lit a
+      //     banner and filtered nothing.
+      //
+      // The date compared is the BOOKING date (data-win-date), never the
+      // request date the row displays. The tile counts bookings CONFIRMED
+      // that day "(any request date)" — its own header says so — so
+      // filtering on request date would dim the very row booked that day
+      // and show 0 under a tile reading 2.
+      var scope = target || document;
       if (filter !== 'all') {
-        document.querySelectorAll('table[data-filterable] tbody tr').forEach(function(tr) {
+        scope.querySelectorAll('table[data-filterable] tbody tr').forEach(function(tr) {
           var status = tr.getAttribute('data-status') || '';
-          if (filter === 'WIN'  && status !== 'WIN')  tr.classList.add('kpi-row-dim');
-          if (filter === 'PENDING' && status !== 'PENDING') tr.classList.add('kpi-row-dim');
+          var dim = false;
+          if (filter === 'WIN' && status !== 'WIN') dim = true;
+          if (filter === 'PENDING' && status !== 'PENDING') dim = true;
+          // Day-scoped tiles carry the report day; PTD tiles carry nothing
+          // and match every date, which is what "period to date" means.
+          if (!dim && filterDate) {
+            var rowDate = tr.getAttribute('data-win-date') || '';
+            if (rowDate !== filterDate) dim = true;
+          }
+          if (dim) tr.classList.add('kpi-row-dim');
         });
       }
     });

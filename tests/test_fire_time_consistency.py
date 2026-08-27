@@ -9,7 +9,7 @@ check-in" every weekday.
 The schedule (Michael 2026-07-21: "get rid of the recaps and just do daily at
 8am est for the day before") is now ONE fire, no wrap-up, no weekend:
 
-  • MORNING — 8:07 AM ET, Mon-Fri (reports the PRIOR business day; Mon→Fri,
+  • MORNING — 6:30 AM ET, Mon-Fri (reports the PRIOR business day; Mon→Fri,
              Tue→Mon, Wed→Tue, Thu→Wed, Fri→Thu)
 
 Surfaces checked (parsed textually — no project imports, no sentry_sdk dep):
@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 # The canonical fire time, in Eastern Time. ONE fire, Mon-Fri (dow 1-5).
-MORNING_ET = (8, 7)     # 8:07 AM ET, Mon-Fri
+MORNING_ET = (6, 30)    # 6:30 AM ET, Mon-Fri (was 8:07 until 2026-08-27)
 FRIDAY_WRAPUP = (16, 30)  # the RETIRED 4:30 PM wrap-up — must NOT appear anywhere
 
 # ET → UTC offsets by DST season (ET is behind UTC).
