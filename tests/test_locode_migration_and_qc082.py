@@ -244,10 +244,11 @@ def test_mdolx_still_outranks_the_lane_fallback():
         "260500", [], {"260500"}, core.canonical_port_key("Jpyok"),
         "2026-08-20", set()) is True
 
-# ── HELD BACK, DELIBERATELY ────────────────────────────────────────────────
+# ── WHERE THE COMPANION GUARD WENT ─────────────────────────────────
 #
-# test_two_lane_less_rows_are_not_evidence_of_each_other lived here and has
-# been REMOVED FROM THIS BRANCH, not deleted from the plan.
+# test_two_lane_less_rows_are_not_evidence_of_each_other lived here, was held
+# back from the UN/LOCODE branch on purpose, and now lives in
+# tests/test_send_signal_thread_anchor.py.
 #
 # It guards ingest._prior_win_captured against canonical_port_key's "unknown"
 # sentinel: route BOTH sides of that comparison through the alias-aware key
@@ -256,8 +257,8 @@ def test_mdolx_still_outranks_the_lane_fallback():
 # function is for. The bare .lower() it replaces got this right by accident,
 # because an empty string is falsy.
 #
-# That routing change is part of the DUPLICATE-ROW work (one shipment stored
-# as two), not of the UN/LOCODE merge: this branch normalises at parse time,
+# The routing change belongs to the DUPLICATE-ROW work (one shipment stored as
+# two), not to the LOCODE merge: this file's branch normalises at parse time,
 # so a JPYOK row is stored as "Yokohama" and both sides already agree without
-# it. Shipping the guard here would pin behaviour whose cause is not in this
-# diff. It goes in with the routing change, which needs it.
+# it. Pinning it here would have pinned behaviour whose cause was not in that
+# diff. It shipped with the routing change, which needs it.
