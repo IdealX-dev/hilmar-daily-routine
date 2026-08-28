@@ -3,6 +3,73 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-28 (blob dry run) — QC-082 would have paged an ERROR on a healthy row at the next fire
+
+The first real dry run of `migrate_locode_rekey.py` against blob, dispatched
+today. It is read-only (`--dry-run` returns above both `write_text` calls),
+and it came back with three things worth having.
+
+```
+Read 414 rows from tracking-data-v2.json and 84 corrections
+  ROW  stand_261031  'Jpyok' -> 'Yokohama'  id -> stand_261031
+##[error]ALREADY STALE before this migration: stand_260905 (...)
+rows renamed=1 corrections to re-key=0 unverifiable=0 pre-existing stale=1
+```
+
+#### 1. THE MIGRATION IS A CONFIRMED NO-OP
+
+**0 corrections to re-key, 0 unverifiable.** Exactly one live row carries the
+`Jpyok` spelling — `stand_261031` — and its `request_id` does not move, because
+a `stand_*` id is derived from the MDOLX ref rather than from
+`core.request_id`'s destination hash. So the merge re-keys nothing and
+`--apply` has nothing to do. That is a MEASUREMENT, replacing the
+`[ASSUMPTION]` #230 shipped with.
+
+**A correction to #230's framing while I am here:** the "44 of 134 rows /
+largest lane by 3x" figure was measured on `data/ol-transaction-report-2026.json`,
+OL's export. In the LIVE tracking data it is one row. Both numbers are real
+and they are different datasets — the lane-median starvation was demonstrated
+on the OL corpus, the production blast radius today is a single row. The
+parser fix still matters going forward; the retroactive damage was one row.
+
+#### 2. AND THE THING THE RUN ACTUALLY EARNED ITS KEEP FOR
+
+`stand_260905` was reported as pre-existing staleness — and it is **not
+stale**. It carries BOTH of Michael's verdicts:
+
+- a `set` fixing the lane (2026-07-14): *"Oakland → Tokyo ... so it resolves
+  permanently every fire"*
+- a later `exclude` (2026-08-13): *"260905 260192 260963 were bookings hilmar
+  cancelled"*
+
+The exclude drops the row, so the `set` matches nothing **by design**. But
+QC-082's exemption asked only whether THAT correction carried the flag, never
+whether a SIBLING correction on the same `request_id` excluded the row. So the
+`set` read as an orphaned human verdict and **QC-082 — which is
+`log.error` — would have paged, on healthy data, every fire, forever.**
+
+That is the QC-081 failure mode exactly, the one held back from #230 for
+precisely this reason. QC-082 shipped 2026-08-27 and the next daily fire had
+not yet run when the dry run found it, so **it never reached production.**
+
+Fixed in QC-082 and in the migration's `already_stale` bucket together — the
+same bug in both, and QC-082's own remediation message tells a human to run
+that migration, so the two disagreeing about one row would send someone to a
+tool that contradicts the alarm that sent them. Pinned by a test that runs
+both against the real `stand_260905` shape.
+
+The exemption is keyed on the **id**, not applied file-wide: a third test
+asserts a genuine orphan is still caught when a DIFFERENT id is excluded.
+Widening it to "any exclude anywhere" would silence the check entirely.
+
+#### 3. WHY THE STEP SHOWS RED
+
+`--dry-run` exits non-zero when it finds anything to report, so the step goes
+RED rather than green-in-zero-seconds. Deliberate, from the 2026-08-20 lesson
+where a diagnostic died on its first line and reported success because of a
+trailing `|| true`. Red here means "there is something to read", not "it
+broke".
+
 ### 2026-08-28 (later still) — QC-083: find the duplicate pairs already on disk, and do not delete them
 
 #231 stopped NEW phantom losses. The pairs written by earlier fires are still
