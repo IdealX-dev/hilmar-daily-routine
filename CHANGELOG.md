@@ -3,6 +3,100 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-28 (later) — the reversal that could never arrive: stamp the deadline, not the fire clock
+
+Michael, told that a WIN→LOSS reversal cannot reach any report: *"why not?
+what is best way.. figure it out and manage it"*. So: decided and shipped, not
+asked.
+
+#### MEASURED FIRST, ON THE PRODUCTION SHAPE
+
+One row — a Monday 14:00 ET Send that OL never books — through four
+consecutive fires at 06:30 ET with `window=previous`:
+
+```
+fire 08-25 -> reports 08-24 : WIN->PENDING stamped 08-25   (outside the window)
+fire 08-26 -> reports 08-25 : WIN->LOSS    stamped 08-26   (outside)
+fire 08-27 -> reports 08-26 : WIN->LOSS    stamped 08-27   (outside)
+fire 08-28 -> reports 08-27 : WIN->LOSS    stamped 08-28   (outside)
+   STATUS CHANGES TODAY renders: NOTHING, every single day
+```
+
+**Exactly one day ahead of the window, on every fire, forever.** The promotion
+is stamped from LONNY'S EMAIL (`ingest.py:1763`, `at=sent_dt`); the reversal
+was stamped from the PIPELINE'S CLOCK (`age_requests`, `at=now`). Production
+reports the PRIOR business day, so the fire day is always one day after the
+day being reported. And it never catches up, because every fire rebuilds
+`status_history` from empty and re-creates the reversal at that morning's
+`now`. It is not late. It never arrives.
+
+#### THE FIX — THE ONE THIS REPO ALREADY MADE, IN THE OTHER DIRECTION
+
+`ingest.py`, 2026-08-11, on the prior-build WIN restore: *"DATE THE RESTORE
+FROM THE PRIOR EVIDENCE, NEVER FROM NOW."* Same defect, same fix.
+
+Each staleness predicate already computed a deadline internally and threw it
+away, returning a bool. Now they return it:
+
+- `core.business_stale_deadline(dt, hours)` ← `is_business_stale`
+- `core.pending_hilmar_deadline(resp_dt, *, request_dt=None)` ← `pending_hilmar_stale`
+- `core.pending_ol_deadline(request_dt)` ← `pending_ol_stale`
+
+Each predicate is rewritten to CONSUME its own deadline function, so a
+deadline and the bool it came from cannot drift. `StatusDecision` gains
+`stale_at`, set on every aging LOSS branch — `SEND_NO_BOOKING`,
+`NO_RESPONSE`, `NO_RESPONSE_TS`, and the whole Q&L tail (`ETD_MISS`, `PRICE`,
+`UNDIFFERENTIATED`, `QUOTED_NOT_BOOKED`), which is one aging event wearing
+four labels and so carries one deadline bound once above them all.
+`RESPONSE_NO_RATE` is deliberately excluded: it fires on evidence, not on a
+clock.
+
+`age_requests` and `qc_selfheal` (both trees) stamp `at=decision.stale_at`.
+After the fix, the same row:
+
+```
+fire 08-26 -> reports 08-25 : WIN->LOSS stamped 08-25   <- IN the window, renders
+fire 08-27 -> reports 08-26 : WIN->LOSS stamped 08-25   (stable; correctly silent)
+fire 08-28 -> reports 08-27 : WIN->LOSS stamped 08-25   (stable; correctly silent)
+```
+
+Reported once, on the day it happened, then quiet. The stamp is in the past by
+construction (stale *means* now is past the deadline), identical on every
+later fire, and lands on the business day the window actually closed.
+
+#### THE DST TRAP, LOOKED UP RATHER THAN RECALLED
+
+Per the CPython docs (Context7, this session): adding a timedelta to an aware
+datetime *"adjusts the date and time while preserving the original tzinfo
+attribute without performing timezone adjustments"*, while subtracting two
+aware datetimes normalises both to UTC. So `is_business_stale`, which converts
+to ET **before** adding hours, measures WALL-clock time; `pending_hilmar_stale`
+and `pending_ol_stale`, which subtract, measure ABSOLUTE time. **The two
+already disagree by an hour across a DST change.** That divergence predates
+this work and is NOT silently unified here — each deadline function is lifted
+from the predicate it belongs to, verbatim.
+
+Proven, not asserted: **108,864 predicate evaluations × both trees**, 1,008
+anchors spanning both 2026 DST transitions — **zero** behaviour drift against
+the pre-refactor implementations, and zero deadline-vs-predicate disagreements
+one second either side of every boundary.
+
+#### WHAT THIS DOES NOT DO
+
+`_is_current_status_change` (2026-08-13) stays. It filters a genuinely LATE
+record — the April aging only written down today — and honest dating does not
+make it redundant; it makes the two agree instead of fight. Pinned: a same-day
+aging renders, an April one does not.
+
+**A second, separate defect surfaced while measuring this and is NOT fixed
+here.** `apply_send_signals` promotes a send-signal row to `WIN`
+unconditionally, and `age_requests` immediately re-decides it to
+`PENDING(AWAITING_MDOLX)` — because `decide_status` (Reading B, Michael
+2026-04-27) says a Send with no MDOLX is not a win. So every such row gets a
+spurious `PENDING→WIN→PENDING` pair inside a single fire, and that transient
+WIN is what wore the green pill. Changing it means changing what a "WIN"
+means in the status model, which earns its own PR and its own scrutiny.
+
 ### 2026-08-28 — one move asked twice, one booking, and an invented loss on the other copy
 
 Michael, on the Oakland → Tokyo pair: *"that's your job by parsing emails

@@ -1888,7 +1888,31 @@ def age_requests(requests: list[dict], now: datetime | None = None) -> None:
         # a real age_requests run 2026-07-26.
         _prior_status = r.get("status")
         if _prior_status != decision.status:
-            C.record_transition(r, decision.status, decision.reason_detail, at=now)
+            # STAMP THE DEADLINE, NOT THE FIRE CLOCK (2026-08-28).
+            #
+            # `at=now` is why a derived reversal never reached a report.
+            # Measured on the production shape (window=previous, 06:30 ET
+            # fire) for a Mon-14:00 send that never booked: WIN→LOSS stamped
+            # 08-26 while the report covered 08-25, then 08-27 against 08-26,
+            # then 08-28 against 08-27. Always exactly one day ahead of the
+            # window and walking forward with it, because every fire rebuilds
+            # status_history and re-stamps at that morning's now. Michael saw
+            # the consequence as a green WIN pill beside "REVERSED, now LOSS"
+            # with no reversal ever following it.
+            #
+            # decision.stale_at is the instant the row actually crossed its
+            # window, from the same predicate that decided it was past. It is
+            # in the PAST by construction on any aging branch (stale means
+            # now > deadline), it is IDENTICAL on every later fire, so the
+            # entry stops migrating, and it lands the event on the business
+            # day it happened — which is the day the report covers.
+            #
+            # None for a decision no window produced (a dateless row, or a
+            # non-aging status): fall back to now rather than invent a clock.
+            # Same rule, same reason, as the 2026-08-11 prior-build WIN
+            # restore below — "date it from the evidence, never from now".
+            C.record_transition(r, decision.status, decision.reason_detail,
+                                at=decision.stale_at or now)
         else:
             r["status"] = decision.status
         r["loss_reason"] = decision.loss_reason

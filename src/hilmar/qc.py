@@ -361,7 +361,9 @@ def phase_3_entries(log: Log, data: dict) -> None:
             lane_winning_median=_lane_winning_median,
         )
         if prior_status != decision.status:
-            core.record_transition(r, decision.status, decision.reason_detail)
+            # at=decision.stale_at — see scripts/ingest.age_requests.
+            core.record_transition(r, decision.status, decision.reason_detail,
+                                   at=decision.stale_at)
             log.fix(f"{rid_label}: Status {prior_status} → {decision.status} ({decision.reason_detail})")
         else:
             r["status"] = decision.status

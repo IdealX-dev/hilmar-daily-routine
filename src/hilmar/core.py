@@ -1088,6 +1088,14 @@ class StatusDecision:
     has_send: bool
     loss_reason: str | None        # see below
     reason_detail: str             # human-readable why
+    #: WHEN the row crossed the deadline that produced this status — set only
+    #: on an AGING outcome (a LOSS reached because a window expired), None on
+    #: every other decision. The caller stamps status_history with this
+    #: instead of its own clock, so a reversal carries the day the row died
+    #: rather than the day the pipeline noticed. None means "no deadline to
+    #: name" (a dateless row, or a status that is not time-derived) and the
+    #: caller must fall back to now — never fabricate one.
+    stale_at: datetime | None = None
 
     # loss_reason taxonomy:
     #   None              — WIN or PENDING
@@ -1099,6 +1107,81 @@ class StatusDecision:
     #   "UNDIFFERENTIATED"— Q&L, no concrete signal (rate competitive,
     #                       ETD fit OK, or insufficient lane history)
     #   "OTHER"           — Q&L, malformed timestamp / unknown
+
+
+# ─────────────────────────────────────────────────────────────────────
+# WHEN a row went stale — not just whether. Added 2026-08-28.
+#
+# Each predicate below already computed a deadline internally and threw it
+# away, returning only a bool. The caller then stamped the resulting
+# transition with `now` — the FIRE clock — which is how a derived reversal
+# came to carry the day the pipeline noticed instead of the day the row
+# actually died. Measured on the production shape (window=previous, 06:30 ET
+# fire): a Mon-14:00 send aged out with the WIN->LOSS stamped 08-26 while the
+# report covered 08-25, then 08-27 against 08-26, then 08-28 against 08-27 —
+# exactly one day ahead of the window, walking forward with it forever,
+# because every fire rebuilds status_history and re-stamps at that morning's
+# now. It is not late. It never arrives.
+#
+# The precedent is already in this codebase: ingest.py's prior-build WIN
+# restore, 2026-08-11, "DATE THE RESTORE FROM THE PRIOR EVIDENCE, NEVER FROM
+# NOW" — same defect, same fix, opposite direction of travel.
+#
+# EACH FUNCTION REPRODUCES ITS OWN PREDICATE'S ARITHMETIC, DELIBERATELY NOT A
+# UNIFIED ONE. Per the CPython datetime docs (checked 2026-08-28, not
+# recalled): adding a timedelta to an aware datetime "adjusts the date and
+# time while preserving the original tzinfo attribute without performing
+# timezone adjustments", so ET-localised `+ timedelta(hours=24)` advances 24
+# WALL hours (23 or 25 absolute across a DST change), while subtracting two
+# aware datetimes normalises both to UTC and measures ABSOLUTE elapsed time.
+# is_business_stale does the first; pending_hilmar_stale and pending_ol_stale
+# do the second. They therefore already disagree by an hour across a DST
+# boundary. That divergence predates this change and is NOT silently unified
+# here — each deadline is lifted from the predicate it belongs to, so the
+# deadline and the bool can never disagree about the same row.
+# ─────────────────────────────────────────────────────────────────────
+
+def business_stale_deadline(dt: datetime | None, hours: int = 24) -> datetime | None:
+    """The instant ``dt`` becomes stale under is_business_stale. None when
+    there is no clock to measure from — a row with no date has no deadline,
+    and inventing one is the mistake this whole module keeps paying for."""
+    if dt is None:
+        return None
+    dt_et = dt.astimezone(ET)
+    if dt_et.weekday() >= 4:                          # Fri=4, Sat=5, Sun=6
+        days_to_tue = (1 - dt_et.weekday()) % 7       # Fri=4→4, Sat=5→3, Sun=6→2
+        return (dt_et + timedelta(days=days_to_tue)).replace(
+            hour=18, minute=0, second=0, microsecond=0)
+    return dt_et + timedelta(hours=hours)
+
+
+def pending_hilmar_deadline(resp_dt: datetime | None, *,
+                            request_dt: datetime | None = None) -> datetime | None:
+    """The instant a QUOTED PENDING-Hilmar row ages out to Q&L.
+
+    Same anchor rule as pending_hilmar_stale, including the request_dt
+    fallback and its keyword-only guard."""
+    anchor = resp_dt if resp_dt is not None else request_dt
+    if anchor is None:
+        return None
+    hours = (PENDING_HILMAR_LOSS_HOURS_FRIDAY
+             if anchor.astimezone(ET).weekday() == 4
+             else PENDING_HILMAR_LOSS_HOURS)
+    return anchor + timedelta(hours=hours)
+
+
+def pending_ol_deadline(request_dt: datetime | None) -> datetime | None:
+    """The instant an UNQUOTED row becomes a genuine non-response.
+
+    None for a dateless row. pending_ol_stale returns True in that case (it
+    preserves the pre-2026-07-24 immediate-NQ behaviour), so the caller falls
+    back to its own clock rather than being handed a fabricated deadline."""
+    if request_dt is None:
+        return None
+    hours = (PENDING_OL_LOSS_HOURS_FRIDAY
+             if request_dt.astimezone(ET).weekday() == 4
+             else PENDING_OL_LOSS_HOURS)
+    return request_dt + timedelta(hours=hours)
 
 
 def is_business_stale(
@@ -1121,18 +1204,10 @@ def is_business_stale(
     Kept byte-for-byte identical to scripts/core.is_business_stale —
     tests/test_core_parity.py fails if they drift.
     """
-    if dt is None:
+    deadline = business_stale_deadline(dt, hours)
+    if deadline is None:
         return False
     now = now or now_utc()
-    dt_et = dt.astimezone(ET)
-    if dt_et.weekday() >= 4:                          # Fri=4, Sat=5, Sun=6
-        # Land on the upcoming Tuesday 18:00 ET. Friday → +4 days, Saturday
-        # → +3, Sunday → +2. (weekday(Tue) == 1.)
-        days_to_tue = (1 - dt_et.weekday()) % 7       # Fri=4→4, Sat=5→3, Sun=6→2
-        deadline = (dt_et + timedelta(days=days_to_tue)).replace(
-            hour=18, minute=0, second=0, microsecond=0)
-    else:
-        deadline = dt_et + timedelta(hours=hours)
     return now.astimezone(ET) > deadline
 
 
@@ -1176,14 +1251,11 @@ def pending_hilmar_stale(resp_dt: datetime | None, now: datetime | None = None,
     Kept byte-for-byte identical to scripts/core.pending_hilmar_stale —
     tests/test_core_parity.py fails if they drift.
     """
-    anchor = resp_dt if resp_dt is not None else request_dt
-    if anchor is None:
+    deadline = pending_hilmar_deadline(resp_dt, request_dt=request_dt)
+    if deadline is None:
         return False
     now = now or now_utc()
-    anchor_et = anchor.astimezone(ET)
-    deadline = (PENDING_HILMAR_LOSS_HOURS_FRIDAY if anchor_et.weekday() == 4
-                else PENDING_HILMAR_LOSS_HOURS)
-    return (now - anchor).total_seconds() / 3600.0 >= deadline
+    return now >= deadline
 
 
 def pending_ol_stale(request_dt, now=None) -> bool:
@@ -1207,13 +1279,11 @@ def pending_ol_stale(request_dt, now=None) -> bool:
     Kept byte-for-byte identical across scripts/core.py and
     src/hilmar/core.py — tests/test_core_parity.py fails if they drift.
     """
-    if request_dt is None:
+    deadline = pending_ol_deadline(request_dt)
+    if deadline is None:
         return True
     now = now or now_utc()
-    req_et = request_dt.astimezone(ET)
-    deadline = (PENDING_OL_LOSS_HOURS_FRIDAY if req_et.weekday() == 4
-                else PENDING_OL_LOSS_HOURS)
-    return (now - request_dt).total_seconds() / 3600.0 >= deadline
+    return now >= deadline
 
 
 def pending_ol_overdue(request_dt, now=None) -> bool:
@@ -1341,6 +1411,8 @@ def decide_status(
         # tests/test_core_parity.py enforces the two agree.
         if send_at is None:
             send_at = parse_iso(request_timestamp)
+        # The deadline this row crossed — see scripts/core.py.
+        _stale_at = business_stale_deadline(send_at, PENDING_WINDOW_HOURS)
         if is_business_stale(send_at, now):
             # has_send stays TRUE — evidence field, not a state field. See the
             # matching branch in scripts/core.py for the full 2026-07-26
@@ -1349,7 +1421,8 @@ def decide_status(
                 STATUS_Q_AND_L, True, True, "SEND_NO_BOOKING",
                 f"Send received but no MDOLX within the "
                 f"{PENDING_WINDOW_HOURS}h (biz-hours) cutoff — booking never "
-                f"confirmed (real wins confirm same/next business day)"
+                f"confirmed (real wins confirm same/next business day)",
+                stale_at=_stale_at,
             )
         return StatusDecision(STATUS_PENDING, True, True, "AWAITING_MDOLX",
                               "Lonny replied Send — awaiting MDOLX booking confirmation")
@@ -1384,7 +1457,8 @@ def decide_status(
                     STATUS_PENDING, False, False, None,
                     f"Awaiting OL quote — within the {_w}h response window")
             return StatusDecision(STATUS_NQ, False, False, "NO_RESPONSE",
-                                  "OL-USA never responded with a quote")
+                                  "OL-USA never responded with a quote",
+                                  stale_at=pending_ol_deadline(req_dt))
         return StatusDecision(STATUS_NQ, False, False, "RESPONSE_NO_RATE",
                               "MBD responded but no rate extracted — see reason_detail")
 
@@ -1407,7 +1481,8 @@ def decide_status(
         return StatusDecision(
             STATUS_Q_AND_L, True, False, "NO_RESPONSE_TS",
             "Quoted but response_timestamp unparseable, and the request itself "
-            "is past the decision window")
+            "is past the decision window",
+            stale_at=pending_hilmar_deadline(req_dt))
 
     hours_since = (now - resp_dt).total_seconds() / 3600.0
     # PENDING-Hilmar quote-decision window. The numbers live in
@@ -1429,10 +1504,19 @@ def decide_status(
     # Quoted & Lost. Tag the reason as best we can.
     base = f"Quoted {hours_since:.1f}h ago, no Send — Q&L"
 
+    # ONE DEADLINE FOR THE WHOLE Q&L TAIL. ETD_MISS, PRICE, UNDIFFERENTIATED
+    # and QUOTED_NOT_BOOKED are not four events — they are one aging event
+    # (the quote-decision window expiring) wearing four labels, so they are
+    # all stamped with the moment that window closed. Bound here, once, above
+    # every return below it: a branch added later that forgets to pass it
+    # fails tests/test_reversals_are_dated_when_they_happened.py.
+    _ql_stale_at = pending_hilmar_deadline(resp_dt)
+
     # ETD miss wins first — it's a concrete signal regardless of price.
     if etd_fit_days is not None and etd_fit_days >= ETD_MISS_DAYS:
         return StatusDecision(STATUS_Q_AND_L, True, False, "ETD_MISS",
-                              f"{base} (ETD missed Lonny's ask by {etd_fit_days}d)")
+                              f"{base} (ETD missed Lonny's ask by {etd_fit_days}d)",
+                              stale_at=_ql_stale_at)
 
     # PRICE requires a real rate gap vs the winning lane median (2026-06-02).
     rate_val = parse_rate(ol_rate) if isinstance(ol_rate, str) else (
@@ -1447,19 +1531,21 @@ def decide_status(
             return StatusDecision(
                 STATUS_Q_AND_L, True, False, "PRICE",
                 f"{base} (rate ${rate_val:.0f} is {gap_pct:.0f}% above "
-                f"lane winning median ${lane_med:.0f} → rate-driven)"
+                f"lane winning median ${lane_med:.0f} → rate-driven)",
+                stale_at=_ql_stale_at,
             )
         return StatusDecision(
             STATUS_Q_AND_L, True, False, "UNDIFFERENTIATED",
             f"{base} (rate ${rate_val:.0f} ≤ lane winning median "
-            f"${lane_med:.0f} — competitive on price, root cause unclear)"
+            f"${lane_med:.0f} — competitive on price, root cause unclear)",
+            stale_at=_ql_stale_at,
         )
 
     # No signal to determine PRICE.
     if rate_val is None and etd_fit_days is None and lane_med is None:
         return StatusDecision(
             STATUS_Q_AND_L, True, False, "QUOTED_NOT_BOOKED",
-            f"{base}, no ETD signal, no rate parsed")
+            f"{base}, no ETD signal, no rate parsed", stale_at=_ql_stale_at)
     detail_suffix = ""
     if rate_val is None:
         detail_suffix = " (no ol_rate to compare against lane winning median)"
@@ -1467,7 +1553,7 @@ def decide_status(
         detail_suffix = " (no lane winning history to benchmark against)"
     return StatusDecision(
         STATUS_Q_AND_L, True, False, "UNDIFFERENTIATED",
-        f"{base}{detail_suffix}")
+        f"{base}{detail_suffix}", stale_at=_ql_stale_at)
 
 
 def record_transition(request: dict, new_status: str, reason: str, at: datetime | None = None) -> None:

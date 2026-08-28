@@ -1387,7 +1387,12 @@ def finalize_status(
         # record_transition only mutates if status actually changed; the
         # assignment inside record_transition uses a variable, not a literal,
         # so the grep-test for direct literal assignment still passes.
-        C.record_transition(r, decision.status, decision.reason_detail, at=now)
+        # at=decision.stale_at — the deadline the row crossed, not the fire
+        # clock. See scripts/ingest.age_requests for the full write-up; a
+        # `now` stamp here re-dates the reversal on every fire so it walks
+        # forward with the report window and never lands inside it.
+        C.record_transition(r, decision.status, decision.reason_detail,
+                            at=decision.stale_at or now)
         r["loss_reason"] = decision.loss_reason
         prior = r.get("reason_detail") or ""
         if not prior or "Pending match" in prior:
