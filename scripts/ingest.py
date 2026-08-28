@@ -1176,6 +1176,15 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             normalized = re.sub(r"^\s*Port\s+(?=Penang|Ho Chi Minh|Jakarta)\b", "", s_dest, flags=re.IGNORECASE)
             if normalized != s_dest:
                 s_dest = normalized.strip()
+        # THE THIRD SPELLING, CLOSED. Every other destination writer in this
+        # file goes through title_case_destination; this standalone-booking
+        # path did not, so whatever body_parser put in `destination` or `pod`
+        # was stored verbatim — including a raw table-cell "JPYOK", which is
+        # neither the parser's "Jpyok" nor the map's "Yokohama". Routing it
+        # through the same normalizer as every other row is what makes ONE
+        # spelling structural rather than a coincidence, and it applies the
+        # LOCODE table here for free.
+        s_dest = title_case_destination(s_dest) if s_dest else s_dest
         s_dest = s_dest or "Unknown"
         # A destination that resolves to the SAME port as the origin is a
         # parse failure, not a shipment. It happens on re-forwarded or

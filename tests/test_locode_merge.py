@@ -223,3 +223,51 @@ def test_locode_split_would_fragment_the_lane_rollup():
     # left both halves under PRICE_GAP_MIN_LANE_WINS and unbenchmarked.
     assert core.compute_lane_winning_medians(_rows(merged_dest) + _rows("Yokohama"))
     assert not core.compute_lane_winning_medians(_rows("Jpyok") + _rows("Yokohama"))
+
+
+def test_every_destination_writer_goes_through_one_normalizer():
+    """THE THIRD SPELLING. `_norm` was never the only producer.
+
+    Three independent paths write a destination, and each was its own chance
+    to store a different spelling of one port:
+
+      1. body_parser._norm            — Title-Cased JPYOK into "Jpyok"
+      2. body_parser._rate_table_from_cells — the POD cell, which never
+         called _norm at all, so a table cell reading JPYOK landed raw
+      3. ingest.link_bookings_to_requests  — the standalone-booking path,
+         the only destination writer in ingest.py that did NOT route through
+         title_case_destination, so it stored `pod` verbatim
+
+    Path 3 was named in this change's own PR body as a known gap and then
+    left open in the first push; this test is why that was caught before it
+    merged rather than after. All three now resolve to one spelling.
+    """
+    import body_parser as BP
+    import ingest
+
+    # 1 + 2: the parser paths
+    assert BP._norm("JPYOK") == "Yokohama"
+    # 3: the ingest path
+    assert ingest.title_case_destination("JPYOK") == "Yokohama"
+    assert ingest.title_case_destination("Jpyok") == "Yokohama"
+
+    # And the source itself: that path must CALL the normalizer, not merely
+    # happen to agree with it on today's inputs.
+    src = (ROOT / "scripts" / "ingest.py").read_text(encoding="utf-8")
+    i = src.index("def link_bookings_to_requests")
+    j = src.index("\ndef ", i + 10)
+    assert "title_case_destination(s_dest)" in src[i:j], (
+        "link_bookings_to_requests stores a destination without routing it "
+        "through title_case_destination — a third spelling of one port")
+
+
+def test_a_real_five_letter_port_survives_all_three_writers():
+    """The table gate, checked on every path rather than just the resolver."""
+    import body_parser as BP
+    import ingest
+    for real, want in (("BUSAN", "Busan"), ("GENOA", "Genoa"),
+                       ("OSAKA", "Osaka"), ("TOKYO", "Tokyo"),
+                       ("HAIFA", "Haifa"), ("LAGOS", "Lagos")):
+        assert BP._norm(real) == want, f"_norm ate {real}"
+        assert ingest.title_case_destination(real) == want, (
+            f"title_case_destination ate {real}")
