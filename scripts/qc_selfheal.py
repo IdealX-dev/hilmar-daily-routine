@@ -2806,11 +2806,31 @@ def qc082_stale_operator_corrections(rows, corrections_path=None) -> list:
     except Exception as e:
         return [("<unreadable>", f"{path}: {e}")]
     live = {r.get("request_id") for r in (rows or [])}
+    # A request_id EXCLUDED by any correction is absent ON PURPOSE, so a `set`
+    # correction for that same id matching no row is the expected steady state,
+    # not an orphan.
+    #
+    # CAUGHT BEFORE IT FIRED, 2026-08-28, by the first real dry run of
+    # migrate_locode_rekey against blob. `stand_260905` carries BOTH of
+    # Michael's verdicts: a `set` fixing the lane (2026-07-14, "Oakland ->
+    # Tokyo ... so it resolves permanently every fire") and a later `exclude`
+    # (2026-08-13, "260905 260192 260963 were bookings hilmar cancelled").
+    # The exclude drops the row; the `set` then matches nothing — and the old
+    # per-correction test, which only asked whether THIS correction carried the
+    # flag, called that an orphaned human verdict and raised an ERROR.
+    #
+    # It is the QC-081 failure mode exactly: an ERROR-class page on a healthy
+    # row, every fire, forever. QC-082 shipped 2026-08-27 and the next daily
+    # fire had not yet run, so this never reached production.
+    _excluded = {c.get("request_id") for c in doc.get("corrections", [])
+                 if c.get("exclude")}
     stale = []
     for corr in doc.get("corrections", []):
         if corr.get("create") or corr.get("exclude"):
             continue
         rid = corr.get("request_id")
+        if rid in _excluded:
+            continue
         if rid not in live:
             stale.append((rid, (corr.get("note") or corr.get("source") or "")[:100]))
     return stale

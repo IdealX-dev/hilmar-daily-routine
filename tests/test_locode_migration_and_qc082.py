@@ -174,6 +174,57 @@ def test_qc082_exempts_create_and_exclude(tmp_path):
     assert qc.qc082_stale_operator_corrections([], path) == []
 
 
+def test_qc082_does_not_page_on_a_set_whose_row_a_sibling_exclude_removed(tmp_path):
+    """THE REAL ROW, from the first dry run against blob (2026-08-28).
+
+    `stand_260905` carries BOTH of Michael's verdicts: a `set` fixing the lane
+    (2026-07-14, "Oakland -> Tokyo ... so it resolves permanently every fire")
+    and a later `exclude` (2026-08-13, "260905 260192 260963 were bookings
+    hilmar cancelled"). The exclude drops the row, so the `set` matches
+    nothing — by design.
+
+    The old test asked only whether THIS correction carried the flag, so the
+    `set` looked like an orphaned human verdict and QC-082 raised an ERROR on
+    a healthy row, every fire, forever. That is the QC-081 failure mode
+    exactly. QC-082 shipped 2026-08-27 and the next daily fire had not yet
+    run, so it never reached production.
+    """
+    path = _corrections_file(tmp_path, [
+        {"request_id": "stand_260905",
+         "set": {"origin": "Oakland", "destination": "Tokyo"},
+         "note": "operator-authoritative lane"},
+        {"request_id": "stand_260905", "exclude": True,
+         "note": "cancelled booking — not a win"},
+    ])
+    assert qc.qc082_stale_operator_corrections([], path) == [], (
+        "QC-082 paged on a `set` whose row is deliberately excluded by a "
+        "sibling correction — an ERROR on healthy data")
+
+
+def test_qc082_still_catches_an_orphan_when_a_DIFFERENT_id_is_excluded(tmp_path):
+    # The exemption must be keyed on the id, not applied to the whole file.
+    # Widening it to "any exclude anywhere" would silence the check entirely.
+    path = _corrections_file(tmp_path, [
+        {"request_id": "stand_111", "exclude": True},
+        {"request_id": "req_gone", "set": {"status": "LOSS"}, "note": "orphan"},
+    ])
+    assert [rid for rid, _ in qc.qc082_stale_operator_corrections([], path)] == ["req_gone"]
+
+
+def test_the_migration_agrees_with_qc082_about_the_excluded_row(tmp_path):
+    """QC-082's remediation message tells a human to run the migration. If the
+    two disagree about the same row, the person following that instruction is
+    sent to a tool that contradicts the alarm that sent them."""
+    corrections = [
+        {"request_id": "stand_260905", "set": {"destination": "Tokyo"}},
+        {"request_id": "stand_260905", "exclude": True},
+    ]
+    assert mig.plan([], corrections)["already_stale"] == []
+    # and it still reports a genuine orphan
+    orphan = [{"request_id": "req_gone", "set": {"status": "LOSS"}}]
+    assert [s["request_id"] for s in mig.plan([], orphan)["already_stale"]] == ["req_gone"]
+
+
 def test_qc082_zero_state_is_reachable(tmp_path):
     """A check whose green state is unreachable is noise. This one's is real."""
     path = _corrections_file(tmp_path, [{"request_id": "req_live", "set": {}}])

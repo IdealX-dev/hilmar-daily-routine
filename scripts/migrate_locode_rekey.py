@@ -114,12 +114,21 @@ def plan(rows: list[dict], corrections: list[dict]) -> dict:
 
     by_old = {m["request_id"]: m for m in moves if m.get("new_request_id")}
     live_ids = {r.get("request_id") for r in rows}
+    # An id EXCLUDED by any correction is absent deliberately — a sibling `set`
+    # on the same id is not orphaned by this migration or by anything else.
+    # Same fix as QC-082; the first real dry run reported stand_260905 (a
+    # cancelled booking Michael excluded 2026-08-13, whose 2026-07-14 lane
+    # `set` is still in the file) as pre-existing staleness. Kept in step with
+    # the check on purpose: the migration is what QC-082 tells a human to run,
+    # so the two disagreeing about the same row is worse than either bug.
+    excluded_ids = {c.get("request_id") for c in corrections if c.get("exclude")}
     affected, already_stale = [], []
     for corr in corrections:
         rid = corr.get("request_id")
         if rid in by_old and by_old[rid]["new_request_id"] != rid:
             affected.append({**by_old[rid], "note": corr.get("note", "")[:120]})
-        elif rid not in live_ids and not corr.get("create") and not corr.get("exclude"):
+        elif (rid not in live_ids and rid not in excluded_ids
+              and not corr.get("create") and not corr.get("exclude")):
             # PRE-EXISTING staleness, not caused by this migration. Reported
             # separately so the migration is never blamed for it — and so it
             # is finally visible at all (QC-082 is the standing detector).
