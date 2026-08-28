@@ -1542,7 +1542,12 @@ def phase_3_entries(log: Log, data: dict):
             lane_winning_median=lane_winning_median,
         )
         if prior_status != decision.status:
-            core.record_transition(r, decision.status, decision.reason_detail)
+            # at=decision.stale_at — the deadline the row crossed, not this
+            # pass's clock. qc_selfheal runs TWICE per fire, so a `now` stamp
+            # here also made the entry depend on WHICH pass wrote it. See
+            # ingest.age_requests for the full write-up.
+            core.record_transition(r, decision.status, decision.reason_detail,
+                                   at=decision.stale_at)
             log.fix(f"{rid_label}: Status {prior_status} → {decision.status} ({decision.reason_detail})")
         else:
             r["status"] = decision.status
