@@ -225,6 +225,16 @@ def title_case_destination(destination: str | None) -> str:
     if not destination or destination == "Unknown":
         return destination or "Unknown"
     s = destination.strip()
+    # A UN/LOCODE is not a casing problem — it is a different NAME for the
+    # port, so it resolves before any casing rule runs. This function
+    # Title-Cases any head longer than 4 characters, which is the SECOND
+    # independent producer of the fake port "Jpyok" (body_parser._norm is the
+    # first): a subject that reached here as "JPYOK" was renamed here even
+    # when the parser had not touched it. Table-gated in core.resolve_locode,
+    # so a 5-letter real port ("BUSAN", "GENOA") is unaffected.
+    _loc = C.resolve_locode(s)
+    if _loc:
+        return _loc
     # Split off any "(Foo Bar)" suffix
     m = re.match(r"^([A-Za-z]+)(\s*\(.+\))?$", s)
     if m:

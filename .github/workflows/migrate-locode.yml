@@ -1,0 +1,86 @@
+name: Migrate — re-key corrections after the UN/LOCODE merge
+
+# MANUAL ONLY, DRY RUN BY DEFAULT.
+#
+# The UN/LOCODE merge renames a stored destination (JPYOK -> Yokohama).
+# core.request_id hashes the destination, so every affected row is re-keyed on
+# the next fire — and operator_corrections.json is matched BY request_id, with
+# ingest.apply_operator_corrections logging a miss as a plain print(). Michael's
+# verdict would stop applying with nothing red anywhere. CLAUDE.md §3: schema
+# changes are migrations — scripted, reversible, logged. This is the dispatch.
+#
+# ORDER MATTERS. Run this in DRY RUN before the parser change merges: it reads
+# the CURRENT rows out of blob and tells you which corrections the merge will
+# orphan, while their pre-merge keys still match. Running it after the first
+# post-merge fire still works (the plan is computed from each row's own fields,
+# not from the clock), but the dry run is the cheap look-before-you-leap.
+#
+# The dry run exits NON-ZERO when there is anything to do, so this step goes RED
+# rather than green-in-zero-seconds. That is deliberate: on 2026-08-20 a
+# diagnostic died on its first line and reported success because of a trailing
+# `|| true`. There is no `|| true` here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (report only) | apply (re-key) | revert (undo an apply)"
+        required: true
+        default: "dry-run"
+        type: choice
+        options: [dry-run, apply, revert]
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Re-key destination-hashed operator corrections
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --quiet \
+            msal requests tzdata sentry-sdk jsonschema python-dateutil \
+            azure-storage-blob
+
+      # The blob snapshot is the thing the plan is computed FROM, and --apply
+      # rewrites a version-controlled file on the basis of it. Snapshot first so
+      # the inputs to this decision are recoverable, not just its output.
+      - name: Back up blob state before touching anything
+        if: ${{ inputs.mode != 'dry-run' }}
+        run: python3 scripts/state_store.py backup
+
+      - name: Run the migration
+        run: |
+          case "${{ inputs.mode }}" in
+            apply)  FLAG="--apply" ;;
+            revert) FLAG="--revert" ;;
+            *)      FLAG="" ;;
+          esac
+          python3 scripts/migrate_locode_rekey.py $FLAG
+
+      # operator_corrections.json is version-controlled, so the change lands as
+      # a reviewable diff and `git revert` is the outer undo. The artifact is
+      # how the file gets off the runner and into that commit.
+      - name: Show the correction diff
+        if: ${{ inputs.mode != 'dry-run' }}
+        run: git --no-pager diff -- scripts/operator_corrections.json
+
+      - name: Upload the re-keyed corrections for review
+        if: ${{ inputs.mode != 'dry-run' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: operator-corrections-${{ github.run_id }}
+          path: scripts/operator_corrections.json
+          retention-days: 14

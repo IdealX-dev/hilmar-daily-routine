@@ -36,6 +36,13 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 
+# core is this repo's LEAF module (stdlib only, imports nothing local), so a
+# hard import here cannot cycle. Hard, not the lazy try/except used for
+# _canon_carrier below: a swallowed ImportError would silently stop resolving
+# UN/LOCODEs and re-split Yokohama with no alarm anywhere. CI's per-module
+# import smoke test proves this wiring on both trees.
+import core as _core
+
 
 # HTML -> text
 class _HTMLStripper(HTMLParser):
@@ -259,6 +266,15 @@ def _norm(s: str) -> str:
     key = s.lower()
     if key in _ORIGIN_ALIASES:
         return _ORIGIN_ALIASES[key]
+    # UN/LOCODE BEFORE the Title-Case branch. That branch is what manufactured
+    # the fake port "Jpyok" out of the code JPYOK — it Title-Cases any all-caps
+    # token longer than three characters, and a LOCODE is exactly five. Only
+    # codes listed in core.PORT_LOCODES resolve, so BUSAN/OSAKA/TOKYO/GENOA/
+    # HAIFA/LAGOS — five-letter all-caps REAL ports in this corpus — fall
+    # through to Title-Case untouched, which is the behaviour they already had.
+    _loc = _core.resolve_locode(s)
+    if _loc:
+        return _loc
     if s.isupper():
         return s.title() if len(s) > 3 else s
     return s
@@ -1580,6 +1596,18 @@ def _rate_table_from_cells(cells: dict) -> dict:
                 "origin_free_time", "dest_free_time"):
         if cells.get(key):
             out[key] = cells[key]
+    # POL/POD are the only PLACE columns in the grid, and OL writes UN/LOCODEs
+    # into them ("JPYOK" in a Port of Discharge cell). Everything else in the
+    # loop above is a rate, a size or a free-time string and must stay verbatim.
+    # This is the third spelling: the cell copy above never called _norm, so a
+    # POD reading JPYOK landed raw, and ingest's standalone-booking path
+    # (ingest.py:1148) stored it as the row's destination with no normalizer at
+    # all. core.resolve_locode returns None for anything not in the table, so a
+    # real port name in these cells is untouched.
+    for _place in ("pol", "pod"):
+        _resolved = _core.resolve_locode(out.get(_place))
+        if _resolved:
+            out[_place] = _resolved
 
     return out
 
