@@ -1663,6 +1663,95 @@ def phase_4_duplicates(log: Log, data: dict):
                     f"unconfirmed win — same shipment as booking-confirmed "
                     f"{canonical.get('request_id')} (MDOLX{canonical.get('mdolx_ref')})")
 
+    # ── QC-083 — PASS 3: THE SUPERSEDED RE-ASK ────────────────────────────
+    #
+    # DETECT-ONLY, ON PURPOSE. Pass 2 above DROPS a row; this one does not,
+    # and the difference is deliberate.
+    #
+    # THE SHAPE. Lonny asks for one move, gets no answer or changes his mind,
+    # and asks AGAIN on a later day in the same thread. One shipment, two
+    # rows. OL books one of them. Before #231 the send-signal matcher then
+    # promoted the OTHER row too (it matched on lane and recency and skipped
+    # rows already WIN), and that copy aged out LOSS/SEND_NO_BOOKING — an
+    # invented loss on a shipment that shipped, with a reason accusing OL of
+    # never confirming a booking OL had confirmed. Oakland -> Tokyo,
+    # 2026-08-25/26, MDOLX261145.
+    #
+    # #231 STOPPED THE BLEEDING; this finds what already bled. No NEW phantom
+    # loss can be created — the Send is now consumed by the booked row — but
+    # the pairs written by earlier fires are still in tracking-data-v2.json.
+    #
+    # PASS 2 CANNOT SEE THEM, twice over: it keys on request_date (a re-ask is
+    # by definition a DIFFERENT day, so the pair lands in two groups), and it
+    # only fires on an unconfirmed WIN (post-#231 the stale copy is a LOSS).
+    #
+    # WHY IT ONLY REPORTS. Absorbing a row means deleting a loss, and a
+    # detector that is wrong in that direction manufactures a win rate — the
+    # exact failure this repo has already shipped once. Nothing here can
+    # measure how many real rows match: the data is in blob and nothing
+    # meaningful runs locally. So this names them, with their ids, and the
+    # heal gets written against a real list rather than a hypothesis.
+    #
+    # THE DISCRIMINATOR IS THE REQUESTED SAILING, NOT THE LOOKALIKE FIELDS.
+    # Same thread + same lane + same containers also describes TWO GENUINE
+    # MOVES Lonny asked for in one thread, one of which lost. Erasing that is
+    # erasing a real loss. What separates them is `etd_requested`: one
+    # shipment asked twice names the SAME sailing; two shipments name two.
+    # A row missing that field is skipped entirely — absence is not evidence,
+    # and this is the branch where guessing costs a loss.
+    reask = 0
+    supersede: dict[tuple, list[dict]] = {}
+    for r in data.get("requests", keepers):
+        cid = (r.get("conversation_id") or "").strip()
+        lane = core.canonical_port_key(r.get("destination"))
+        cont = (r.get("containers") or "").strip().lower()
+        etd = str(r.get("etd_requested") or "").strip().lower()
+        # canonical_port_key returns "unknown" for a lane it cannot resolve —
+        # two unresolved rows are not evidence of each other. Same guard as
+        # ingest._prior_win_captured.
+        if cid and cont and etd and lane and lane != "unknown":
+            supersede.setdefault((cid, lane, cont, etd), []).append(r)
+
+    for grp in supersede.values():
+        if len(grp) < 2:
+            continue
+        distinct_mdolx = {str(r.get("mdolx_ref")) for r in grp if r.get("mdolx_ref")}
+        # Two bookings on one sailing is two shipments Lonny really did move.
+        if len(distinct_mdolx) != 1:
+            continue
+        booked = [r for r in grp if r.get("mdolx_ref")]
+        # A row with its OWN send evidence is an ask Lonny accepted in its own
+        # right — post-#231 the Send lands on the row whose thread it names,
+        # so has_send here means this row was accepted and genuinely lost.
+        #
+        # THIS GUARD DEPENDS ON THE REBUILD HAVING RUN. The pairs already on
+        # disk were promoted by the PRE-#231 matcher, so they still carry
+        # has_send=True until a fire rebuilds them from the staged mail (which
+        # is every fire, for any RFQ still inside refresh_stage's window). So
+        # this check UNDER-reports on the first fire after #231, and on a pair
+        # whose RFQ has aged out of the stage window. That is the safe
+        # direction: a false negative reports nothing, a false positive would
+        # nominate a real loss for deletion.
+        stale = [r for r in grp
+                 if not r.get("mdolx_ref") and not r.get("has_send")
+                 and r.get("request_date") != booked[0].get("request_date")]
+        if not booked or not stale:
+            continue
+        for dup in stale:
+            reask += 1
+            log.warn(
+                f"QC-083: {dup.get('request_id')} looks like a SUPERSEDED "
+                f"RE-ASK of {booked[0].get('request_id')} "
+                f"(MDOLX{booked[0].get('mdolx_ref')}) — same thread, lane "
+                f"{dup.get('lane')}, containers {dup.get('containers')} and "
+                f"requested sailing {dup.get('etd_requested')}, asked "
+                f"{dup.get('request_date')} vs {booked[0].get('request_date')}, "
+                f"no booking and no send of its own. Currently counted as a "
+                f"separate {core.display_status(dup) or dup.get('status')}. "
+                f"NOT absorbed — reported for review.")
+    if reask == 0:
+        log.ok("QC-083: no superseded re-asks detected")
+
     data["requests"] = [r for r in keepers if id(r) not in drop_ids]
     if content_dupes:
         log.fix(f"PHASE 4: collapsed {content_dupes} phantom unconfirmed-win "
