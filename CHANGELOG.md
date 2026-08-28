@@ -3,6 +3,98 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-28 — one move asked twice, one booking, and an invented loss on the other copy
+
+Michael, on the Oakland → Tokyo pair: *"that's your job by parsing emails
+properly"* — rejecting a "this needs a blob diagnostic" answer. He was right;
+the evidence to match on was already staged and the matcher was throwing it
+away.
+
+#### THE DEFECT
+
+`apply_send_signals` matched Lonny's "Send" replies to a request by **lane and
+recency only**. It never read `in_reply_to`, `references` or
+`conversation_id` — which `refresh_stage.build_stage_record` puts on EVERY
+staged message (`refresh_stage.py:1105-1110`), and which the other two matchers
+already use: `link_bookings_to_requests` scores a header-chain pool
+(`ingest.py:983-1027`), `apply_rate_responses` prefers a `conversation_id` hit
+(`ingest.py:1374-1404`). Send-signal was the only one of the three that was
+blind.
+
+Worse, it **skipped every row already WIN**. So when Lonny asked for one move
+on two days, the Send that belonged to the booked row was refused by that row
+and fell through to the next-latest open row on the lane — promoting the
+duplicate. That row then had no booking, so it aged out
+`LOSS / SEND_NO_BOOKING`.
+
+Net result on the live pair: one move, quoted once (Wan Hai $2,884), booked
+once on MDOLX261145 — reported as **a win and a loss**, with the loss reason
+accusing OL of never confirming a booking OL had confirmed.
+
+Reproduced on `main` before touching anything, on the real row shape:
+
+```
+=== A' — the SAME shape on main (the bug) ===
+  older req_0825: status=WIN has_send=True
+  -> cascaded on main: True   (True = the bug reproduces)
+```
+
+#### THE FIX — evidence, in order, spent once
+
+`send_thread_anchors` / `send_reply_is_in_thread`, then resolution order:
+
+1. **thread pool** — rows the reply is provably anchored to. When non-empty it
+   is the WHOLE candidate set; a Send that names its thread never lands
+   outside it.
+2. **booking evidence** — a row whose MDOLX landed at or after the Send
+   outranks an open row. That booking IS what the Send bought, so a booked row
+   is an eligible target, not a skipped one.
+3. **recency** — the old rule, kept, as the tie-break.
+
+Two guards on the obvious over-correction:
+
+- **`_send_consumed`** — a row absorbs at most one Send per fire. Without it
+  rule 2 would hand every Send on the lane to the same booked row and a
+  genuine double-ask would collapse to one win. With it, a second Send falls
+  through to the next-best open row. Proven both ways:
+
+  ```
+  === B — two genuine asks must BOTH promote ===
+    promotions: 2   req_A has_send=True   req_B has_send=True
+  ```
+
+- **chronological iteration** — the loop now sorts by `sent`, not stage-file
+  order. `_pick_best_request` was made deterministic by construction for
+  exactly this reason (`ingest.py:153-171`); a matcher whose outcome depends
+  on the order rows happened to be written in is the same defect wearing a
+  different hat.
+
+`conversation_id` is trusted here and nowhere else on purpose. `core.request_id`
+declines it as an identity key because Outlook reuses it across identical
+subjects — but here that reuse can only ADD the sibling ask to the pool, and
+the scoring then picks between them on booking evidence, which is the wanted
+behaviour.
+
+#### WHAT IS DELIBERATELY NOT IN THIS CHANGE
+
+**The heal.** This stops NEW phantom losses; it does not absorb the duplicate
+rows already in `tracking-data-v2.json`. That is a `qc_selfheal` pass which
+REMOVES A ROW FROM LIVE DATA, so it earns its own PR and its own scrutiny
+rather than riding along with a parser fix.
+
+**The reversal (Michael's item 1)** — why a WIN→LOSS never reaches any report.
+Still open, and to be REWRITTEN rather than ported: the agent-authored version
+pages an ERROR-class Sentry alert on healthy rows every fire (reproduced twice
+by its own reviewers) and leaves a superseded `PENDING→LOSS` on the report day
+when a row recovers.
+
+#### ALSO
+
+`test_two_lane_less_rows_are_not_evidence_of_each_other`, held back from #230
+because the `canonical_port_key` `"unknown"`-sentinel routing belongs to this
+work, is restored here — with an added positive assertion that a real lane
+still matches, so it cannot pass by matching nothing.
+
 ### 2026-08-27 (later) — JPYOK is Yokohama, and it was costing the biggest lane in the book
 
 Michael, supplying the fact the code could not: *"JPYOK and Yokohama are samy

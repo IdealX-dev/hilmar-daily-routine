@@ -1184,6 +1184,36 @@ def apply_rate_responses(
     return quoted_count
 
 
+def send_thread_anchors(row: dict[str, Any]) -> set[str]:
+    """Every message id this Send reply is anchored to (In-Reply-To +
+    References), normalised without angle brackets.
+
+    Mirrors scripts/ingest.send_thread_anchors — the 2026-08-27 fix. Kept in
+    both trees because the defect it prevents is a WIN on the wrong row, and
+    a matcher that is right in only one tree is the "green in CI, wrong on the
+    box" split the parity tests exist to stop.
+    """
+    chain: set[str] = set()
+    irt = (row.get("in_reply_to") or "").strip()
+    if irt:
+        chain.add(irt.strip("<>"))
+    for ref in (row.get("references") or []):
+        if ref:
+            chain.add(str(ref).strip().strip("<>"))
+    return chain
+
+
+def send_reply_is_in_thread(r: dict[str, Any], chain: set[str], conv_id: str) -> bool:
+    """True when request row `r` is part of the thread this Send replies to —
+    by its own RFQ imid appearing in the reply's header chain, or by a shared
+    Outlook conversation_id. Mirrors scripts/ingest.send_reply_is_in_thread.
+    """
+    if conv_id and (r.get("conversation_id") or "").strip() == conv_id:
+        return True
+    return any(s and str(s).strip().strip("<>") in chain
+               for s in (r.get("source_imids") or []))
+
+
 def apply_send_signals(
     requests: list[dict[str, Any]],
     lonny_replies: list[dict[str, Any]],
@@ -1195,7 +1225,13 @@ def apply_send_signals(
     for lane_reqs in by_lane.values():
         lane_reqs.sort(key=lambda r: r.get("request_timestamp") or "")
 
-    for row in lonny_replies:
+    # A row absorbs at most ONE Send per fire, and replies are processed
+    # chronologically so stage-file order cannot decide the outcome. Mirrors
+    # the 2026-08-27 production fix.
+    _send_consumed: set[int] = set()
+
+    for row in sorted(lonny_replies, key=lambda x: (x.get("sent") or "",
+                                                    x.get("imid") or "")):
         parsed = row.get("body_parsed") or {}
         has_signal = parsed.get("send_signal") or row.get("send_signal")
         if not has_signal:
@@ -1208,20 +1244,42 @@ def apply_send_signals(
         if not sent_dt:
             continue
         candidates = by_lane.get(canonical_lane_key(dest), [])
+        # A Send is thread evidence, spent once (2026-08-27, mirrored from
+        # scripts/ingest.py). The old loop SKIPPED every row already carrying
+        # an MDOLX and then took the latest remaining ask on the lane, so a
+        # Send whose own row had just been booked cascaded onto an older,
+        # unrelated ask and stamped it accepted — the Oakland -> Tokyo pair of
+        # 2026-08-25/26, one move asked twice, booked once, reported as a win
+        # AND an OL-never-confirmed loss.
+        #
+        #   1. the reply's own thread, when it has one, IS the candidate set
+        #   2. a row whose booking landed at or after the Send outranks an
+        #      open row — that booking is what the Send bought
+        #   3. recency as the tie-break, unchanged
+        chain = send_thread_anchors(row)
+        conv = (row.get("conversation_id") or "").strip()
+        pool = [r for r in candidates if id(r) not in _send_consumed]
+        thread_pool = [r for r in pool if send_reply_is_in_thread(r, chain, conv)]
         best: dict[str, Any] | None = None
-        for r in candidates:
-            # Skip already-matched-to-MDOLX rows; finalize_status will WIN them.
-            if r.get("mdolx_ref"):
-                continue
+        best_key: tuple[int, datetime] | None = None
+        for r in (thread_pool or pool):
             req_dt = C.parse_iso(r.get("request_timestamp"))
             if not req_dt or req_dt > sent_dt:
                 continue
             if (sent_dt - req_dt) > timedelta(days=5):
                 continue
-            best_dt = C.parse_iso(best["request_timestamp"]) if best else None
-            if best is None or (best_dt and req_dt > best_dt):
-                best = r
+            bk_dt = C.parse_iso(r.get("booking_timestamp"))
+            booked_after = 1 if (r.get("mdolx_ref") and bk_dt and bk_dt >= sent_dt) else 0
+            key = (booked_after, req_dt)
+            if best is None or best_key is None or key > best_key:
+                best, best_key = r, key
         if best is None:
+            continue
+        _send_consumed.add(id(best))
+        if best.get("mdolx_ref"):
+            # CONSUMED, NOT CASCADED — this Send produced this booking, and
+            # finalize_status already WINs the row on the MDOLX. Nothing is
+            # left of it to promote a sibling ask with.
             continue
         # Set INPUT FIELDS only — status flows through finalize_status.
         best["quoted"] = True

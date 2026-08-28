@@ -1576,11 +1576,57 @@ def apply_rate_responses(requests: list[dict], rate_rsps: list[dict],
 # Apply send-signals from Lonny replies
 # ─────────────────────────────────────────────────────────────────────
 
-def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
+def send_thread_anchors(row: dict) -> set[str]:
+    """Every message id this reply is anchored to — its own In-Reply-To and
+    References, normalised without angle brackets.
+
+    refresh_stage.build_stage_record stages `in_reply_to` + `references` +
+    `conversation_id` on EVERY message (refresh_stage.py:1105-1110), and both
+    other matchers already use them: link_bookings_to_requests scores its
+    header-chain pool (ingest.py:983-1027) and apply_rate_responses prefers a
+    conversation_id hit (ingest.py:1374-1404). apply_send_signals was the only
+    one of the three that never looked, which is the whole defect below.
     """
-    For each lonny_reply with send_signal=True: promote the matched request to WIN
-    if not already. Match by subject destination via RE: strip.
-    Returns count of promotions.
+    chain: set[str] = set()
+    irt = (row.get("in_reply_to") or "").strip()
+    if irt:
+        chain.add(irt.strip("<>"))
+    for ref in (row.get("references") or []):
+        if ref:
+            chain.add(str(ref).strip().strip("<>"))
+    return chain
+
+
+def send_reply_is_in_thread(r: dict, chain: set[str], conv_id: str) -> bool:
+    """True when request row `r` is part of the thread this Send replies to.
+
+    Two independent proofs, either sufficient:
+      - the row's own RFQ imid appears in the reply's In-Reply-To/References
+      - the row and the reply carry the same Outlook conversation_id
+
+    conversation_id is deliberately NOT trusted as an identity key on its own
+    anywhere else (core.request_id's docstring: Outlook reuses it across
+    identical subjects). Here that reuse is harmless — it can only ADD the
+    sibling ask to the pool, and the scoring below then picks between them on
+    booking evidence, which is exactly what we want it to do.
+    """
+    if conv_id and (r.get("conversation_id") or "").strip() == conv_id:
+        return True
+    return any(s and str(s).strip().strip("<>") in chain
+               for s in (r.get("source_imids") or []))
+
+
+def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
+    """Attribute each of Lonny's "Send" replies to the ONE request it accepts.
+
+    A Send is thread evidence that is spent exactly once. Resolution order:
+    the reply's own thread (In-Reply-To / References / conversation_id), then
+    the booking that landed at or after it, then recency on the lane — all
+    inside the existing terminal-strict lane narrowing. A Send that resolves
+    to an already-booked row is CONSUMED there and promotes nothing else.
+
+    Returns the number of PROMOTIONS (a Send consumed by a booking is not one
+    — the row was already WIN on harder evidence).
     """
     promotions = 0
     by_lane: dict[str, list[dict]] = defaultdict(list)
@@ -1589,7 +1635,18 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
     for lane_reqs in by_lane.values():
         lane_reqs.sort(key=lambda r: r.get("request_timestamp") or "")
 
-    for row in lonny_replies:
+    # A row absorbs at most ONE Send per fire. Without this ledger the
+    # booking-evidence rule below would hand every Send on the lane to the
+    # same booked row; with it, a second genuine Send falls through to the
+    # next-best open row, which is the behaviour Lonny's real double-asks need.
+    _send_consumed: set[int] = set()
+
+    # CHRONOLOGICAL, not stage-file order. `_pick_best_request` already made
+    # booking-linking deterministic by construction for exactly this reason
+    # (ingest.py:153-171); a matcher whose outcome depends on the order rows
+    # happened to be written in is the same defect wearing a different hat.
+    for row in sorted(lonny_replies, key=lambda x: (x.get("sent") or "",
+                                                    x.get("imid") or "")):
         # Prefer body-parsed send_signal; fall back to legacy row field.
         parsed = row.get("body_parsed") or {}
         has_signal = parsed.get("send_signal") or row.get("send_signal")
@@ -1628,10 +1685,42 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
             # open is the correct outcome.
             candidates = [r for r in candidates
                           if C.same_port(dest, r.get("destination"))]
+        # ── WHICH ROW DOES THIS SEND BELONG TO ───────────────────────────
+        # A Send is evidence on a THREAD and it is spent ONCE. Until
+        # 2026-08-27 this loop asked neither question: it ignored the
+        # threading headers the stager puts on every message, and it SKIPPED
+        # every row already WIN — so a Send whose own row had just been booked
+        # fell through to the next-latest open row on the lane and promoted
+        # THAT one instead. The comment 40 lines up already names the outcome
+        # in the terminal case ("the row Lonny actually confirmed stayed open
+        # and aged out as a loss"); the same cascade fires with no terminals
+        # in sight whenever Lonny asks for one move twice.
+        #
+        # Proved by the Oakland -> Tokyo pair of 2026-08-25/26: one move,
+        # asked on two days, quoted at one rate (Wan Hai $2,884), booked once
+        # on MDOLX261145 against the 08-26 row — and the 08-25 row promoted to
+        # WIN by the very Send that booking had already consumed, then aged to
+        # LOSS/SEND_NO_BOOKING. An invented loss on a shipment that shipped,
+        # and an OL-never-confirmed accusation against a booking OL confirmed.
+        #
+        # Now, in order:
+        #   1. thread pool — rows this reply is provably anchored to. When it
+        #      is non-empty it is the WHOLE candidate set: a Send that names
+        #      its thread never lands outside it.
+        #   2. booking evidence — a row whose MDOLX landed AT OR AFTER this
+        #      Send outranks an open row. That booking IS what the Send
+        #      bought; a booked row is an eligible target, not a skipped one.
+        #   3. recency — the previous rule, unchanged, as the tie-break.
+        # Every Send is consumed by at most one row (`_send_consumed`), so two
+        # genuine Sends on one lane still promote two rows.
+        chain = send_thread_anchors(row)
+        conv = (row.get("conversation_id") or "").strip()
+        pool = [r for r in candidates if id(r) not in _send_consumed]
+        thread_pool = [r for r in pool if send_reply_is_in_thread(r, chain, conv)]
+        match_via = "thread" if thread_pool else "lane+time"
         best = None
-        for r in candidates:
-            if r.get("status") == "WIN":
-                continue
+        best_key = None
+        for r in (thread_pool or pool):
             req_dt = C.parse_iso(r.get("request_timestamp"))
             if not req_dt or req_dt > sent_dt:
                 continue
@@ -1640,9 +1729,32 @@ def apply_send_signals(requests: list[dict], lonny_replies: list[dict]) -> int:
             # truly stale ones (>7 days = different ask).
             if (sent_dt - req_dt) > timedelta(days=7):
                 continue
-            if not best or (C.parse_iso(r["request_timestamp"]) >
-                            C.parse_iso(best["request_timestamp"])):
-                best = r
+            bk_dt = C.parse_iso(r.get("booking_timestamp"))
+            booked_after = 1 if (r.get("mdolx_ref") and bk_dt and bk_dt >= sent_dt) else 0
+            key = (booked_after, req_dt)
+            if best is None or key > best_key:
+                best, best_key = r, key
+        if best is not None:
+            _send_consumed.add(id(best))
+            best["_send_match_via"] = match_via
+            _imid = row.get("imid")
+            if _imid:
+                # Filtered, not just unioned: build_requests appends
+                # row.get("imid") unguarded, so a stage row with no
+                # internetMessageId leaves a None in here and sorted() would
+                # die comparing None to str on the first such lane.
+                best["source_imids"] = sorted(
+                    {i for i in {*(best.get("source_imids") or []), _imid} if i})
+        if best is not None and best.get("mdolx_ref"):
+            # CONSUMED, NOT CASCADED. This Send produced THIS booking; there is
+            # nothing left of it to promote anything else with. Returning here
+            # is the whole fix — the row is already WIN with has_send set by
+            # link_bookings_to_requests, so nothing is written that could go
+            # stale, and no sibling ask inherits an acceptance that was never
+            # about it.
+            print(f"  send consumed by booked win MDOLX{best.get('mdolx_ref')} "
+                  f"({best.get('lane')}) via {match_via} — no cascade")
+            continue
         if best:
             # record_transition, not a bare assignment — see age_requests.
             # A promotion to WIN with no history entry is the same defect in
@@ -2035,7 +2147,15 @@ def _prior_win_captured(wm, wma, new_mdolx_all, wdest, wdate, new_lane_dates) ->
     all_refs = {wm, *(wma or [])} - {None, ""}
     if all_refs:
         return bool(all_refs & new_mdolx_all)
-    return bool(wdest and (wdest, wdate) in new_lane_dates)
+    # "unknown" is canonical_port_key's sentinel for a MISSING destination, not
+    # a place. Two rows that both failed to resolve a lane are not evidence of
+    # each other, and treating them as a match would DROP a prior WIN instead
+    # of preserving it — the opposite of this function's job. The old bare
+    # .lower() got this right by accident (empty string is falsy); the
+    # alias-aware key has to say it out loud.
+    if not wdest or wdest == "unknown":
+        return False
+    return (wdest, wdate) in new_lane_dates
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2197,8 +2317,22 @@ def main() -> int:
             for r in new_wins:
                 for m in r.get("mdolx_refs_all", []) or []:
                     new_mdolx_all.add(m)
+            # BOTH SIDES OF THIS COMPARISON GO THROUGH canonical_port_key.
+            #
+            # It was a bare .lower() on each side, which means the fallback
+            # match fails the moment the two sides SPELL the port differently
+            # — and that is exactly what a normalization change creates on the
+            # day it ships. The 2026-08-27 UN/LOCODE merge is the live case:
+            # the prior file says "Jpyok", the fresh build says "Yokohama", so
+            # a prior WIN with no MDOLX ref would look uncaptured and be
+            # APPENDED — a duplicate row carrying the pre-merge spelling and
+            # the pre-merge request_id, i.e. the bug re-imported one day after
+            # it was fixed. (The reconcile-by-request_id branch below cannot
+            # save it either; the id moved with the destination.) Alias-aware
+            # keys also fix the standing HCMC/Cat Lai version of the same
+            # mismatch, which had the same shape and no ticket.
             new_lane_dates = {
-                ((r.get("destination") or "").lower(),
+                (C.canonical_port_key(r.get("destination")),
                  (r.get("request_timestamp") or "")[:10])
                 for r in new_wins
             }
@@ -2215,7 +2349,7 @@ def main() -> int:
                 wm = w.get("mdolx_ref")
                 wma = list(w.get("mdolx_refs_all") or [])
                 wdate = (w.get("request_timestamp") or "")[:10]
-                wdest = (w.get("destination") or "").lower()
+                wdest = C.canonical_port_key(w.get("destination"))
                 # MDOLX is the strongest signal: the prior WIN is captured
                 # (already represented, so do NOT carry it forward) when ANY of
                 # its MDOLX refs — primary or secondary — appears among the new
