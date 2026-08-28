@@ -3,6 +3,54 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-28 (later still) — QC-083: find the duplicate pairs already on disk, and do not delete them
+
+#231 stopped NEW phantom losses. The pairs written by earlier fires are still
+in `tracking-data-v2.json`. QC-083 finds them and **reports them** — it does
+not absorb them, and that is the decision, not a deferral.
+
+#### WHY REPORT AND NOT HEAL
+
+Absorbing one of these rows deletes a **LOSS**. A detector wrong in that
+direction manufactures a win rate, which is a failure this repo has already
+shipped once. And nothing here can measure how many real rows match: the data
+is in blob and nothing meaningful runs locally. So the check names them, with
+their ids, and the heal gets written against a real list instead of a
+hypothesis.
+
+#### PHASE 4'S EXISTING PASSES CANNOT SEE THEM — TWICE OVER
+
+Pass 2 keys on `request_date`, and a re-ask is by definition a DIFFERENT day,
+so the pair lands in two separate groups. It also fires only on an unconfirmed
+**WIN**, and post-#231 the stale copy is a **LOSS**. Neither half matches.
+
+#### THE DISCRIMINATOR IS THE REQUESTED SAILING
+
+Same thread + same lane + same containers **also describes two genuine moves**
+Lonny asked for in one thread, one of which lost. Collapsing that erases a
+real loss. What separates them is `etd_requested`: one shipment asked twice
+names the SAME sailing, two shipments name two. A row missing that field is
+skipped entirely — absence is not evidence, and this is the branch where
+guessing costs a loss.
+
+Never fires when: the group holds 2+ distinct MDOLX refs (two real bookings,
+Michael's 2026-08-24 Tokyo question); the stale row carries its own `has_send`
+(an ask Lonny accepted in its own right, so its loss is real); the lane is
+unresolved (`canonical_port_key` → `"unknown"`, the same sentinel trap guarded
+in `ingest._prior_win_captured`); or the pair is same-day (pass 2 owns that,
+and two checks racing to collapse one row is how a heal double-counts).
+
+Ten of the fourteen tests are negative cases, deliberately.
+
+#### A LIMIT WORTH KNOWING
+
+The `has_send` guard depends on the rebuild having run. Pairs already on disk
+were promoted by the PRE-#231 matcher and still carry `has_send=True` until a
+fire rebuilds them from staged mail. So QC-083 **under-reports** on the first
+fire after #231, and on any pair whose RFQ has aged out of the 14-day stage
+window. That is the safe direction: a false negative reports nothing; a false
+positive nominates a real loss for deletion.
+
 ### 2026-08-28 (later) — the reversal that could never arrive: stamp the deadline, not the fire clock
 
 Michael, told that a WIN→LOSS reversal cannot reach any report: *"why not?
