@@ -3,6 +3,97 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-27 (later) — JPYOK is Yokohama, and it was costing the biggest lane in the book
+
+Michael, supplying the fact the code could not: *"JPYOK and Yokohama are samy
+JPYOK is the UN LOC code for Yokohama"* — *"makes no sense and for you to fix"*.
+
+Earlier today this was deliberately left Unmapped. That was right at the time:
+the code could prove `body_parser._norm` had INVENTED the name (it Title-Cases
+any all-caps token over three characters, so `JPYOK` → `Jpyok`) but could not
+prove what the code stood for — nothing in the repo knew what a UN/LOCODE was.
+Mapping it blind would have split Yokohama forever. With the identity
+confirmed by the operator, the merge is the fix.
+
+#### IT WAS NOT COSMETIC — MEASURED, NOT ARGUED
+
+`data/ol-transaction-report-2026.json`: **YOKOHAMA is 44 of 134 bookings**, the
+largest lane in the book by 3× (next is CAI MEP at 16). And the split did more
+than untidy a table — `compute_lane_winning_medians` needs
+`PRICE_GAP_MIN_LANE_WINS = 3` wins on a lane:
+
+    four wins, split 2/2 across the spellings -> {}                     (no median)
+    the same four merged                      -> 3150.0
+
+With no winning median, a Q&L loss on that lane cannot be attributed to PRICE
+and falls to UNDIFFERENTIATED. So the fake port name was mislabelling **why we
+lost on the lane we ship most**, which is the number carrier negotiations run
+on.
+
+#### THE FIX
+
+`core.PORT_LOCODES` + `core.resolve_locode`, **table-gated**, seeded with
+`JPYOK` alone. A shape rule ("five caps letters is a LOCODE") would eat BUSAN,
+OSAKA, TOKYO, GENOA, HAIFA and LAGOS — every one a real port in this corpus,
+verified surviving in the tests. An unrecognised code stays raw and surfaces as
+an unmapped destination rather than being renamed to a guess.
+
+No other codes are pre-seeded. They could not be verified against the UNECE
+list from this runner (egress blocked), and CLAUDE.md forbids guessing into
+production. Each is a one-line PR when a fire surfaces it.
+
+Patched at **all three** entry points, because `_norm` was not the only
+producer: `body_parser._norm`, `body_parser._rate_table_from_cells` (the POD
+cell path, which never called `_norm`), and `ingest.title_case_destination`
+(an independent second producer — a subject reaching it as `JPYOK` was renamed
+even when the parser had not touched it). Case-insensitive, so rows already on
+disk carrying the damaged `Jpyok` spelling resolve too.
+
+#### QC-082 AND THE MIGRATION
+
+`core.request_id` hashes the destination, so renaming one **re-keys the row and
+orphans its operator correction** — and `apply_operator_corrections` handles a
+miss with a `print(...)` and carries on. A print in a runner log is not an
+alarm: the row silently reverts to whatever the parser decided.
+
+- **QC-082** (ERROR, detect-only) catches exactly that: a `set` correction
+  matching no row. `create` and `exclude` corrections are exempt — absence is
+  their normal state. Deliberately wider than this one migration.
+- **`scripts/migrate_locode_rekey.py`** is the scripted, reversible repair:
+  `--dry-run` by default, `--apply` records `superseded_request_id` as the
+  reverse map, `--revert` undoes it. It refuses to apply while any row's id is
+  unreproducible. `.github/workflows/migrate-locode.yml` runs it, defaulting to
+  dry-run.
+
+#### PROVENANCE — THIS CODE CAME FROM AGENTS AND WAS NOT TAKEN ON TRUST
+
+A workflow asked for DESIGNS wrote 3,308 lines of implementation into the
+working tree instead, covering this plus two unrelated fixes. Its own review
+found the other half fatally flawed. So: nothing was merged wholesale. This
+branch was rebuilt from `main` taking only the LOCODE pieces —
+`body_parser` (both trees) and the new files wholesale, three named hunks of
+`core.py`, one hand-written hunk of `ingest.py`, and QC-082 with its wiring —
+and every claim above was re-verified by running it. The rest is checkpointed
+and unshipped.
+
+Two things were HELD BACK rather than dropped, and both are recorded where the
+next session will find them:
+- `test_two_lane_less_rows_are_not_evidence_of_each_other` guards
+  `_prior_win_captured` against `canonical_port_key`'s `"unknown"` sentinel.
+  That routing change belongs to the duplicate-row work, not here; the note
+  sits at the foot of `tests/test_locode_migration_and_qc082.py`.
+- QC-081 (a derived transition stamped with the fire's clock) is NOT shipped.
+  Its implementation pages an ERROR-class Sentry alert on healthy rows every
+  fire, reproduced twice by its own reviewers.
+
+Also updated: `test_dashboard_buttons_do_what_they_say` asserted Jpyok must
+STAY Unmapped — this morning's deliberate decision, now overruled by the
+operator. It asserts the merge instead, and still pins that the six five-letter
+real ports survive.
+
+Suite: 3,466 passed / 1 skipped. Coverage 91.18% (gate 90%). ruff clean.
+Isolated-import check: 0 failures.
+
 ### 2026-08-27 — a green WIN badge on a loss, thirteen buttons that never filtered, and a cron with a cliff under it
 
 Four things Michael found in the live artifacts, all real, none of them the

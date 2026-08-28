@@ -42,6 +42,12 @@ import core
 _BLOB_HOST = bool(os.environ.get("AZURE_STORAGE_CONNECTION_STRING"))
 
 
+# QC-082 reads the corrections file directly. Same constant the applier uses,
+# imported rather than re-spelled — a second path literal is how a check ends
+# up auditing a different file from the one production reads.
+from ingest import CORRECTIONS_PATH as _CORRECTIONS_PATH
+
+
 class _QC032Done(Exception):
     """Control-flow sentinel: the blob branch of QC-032 already reported."""
 
@@ -2665,6 +2671,57 @@ def _fire_alert_github_configured() -> bool:
         return False
 
 
+def qc082_stale_operator_corrections(rows, corrections_path=None) -> list:
+    """QC-082: an operator correction whose key matches no row — SILENTLY.
+
+    operator_corrections.json is the ONLY durable human state in a system that
+    rebuilds every row from staged mail each fire (CLAUDE.md "rebuild, don't
+    merge"). Corrections are matched by `request_id`, and
+    ingest.apply_operator_corrections handles a miss with
+    `print("WARN: ... has no matching row — skipped")` and carries on. A print
+    in a runner log is not an alarm: the row quietly reverts to whatever the
+    parser decided, and Michael's verdict is gone with nothing red anywhere.
+
+    That is not a hypothetical. `core.request_id` hashes the DESTINATION
+    (sha1(conversationId | ts | destination.lower())), so ANY change to how a
+    destination is spelled re-keys every affected row and orphans its
+    correction. The 2026-08-27 UN/LOCODE merge (JPYOK -> Yokohama) is one such
+    change; scripts/migrate_locode_rekey.py is its scripted, reversible repair.
+    This check is the standing detector so the NEXT one cannot be silent —
+    including a re-key nobody realised was a re-key.
+
+    NOT every absence is a fault, and the exemptions are the whole reason this
+    can be an ERROR rather than noise:
+      - `create: true` — its purpose is to add a row that does not exist, and
+        it self-skips once the real booking email arrives. Absence is normal.
+      - `exclude: true` — a fresh ingest already drops the row, so absence is
+        the EXPECTED steady state (see the applier's own comment).
+    What is left is `set` corrections: a human overrode a specific row and
+    that row must be there.
+
+    DETECT-ONLY. There is no safe automatic repair — re-keying a correction
+    means deciding which row the human meant, and guessing that wrong writes a
+    fabricated verdict onto real business. The repair is the migration script,
+    run by a person who reads its plan first.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(corrections_path) if corrections_path else _CORRECTIONS_PATH
+    try:
+        doc = _json.loads(_Path(path).read_text(encoding="utf-8"))
+    except Exception as e:
+        return [("<unreadable>", f"{path}: {e}")]
+    live = {r.get("request_id") for r in (rows or [])}
+    stale = []
+    for corr in doc.get("corrections", []):
+        if corr.get("create") or corr.get("exclude"):
+            continue
+        rid = corr.get("request_id")
+        if rid not in live:
+            stale.append((rid, (corr.get("note") or corr.get("source") or "")[:100]))
+    return stale
+
+
 def phase_6_rules(log: Log, data: dict):
     log.section("PHASE 6: CROSS-CHECK RULES")
     requests = data["requests"]
@@ -5050,6 +5107,32 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-080: {len(_wins)} win(s) — too few to judge clustering")
     except Exception as _e:
         log.warn(f"QC-080: check failed with exception: {_e}")
+
+    # QC-082: A HUMAN VERDICT THAT SILENTLY STOPPED APPLYING.
+    #
+    # 2026-08-27, shipped alongside the UN/LOCODE merge. That merge renames a
+    # stored destination, core.request_id hashes the destination, and the
+    # corrections file is keyed by request_id — so the merge re-keys rows and
+    # orphans their corrections. The applier only PRINTS a WARN on a miss, so
+    # without this the loss is invisible. The check is deliberately wider than
+    # that one migration: any future change to how a destination, a timestamp
+    # or a conversation id is spelled has the same effect, and this is the
+    # detector that makes it loud on the very next fire.
+    try:
+        _stale82 = qc082_stale_operator_corrections(data.get("requests", []))
+        if _stale82:
+            log.error(
+                f"QC-082: {len(_stale82)} operator correction(s) match NO row "
+                f"— a human verdict is not being applied and nothing else says "
+                f"so. " + "; ".join(f"{rid}: {why}" for rid, why in _stale82[:3])
+                + (f" + {len(_stale82) - 3} more" if len(_stale82) > 3 else "")
+                + " Run scripts/migrate_locode_rekey.py --dry-run to see "
+                  "whether a destination rename re-keyed them.")
+        else:
+            log.ok("QC-082: every `set` operator correction still matches a "
+                   "live row")
+    except Exception as _e:
+        log.warn(f"QC-082: check failed with exception: {_e}")
 
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #

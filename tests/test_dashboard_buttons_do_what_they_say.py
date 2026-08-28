@@ -197,13 +197,37 @@ def test_a_day_label_only_appears_where_a_date_filter_backs_it():
                 f"got {f!r}: {lab!r}")
 
 
-def test_huangpu_is_mapped_and_jpyok_deliberately_is_not():
-    # Michael: "still shows things unmapped". Huangpu is a real port name
-    # that was simply missing — a map entry. Jpyok is a UN/LOCODE our own
-    # parser title-cased into a fake port name; mapping it would turn the
-    # row green while splitting Yokohama across two spellings forever, and
-    # would delete the only detector pointing at it.
+def test_huangpu_and_jpyok_both_resolve_now():
+    """Michael, 2026-08-27: "still shows things unmapped" — and then, on the
+    second one: "JPYOK and Yokohama are samy JPYOK is the UN LOC code for
+    Yokohama ... makes no sense and for you to fix".
+
+    THIS TEST USED TO ASSERT THE OPPOSITE for Jpyok. When it was written the
+    code could prove our parser had INVENTED the name (body_parser._norm
+    Title-Cases any all-caps token over three characters, so JPYOK became
+    "Jpyok") but could not prove what the code stood for — nothing in the
+    repo knew what a UN/LOCODE was. So it was pinned Unmapped deliberately,
+    to keep the only detector pointing at it rather than paper it over with
+    a map entry that would have split Yokohama forever.
+
+    The operator supplied the missing fact. Yokohama is 44 of the 134
+    bookings in data/ol-transaction-report-2026.json — the largest lane in
+    the book by 3x — and the split was starving its winning median below
+    PRICE_GAP_MIN_LANE_WINS (measured: split -> no median at all, merged ->
+    3150.0), which flipped that lane's Q&L losses from PRICE to
+    UNDIFFERENTIATED. So the merge is the fix, not the map entry.
+    """
     assert core.trade_region_for("Huangpu") == "Far East"
-    assert core.trade_region_for("Jpyok") == "Unmapped", (
-        "Jpyok must stay Unmapped — it is a parser defect, not a map gap. "
-        "Fix it in body_parser._norm so the rows MERGE into Yokohama.")
+    # Jpyok now RESOLVES rather than being detected — through the port it
+    # names, not through a region entry of its own.
+    assert core.resolve_locode("JPYOK") == "Yokohama"
+    assert core.resolve_locode("Jpyok") == "Yokohama", (
+        "rows written before the fix carry the Title-Cased spelling; the "
+        "resolver must reach them too")
+    assert core.trade_region_for("Jpyok") == "Far East"
+    assert core.same_port("Yokohama", "JPYOK"), "the whole point is the merge"
+    # And the five-letter REAL ports must be untouched — a shape rule would
+    # have eaten every one of these.
+    for real in ("BUSAN", "OSAKA", "TOKYO", "GENOA", "HAIFA", "LAGOS"):
+        assert core.resolve_locode(real) is None, (
+            f"{real} is a real port, not a LOCODE — the table gate failed")

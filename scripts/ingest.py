@@ -225,6 +225,16 @@ def title_case_destination(destination: str | None) -> str:
     if not destination or destination == "Unknown":
         return destination or "Unknown"
     s = destination.strip()
+    # A UN/LOCODE is not a casing problem — it is a different NAME for the
+    # port, so it resolves before any casing rule runs. This function
+    # Title-Cases any head longer than 4 characters, which is the SECOND
+    # independent producer of the fake port "Jpyok" (body_parser._norm is the
+    # first): a subject that reached here as "JPYOK" was renamed here even
+    # when the parser had not touched it. Table-gated in core.resolve_locode,
+    # so a 5-letter real port ("BUSAN", "GENOA") is unaffected.
+    _loc = C.resolve_locode(s)
+    if _loc:
+        return _loc
     # Split off any "(Foo Bar)" suffix
     m = re.match(r"^([A-Za-z]+)(\s*\(.+\))?$", s)
     if m:
@@ -1166,6 +1176,15 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
             normalized = re.sub(r"^\s*Port\s+(?=Penang|Ho Chi Minh|Jakarta)\b", "", s_dest, flags=re.IGNORECASE)
             if normalized != s_dest:
                 s_dest = normalized.strip()
+        # THE THIRD SPELLING, CLOSED. Every other destination writer in this
+        # file goes through title_case_destination; this standalone-booking
+        # path did not, so whatever body_parser put in `destination` or `pod`
+        # was stored verbatim — including a raw table-cell "JPYOK", which is
+        # neither the parser's "Jpyok" nor the map's "Yokohama". Routing it
+        # through the same normalizer as every other row is what makes ONE
+        # spelling structural rather than a coincidence, and it applies the
+        # LOCODE table here for free.
+        s_dest = title_case_destination(s_dest) if s_dest else s_dest
         s_dest = s_dest or "Unknown"
         # A destination that resolves to the SAME port as the origin is a
         # parse failure, not a shipment. It happens on re-forwarded or

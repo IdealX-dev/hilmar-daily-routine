@@ -473,6 +473,71 @@ def to_pt(dt: datetime | None) -> datetime | None:
     return dt.astimezone(PT) if dt else None
 
 
+#: UN/LOCODE → the ONE display spelling this book uses for that port.
+#:
+#: A UN/LOCODE is the 5-character UNECE code for a place (2-letter ISO-3166
+#: country + 3-letter locality). OL and the carriers write them into booking
+#: subjects and POD columns interchangeably with the port name. Nothing in
+#: this repo knew what one was until 2026-08-27, so `body_parser._norm` — which
+#: Title-Cases any all-caps token longer than three characters — turned the
+#: code `JPYOK` into the fake port name "Jpyok", and Yokohama (44 of the 134
+#: bookings in data/ol-transaction-report-2026.json — the largest lane in the
+#: book) split across two spellings. `aggregate_lanes` and
+#: `compute_lane_winning_medians` both key on the raw "Oakland → X" display
+#: string, so the split also starved the Yokohama winning median below
+#: PRICE_GAP_MIN_LANE_WINS and flipped that lane's Q&L losses from PRICE to
+#: UNDIFFERENTIATED. Michael, confirming the identity himself: "JPYOK and
+#: Yokohama are same JPYOK is the UN LOC code for Yokohama".
+#:
+#: TABLE-GATED, AND THAT IS THE WHOLE SAFETY ARGUMENT. A shape rule ("5 caps
+#: letters is a LOCODE") would eat BUSAN, OSAKA, TOKYO, GENOA, HAIFA and LAGOS
+#: — every one a real port in this corpus. Only codes listed HERE resolve; an
+#: unrecognised code stays raw, lands as an unmapped destination, and trips
+#: QC-015, which now names it as a possible LOCODE. Absent code = one warning
+#: and a one-line PR. Wrong code = two real ports silently merged forever.
+#:
+#: SEEDED FROM EVIDENCE, NOT FROM MEMORY. JPYOK is the only entry because it
+#: is the only code this book has actually produced and the only one the
+#: operator has confirmed. The remaining ports of KNOWN_DESTINATIONS are NOT
+#: pre-seeded: their codes could not be verified against the UNECE list in the
+#: session that wrote this (egress to unece.org / unlocode.info is blocked
+#: from the runner), and CLAUDE.md forbids guessing into production. Add each
+#: one when a fire actually surfaces it, with the UNECE citation in the
+#: comment. tests/test_locode_merge.py::test_every_locode_value_is_a_real_
+#: corpus_port refuses any entry whose value is not already a
+#: KNOWN_DESTINATIONS spelling that maps to a real trade region.
+PORT_LOCODES = {
+    # UNECE JP / Yokohama. Confirmed by the operator 2026-08-27 and observed
+    # in production as the "Jpyok" row of the dashboard's Unmapped bucket.
+    "JPYOK": "Yokohama",
+}
+
+
+def resolve_locode(value) -> str | None:
+    """The port name a UN/LOCODE names, or None when `value` is not a code
+    WE HAVE LISTED.
+
+    Case-insensitive on purpose: by the time a stored row reaches a reader,
+    `_norm` has already Title-Cased the code, so the damaged spelling on disk
+    is "Jpyok", not "JPYOK". Matching both is what lets the fix reach rows
+    that were written before it shipped without rewriting stored history.
+
+    Returns the DISPLAY spelling ("Yokohama"). Callers that need a matching
+    key lowercase it themselves — `canonical_port_key` does exactly that, so
+    resolve_locode("JPYOK") and canonical_port_key("Yokohama") agree.
+
+    Never guesses. A 5-letter token that is not a key here returns None and
+    the caller keeps the raw text, which is what keeps BUSAN/OSAKA/TOKYO/
+    GENOA/HAIFA/LAGOS intact.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    token = value.strip()
+    if len(token) != 5 or not token.isalpha():
+        return None
+    return PORT_LOCODES.get(token.upper())
+
+
 #: Ports that Lonny and OL routinely call by DIFFERENT names for the SAME
 #: destination. Until 2026-07-26 the only lane key in the system was
 #: `.strip().lower()`, so "HCMC" and "Cat Lai" were different lanes — which is
@@ -528,6 +593,14 @@ def canonical_port_key(destination) -> str:
     raw = (destination or "").strip().lower()
     if not raw:
         return "unknown"
+    # A UN/LOCODE collapses to the port it names BEFORE anything else, so a
+    # stray code that got past the write-side normalizers still matches the
+    # port on THIS side of every comparison. Lowercased here, which is why
+    # resolve_locode returns the display spelling and this returns the key:
+    # canonical_port_key("JPYOK") == canonical_port_key("Yokohama").
+    _loc = resolve_locode(raw)
+    if _loc:
+        raw = _loc.strip().lower()
     if raw in _PORT_ALIASES:
         return _PORT_ALIASES[raw]
     head, paren = raw, None
