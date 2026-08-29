@@ -60,8 +60,7 @@ HOW TO TALK TO ME
 - Tag confidence: [Certain] / [Likely] / [Guessing].
 - Short. Specific. Owner + next step on anything operational.
 
-SHARED REFERENCE DATA — do not rebuild it here
-## Shared reference data — ports, airports, rail, carriers (standing)
+SHARED REFERENCE DATA — ports, airports, rail, carriers; do not rebuild it here
 
 Ports, airports, inland depots, rail yards and carrier codes are maintained ONCE,
 in `IdealX-dev/rate-blaster`. Never build a port / airport / rail / LOCODE /
