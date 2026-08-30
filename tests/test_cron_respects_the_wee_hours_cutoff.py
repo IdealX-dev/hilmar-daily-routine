@@ -209,3 +209,104 @@ def test_the_weeklys_exemption_is_real_and_not_just_asserted():
     five_am_mon = datetime(2026, 8, 31, 9, 7, tzinfo=ZoneInfo("UTC"))  # 05:07 ET
     assert W._fire_day_et(five_am_mon) == date(2026, 8, 31), (
         "a 5 AM Monday fire no longer resolves to Monday")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# THE SECOND HALF: a cron that fires and a gate that opens are TWO facts,
+# and daily.yml stores them in two places.
+#
+# #228 moved the crons to 10:30/11:30 UTC and left the gate's DST matcher on
+# the old 12/13. Neither cron could then open the gate, so EVERY scheduled
+# fire skipped itself — green in seconds, having sent nothing. Both of Friday
+# 2026-08-28's scheduled runs did exactly that:
+#
+#   cron='30 11 * * 1-5' hour=11 ET-offset=-0400 → proceed=false
+#
+# The report reached the distribution only because a human dispatched it by
+# hand at 17:31 UTC. Nothing was red. Three days of "successful" scheduled
+# runs sent nothing at all.
+#
+# The numbers being wrong was the symptom. The DEFECT is that one fact lives
+# in two places, so these tests derive the matcher from the crons rather than
+# restating either.
+# ─────────────────────────────────────────────────────────────────────
+
+DAILY_YML = (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
+
+
+def _daily_cron_hours() -> set[int]:
+    """The UTC hours daily.yml is actually scheduled for."""
+    body = DAILY_YML.split("jobs:", 1)[0]
+    hours = {int(c.split()[1]) for c in re.findall(r'- cron:\s*"([^"]+)"', body)}
+    assert hours, "no crons found in daily.yml — this guard would pass vacuously"
+    return hours
+
+
+def _gate_open_hours() -> dict[str, int]:
+    """The {ET offset: cron hour} pairs the schedule gate will open on."""
+    pairs = re.findall(
+        r'\[ "\$offset" = "(-0\d00)" \] && \[ "\$cron_hour" = "(\d+)" \]',
+        DAILY_YML)
+    assert pairs, (
+        "could not find the schedule gate's DST matcher in daily.yml — if it "
+        "was rewritten, this guard must be rewritten with it, not silently pass")
+    return {off: int(h) for off, h in pairs}
+
+
+def test_every_scheduled_cron_can_actually_open_the_gate():
+    """THE REGRESSION. A cron the gate will never match is a fire that never
+    happens, and it reports success while doing nothing."""
+    cron_hours = _daily_cron_hours()
+    gate_hours = set(_gate_open_hours().values())
+    orphaned = cron_hours - gate_hours
+    assert not orphaned, (
+        f"daily.yml is scheduled at UTC hour(s) {sorted(orphaned)} but its "
+        f"schedule gate only opens on {sorted(gate_hours)} — those fires will "
+        f"skip themselves, green and silent, exactly as they did 2026-08-28")
+
+
+def test_the_gate_does_not_wait_on_an_hour_nothing_fires():
+    """The mirror image: a matcher hour with no cron behind it is dead code
+    that makes the gate look correct while covering nothing."""
+    cron_hours = _daily_cron_hours()
+    dangling = set(_gate_open_hours().values()) - cron_hours
+    assert not dangling, (
+        f"the schedule gate opens on UTC hour(s) {sorted(dangling)} that no "
+        f"cron in daily.yml fires at — the crons are {sorted(cron_hours)}")
+
+
+def test_each_dst_season_has_exactly_one_opening():
+    """Both encodings must map to ONE open hour each: two would fire the
+    pipeline twice a day, zero is the outage above. The workflow's own comment
+    says this is why the matcher must not short-circuit."""
+    gate = _gate_open_hours()
+    assert set(gate) == {"-0400", "-0500"}, (
+        f"expected an EDT and an EST branch, got {sorted(gate)}")
+    assert len(set(gate.values())) == 2, (
+        f"both DST branches open on the same cron hour {gate} — one season "
+        f"fires twice and the other never fires")
+    # EST is an hour later in UTC for the same ET wall-clock.
+    assert gate["-0500"] == gate["-0400"] + 1, (
+        f"EST must be exactly one UTC hour after EDT for one ET wall-clock "
+        f"time; got EDT={gate['-0400']} EST={gate['-0500']}")
+
+
+def test_the_open_hours_are_the_ones_that_land_at_the_intended_et_time():
+    """Ties the whole thing back to the wall clock this file exists to guard:
+    the hour the gate opens on must convert to the same ET time in its own
+    season, and must clear the wee-hours cutoff."""
+    cutoff = _cutoff_hour()
+    gate = _gate_open_hours()
+    et_times = []
+    for off, hour in gate.items():
+        day = _EDT_DAY if off == "-0400" else _EST_DAY
+        et = _et_at(f"30 {hour} * * 1-5", day)
+        assert et is not None, f"cron hour {hour} did not parse"
+        assert et.hour >= cutoff, (
+            f"the gate opens on UTC {hour}:30, which is {et:%H:%M} ET in "
+            f"{off} — below the {cutoff}:00 cutoff, so the fire would report "
+            f"the wrong business day")
+        et_times.append((et.hour, et.minute))
+    assert len(set(et_times)) == 1, (
+        f"the two DST branches land at different ET wall-clock times "
+        f"{et_times} — the whole point of two encodings is one local time")
