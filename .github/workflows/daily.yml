@@ -245,8 +245,22 @@ jobs:
           cron="${{ github.event.schedule }}"
           cron_hour=$(echo "$cron" | awk '{print $2}')   # field 2 of "M H * * D"
           proceed=false
-          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "12" ]; then proceed=true; fi
-          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "13" ]; then proceed=true; fi
+          # THESE TWO HOURS MUST MATCH THE `cron:` LINES ABOVE. They did not,
+          # from #228 (2026-08-27) until 2026-08-30: that PR moved the crons
+          # to 10:30/11:30 UTC (6:30 AM ET) and left this matcher on the OLD
+          # 12/13, so NEITHER cron could open the gate and every scheduled
+          # fire skipped itself. Both of Friday 08-28's scheduled runs went
+          # green in seconds having sent nothing —
+          #   cron='30 11 * * 1-5' hour=11 ET-offset=-0400 -> proceed=false
+          # — and the report only reached the distribution because someone
+          # dispatched it by hand at 17:31 UTC. Green, silent, and not firing:
+          # the exact shape of the 2026-08-20 `|| true` diagnostic.
+          #
+          # tests/test_cron_respects_the_wee_hours_cutoff.py now DERIVES both
+          # numbers from the cron lines and fails if they drift apart, so the
+          # next person to move the fire time cannot leave this behind.
+          if [ "$offset" = "-0400" ] && [ "$cron_hour" = "10" ]; then proceed=true; fi
+          if [ "$offset" = "-0500" ] && [ "$cron_hour" = "11" ]; then proceed=true; fi
           echo "cron='$cron' hour=$cron_hour ET-offset=$offset → proceed=$proceed window=previous"
           echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
 

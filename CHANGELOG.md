@@ -41,6 +41,63 @@ three).
 
 The rule now lives in exactly one place. The evidence lives beside it.
 
+### 2026-08-30 — the scheduled fire has not fired since 08-27, and every run reported success
+
+Found while checking what QC-083 turned up in its first real fire. It had not
+had one.
+
+#### THE OUTAGE
+
+`#228` moved the crons to 10:30 / 11:30 UTC (6:30 AM ET) and **left the
+schedule gate's DST matcher on the old 12 / 13**. The two numbers are the same
+fact stored twice, and only one of them moved. Neither cron could then open
+the gate:
+
+```
+cron='30 11 * * 1-5' hour=11 ET-offset=-0400 → proceed=false
+```
+
+Both of Friday 2026-08-28's scheduled runs gated themselves off. `Production
+fire` — **skipped**. The whole workflow reported **success**, in seconds,
+having sent nothing. The report reached the distribution only because someone
+dispatched it by hand at 17:31 UTC.
+
+Green, silent, and not firing — the same shape as the 2026-08-20 `|| true`
+diagnostic that died on its first line and passed. This one is worse: it
+looked like three healthy runs.
+
+Mine. #228 shipped 2026-08-27; the gate has been closed to every scheduled
+fire since.
+
+#### THE FIX, AND THE REAL FIX
+
+The matcher moves to 10 / 11. That is the symptom.
+
+The DEFECT is that a cron that fires and a gate that opens are two facts and
+`daily.yml` keeps them in two places. Four tests now DERIVE the matcher from
+the cron lines instead of restating either number:
+
+- every scheduled cron hour must be one the gate opens on (the regression —
+  fails on the shipped state with `assert not {12, 13}`)
+- every matcher hour must have a cron behind it (dead code that makes the gate
+  look correct while covering nothing)
+- each DST season opens on exactly one hour, and EST is exactly one UTC hour
+  after EDT — two openings would fire the pipeline twice a day, zero is this
+  outage
+- the hour the gate opens on must convert to the intended ET wall-clock in its
+  own season, and clear the wee-hours cutoff, so the two halves of this file
+  cannot disagree
+
+Both regression tests were re-run against the shipped 12/13 and both fail
+there.
+
+#### WHY THE EXISTING CRON TEST DID NOT CATCH IT
+
+`test_cron_respects_the_wee_hours_cutoff` checked that the crons convert to a
+safe ET hour. They do — 6:30 AM ET is correct and was never the problem. It
+never asked whether anything downstream would act on them. A guard on the
+schedule that ignores the gate is half a guard.
+
 ### 2026-08-28 (blob dry run) — QC-082 would have paged an ERROR on a healthy row at the next fire
 
 The first real dry run of `migrate_locode_rekey.py` against blob, dispatched
