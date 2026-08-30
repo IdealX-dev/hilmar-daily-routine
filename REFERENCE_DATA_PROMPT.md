@@ -74,7 +74,8 @@ decision. A seaports-only extract measures **480 KB** against the full db's
 ### BLOCKED, correctly — `core.CARRIER_ALIASES`
 
 42 entries, untouched, and staying that way until `carrier_registry` reaches
-`rate-blaster` `main`. `portal/carriers.py` is **not** substituted for it —
+`rate-blaster` `main`. `rate_blaster/portal/carriers.py` (in rate-blaster —
+there is no such path in this repo) is **not** substituted for it —
 its own docstring calls it *"curated, not exhaustive"*, and the probe's
 closing line says the same.
 
