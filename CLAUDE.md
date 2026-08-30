@@ -219,24 +219,6 @@ that survived because both sides of the comparison were equally wrong.
   Fixtures dated relative to `now` pass or fail depending on the hour the suite
   runs; anchor them to `gen_email._report_date`.
 
-## Reference data is NOT maintained here
-
-Ports, airports, inland depots, rail yards and carrier codes live ONCE, in
-`IdealX-dev/rate-blaster`. Never build a port / LOCODE / carrier list in this
-repo, and never hard-code a UN/LOCODE, IATA code or SCAC. Finding one is a
-finding — report it.
-
-Read `REFERENCE_DATA_PROMPT.md` before touching anything that resolves a port
-or a carrier. It carries the schema, the five rules (each one a defect that
-already shipped), what is local to this repo vs shared, and this repo's
-current compliance status — including the OPEN violation `core.PORT_LOCODES`
-shipped in #230.
-
-Check what is actually consumable before writing against it — never assume:
-`python -m rate_blaster.scripts.reference_data_status`. It exits non-zero
-while a component is still on a branch. `portal/carriers.py` is a UI picker,
-not the registry.
-
 ## Reports and who sees them
 
 `config.json` holds `distribution.full_list` (staff) and `client_report`

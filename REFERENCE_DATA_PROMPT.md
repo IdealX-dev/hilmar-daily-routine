@@ -1,54 +1,30 @@
-# Shared reference data — ports, airports, rail, carriers
+# Reference data — this repo's compliance record
 
-**Standing rule, every repo, every session.** Paste-free: point a session here
-instead of re-typing the contract.
+**The rule is not restated here.** It lives in `CLAUDE.md`, section *"SHARED
+REFERENCE DATA — ports, airports, rail, carriers; do not rebuild it here"*,
+which is loaded into every session automatically. A contract about not keeping
+two copies of a thing does not get kept in two copies.
 
-Ports, airports, inland depots, rail yards and carrier codes are maintained
-ONCE, in `IdealX-dev/rate-blaster`. Never build a port / airport / rail /
-LOCODE / carrier list in any other repo, and never hard-code a UN/LOCODE, IATA
-code or SCAC. **Finding one is a finding — report it.**
-
----
-
-## Where it lives
-
-**`rate_blaster/geo/geo_master.db`** — committed SQLite, on `main`:
-
-| table | rows | key |
-|---|---|---|
-| `seaports` | 11,928 | `locode` |
-| `airports` | 7,883 | `iata_code` (plus `icao_code`) |
-| `icds` | 12,949 | `icd_code` |
-| `rail_yards` | 9,177 | `yard_id` |
-
-All carry `name`, `city`, `country_code`, `lat`, `lon`.
-
-**`rate_blaster/util/carrier_registry.py`** — 28 ocean lines (SCAC) + 25
-airlines (IATA/ICAO). `canonical_for_code()` resolves any of them.
+This file holds the two things `CLAUDE.md` cannot: **what the probe actually
+returned when it was run**, and **where this repo currently stands against the
+rule**. Both are findings with dates on them, not policy.
 
 ---
 
-## Check what is consumable BEFORE writing against it
+## What is actually consumable — measured, 2026-08-28
 
-Never assume, and never take anyone's word for it — including the operator's,
-including this file's:
+`CLAUDE.md` says to run the probe rather than trust anyone's summary,
+including its own. This is what running it returned. **Re-run it; do not trust
+this page.**
 
 ```
 python -m rate_blaster.scripts.reference_data_status
 ```
 
-It prints SHAREABLE vs LOCAL ONLY per component and **exits non-zero while
-anything is still on a branch**. A component marked LOCAL ONLY exists but
-cannot be consumed by another repo yet, and telling a consumer otherwise is
-the defect this probe exists to prevent.
-
-`portal/carriers.py` is a UI picker whose own docstring says *"curated, not
-exhaustive"*. **It is NOT the registry.** Never substitute it.
-
-### Last verified: 2026-08-28
-
-Run from `claude/rate-blaster-geo-fetch-0cckio` @ `b527194` — the probe is not
-itself on `main` yet, which is why it must be run from that branch today.
+The probe is **not on `rate-blaster` `main`**. It lives on
+`claude/rate-blaster-geo-fetch-0cckio` @ `b527194`, alongside
+`carrier_registry.py` — which is why it has to be run from that branch today,
+and why it reports itself as unconsumable.
 
 ```
   [SHAREABLE] geo_master.db
@@ -69,82 +45,56 @@ Another repo can consume RIGHT NOW: geo_master.db
 EXIT=1
 ```
 
-**This snapshot is a convenience, not an authority.** It goes stale the moment
-that branch merges. Re-run the probe.
+**This snapshot goes stale the moment that branch merges.** It is here as
+evidence of a decision made on a date, not as a substitute for the probe.
+
+Corroborated independently against `geo_master.db` on `rate-blaster` `main`
+(`531bd27`): `JPYOK` → `name='Port of Yokohama'`, `city='Yokohama'`,
+`country_code='JP'` — which is rule 1 in one row. And `city='Lagos'` returns
+`NGAPP`, `NGTIN` **and** `PTLOS` — rule 2 in three.
 
 ---
 
-## Five rules. Each is a defect that already shipped.
-
-**1. Join on `city`, never `name`.**
-`JPYOK` is `name='Port of Yokohama'`, `city='Yokohama'`. Keying a lane off
-`name` rewrites every lane key in the consuming system.
-
-**2. Code → place only, never place → code.**
-262 of 11,629 city names map to more than one LOCODE. `Lagos` returns two
-Nigerian ports **and** `PTLOS` in Portugal. A reverse join eventually ships to
-the wrong continent.
-
-**3. Resolution is unrestricted; MATCHING in prose is gated** on
-`seaports.is_major = 1` — 136 ports, covering every lane actually quoted.
-Resolving a code someone handed you is always safe; going looking for port
-names inside free text is not.
-
-**4. Never match a bare 2-letter carrier code in free text.**
-`PO` is a purchase order. `CM` is centimetres. `FX` is foreign exchange. `5X`
-is `5x40HC`. `VS` is what a comparison prints BETWEEN two carriers. Match a
-full name or a labelled column, nothing else.
-
-**5. 3-letter IATA codes ARE the identifier — match them, but mind POSITION.**
-Seven incoterms are live IATA codes. `FOB Shanghai` resolves FOB to Fort
-Bragg; `CPT Hamburg` to Cape Town; `12.4 CBM` is Columbus. A 3-letter token
-**after a number** is a unit. An incoterm **before a place name** is the
-incoterm.
-
-### Two more that follow from the above
-
-- **Anything you cannot resolve is `None`, never a guess.** A wrong carrier or
-  port on a priced row misleads a human in a way a blank never does.
-- **A missing code stays absent — never a placeholder.** A code that looks
-  real will reach a booking.
-
----
-
-## What stays local, and what does not
-
-**Local to each repo:**
-
-- **Aliases** — `"port of los angeles"`, `"san pedro"`. How *your*
-  correspondents spell a place.
-- **Match policy** — which subset your parser recognises.
-
-**Never local:**
-
-- The data itself.
-- **A field upstream does not carry.** Add it in rate-blaster and publish.
-  Corrections are a PR against rate-blaster so every repo gets them at once.
-
----
-
-## Compliance status — this repo (hilmar-daily-routine)
+## Where this repo stands
 
 Audited 2026-08-28.
 
-**OPEN VIOLATION.** `scripts/core.py` — `PORT_LOCODES` and `resolve_locode()`,
-shipped in #230 on 2026-08-27. A local LOCODE table containing a hard-coded
-UN/LOCODE: both halves of the rule, in one place. `geo_master.db` is
-SHAREABLE, so this is replaceable now with a `locode` → `city` lookup
-(direction per rule 2).
+### OPEN VIOLATION — `scripts/core.py`
 
-**BLOCKED, correctly.** `core.CARRIER_ALIASES` (42 entries) stays as-is until
-`carrier_registry` reaches `main`. Do not substitute `portal/carriers.py`.
+`PORT_LOCODES` and `resolve_locode()`, shipped in **#230** on 2026-08-27. A
+local LOCODE table containing a hard-coded UN/LOCODE: both halves of the rule
+broken in one place.
 
-**Clean on rule 4.** `CARRIER_ALIASES` has zero keys of length ≤ 2, so nothing
-here matches a bare 2-letter code in prose. `HLAG` and `OOCL` are 4-letter but
-are trading names appearing in email text, not dispatched SCACs.
+`geo_master.db` is SHAREABLE, so this is replaceable now — as a `locode` →
+`city` lookup, code→place only, per rule 2. **Not yet fixed**; the access
+mechanism (vendor an extract vs fetch at build time) is an open operator
+decision. A seaports-only extract measures **480 KB** against the full db's
+5.8 MB, if that helps size it.
 
-**Under the contract, not yet migrated.** `core._TRADE_REGION_MAP` (port →
-trade region) and `body_parser.KNOWN_ORIGINS`. Trade region is a
-classification `geo_master` does not carry — by the rule above that is a field
-to add in rate-blaster and publish, not to keep here. `Huangpu`, added locally
-in #228, is in neither `name` nor `city` upstream and is a row to contribute.
+### BLOCKED, correctly — `core.CARRIER_ALIASES`
+
+42 entries, untouched, and staying that way until `carrier_registry` reaches
+`rate-blaster` `main`. `portal/carriers.py` is **not** substituted for it —
+its own docstring calls it *"curated, not exhaustive"*, and the probe's
+closing line says the same.
+
+### CLEAN — rule 4
+
+`CARRIER_ALIASES` has **zero** keys of length ≤ 2, so nothing in this repo
+matches a bare 2-letter code in prose. `HLAG` and `OOCL` are 4-letter but are
+trading names appearing in email text, not dispatched SCACs.
+
+### UNDER THE CONTRACT, NOT YET MIGRATED
+
+- `core._TRADE_REGION_MAP` — port → trade region. Trade region is a
+  classification `geo_master` does not carry, so by the rule it is a field to
+  add in rate-blaster and publish, not to keep here.
+- `body_parser.KNOWN_ORIGINS` — origin port names.
+- `Huangpu`, added locally in **#228**, is in neither `name` nor `city`
+  upstream. A row to contribute via PR against rate-blaster.
+
+### NOT YET ASSESSED
+
+Rule 5 (3-letter IATA codes and incoterm collisions) has not been audited
+against this repo. It is ocean-only today, so the exposure is likely nil — but
+"likely" is not a measurement, and this line stays until someone takes one.
