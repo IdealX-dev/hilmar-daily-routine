@@ -3,6 +3,44 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-30 — two sessions wrote the same contract; only one copy ships
+
+Michael sent the bare filename `REFERENCE_DATA_PROMPT.md`. It existed nowhere
+— not here, not in rate-blaster, not on any reachable ref — so this session
+wrote it: the shared reference-data contract, plus a pointer section in
+CLAUDE.md.
+
+**Another session had already landed the same contract in CLAUDE.md** (#236,
+#237) while this one was writing. Caught before merge, on a `mergeable_state:
+behind` from the base moving underneath the branch.
+
+Shipping it as written would have put THREE copies of one rule in this repo:
+main's CLAUDE.md block, a full restatement in the new file, and a third
+partial restatement in the pointer section — a contract about not keeping two
+copies of a thing, kept in three.
+
+So the file was rewritten to hold **only what CLAUDE.md cannot**, and the
+duplicate CLAUDE.md section was dropped entirely:
+
+- **What the probe actually returned**, with the date and the commit it was
+  run from. CLAUDE.md states the claims; this records the measurement —
+  including that `carrier_registry` and `reference_data_status` itself are
+  LOCAL ONLY, on `claude/rate-blaster-geo-fetch-0cckio` @ `b527194`, so no
+  consumer can use them yet. Labelled as going stale the moment that branch
+  merges, with the instruction to re-run rather than trust the page.
+- **This repo's compliance status**, a dated finding rather than policy: the
+  OPEN violation (`core.PORT_LOCODES` / `resolve_locode`, shipped by this
+  session in #230), what is correctly blocked, what is clean on rule 4, what
+  is not yet migrated, and — recorded rather than assumed — that rule 5 has
+  not been audited here at all.
+
+Corroborated independently against `geo_master.db` on rate-blaster `main`
+(`531bd27`): `JPYOK` is name='Port of Yokohama' / city='Yokohama' (rule 1 in
+one row), and city='Lagos' returns `NGAPP`, `NGTIN` and `PTLOS` (rule 2 in
+three).
+
+The rule now lives in exactly one place. The evidence lives beside it.
+
 ### 2026-08-30 — the scheduled fire has not fired since 08-27, and every run reported success
 
 Found while checking what QC-083 turned up in its first real fire. It had not
