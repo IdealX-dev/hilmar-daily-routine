@@ -60,6 +60,56 @@ HOW TO TALK TO ME
 - Tag confidence: [Certain] / [Likely] / [Guessing].
 - Short. Specific. Owner + next step on anything operational.
 
+SHARED REFERENCE DATA — ports, airports, rail, carriers; do not rebuild it here
+
+Ports, airports, inland depots, rail yards and carrier codes are maintained ONCE,
+in `IdealX-dev/rate-blaster`. Never build a port / airport / rail / LOCODE /
+carrier list in any other repo, and never hard-code a UN/LOCODE, IATA code or
+SCAC. Finding one is a finding — report it.
+
+**`rate_blaster/geo/geo_master.db`** — committed SQLite, on `main`:
+`seaports` 11,928 (key `locode`) · `airports` 7,883 (key `iata_code`, plus
+`icao_code`) · `icds` 12,949 (key `icd_code`) · `rail_yards` 9,177 (key
+`yard_id`). All carry name, city, country_code, lat, lon.
+
+**`rate_blaster/util/carrier_registry.py`** — 28 ocean lines (SCAC) + 25
+airlines (IATA/ICAO); `canonical_for_code()` resolves any of them.
+
+**Check what is actually consumable before writing against it — never assume,
+and never take my word:**
+`python -m rate_blaster.scripts.reference_data_status`
+It prints SHAREABLE vs LOCAL ONLY per component and exits non-zero while
+anything is still on a branch. `portal/carriers.py` is a UI picker whose own
+docstring says "curated, not exhaustive" — it is NOT the registry.
+
+Five rules. Each is a defect that already shipped:
+
+1. **Join on `city`, never `name`.** `JPYOK` is name='Port of Yokohama',
+   city='Yokohama'. Keying a lane off `name` rewrites every lane key.
+2. **Code → place only, never place → code.** 262 of 11,629 city names map to
+   more than one LOCODE; 'Lagos' returns two Nigerian ports AND `PTLOS` in
+   Portugal. A reverse join eventually ships to the wrong continent.
+3. **Resolution is unrestricted; MATCHING in prose is gated** on
+   `seaports.is_major = 1` (136 ports, covering every lane actually quoted).
+4. **Never match a bare 2-letter carrier code in free text.** `PO` is a
+   purchase order, `CM` is centimetres, `FX` is foreign exchange, `5X` is
+   `5x40HC`, `VS` is what a comparison prints BETWEEN two carriers.
+5. **3-letter IATA codes ARE the identifier — match them, but mind POSITION.**
+   Seven incoterms are live IATA codes: `FOB Shanghai` resolves FOB to Fort
+   Bragg, `CPT Hamburg` to Cape Town; `12.4 CBM` is Columbus. A 3-letter token
+   after a number is a unit; an incoterm before a place name is the incoterm.
+
+Local to each repo: **aliases** ("port of los angeles", "san pedro") and
+**match policy** (which subset your parser recognises). Data is shared; those
+two are not. Need a FIELD upstream does not carry? Add it in rate-blaster and
+publish — never locally. Corrections are a PR against rate-blaster so every
+repo gets them at once.
+
+Canonical text for this block: `IdealX-dev/idealx-claude-standards` →
+`user-claude-md/CLAUDE.md`. It is duplicated into each consuming repo on
+purpose: a cloud session reads THIS file and cannot read any machine's
+`~/.claude/CLAUDE.md`. Corrections go upstream, not here.
+
 # ─────────────────────────────────────────────────────────────────────
 # Repository guide (added by /init 2026-08-24 — the working standard
 # above is the contract; this half is orientation so a new session can
