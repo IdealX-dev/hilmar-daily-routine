@@ -280,14 +280,31 @@ def _norm(s: str) -> str:
     return s
 
 def _scan_for_origin(segment: str):
+    """The earliest known origin named in ``segment``, or None.
+
+    WAS AN UNANCHORED str.find() (fixed 2026-08-31). _KNOWN_ORIGINS carries
+    the bare three-letter forms "SLC", "OAK" and "LAX", so a substring search
+    found them inside ordinary English. Executed against this module before
+    the fix:
+
+        parse_subject_lane('Relaxed cutoff to Tokyo')   -> ('LAX', 'Tokyo')
+        parse_subject_lane('Flaxseed shipment to Busan')-> ('LAX', 'Busan')
+
+    re-LAX-ed. f-LAX-seed. The origin is a lane endpoint, so a bogus one
+    splits the lane bucket and mis-labels the carrier scoreboard — the same
+    damage the "HILMAR" entry caused before it was removed from this list.
+
+    Word boundaries now. Note this does NOT lose "Oakland": the long form is
+    in the list ahead of the short one and still matches at its own index,
+    while bare "OAK" correctly stops matching inside "Oakland" — the loop
+    takes the earliest match either way.
+    """
     low = segment.lower()
     best = None
     for o in _KNOWN_ORIGINS:
-        idx = low.find(o.lower())
-        if idx != -1:
-            end = idx + len(o)
-            if best is None or idx < best[1]:
-                best = (o, idx, end)
+        m = re.search(rf"\b{re.escape(o.lower())}\b", low)
+        if m and (best is None or m.start() < best[1]):
+            best = (o, m.start(), m.end())
     if best:
         return best[0], best[2]
     return None
@@ -517,6 +534,41 @@ _LANE_STOPWORDS = frozenset({
     "costs", "option", "options", "cheaper", "for", "from", "to",
 })
 
+# ─────────────────────────────────────────────────────────────────────
+# THREE-LETTER TOKENS THAT ARE NEVER A PLACE (contract rule 5, 2026-08-31).
+#
+# "3-letter IATA codes ARE the identifier — match them, but mind POSITION.
+#  Seven incoterms are live IATA codes: FOB Shanghai resolves FOB to Fort
+#  Bragg, CPT Hamburg to Cape Town; 12.4 CBM is Columbus."
+#
+# This repo is ocean-only, so it has no IATA table to collide with — but it
+# reads a DESTINATION PORT out of free subject text, and an incoterm sits in
+# exactly the position a port does. Executed against this module before the
+# fix:
+#
+#   parse_subject_lane('Updated Rates FOB Korea from Dalhart') -> ('Dalhart', 'FOB')
+#   parse_subject_lane('Rates CPT Japan from Tulare')          -> ('Tulare', 'CPT')
+#
+# FOB and CPT became destination ports, and ingest keys a lane off that. The
+# trailing-region pop makes it worse, not better: it strips "Korea" and hands
+# back the incoterm sitting behind it.
+#
+# Units are here for the same reason from the other direction — a 3-letter
+# token AFTER A NUMBER is a measure, never a place.
+# ─────────────────────────────────────────────────────────────────────
+_INCOTERMS = frozenset({
+    "exw", "fca", "fas", "fob", "cfr", "cif", "cpt", "cip",
+    "daf", "des", "deq", "ddu", "dap", "dpu", "ddp",
+})
+_UNIT_TOKENS = frozenset({
+    "cbm", "kgs", "kg", "lbs", "lb", "mt", "cbf", "cft",
+    "teu", "feu", "fcl", "lcl", "hc", "rf", "dv", "gp",
+})
+
+#: Never a lane endpoint, whatever position it appears in.
+_NOT_A_PLACE = _INCOTERMS | _UNIT_TOKENS
+
+
 
 def parse_subject_lane(subject):
     if not subject:
@@ -590,7 +642,9 @@ def parse_subject_lane(subject):
             before_toks.pop()
         dest = before_toks[-1] if before_toks else None
         if (dest and dest.lower() not in _LANE_STOPWORDS
-                and origin.lower() not in _LANE_STOPWORDS):
+                and dest.lower() not in _NOT_A_PLACE
+                and origin.lower() not in _LANE_STOPWORDS
+                and origin.lower() not in _NOT_A_PLACE):
             return _norm(origin), _norm(dest)
 
     # Last-resort destination recovery (QC-057) — only reached when EVERY
@@ -1834,7 +1888,9 @@ def _prose_lane(text: str):
         d = m.group("d").strip()
         o, d = _norm(o), _norm(d)
         if (o and d and o.lower() not in _LANE_STOPWORDS
-                and d.lower() not in _LANE_STOPWORDS):
+                and o.lower() not in _NOT_A_PLACE
+                and d.lower() not in _LANE_STOPWORDS
+                and d.lower() not in _NOT_A_PLACE):
             return o, d
     return None, None
 
