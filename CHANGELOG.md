@@ -3,6 +3,74 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-31 (latest) — QC-083 stops reporting and starts absorbing
+
+It shipped **DETECT-ONLY on 2026-08-28** and the days since are the whole
+justification. From that entry, verbatim: *"the heal gets written
+against a real list rather than a hypothesis."* The list arrived.
+
+**The 2026-08-31 fire named exactly two pairs**, both HCMC:
+
+```
+req_9e919aa59f6f6bfe  <-  req_913dc883fba91890  (MDOLX260712)
+req_34213cc401395756  <-  req_e54685b379d8c950  (MDOLX261072)
+```
+
+Two, not twenty. That is what a heal can be sized against, and it is why the
+absorb is now written.
+
+#### WHY IT WAITED
+
+Absorbing a superseded re-ask **deletes a LOSS**. A detector wrong in that
+direction manufactures a win rate — the exact failure this repo has already
+shipped once (the STRICT-vs-LEGACY filter that produced a 100% win rate and
+survived because both sides of the comparison were equally wrong). Nothing
+local could measure the blast radius: the data is in blob and nothing
+meaningful runs locally. So it named rows and waited for a fire to answer.
+
+#### WHAT THE ABSORB DOES
+
+The duplicate's `source_imids` and `source_ids` fold into the booked row
+FIRST, and a `merge_notes` line records what went and why, so the deletion is
+reversible by hand. The `FIX` line names both request_ids and the MDOLX — for
+a deleted row that log line is the only trace left, so it has to carry enough
+to undo by hand.
+
+Three guards, each with a test that fails when it is removed:
+
+- **A human verdict outranks the heal.** A `manual_locked` row — one an
+  operator correction already pinned — is NEVER absorbed. The conflict is
+  WARNed so it is visible, rather than silently resolved in the code's favour.
+  `operator_corrections.json` is the only durable human state in a system that
+  rebuilds every row each fire; a row Michael pinned is a row he looked at.
+- **It scans what phase 4 left standing**, not the original `data["requests"]`.
+  This was a live bug the moment the check stopped being read-only: pass 1
+  collapses exact `request_id` collisions and the discarded twin stayed in the
+  scanned list, so it could be elected as the surviving "booked" row — and the
+  absorbed row's evidence would have been folded into a dict that phase 4 then
+  filtered out. One row gone, its thread gone, nothing to show for it.
+  `test_the_survivor_is_a_row_that_survives_phase_4` pins it.
+- **Idempotent across the two `qc_selfheal` passes per fire.** The second pass
+  sees a group of one and does nothing — no duplicate `merge_notes`, no second
+  FIX line.
+
+Everything QC-083 must NOT fire on is unchanged and still tested: two genuine
+sailings in one thread, a stale row carrying its own `has_send`, two distinct
+MDOLX refs, a missing `etd_requested`, a different thread, an unresolved
+(`"unknown"`) lane, a same-day pair (pass 2 owns those), different container
+lines, a lone row.
+
+Prose corrected in the same commit, because both said the opposite: the
+QC-083 header comment in `scripts/qc_selfheal.py` (*"DETECT-ONLY, ON
+PURPOSE"* / *"WHY IT ONLY REPORTS"*), the `reports/QC-INDEX.md` row
+(*"DETECT-ONLY, deliberately"*), and the test module docstring (*"THIS CHECK
+ONLY REPORTS"*). A doc that describes the previous behaviour is worse than no
+doc — the next session reads it and trusts it.
+
+`3645 passed, 1 skipped`; ruff clean; coverage 91.11% against the 90% gate.
+
+---
+
 ### 2026-08-31 (later still) — the KPI tiles and STATUS CHANGES mean two different days
 
 Michael, on the delivered Aug 28 report: *"how are there zero losses or
