@@ -63,41 +63,68 @@ which is rule 1 in one row. And `city='Lagos'` returns `NGAPP`, `NGTIN`
 
 ---
 
-## The one thing standing between this repo and the rule
+## MEASURED 2026-08-31 — the gap is real and it is TINY
 
-**`rate-blaster` is a PRIVATE repository, and this repo's runner has no
-credential that can read it.** Verified 2026-08-31, both halves:
+This page spent three days calling `scripts/core.py` an OPEN VIOLATION and
+naming a missing GitHub secret as the blocker. Then someone finally ran
+`len()` on the tables. Here is what this repo actually keeps:
 
-- `IdealX-dev/rate-blaster` → `"private": true` (GitHub API).
-- Every workflow in `.github/workflows/` checks out with `actions/checkout@v5`
-  and no `repository:` override, and the only GitHub token in play is
-  `${{ github.token }}` — scoped to `IdealX-dev/hilmar-daily-routine` alone.
-  The nine `secrets.*` this repo uses are all service credentials (Graph,
-  Sentry, Azure, Anthropic, Teams, QT). **None is a GitHub PAT.**
+| table | entries |
+|---|---|
+| `core.PORT_LOCODES` | **1** — `{"JPYOK": "Yokohama"}` |
+| `core.CARRIER_ALIASES` | 42 |
+| `core._TRADE_REGION_MAP` | 81 |
+| `body_parser.KNOWN_ORIGINS` | 22 |
 
-So the sharing standard —
+**`PORT_LOCODES` is one row.** Consuming `geo_master.db` would delete a
+one-line dict in exchange for putting a private cross-repo dependency into the
+daily fire. That is a bad trade today, and the page said the opposite because
+it inherited the framing from its own first draft and nobody executed it.
 
-```
-pip install "git+https://github.com/IdealX-dev/rate-blaster.git@main"
-```
+The code already made the argument. Above that dict, in `core.py`:
 
-— installs fine in a session that already has the repo attached, and **fails
-on the GitHub Actions runner** that actually fires the daily report. That is
-the whole gap. It is not a design question; it is one missing secret.
+> SEEDED FROM EVIDENCE, NOT FROM MEMORY. JPYOK is the only entry because it is
+> the only code this book has actually produced and the only one the operator
+> has confirmed. [...] Add each one when a fire actually surfaces it, with the
+> UNECE citation in the comment.
 
-### What unblocks it
+with `tests/test_locode_merge.py::test_every_locode_value_is_a_real_corpus_port`
+refusing anything unconfirmed. The rule in `CLAUDE.md` exists to stop a
+12,000-row port list from being duplicated and drifting. One operator-confirmed
+row behind a test is not that.
 
-A fine-grained PAT with **read-only Contents on `IdealX-dev/rate-blaster`**,
-stored as a repo secret on `IdealX-dev/hilmar-daily-routine` (say
-`RATE_BLASTER_TOKEN`). Creating that secret is an access change, so it is
-Michael's to make — a session must not provision it.
+### So: DO NOT create `RATE_BLASTER_TOKEN` yet
 
-**Check it out; do not put it in a pip URL.** The obvious form —
-`pip install "git+https://<token>@github.com/..."` — puts the credential on
-pip's command line, where it can reach logs through an error message or a
-re-encoding that defeats Actions' secret masking, and leaves it in the cached
-clone's git config. Use the documented cross-repo checkout instead, in
-`daily.yml` and `test.yml`:
+Michael's call, 2026-08-31, on being shown the measurement. The credential
+mechanics are recorded below because they will be right when the day comes —
+not because that day is now.
+
+**Revisit when** `PORT_LOCODES` starts growing a row per fire, or QC-015
+(unresolved lane in a client-facing surface) starts firing on ports the local
+tables do not carry. Then the dependency pays for itself. Until then it is
+ceremony with a private-repo failure mode attached to the daily report.
+
+`core._TRADE_REGION_MAP` can never be replaced from upstream anyway: trade
+region is a classification `geo_master` does not carry.
+
+### The mechanics, for when it IS worth doing
+
+`IdealX-dev/rate-blaster` is **private** (`"private": true`, GitHub API), and
+this repo's runner has no credential that can read it — every workflow checks
+out with `actions/checkout@v5` and no `repository:` override, and the only
+GitHub token in play is `${{ github.token }}`, scoped to
+`IdealX-dev/hilmar-daily-routine` alone. None of the nine `secrets.*` is a
+GitHub PAT.
+
+So `pip install "git+https://github.com/IdealX-dev/rate-blaster.git@main"`
+works in an agent session with the repo attached and fails on the runner. It
+needs a fine-grained PAT, read-only Contents on rate-blaster, as
+`RATE_BLASTER_TOKEN`.
+
+**Check the repo out; do not put the token in a pip URL.** The obvious form
+puts the credential on pip's command line, where an error message or a
+re-encoding can carry it past Actions' secret masking, and leaves it in the
+cached clone's git config:
 
 ```yaml
 - uses: actions/checkout@v5
@@ -112,46 +139,33 @@ clone's git config. Use the documented cross-repo checkout instead, in
 
 `pip` never sees the token. `actions/checkout`'s own docs describe `token` as
 *"configured with the local git config"* with *"the post-job step removes the
-PAT"*, and `persist-credentials: false` keeps it out of that config in the
-first place. `.rate-blaster` needs a `.gitignore` line so the nested checkout
-does not show up as untracked.
-
-**Size is not a reason to hesitate either way.** `actions/checkout` defaults to
-`fetch-depth: 1`, so it takes the tip tree, not rate-blaster's ~176 MB of
-history; `geo_master.db` in it is 6.2 MB. (For the record, the pip route is not
-slow either — pip's docs, `topics/vcs-support`: *"Pip defaults to partial
-clones for Git 2.17 or later."* Size was never the objection; credential
-handling is.)
+PAT"*; `persist-credentials: false` keeps it out of that config to begin with.
+`.rate-blaster` needs a `.gitignore` line. Size is not a factor either way —
+`fetch-depth` defaults to 1.
 
 ---
 
 ## Where this repo stands
 
-Audited 2026-08-28, re-checked 2026-08-31.
+Audited 2026-08-28, re-checked and **measured** 2026-08-31.
 
-### OPEN VIOLATION — `scripts/core.py`
+### NOT A VIOLATION IN PRACTICE — `scripts/core.py`
 
-`PORT_LOCODES` and `resolve_locode()`, shipped in **#230** on 2026-08-27. A
-local LOCODE table containing a hard-coded UN/LOCODE: both halves of the rule
-broken in one place.
+`PORT_LOCODES` (1 entry) and `resolve_locode()`, shipped in **#230**. It is a
+hard-coded UN/LOCODE, which the letter of the rule forbids — and it is one row,
+seeded from a fire, operator-confirmed, and guarded by a test that rejects
+unverified additions. Reported here rather than "fixed", because the fix costs
+more than the defect. See the measurement above.
 
-`geo_master.db` is SHAREABLE, so the replacement exists — as a `locode` →
-`city` lookup, code→place only, per rule 2. **Still not fixed**, and the
-reason changed on 2026-08-31: it is no longer an open design decision
-(Michael settled that — consume the package, do not vendor an extract), it is
-the missing runner credential above. Nothing should be written against
-`rate_blaster.geo` until CI can install it, because a consumption path that
-cannot run in production is worse than the violation it replaces.
+### AVAILABLE, NOT URGENT — `core.CARRIER_ALIASES`
 
-### NO LONGER BLOCKED — `core.CARRIER_ALIASES`
+42 entries. `carrier_registry` reached `rate-blaster` `main` (53 carriers, 28
+ocean + 25 air), so the upstream block recorded on 2026-08-28 has cleared. What
+remains is the same credential, and the same verdict: 42 local aliases are not
+worth a private cross-repo dependency on the daily fire today.
 
-42 entries. The block recorded here on 2026-08-28 was *"staying that way until
-`carrier_registry` reaches `rate-blaster` `main`."* **It has.** 53 carriers,
-28 ocean + 25 air, SHAREABLE as of the probe run above.
-
-It now sits behind the same credential as the LOCODE table, and behind nothing
-else. `rate_blaster/portal/carriers.py` is still **not** the substitute — its
-own docstring calls it *"curated, not exhaustive"*.
+`rate_blaster/portal/carriers.py` is still **not** the substitute — its own
+docstring calls it *"curated, not exhaustive"*.
 
 ### CLEAN — rule 4
 
