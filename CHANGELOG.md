@@ -51,8 +51,19 @@ bug against arithmetic that is correct.
 `_status_change_daynote` renders under the STATUS CHANGES header:
 
 > Moves that happened on the report day — **All 4** were requested on an
-> earlier day. The tiles below bucket by REQUEST date, so they count in their
-> request day's tiles, not today's.
+> earlier day. The tiles below bucket by REQUEST date, so they count in the
+> tiles for the day they were requested, not for today.
+
+Two Copilot findings were fixed before merge, both verified by execution.
+**The note dated a row by `request_date`/`date` only** — while `_today_events`
+resolves `request_date or request_timestamp` — so a row requested ON the
+report day carrying just a timestamp printed *"It was requested on an earlier
+day"*, which is false. It now resolves the same way and stays silent when any
+row cannot be dated at all. **And the wording carried curly apostrophes**,
+which the Word/Outlook HTML engine mojibakes; straight quotes were not the fix
+either, since they close the single-quoted f-strings the note is built from.
+Reworded past the possessive entirely, and a test asserts neither kind of
+apostrophe survives.
 
 It discriminates rather than decorating: a same-day move gets the opposite
 note, a mixed day reports "2 of 3", and it stays silent when there is nothing
