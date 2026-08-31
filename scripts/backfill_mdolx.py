@@ -44,6 +44,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import body_parser as BP  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = ROOT / "tracking-data-v2.json"
 # When invoked from the OneDrive working dir, DATA_PATH may be one level
@@ -87,41 +90,28 @@ def _normalize_mdolx(s: str) -> str | None:
     return None
 
 
-# Carrier-name → booking-ref-prefix mapping (e.g. CMA CGM uses NAM,APL,ANL,
-# ONE uses RICG,ONEY, etc). Used to verify a stage email's carrier matches
-# the WIN's carrier_won when subjects contain refs but not the carrier name.
-_CARRIER_REF_PREFIXES: dict[str, tuple[str, ...]] = {
-    "CMA CGM":     ("NAM", "APL", "ANL", "CMA", "CGM"),
-    "Maersk":      ("MAEU", "SEAU", "SUDU", "MSK", "MAERSK"),
-    "MSC":         ("MEDU", "MSCU", "EBKG", "MSC"),
-    "ONE":         ("ONEY", "RICG", "SCNB", "ONE"),
-    "Evergreen":   ("EBKG", "EISU", "EGLV", "EVERGREEN", "EMC"),
-    "Hapag-Lloyd": ("HLCU", "HLBU", "HLAG", "HAPAG"),
-    "OOCL":        ("OOLU", "OOCL"),
-    "Yang Ming":   ("YMLU", "YML", "YANGMING", "YANG"),
-    "HMM":         ("HMMU", "HMM", "HYUNDAI"),
-    "ZIM":         ("ZIMU", "ZIM"),
-    "COSCO":       ("COSU", "COSCO", "COSCON"),
-}
+# CARRIER VERIFICATION — SEE body_parser.CARRIER_REF_PREFIXES.
+#
+# This module carried its own copy of the ref-prefix table and matched it with
+# `p.upper() in subj_up` — a bare substring over free subject text. Executed
+# 2026-08-31 against the real module:
+#   _carrier_match('CMA CGM', "...Oakland to Ho Chi Minh, VIETNAM ...") -> True
+# because "NAM" is inside VIETNAM. This function GATES whether an MDOLX number
+# is attached to a WIN (find_mdolx_for_win strategy 3, whose docstring says
+# "false matches are far worse than no match — they corrupt data"), so a bogus
+# True here binds a booking to the wrong shipment.
+#
+# The table is gone; body_parser owns it. Both tiers are now anchored.
 
 
 def _carrier_match(win_carrier: str, subject: str) -> bool:
-    """Verify the subject names the WIN's carrier (by name or ref prefix).
+    """Does ``subject`` name ``win_carrier`` — by full name on word
+    boundaries, or by one of its booking-ref prefixes followed by digits?
 
-    Two-tier match:
-      Tier 1 — exact carrier name appears in subject (case-insensitive)
-      Tier 2 — a known booking-ref prefix for that carrier appears
+    Asks about THIS carrier rather than detecting the first of many, so a
+    subject naming two carriers cannot confirm the wrong one.
     """
-    if not win_carrier or not subject:
-        return False
-    subj_up = subject.upper()
-    canonical = win_carrier.strip()
-    # Tier 1: name match
-    if canonical.upper() in subj_up:
-        return True
-    # Tier 2: ref-prefix match
-    prefixes = _CARRIER_REF_PREFIXES.get(canonical, ())
-    return any(p.upper() in subj_up for p in prefixes)
+    return BP.carrier_named_in(subject, win_carrier)
 
 
 def find_mdolx_for_win(win: dict, stage_rows: list[dict]) -> str | None:

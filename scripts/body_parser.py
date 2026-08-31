@@ -280,14 +280,31 @@ def _norm(s: str) -> str:
     return s
 
 def _scan_for_origin(segment: str):
+    """The earliest known origin named in ``segment``, or None.
+
+    WAS AN UNANCHORED str.find() (fixed 2026-08-31). _KNOWN_ORIGINS carries
+    the bare three-letter forms "SLC", "OAK" and "LAX", so a substring search
+    found them inside ordinary English. Executed against this module before
+    the fix:
+
+        parse_subject_lane('Relaxed cutoff to Tokyo')   -> ('LAX', 'Tokyo')
+        parse_subject_lane('Flaxseed shipment to Busan')-> ('LAX', 'Busan')
+
+    re-LAX-ed. f-LAX-seed. The origin is a lane endpoint, so a bogus one
+    splits the lane bucket and mis-labels the carrier scoreboard — the same
+    damage the "HILMAR" entry caused before it was removed from this list.
+
+    Word boundaries now. Note this does NOT lose "Oakland": the long form is
+    in the list ahead of the short one and still matches at its own index,
+    while bare "OAK" correctly stops matching inside "Oakland" — the loop
+    takes the earliest match either way.
+    """
     low = segment.lower()
     best = None
     for o in _KNOWN_ORIGINS:
-        idx = low.find(o.lower())
-        if idx != -1:
-            end = idx + len(o)
-            if best is None or idx < best[1]:
-                best = (o, idx, end)
+        m = re.search(rf"\b{re.escape(o.lower())}\b", low)
+        if m and (best is None or m.start() < best[1]):
+            best = (o, m.start(), m.end())
     if best:
         return best[0], best[2]
     return None
@@ -338,6 +355,90 @@ _BOOKING_PREFIX_TO_CARRIER = {
 # free prose mis-reads "ONE container" / "for ONE day" as the carrier ONE.
 # detect_carrier_token() skips these unless allow_short=True.
 _AMBIGUOUS_CARRIER_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+# ─────────────────────────────────────────────────────────────────────
+# A BOOKING REFERENCE NAMES ITS CARRIER. A WORD IN PROSE DOES NOT.
+#
+# THE contract rule 4: never match a bare carrier code in free text. This
+# table is the ONLY place booking-ref prefixes live; patch_carriers and
+# backfill_mdolx each carried a private copy that mixed ref prefixes with
+# bare NAME tokens ("NAM", "CMA", "MSC", "ONE") and matched the lot with a
+# substring `in`. Measured on real Hilmar subjects, that assigned CMA CGM to
+# every Vietnam and Panama lane, because "NAM" is a CMA CGM booking-ref
+# prefix and it is also inside VIET-NAM and PA-NAM-A:
+#
+#   CMA CGM  <- MDOLX261145_ HILMAR Oakland to Cat Lai, VIETNAM 2x40RF
+#   CMA CGM  <- HILMAR Oakland to Manzanillo, PANAMA 2x40RF
+#
+# Cai Mep alone was 16 of 134 bookings in OL's 2026 export. The carrier
+# reached the scorecards, the negotiation brief, share_intel's export and —
+# via sync_to_quote_tracker — a Turso registry another repo reads.
+#
+# THE FIX IS THE DISCIPLINE THIS FILE ALREADY HAD. detect_carrier_token
+# (2026-06-15) scans on WORD BOUNDARIES and refuses _AMBIGUOUS_CARRIER_TOKENS
+# outside a known carrier cell; parse_subject_carrier's Pattern D anchors a
+# ref prefix to its DIGITS. Both were right. The two older sites predate them
+# and never adopted them. Nothing new is invented here — the correct answer is
+# lifted out of this module and made importable so there is one of it.
+#
+# NAME TOKENS ARE DELIBERATELY ABSENT BELOW. A prefix here is matched only
+# when digits follow it. Names belong to detect_carrier_token, which knows
+# which of them are ambiguous. Mixing the two is the whole defect.
+# ─────────────────────────────────────────────────────────────────────
+
+CARRIER_REF_PREFIXES: dict[str, tuple[str, ...]] = {
+    "CMA CGM":     ("NAM", "APLU", "ANNU"),
+    "Maersk":      ("MAEU", "SEAU", "SUDU"),
+    "MSC":         ("MEDU", "MSCU", "EBKG"),
+    "ONE":         ("ONEY", "RICG", "SCNB"),
+    "Evergreen":   ("EISU", "EGLV"),
+    "Hapag-Lloyd": ("HLCU", "HLBU"),
+    "OOCL":        ("OOLU",),
+    "Yang Ming":   ("YMLU",),
+    "HMM":         ("HMMU",),
+    "ZIM":         ("ZIMU",),
+    "COSCO":       ("COSU",),
+}
+
+#: prefix -> canonical, longest prefix first so OOLU beats a shorter alternative.
+_REF_PREFIX_TO_CARRIER = {p: c for c, ps in CARRIER_REF_PREFIXES.items() for p in ps}
+_REF_RX = re.compile(
+    r"\b(" + "|".join(sorted(_REF_PREFIX_TO_CARRIER, key=len, reverse=True))
+    + r")\s*[#:]?\s*(\d{5,})\b", re.IGNORECASE)
+
+
+def carrier_from_booking_ref(text):
+    """The carrier named by a BOOKING REFERENCE in ``text``, or None.
+
+    A prefix counts only when DIGITS follow it — ``NAM8322223`` is a CMA CGM
+    booking, ``VIETNAM`` is a country. That anchor is the whole guard, and it
+    is why this cannot be collapsed into a plain token scan.
+
+    Returns None rather than a guess when nothing anchors. Per the contract:
+    a wrong carrier on a priced row misleads a human in a way a blank does not.
+    """
+    if not text:
+        return None
+    m = _REF_RX.search(str(text))
+    return _REF_PREFIX_TO_CARRIER.get(m.group(1).upper()) if m else None
+
+
+def carrier_named_in(text, canonical) -> bool:
+    """Does ``text`` name ``canonical`` — by full name on word boundaries, or
+    by one of its booking-ref prefixes anchored to digits?
+
+    Verification helper: asks about ONE carrier rather than returning the
+    first of many, so a subject naming two carriers cannot silently confirm
+    the wrong one.
+    """
+    if not text or not canonical:
+        return False
+    name = str(canonical).strip()
+    if not name:
+        return False
+    if re.search(rf"\b{re.escape(name.upper())}\b", str(text).upper()):
+        return True
+    return carrier_from_booking_ref(text) == name
+
 
 
 def detect_carrier_token(text, *, allow_short: bool = False):
@@ -433,6 +534,41 @@ _LANE_STOPWORDS = frozenset({
     "costs", "option", "options", "cheaper", "for", "from", "to",
 })
 
+# ─────────────────────────────────────────────────────────────────────
+# THREE-LETTER TOKENS THAT ARE NEVER A PLACE (contract rule 5, 2026-08-31).
+#
+# "3-letter IATA codes ARE the identifier — match them, but mind POSITION.
+#  Seven incoterms are live IATA codes: FOB Shanghai resolves FOB to Fort
+#  Bragg, CPT Hamburg to Cape Town; 12.4 CBM is Columbus."
+#
+# This repo is ocean-only, so it has no IATA table to collide with — but it
+# reads a DESTINATION PORT out of free subject text, and an incoterm sits in
+# exactly the position a port does. Executed against this module before the
+# fix:
+#
+#   parse_subject_lane('Updated Rates FOB Korea from Dalhart') -> ('Dalhart', 'FOB')
+#   parse_subject_lane('Rates CPT Japan from Tulare')          -> ('Tulare', 'CPT')
+#
+# FOB and CPT became destination ports, and ingest keys a lane off that. The
+# trailing-region pop makes it worse, not better: it strips "Korea" and hands
+# back the incoterm sitting behind it.
+#
+# Units are here for the same reason from the other direction — a 3-letter
+# token AFTER A NUMBER is a measure, never a place.
+# ─────────────────────────────────────────────────────────────────────
+_INCOTERMS = frozenset({
+    "exw", "fca", "fas", "fob", "cfr", "cif", "cpt", "cip",
+    "daf", "des", "deq", "ddu", "dap", "dpu", "ddp",
+})
+_UNIT_TOKENS = frozenset({
+    "cbm", "kgs", "kg", "lbs", "lb", "mt", "cbf", "cft",
+    "teu", "feu", "fcl", "lcl", "hc", "rf", "dv", "gp",
+})
+
+#: Never a lane endpoint, whatever position it appears in.
+_NOT_A_PLACE = _INCOTERMS | _UNIT_TOKENS
+
+
 
 def parse_subject_lane(subject):
     if not subject:
@@ -506,7 +642,9 @@ def parse_subject_lane(subject):
             before_toks.pop()
         dest = before_toks[-1] if before_toks else None
         if (dest and dest.lower() not in _LANE_STOPWORDS
-                and origin.lower() not in _LANE_STOPWORDS):
+                and dest.lower() not in _NOT_A_PLACE
+                and origin.lower() not in _LANE_STOPWORDS
+                and origin.lower() not in _NOT_A_PLACE):
             return _norm(origin), _norm(dest)
 
     # Last-resort destination recovery (QC-057) — only reached when EVERY
@@ -1750,7 +1888,9 @@ def _prose_lane(text: str):
         d = m.group("d").strip()
         o, d = _norm(o), _norm(d)
         if (o and d and o.lower() not in _LANE_STOPWORDS
-                and d.lower() not in _LANE_STOPWORDS):
+                and o.lower() not in _NOT_A_PLACE
+                and d.lower() not in _LANE_STOPWORDS
+                and d.lower() not in _NOT_A_PLACE):
             return o, d
     return None, None
 
