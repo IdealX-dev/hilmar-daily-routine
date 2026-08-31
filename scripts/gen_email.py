@@ -271,6 +271,69 @@ def _pending_as_of_note(as_of_label):
             f'are still open.</p>')
 
 
+def _status_change_daynote(status_ch, report_date):
+    """Say which day STATUS CHANGES describes, and where its rows are counted.
+
+    Michael, 2026-08-31, on the delivered Aug 28 report: *"how are there zero
+    losses or changes in the friday kpi cards if you show four as status
+    changes to lost"*.
+
+    Both numbers were right. THE ROW OF KPI TILES MIXES TWO DEFINITIONS OF
+    "that day", and `_today_summary`'s own docstring says so:
+
+      WON                       — event-dated. Booked THAT DAY, any request date.
+      REQUESTS / Q&L / NQ /
+      PENDING                   — intake-dated. The CURRENT status of the
+                                  requests that CAME IN that day.
+
+    STATUS CHANGES is event-dated like WON. So on Aug 28 it listed four rows
+    aging PENDING HILMAR -> Q&L, every one of them requested Aug 27 — and
+    Friday's intake was zero rows, so all four intake tiles read 0. The four
+    losses are not missing: they sit in THURSDAY's tiles, because that is the
+    day they were requested.
+
+    WHY NOT JUST EVENT-DATE THE LOSS TILES TO MATCH. Because those four tiles
+    are built to sum against the REQUESTS tile — Michael's own standing rule,
+    "it should all tie out to requests". A row requested Thursday and lost
+    Friday would then land in Friday's losses but not Friday's requests, and
+    the bucket sum would exceed the total again. That reconciliation is the
+    thing the tiles are FOR.
+
+    So the section states its own semantics instead, the way
+    `_pending_as_of_note` does for the live PENDING lists. Same defect class,
+    same remedy: a section that describes a different moment from the box
+    around it has to say so, or the reader reconciles it by hand and files a
+    bug against arithmetic that is correct.
+    """
+    if not status_ch or report_date is None:
+        # No rows, or a caller that does not know its report day. Saying
+        # nothing beats saying something unverifiable — the whole point of the
+        # note is to state a fact about WHICH day these rows belong to.
+        return ""
+    rd = report_date.isoformat() if hasattr(report_date, "isoformat") else str(report_date)
+    earlier = sum(1 for r, _h in status_ch
+                  if (r.get("request_date") or r.get("date")) != rd)
+    total = len(status_ch)
+    if not earlier:
+        lead, tail = (("It was", "it appears") if total == 1
+                      else (f"All {total} were", "they appear"))
+        return (f'<p style="margin:0 0 6px;font-size:13px;color:{B.DOC_MUTED}">'
+                f'Moves that happened on the report day. {lead} also requested '
+                f'that day, so {tail} in the tiles below too.</p>')
+    if earlier == 1:
+        lead, verb = ("It", "was") if total == 1 else (f"<b>1 of {total}</b>", "was")
+        tail = ("it counts in its request day’s tiles" if total == 1
+                else "that one counts in its request day’s tiles")
+    else:
+        lead = f"<b>All {total}</b>" if earlier == total else f"<b>{earlier} of {total}</b>"
+        verb = "were"
+        tail = "they count in their request day’s tiles"
+    return (f'<p style="margin:0 0 6px;font-size:13px;color:{B.DOC_MUTED}">'
+            f'Moves that happened on the report day — {lead} {verb} requested '
+            f'on an earlier day. The tiles below bucket by REQUEST date, so '
+            f'{tail}, not today’s.</p>')
+
+
 def _left_pending_note(status_ch, pending_hil):
     """Name the rows that moved INTO Pending Hilmar today and have since left,
     AND SAY WHERE EACH ONE WENT.
@@ -1074,7 +1137,7 @@ def _undated_quotes_note(undated) -> str:
 
 
 def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
-                      undated_quotes=(), as_of_label=""):
+                      undated_quotes=(), as_of_label="", report_date=None):
     """Render the 'What Happened on <day>' block. The label `report_label` is
     TODAY's now-complete business day (see _report_date) — the ~6 PM ET evening
     fire runs AFTER Lonny's PT office has closed for the day, so today's data
@@ -1593,6 +1656,7 @@ def _today_block_html(report_label, new_req, ol_resp, status_ch, pending,
   {resp_table}
 
   <h3 style="margin:16px 0 4px;color:{B.DOC_PENDING};font-size:14px">🔄 STATUS CHANGES ({len(status_ch)})</h3>
+  {_status_change_daynote(status_ch, report_date)}
   {sc_table}
 
   <p style="margin:14px 0 0;font-size:13px;color:{B.DOC_INK};font-weight:bold">{_esc(summary_line)}</p>
@@ -2875,7 +2939,12 @@ def build_body(data, cfg):
     # since 2026-08-21 they say so — see _pending_as_of_note.
     html_body += _today_block_html(report_label, new_req, ol_resp, status_ch,
                                    pending, undated_q,
-                                   as_of_label=updated_label)
+                                   as_of_label=updated_label,
+                                   # STATUS CHANGES is event-dated while the
+                                   # KPI tiles below are intake-dated; the note
+                                   # needs the report day to say which of its
+                                   # rows were requested earlier.
+                                   report_date=report_date)
     html_body += _kpi_block_html(data.get("summary", {}) or {}, requests=data.get("requests", []) or [], report_date=report_date)
     # Loss-reason mix — the "why we lost" lens. Renders nothing when
     # there are no losses in the 30/60-day windows.
