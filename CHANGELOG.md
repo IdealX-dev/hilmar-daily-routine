@@ -3,6 +3,78 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-31 (later still) — the KPI tiles and STATUS CHANGES mean two different days
+
+Michael, on the delivered Aug 28 report: *"how are there zero losses or
+changes in the friday kpi cards if you show four as status changes to lost"*.
+
+**Both numbers were right.** The row of five KPI tiles mixes two definitions of
+"that day", and `_today_summary`'s own docstring already says so:
+
+| tile | dated by |
+|---|---|
+| WON | **event** — booked that day, any request date |
+| REQUESTS / Q&L / NQ / PENDING | **intake** — current status of the requests that came in that day |
+
+STATUS CHANGES is event-dated like WON. On Aug 28 it listed four rows aging
+`PENDING HILMAR → Q&L`, **every one requested Aug 27**, while Friday's intake
+was zero rows — so all four intake tiles correctly read 0.
+
+The losses are not missing. They sit in **Thursday's** tiles, because Thursday
+is when they were requested, and because the tile shows CURRENT status
+Thursday's `PENDING` reads 4 in Thursday's report while its `Q&L` would read 4
+if regenerated now.
+
+#### THIS IS #232 SURFACING, NOT BREAKING
+
+Before aging transitions were stamped with the deadline they crossed, they
+carried the pipeline clock and never landed in the report-day window at all.
+STATUS CHANGES would have been EMPTY here and the zeros would have looked
+unremarkable. The transitions now appear on the day they happened, which put
+them next to intake-dated tiles that disagree.
+
+#### THE OBVIOUS FIX IS THE WRONG ONE
+
+Event-dating Q&L / NQ / PENDING to match WON would break the reconciliation
+Michael asked for — *"it should all tie out to requests"*. Those four tiles are
+built to sum against the REQUESTS tile; a row requested Thursday and lost
+Friday would land in Friday's losses but not Friday's requests, and the bucket
+sum would exceed the total again. That identity is what the tiles are FOR.
+
+So the section states its own semantics instead — exactly what
+`_pending_as_of_note` already does for the live PENDING lists, which was the
+remedy for the same defect class on 2026-08-21 (*"pending hilmar two sections
+different number of open"*). A section describing a different moment from the
+box around it has to say so, or the reader reconciles it by hand and files a
+bug against arithmetic that is correct.
+
+`_status_change_daynote` renders under the STATUS CHANGES header:
+
+> Moves that happened on the report day — **All 4** were requested on an
+> earlier day. The tiles below bucket by REQUEST date, so they count in the
+> tiles for the day they were requested, not for today.
+
+Two Copilot findings were fixed before merge, both verified by execution.
+**The note dated a row by `request_date`/`date` only** — while `_today_events`
+resolves `request_date or request_timestamp` — so a row requested ON the
+report day carrying just a timestamp printed *"It was requested on an earlier
+day"*, which is false. It now resolves the same way and stays silent when any
+row cannot be dated at all. **And the wording carried curly apostrophes**,
+which the Word/Outlook HTML engine mojibakes; straight quotes were not the fix
+either, since they close the single-quoted f-strings the note is built from.
+Reworded past the possessive entirely, and a test asserts neither kind of
+apostrophe survives.
+
+It discriminates rather than decorating: a same-day move gets the opposite
+note, a mixed day reports "2 of 3", and it stays silent when there is nothing
+to say or when the caller cannot supply a report day — saying nothing beats
+saying something unverifiable.
+
+13 tests, including singular/plural agreement at every count (a report that
+says "All 1 were" gets trusted less than it should) and a wiring test that
+fails if the helper is computed but never rendered — the half-fix that would
+otherwise pass every unit test in the file.
+
 ### 2026-08-31 (Monday fire) — one port is one lane, however it was spelled
 
 `aggregate_lanes` and `compute_lane_winning_medians` keyed on the raw
