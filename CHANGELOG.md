@@ -64,6 +64,88 @@ says "All 1 were" gets trusted less than it should) and a wiring test that
 fails if the helper is computed but never rendered — the half-fix that would
 otherwise pass every unit test in the file.
 
+### 2026-08-31 (Monday fire) — one port is one lane, however it was spelled
+
+`aggregate_lanes` and `compute_lane_winning_medians` keyed on the raw
+"Oakland → X" DISPLAY string. The note above `core.PORT_LOCODES` named that as
+the reason the Yokohama split starved its own winning median — and #230 fixed
+the JPYOK spelling at PARSE time and left the keying alone. **The cause
+outlived the symptom.**
+
+#### THE LIVE PAIR, FROM QC-083's FIRST REAL FIRE
+
+Monday's fire — the first scheduled one since 08-27, restored by #239 — gave
+QC-083 its first real output. Two pairs, and the second is a lane-spelling
+split in production data:
+
+```
+req_34213cc401395756  superseded re-ask of  req_e54685b379d8c950 (MDOLX261072)
+    Oakland → HCMC (Cat Lai)        vs        Oakland → HCMC
+```
+
+#### THE MERGE IS AN OPERATOR RULING, NOT AN INFERENCE
+
+I stopped this change once, mid-build, and said why: `canonical_port_key`'s own
+docstring calls itself *"a MATCHING key, not a display value"*, built for
+booking→request linking. Reusing it to bucket a REPORTING aggregate merges Cat
+Lai and Cai Mep's rates, and those terminals are ~50km apart — a pricing
+decision, not a code decision.
+
+Michael, 2026-08-31: *"no they are all hcmc with two different terminal
+requests in ho chi minh"*. One lane. `_PORT_ALIASES` already said so for
+matching (*"Lonny asks for 'HCMC'; OL confirms whichever terminal the vessel
+calls"*); this confirms it for pricing.
+
+**And the example I first justified this with was wrong.** I told Michael six
+operator corrections pinning `KOBE` were splitting the Kobe lane. They are
+not: `title_case_destination('Kobe')` returns `'KOBE'`, so the parser already
+merges that pair — I had repeated the audit's claim without running it. The
+real divergences are the seven `canonical_port_key` merges that
+`title_case_destination` does not make: HCMC / Cat Lai / Cai Mep / Port Busan
+/ the Lat Krabang spellings / Manila N-S.
+
+#### WHAT SHIPPED
+
+`core.canonical_lane_id` routes both lane ends through `canonical_port_key`.
+`aggregate_lanes` buckets on it and displays the most common spelling the rows
+actually carried — ties broken alphabetically, because deterministic beats
+pretty: a display that flipped between fires would make the dashboard and the
+PDF disagree about one lane on one day. The dict is still keyed by a display
+string, so **no consumer changed**; two entries simply become one.
+
+`compute_lane_winning_medians` buckets canonically and emits the merged median
+**under every spelling that fed the bucket**, so a raw lookup still hits and no
+caller had to change. The canonical key is deliberately NOT emitted — it is an
+internal bucket id, and putting it in a returned dict would change an
+observable contract for no caller that needs it. `decide_status` looks up raw
+first, canonical as a fallback.
+
+That asymmetry is the trap this change had to avoid: bucketing one side
+canonically and looking the other up raw returns `None` silently, which reads
+as "no lane history" and drops every Q&L on the lane from PRICE to
+UNDIFFERENTIATED — the same wrong answer by a new route. A test drives a real
+`decide_status` call end to end rather than trusting the two sides agree.
+
+#### WHY IT MATTERS BEYOND TIDINESS
+
+`PRICE_GAP_MIN_LANE_WINS` is 3. Four wins split 2/2 across two spellings
+produce **no median at all**, and every Q&L on that lane falls to
+UNDIFFERENTIATED — "we lost, the data doesn't tell us why" — on the lane group
+Hilmar ships most.
+
+#### THE OLD TEST, REWRITTEN RATHER THAN DELETED
+
+`test_locode_split_would_fragment_the_lane_rollup` asserted `len(split) == 2`
+— it existed to DEMONSTRATE the damage. Both layers now merge that pair, so
+the pre-condition can no longer be constructed with it. That is the
+improvement, not a lost guard: it now asserts the raw un-normalised spelling
+merges too (defence in depth), keeps the median assertion, and adds a
+Yokohama-vs-Tokyo case so the bucketing cannot pass by collapsing everything.
+
+41 tests across both trees. **Half assert things must stay SEPARATE** — a
+bucketer that merged everything would satisfy every merge test ever written.
+Reverting the bucketing fails 11.
+
 ### 2026-08-31 (later) — rule 5 was not nil here: re-LAX-ed, and an incoterm read as a port
 
 I recorded rule 5 as **"NOT ASSESSED — ocean-only, exposure likely nil"** on
