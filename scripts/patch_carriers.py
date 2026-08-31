@@ -810,32 +810,37 @@ def main():
         # Carrier name + booking-ref-prefix map (mirrored from
         # backfill_mdolx.py — single source of truth would be nicer
         # later, but inline for now).
-        _CARRIER_PREFIXES: dict[str, tuple[str, ...]] = {
-            "CMA CGM":     ("NAM", "APL", "ANL", "CMA", "CGM"),
-            "Maersk":      ("MAEU", "SEAU", "SUDU", "MSK", "MAERSK"),
-            "MSC":         ("MEDU", "MSCU", "EBKG", "MSC"),
-            "ONE":         ("ONEY", "RICG", "SCNB", "ONE"),
-            "Evergreen":   ("EBKG", "EISU", "EGLV", "EVERGREEN", "EMC"),
-            "Hapag-Lloyd": ("HLCU", "HLBU", "HLAG", "HAPAG"),
-            "OOCL":        ("OOLU", "OOCL"),
-            "Yang Ming":   ("YMLU", "YML", "YANGMING", "YANG"),
-            "HMM":         ("HMMU", "HMM", "HYUNDAI"),
-            "ZIM":         ("ZIMU", "ZIM"),
-            "COSCO":       ("COSU", "COSCO", "COSCON"),
-        }
-
+        # PASS 4 USED A SUBSTRING MATCH AND FABRICATED A CARRIER (2026-08-31).
+        #
+        # The table here mixed booking-ref prefixes with bare name tokens and
+        # matched all of them with `p in up` — no word boundary, no digits
+        # anchor, over an email SUBJECT LINE. "NAM" is a real CMA CGM
+        # booking-ref prefix; it is also inside VIETNAM and PANAMA. Measured
+        # on real Hilmar subjects, none of which name a carrier:
+        #
+        #   CMA CGM  <- MDOLX261145_ HILMAR Oakland to Cat Lai, VIETNAM 2x40RF
+        #   CMA CGM  <- HILMAR Oakland to Manzanillo, PANAMA 2x40RF
+        #
+        # Every Vietnam and Panama lane. Cai Mep alone was 16 of 134 bookings
+        # in OL's 2026 export. This branch only fills a WIN whose carrier_won
+        # is already blank — so it never overwrote a known carrier, it
+        # INVENTED one where the honest answer was None. The contract's own
+        # rule: a wrong carrier on a priced row misleads a human in a way a
+        # blank never does.
+        #
+        # Now routed through body_parser, which had the right discipline since
+        # 2026-06-15: detect_carrier_token scans on word boundaries and
+        # refuses ambiguous short tokens outside a carrier cell, and
+        # carrier_from_booking_ref requires DIGITS after the prefix. The local
+        # table is deleted rather than fixed — one table, in one place.
         def _carrier_from_subject(subj: str) -> str | None:
-            """Return the canonical carrier name detected in subject, or None."""
+            """Return the canonical carrier named in ``subj``, or None.
+
+            A subject line is unlabelled free text, so allow_short stays off:
+            a bare "ONE" or "CMA" here is not evidence."""
             if not subj:
                 return None
-            up = subj.upper()
-            for canonical, prefixes in _CARRIER_PREFIXES.items():
-                if canonical.upper() in up:
-                    return canonical
-                for p in prefixes:
-                    if p in up:
-                        return canonical
-            return None
+            return BP.detect_carrier_token(subj) or BP.carrier_from_booking_ref(subj)
 
         # Load stage. Prefer .txt (current), fall back .jsonl.
         stage_path = _Path(__file__).resolve().parent / "stage_emails.txt"

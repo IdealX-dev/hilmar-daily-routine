@@ -321,6 +321,90 @@ _BOOKING_PREFIX_TO_CARRIER = {
 # mis-reads "ONE container" as the carrier ONE. detect_carrier_token() skips
 # these unless allow_short=True. Mirror of scripts/body_parser.py (2026-06-15).
 _AMBIGUOUS_CARRIER_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+# ─────────────────────────────────────────────────────────────────────
+# A BOOKING REFERENCE NAMES ITS CARRIER. A WORD IN PROSE DOES NOT.
+#
+# THE contract rule 4: never match a bare carrier code in free text. This
+# table is the ONLY place booking-ref prefixes live; patch_carriers and
+# backfill_mdolx each carried a private copy that mixed ref prefixes with
+# bare NAME tokens ("NAM", "CMA", "MSC", "ONE") and matched the lot with a
+# substring `in`. Measured on real Hilmar subjects, that assigned CMA CGM to
+# every Vietnam and Panama lane, because "NAM" is a CMA CGM booking-ref
+# prefix and it is also inside VIET-NAM and PA-NAM-A:
+#
+#   CMA CGM  <- MDOLX261145_ HILMAR Oakland to Cat Lai, VIETNAM 2x40RF
+#   CMA CGM  <- HILMAR Oakland to Manzanillo, PANAMA 2x40RF
+#
+# Cai Mep alone was 16 of 134 bookings in OL's 2026 export. The carrier
+# reached the scorecards, the negotiation brief, share_intel's export and —
+# via sync_to_quote_tracker — a Turso registry another repo reads.
+#
+# THE FIX IS THE DISCIPLINE THIS FILE ALREADY HAD. detect_carrier_token
+# (2026-06-15) scans on WORD BOUNDARIES and refuses _AMBIGUOUS_CARRIER_TOKENS
+# outside a known carrier cell; parse_subject_carrier's Pattern D anchors a
+# ref prefix to its DIGITS. Both were right. The two older sites predate them
+# and never adopted them. Nothing new is invented here — the correct answer is
+# lifted out of this module and made importable so there is one of it.
+#
+# NAME TOKENS ARE DELIBERATELY ABSENT BELOW. A prefix here is matched only
+# when digits follow it. Names belong to detect_carrier_token, which knows
+# which of them are ambiguous. Mixing the two is the whole defect.
+# ─────────────────────────────────────────────────────────────────────
+
+CARRIER_REF_PREFIXES: dict[str, tuple[str, ...]] = {
+    "CMA CGM":     ("NAM", "APLU", "ANNU"),
+    "Maersk":      ("MAEU", "SEAU", "SUDU"),
+    "MSC":         ("MEDU", "MSCU", "EBKG"),
+    "ONE":         ("ONEY", "RICG", "SCNB"),
+    "Evergreen":   ("EISU", "EGLV"),
+    "Hapag-Lloyd": ("HLCU", "HLBU"),
+    "OOCL":        ("OOLU",),
+    "Yang Ming":   ("YMLU",),
+    "HMM":         ("HMMU",),
+    "ZIM":         ("ZIMU",),
+    "COSCO":       ("COSU",),
+}
+
+#: prefix -> canonical, longest prefix first so OOLU beats a shorter alternative.
+_REF_PREFIX_TO_CARRIER = {p: c for c, ps in CARRIER_REF_PREFIXES.items() for p in ps}
+_REF_RX = re.compile(
+    r"\b(" + "|".join(sorted(_REF_PREFIX_TO_CARRIER, key=len, reverse=True))
+    + r")\s*[#:]?\s*(\d{5,})\b", re.IGNORECASE)
+
+
+def carrier_from_booking_ref(text):
+    """The carrier named by a BOOKING REFERENCE in ``text``, or None.
+
+    A prefix counts only when DIGITS follow it — ``NAM8322223`` is a CMA CGM
+    booking, ``VIETNAM`` is a country. That anchor is the whole guard, and it
+    is why this cannot be collapsed into a plain token scan.
+
+    Returns None rather than a guess when nothing anchors. Per the contract:
+    a wrong carrier on a priced row misleads a human in a way a blank does not.
+    """
+    if not text:
+        return None
+    m = _REF_RX.search(str(text))
+    return _REF_PREFIX_TO_CARRIER.get(m.group(1).upper()) if m else None
+
+
+def carrier_named_in(text, canonical) -> bool:
+    """Does ``text`` name ``canonical`` — by full name on word boundaries, or
+    by one of its booking-ref prefixes anchored to digits?
+
+    Verification helper: asks about ONE carrier rather than returning the
+    first of many, so a subject naming two carriers cannot silently confirm
+    the wrong one.
+    """
+    if not text or not canonical:
+        return False
+    name = str(canonical).strip()
+    if not name:
+        return False
+    if re.search(rf"\b{re.escape(name.upper())}\b", str(text).upper()):
+        return True
+    return carrier_from_booking_ref(text) == name
+
 
 
 def detect_carrier_token(text, *, allow_short: bool = False):
@@ -1030,10 +1114,43 @@ _CARRIER_TOKENS = ["MSC", "CMA CGM", "CMA", "EVERGREEN", "ONE", "MAERSK",
                    "HMM", "COSCO", "OOCL", "WAN HAI", "YANG MING", "ZIM",
                    "HAPAG", "HAPAG-LLOYD"]
 
-def _find_carrier(text):
-    up = text.upper()
-    for tok in _CARRIER_TOKENS:
-        if tok in up:
+#: Tokens in _CARRIER_TOKENS that are also ordinary English words or fragments
+#: of a longer carrier name. Matching these in prose is how "phONE", "stONE"
+#: and "dONE" all read as the carrier ONE. Mirrors the scripts/ tree's
+#: _AMBIGUOUS_CARRIER_TOKENS; kept as its own name because this list also
+#: carries WAN HAI and the HAPAG variants.
+_AMBIGUOUS_PROSE_TOKENS = frozenset({"ONE", "CMA", "CGM", "APL", "ANL"})
+
+
+def _find_carrier(text, *, allow_short: bool = False):
+    """The canonical carrier named in ``text``, or None.
+
+    WAS A BARE SUBSTRING SCAN (fixed 2026-08-31). Executed against this
+    module before the fix:
+
+        _find_carrier("Please call my phone for details")  -> 'ONE'
+        _find_carrier("stone container")                   -> 'ONE'
+        _find_carrier("Booking done, no money yet")        -> 'ONE'
+        _find_carrier("ZIMBABWE inland move")              -> 'ZIM'
+
+    ph-ONE, st-ONE, d-ONE, ZIM-babwe. ingest.py:597 feeds it
+    ``f"{subject}\n{preview}"`` — unlabelled prose — so any OL mail whose
+    preview said "done" or "phone" claimed ONE as the carrier. qc.py:416
+    already carried a comment noting this function matched by substring and
+    hand-rolled its own word-boundary regex to avoid it; the workaround stays
+    correct, but the defect belonged here.
+
+    Now word-boundary, longest-token-first so "CMA CGM" beats "CMA", and
+    ambiguous tokens are refused unless ``allow_short`` says the text is a
+    known carrier cell rather than prose.
+    """
+    if not text:
+        return None
+    up = str(text).upper()
+    for tok in sorted(_CARRIER_TOKENS, key=len, reverse=True):
+        if tok in _AMBIGUOUS_PROSE_TOKENS and not allow_short:
+            continue
+        if re.search(rf"\b{re.escape(tok)}\b", up):
             return tok.title() if tok not in ("MSC", "ONE", "HMM", "OOCL", "ZIM") else tok
     return None
 
