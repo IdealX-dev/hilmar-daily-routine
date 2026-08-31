@@ -1665,8 +1665,8 @@ def phase_4_duplicates(log: Log, data: dict):
 
     # ── QC-083 — PASS 3: THE SUPERSEDED RE-ASK ────────────────────────────
     #
-    # DETECT-ONLY, ON PURPOSE. Pass 2 above DROPS a row; this one does not,
-    # and the difference is deliberate.
+    # IT ABSORBS, since 2026-08-31. It shipped DETECT-ONLY on 2026-08-28 and
+    # the days in between are the whole story — see WHY IT REPORTED FIRST.
     #
     # THE SHAPE. Lonny asks for one move, gets no answer or changes his mind,
     # and asks AGAIN on a later day in the same thread. One shipment, two
@@ -1685,12 +1685,13 @@ def phase_4_duplicates(log: Log, data: dict):
     # by definition a DIFFERENT day, so the pair lands in two groups), and it
     # only fires on an unconfirmed WIN (post-#231 the stale copy is a LOSS).
     #
-    # WHY IT ONLY REPORTS. Absorbing a row means deleting a loss, and a
+    # WHY IT REPORTED FIRST. Absorbing a row means DELETING A LOSS, and a
     # detector that is wrong in that direction manufactures a win rate — the
-    # exact failure this repo has already shipped once. Nothing here can
-    # measure how many real rows match: the data is in blob and nothing
-    # meaningful runs locally. So this names them, with their ids, and the
-    # heal gets written against a real list rather than a hypothesis.
+    # exact failure this repo has already shipped once. Nothing here could
+    # measure how many real rows matched: the data is in blob and nothing
+    # meaningful runs locally. So it named them, with their ids, and waited
+    # for a fire to answer. The 2026-08-31 fire named exactly two, both HCMC.
+    # The heal below is written against that list, not a hypothesis.
     #
     # THE DISCRIMINATOR IS THE REQUESTED SAILING, NOT THE LOOKALIKE FIELDS.
     # Same thread + same lane + same containers also describes TWO GENUINE
@@ -1701,7 +1702,9 @@ def phase_4_duplicates(log: Log, data: dict):
     # and this is the branch where guessing costs a loss.
     reask = 0
     supersede: dict[tuple, list[dict]] = {}
-    for r in data.get("requests", keepers):
+    for r in keepers:
+        if id(r) in drop_ids:
+            continue
         cid = (r.get("conversation_id") or "").strip()
         lane = core.canonical_port_key(r.get("destination"))
         cont = (r.get("containers") or "").strip().lower()
@@ -1737,18 +1740,56 @@ def phase_4_duplicates(log: Log, data: dict):
                  and r.get("request_date") != booked[0].get("request_date")]
         if not booked or not stale:
             continue
+        canonical = booked[0]
         for dup in stale:
+            # ── THE ABSORB ────────────────────────────────────────────────
+            # Detect-only until 2026-08-31. It shipped that way on purpose:
+            # absorbing a row DELETES A LOSS, and a detector wrong in that
+            # direction manufactures a win rate — so it named rows first and
+            # earned the deletion afterwards. QC-083's first real fire named
+            # exactly two, both HCMC:
+            #
+            #   req_9e919aa59f6f6bfe  <-  req_913dc883fba91890 (MDOLX260712)
+            #   req_34213cc401395756  <-  req_e54685b379d8c950 (MDOLX261072)
+            #
+            # Two, not twenty. The heal is now sized against a real list.
+            #
+            # A HUMAN VERDICT OUTRANKS THIS. operator_corrections.json is the
+            # only durable human state in a system that rebuilds every row
+            # each fire; a row Michael pinned is a row he looked at, and no
+            # heuristic gets to delete it. Reported instead, so the conflict
+            # is visible rather than silently resolved in the code's favour.
+            if dup.get("manual_locked"):
+                reask += 1
+                log.warn(
+                    f"QC-083: {dup.get('request_id')} looks like a superseded "
+                    f"re-ask of {canonical.get('request_id')} but carries an "
+                    f"operator correction — NOT absorbed. A human verdict "
+                    f"outranks this heal; resolve it in "
+                    f"operator_corrections.json if the row should go.")
+                continue
+            # Evidence moves to the surviving row before the duplicate goes,
+            # so the thread it was reached through is not lost with it.
+            canonical["source_imids"] = sorted(set(
+                (canonical.get("source_imids") or []) + (dup.get("source_imids") or [])))
+            canonical["source_ids"] = sorted(set(
+                (canonical.get("source_ids") or []) + (dup.get("source_ids") or [])))
+            canonical.setdefault("merge_notes", []).append(
+                f"Absorbed superseded re-ask {dup.get('request_id')} "
+                f"({dup.get('request_date')}, {dup.get('lane')}, "
+                f"{dup.get('containers')}, sailing {dup.get('etd_requested')}) "
+                f"— same thread and same requested sailing, no booking and no "
+                f"send of its own")
+            drop_ids.add(id(dup))
             reask += 1
-            log.warn(
-                f"QC-083: {dup.get('request_id')} looks like a SUPERSEDED "
-                f"RE-ASK of {booked[0].get('request_id')} "
-                f"(MDOLX{booked[0].get('mdolx_ref')}) — same thread, lane "
-                f"{dup.get('lane')}, containers {dup.get('containers')} and "
-                f"requested sailing {dup.get('etd_requested')}, asked "
-                f"{dup.get('request_date')} vs {booked[0].get('request_date')}, "
-                f"no booking and no send of its own. Currently counted as a "
-                f"separate {core.display_status(dup) or dup.get('status')}. "
-                f"NOT absorbed — reported for review.")
+            log.fix(
+                f"QC-083: absorbed {dup.get('request_id')} into "
+                f"{canonical.get('request_id')} (MDOLX{canonical.get('mdolx_ref')}) "
+                f"— superseded re-ask on {dup.get('lane')}, asked "
+                f"{dup.get('request_date')} vs {canonical.get('request_date')}, "
+                f"same requested sailing {dup.get('etd_requested')}. It was "
+                f"counted as a separate "
+                f"{core.display_status(dup) or dup.get('status')}.")
     if reask == 0:
         log.ok("QC-083: no superseded re-asks detected")
 

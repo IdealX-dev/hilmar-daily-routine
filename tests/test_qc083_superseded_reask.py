@@ -14,10 +14,13 @@ Oakland → Tokyo, 2026-08-25/26, MDOLX261145.
 keys on `request_date` (a re-ask is by definition a different day) and fires
 only on an unconfirmed WIN (post-#231 the stale copy is a LOSS).
 
-THIS CHECK ONLY REPORTS. Absorbing the row means deleting a LOSS, and a
-detector wrong in that direction manufactures a win rate — the failure this
-repo has already shipped once. So the tests below spend most of their weight
-on what it must NOT fire on.
+IT NOW ABSORBS (2026-08-31). It shipped detect-only on 2026-08-28 because
+absorbing the row means DELETING A LOSS, and a detector wrong in that
+direction manufactures a win rate — the failure this repo has already shipped
+once. So it named rows first, and waited for a fire to answer. The 2026-08-31
+fire named exactly two, both HCMC. That is what earned the deletion, and it is
+also why the tests below still spend most of their weight on what it must NOT
+fire on.
 """
 from __future__ import annotations
 
@@ -45,35 +48,138 @@ def _row(rid, *, date, mdolx=None, has_send=False, etd="2026-09-04",
 
 
 def _run(rows):
-    """phase_4_duplicates over `rows`; returns the QC-083 warnings."""
+    """phase_4_duplicates over `rows`; every QC-083 line it emitted.
+
+    Fixes AND warnings, deliberately. The negative tests below assert this is
+    empty, and they have to stay load-bearing across the detect-only ->
+    absorb change: a check that reports through `fix` now would slip past a
+    filter that only reads `warnings`.
+    """
     log = qc_selfheal.Log()
     qc_selfheal.phase_4_duplicates(log, {"requests": list(rows)})
-    return [w for w in log.warnings if "QC-083" in w]
+    return [m for m in (*log.fixes, *log.warnings) if "QC-083" in m]
 
 
 # ── it fires on the live shape ────────────────────────────────────────────
 
-def test_the_tokyo_pair_is_detected():
+def test_the_tokyo_pair_fires_and_the_log_names_both_rows():
+    """The audit line is the only trace a deleted row leaves. It has to carry
+    both request_ids and the booking it was folded into, or nobody can undo
+    this by hand later."""
     booked = _row("req_0826", date="2026-08-26", mdolx="261145",
                   has_send=True, status="WIN")
     stale = _row("req_0825", date="2026-08-25")
-    warns = _run([booked, stale])
-    assert len(warns) == 1, f"expected one detection, got {warns}"
-    assert "req_0825" in warns[0] and "req_0826" in warns[0]
-    assert "261145" in warns[0]
+    lines = _run([booked, stale])
+    assert len(lines) == 1, f"expected one QC-083 line, got {lines}"
+    assert "req_0825" in lines[0] and "req_0826" in lines[0]
+    assert "261145" in lines[0]
 
 
-def test_it_reports_and_does_not_absorb():
-    # The whole point. A dropped row here is a deleted LOSS.
-    rows = [_row("req_0826", date="2026-08-26", mdolx="261145",
-                 has_send=True, status="WIN"),
-            _row("req_0825", date="2026-08-25")]
+def _absorb(rows):
     data = {"requests": list(rows)}
-    qc_selfheal.phase_4_duplicates(qc_selfheal.Log(), data)
-    assert len(data["requests"]) == 2, (
-        "QC-083 removed a row — it is detect-only; absorbing a loss on a "
-        "heuristic is how a win rate gets manufactured")
-    assert {r["request_id"] for r in data["requests"]} == {"req_0825", "req_0826"}
+    log = qc_selfheal.Log()
+    qc_selfheal.phase_4_duplicates(log, data)
+    return data, log
+
+
+def test_it_absorbs_the_duplicate_into_the_booked_row():
+    """DETECT-ONLY UNTIL 2026-08-31, then earned.
+
+    It shipped as a detector on purpose: absorbing a row DELETES A LOSS, and a
+    detector wrong in that direction manufactures a win rate. So it named rows
+    first. QC-083's first real fire named exactly two, both HCMC — two, not
+    twenty — and the heal is now sized against a real list rather than a
+    hypothesis.
+    """
+    booked = _row("req_0826", date="2026-08-26", mdolx="261145",
+                  has_send=True, status="WIN")
+    stale = _row("req_0825", date="2026-08-25")
+    data, log = _absorb([booked, stale])
+    assert [r["request_id"] for r in data["requests"]] == ["req_0826"], (
+        "the superseded re-ask was not absorbed")
+    assert any("absorbed req_0825" in f for f in log.fixes), log.fixes
+
+
+def test_the_absorbed_rows_evidence_moves_to_the_survivor():
+    """The duplicate carries the thread it was reached through. Dropping the
+    row without folding that in loses the only record of how it was found."""
+    booked = _row("req_0826", date="2026-08-26", mdolx="261145",
+                  has_send=True, status="WIN")
+    booked["source_imids"] = ["<a@ol>"]
+    stale = _row("req_0825", date="2026-08-25")
+    stale["source_imids"] = ["<b@ol>"]
+    data, _log = _absorb([booked, stale])
+    kept = data["requests"][0]
+    assert set(kept["source_imids"]) == {"<a@ol>", "<b@ol>"}
+    assert any("Absorbed superseded re-ask req_0825" in n
+               for n in kept.get("merge_notes", [])), kept.get("merge_notes")
+
+
+def test_an_operator_correction_outranks_the_heal():
+    """operator_corrections.json is the only durable human state in a system
+    that rebuilds every row each fire. A row Michael pinned is a row he looked
+    at, and no heuristic gets to delete it — the conflict is REPORTED so it is
+    visible, rather than silently resolved in the code's favour."""
+    booked = _row("req_0826", date="2026-08-26", mdolx="261145",
+                  has_send=True, status="WIN")
+    stale = _row("req_0825", date="2026-08-25")
+    stale["manual_locked"] = True
+    data, log = _absorb([booked, stale])
+    assert len(data["requests"]) == 2, "a manual_locked row was deleted"
+    assert any("operator correction" in w for w in log.warnings), log.warnings
+    assert not any("absorbed" in f for f in log.fixes), log.fixes
+
+
+def test_absorbing_is_idempotent_across_the_two_passes_per_fire():
+    """qc_selfheal runs TWICE per fire. The second pass must find nothing left
+    to do rather than double-logging or touching the survivor again."""
+    booked = _row("req_0826", date="2026-08-26", mdolx="261145",
+                  has_send=True, status="WIN")
+    stale = _row("req_0825", date="2026-08-25")
+    data, first = _absorb([booked, stale])
+    notes_after_one = list(data["requests"][0].get("merge_notes", []))
+    log2 = qc_selfheal.Log()
+    qc_selfheal.phase_4_duplicates(log2, data)
+    assert len(data["requests"]) == 1
+    assert data["requests"][0].get("merge_notes", []) == notes_after_one, (
+        "the second pass appended a duplicate merge note")
+    assert not any("absorbed" in f for f in log2.fixes), log2.fixes
+    assert len(first.fixes) >= 1
+
+
+def test_the_survivor_is_a_row_that_survives_phase_4():
+    """QC-083 used to scan the ORIGINAL data["requests"], not what passes 1
+    and 2 left standing. Harmless while it only reported. Now it folds the
+    absorbed row EVIDENCE into the survivor before deleting it — and if the
+    survivor it picked is a row pass 1 already discarded, the evidence goes
+    out with it and the stale row is deleted anyway. Net: one row gone, its
+    thread gone, and nothing to show it.
+
+    Two dicts share request_id req_win here; pass 1 keeps the richer one. The
+    poorer twin is listed FIRST, so a scan over the original list would elect
+    it as the booked row.
+    """
+    poor = _row("req_win", date="2026-08-26", mdolx="261145", has_send=True,
+                status="WIN")
+    poor["source_imids"] = ["<poor@ol>"]
+    rich = _row("req_win", date="2026-08-26", mdolx="261145", has_send=True,
+                status="WIN")
+    rich["source_imids"] = ["<rich@ol>"]
+    rich["carrier"] = "Maersk"      # the extra field that makes it the keeper
+    rich["rate_usd"] = 4200
+    stale = _row("req_0825", date="2026-08-25")
+    stale["source_imids"] = ["<stale@ol>"]
+
+    data = {"requests": [poor, rich, stale]}
+    log = qc_selfheal.Log()
+    qc_selfheal.phase_4_duplicates(log, data)
+
+    assert len(data["requests"]) == 1, [r["request_id"] for r in data["requests"]]
+    kept = data["requests"][0]
+    assert kept is rich, "phase 4 kept the poorer twin"
+    assert "<stale@ol>" in kept["source_imids"], (
+        "the absorbed row evidence was folded into a row that was then dropped")
+    assert len([m for m in log.fixes if "QC-083" in m]) == 1, log.fixes
 
 
 # ── what it must NEVER fire on ────────────────────────────────────────────
@@ -157,11 +263,15 @@ def test_a_lone_unbooked_row_is_not_a_duplicate_of_nothing():
 
 
 @pytest.mark.parametrize("n_stale", [1, 2, 3])
-def test_every_stale_copy_is_named_not_just_the_first(n_stale):
+def test_every_stale_copy_is_absorbed_not_just_the_first(n_stale):
     booked = _row("req_win", date="2026-08-26", mdolx="261145", has_send=True,
                   status="WIN")
     stale = [_row(f"req_s{i}", date=f"2026-08-2{i}") for i in range(n_stale)]
-    warns = _run([booked, *stale])
-    assert len(warns) == n_stale
+    data = {"requests": [booked, *stale]}
+    log = qc_selfheal.Log()
+    qc_selfheal.phase_4_duplicates(log, data)
+    lines = [m for m in log.fixes if "QC-083" in m]
+    assert len(lines) == n_stale
     for r in stale:
-        assert any(r["request_id"] in w for w in warns)
+        assert any(r["request_id"] in m for m in lines)
+    assert [r["request_id"] for r in data["requests"]] == ["req_win"]
