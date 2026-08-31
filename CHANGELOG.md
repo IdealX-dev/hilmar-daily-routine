@@ -3,6 +3,62 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
+### 2026-08-31 (later) — rule 5 was not nil here: re-LAX-ed, and an incoterm read as a port
+
+I recorded rule 5 as **"NOT ASSESSED — ocean-only, exposure likely nil"** on
+2026-08-30. That was wrong, and "likely" was doing the work. The compliance
+audit found 11 items; I reproduced the two that matter by executing the
+production module.
+
+#### THE ORIGIN SCAN WAS AN UNANCHORED `str.find()`
+
+`_KNOWN_ORIGINS` carries the bare three-letter forms `"SLC"`, `"OAK"` and
+`"LAX"`, and `_scan_for_origin` looked for them as substrings:
+
+```
+parse_subject_lane('Relaxed cutoff to Tokyo')     -> ('LAX', 'Tokyo')
+parse_subject_lane('Flaxseed shipment to Busan')  -> ('LAX', 'Busan')
+```
+
+re-**LAX**-ed. f-**LAX**-seed. The origin is a lane endpoint, so a bogus one
+splits the lane bucket and mis-labels the carrier scoreboard — the *exact*
+damage that got `"HILMAR"` removed from this same list, recorded in the
+comment directly above it.
+
+Word boundaries now. Note this does **not** cost us `Oakland`: the long form
+sits ahead of the short one in the list and still matches at its own index,
+while bare `OAK` correctly stops matching inside it.
+
+#### AN INCOTERM SITS EXACTLY WHERE A PORT SITS
+
+```
+parse_subject_lane('Updated Rates FOB Korea from Dalhart') -> ('Dalhart', 'FOB')
+parse_subject_lane('Rates CPT Japan from Tulare')          -> ('Tulare', 'CPT')
+```
+
+The `<DEST> <region> from <ORIGIN>` branch pops a trailing region word and
+takes whatever capitalised token sits behind it. For `"FOB Korea"` the pop
+makes it **worse**: it strips `Korea` and hands back the incoterm.
+
+`_INCOTERMS` (15) and `_UNIT_TOKENS` (16) now join `_LANE_STOPWORDS` at both
+endpoint-acceptance sites. The contract's framing is about POSITION — a
+3-letter token after a number is a unit, an incoterm before a place name is
+the incoterm — and refusing both classes outright is the conservative reading:
+this repo has no lane whose endpoint is legitimately spelled `FOB` or `CBM`.
+
+A refused pair falls through rather than returning a half-lane. That is the
+honest outcome — we do not know the destination, and `Korea` is a country, not
+the port. The row is dropped and QC surfaces the gap, instead of a fabricated
+lane key entering the aggregates.
+
+#### MOSTLY POSITIVE TESTS, ON PURPOSE
+
+35 tests across BOTH trees. Half assert the parser still works — a parser that
+returned `(None, None)` for everything would pass every negative test in the
+file. The 2026-06-24 Busan/Korea recovery shape, the ordinary `X to Y` lane,
+and the QC-057 destination recovery are all pinned. Both fixes reverted in the
+production tree: **11 tests fail**.
+
 ### 2026-08-30 — two sessions wrote the same contract; only one copy ships
 
 Michael sent the bare filename `REFERENCE_DATA_PROMPT.md`. It existed nowhere
