@@ -310,9 +310,29 @@ def _status_change_daynote(status_ch, report_date):
         # nothing beats saying something unverifiable — the whole point of the
         # note is to state a fact about WHICH day these rows belong to.
         return ""
-    rd = report_date.isoformat() if hasattr(report_date, "isoformat") else str(report_date)
-    earlier = sum(1 for r, _h in status_ch
-                  if (r.get("request_date") or r.get("date")) != rd)
+    rd = report_date if hasattr(report_date, "year") else _et_date(report_date)
+
+    # DATE A ROW THE WAY _today_events DATES IT, request_timestamp INCLUDED.
+    # Copilot on #243, verified by execution: comparing only request_date /
+    # date misreads a row carrying just a request_timestamp. Before the fix, a
+    # row requested ON the report day with a timestamp only produced
+    #     "It was requested on an earlier day"
+    # which is false. _today_events resolves `request_date or
+    # request_timestamp`, and _et_date returns a date for the date-only and
+    # the full-ISO form alike — so the tiles bucketed that row on the report
+    # day while this note claimed the opposite. A note whose entire job is to
+    # say which day a row belongs to cannot be the thing that gets it wrong.
+    def _req_day(r):
+        return _et_date(r.get("request_date") or r.get("date")
+                        or r.get("request_timestamp"))
+
+    days = [_req_day(r) for r, _h in status_ch]
+    if any(d is None for d in days):
+        # A row we cannot date makes the split unverifiable, and an
+        # unverifiable claim is precisely what this note exists to avoid
+        # producing. Stay silent rather than assert a count we cannot prove.
+        return ""
+    earlier = sum(1 for d in days if d != rd)
     total = len(status_ch)
     if not earlier:
         lead, tail = (("It was", "it appears") if total == 1
@@ -322,16 +342,22 @@ def _status_change_daynote(status_ch, report_date):
                 f'that day, so {tail} in the tiles below too.</p>')
     if earlier == 1:
         lead, verb = ("It", "was") if total == 1 else (f"<b>1 of {total}</b>", "was")
-        tail = ("it counts in its request day’s tiles" if total == 1
-                else "that one counts in its request day’s tiles")
+        tail = ("it counts in the tiles for the day it was requested"
+                if total == 1
+                else "that one counts in the tiles for the day it was requested")
     else:
         lead = f"<b>All {total}</b>" if earlier == total else f"<b>{earlier} of {total}</b>"
         verb = "were"
-        tail = "they count in their request day’s tiles"
+        tail = "they count in the tiles for the day they were requested"
+    # NO APOSTROPHES, straight or curly. Copilot on #243: this file is
+    # otherwise straight ASCII and the report renders through the Word/Outlook
+    # HTML engine, which mojibakes smart punctuation — and a straight quote
+    # would close these single-quoted f-strings. Rewording past the possessive
+    # avoids both, and reads better than "request day's" did.
     return (f'<p style="margin:0 0 6px;font-size:13px;color:{B.DOC_MUTED}">'
             f'Moves that happened on the report day — {lead} {verb} requested '
             f'on an earlier day. The tiles below bucket by REQUEST date, so '
-            f'{tail}, not today’s.</p>')
+            f'{tail}, not for today.</p>')
 
 
 def _left_pending_note(status_ch, pending_hil):
