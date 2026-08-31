@@ -21,7 +21,8 @@ this page.**
 python -m rate_blaster.scripts.reference_data_status
 ```
 
-Run against `rate-blaster` `main` @ `6b8f8b57` (2026-08-31, #408). The probe is
+Run against `rate-blaster` `main` @ `6b8f8b57` (2026-08-31,
+`IdealX-dev/rate-blaster#408`). The probe is
 now ON `main` — it was on a branch when this page was first written, which is
 the single biggest change since.
 
@@ -88,20 +89,39 @@ the whole gap. It is not a design question; it is one missing secret.
 
 A fine-grained PAT with **read-only Contents on `IdealX-dev/rate-blaster`**,
 stored as a repo secret on `IdealX-dev/hilmar-daily-routine` (say
-`RATE_BLASTER_TOKEN`). Then, in `daily.yml` and `test.yml`:
+`RATE_BLASTER_TOKEN`). Creating that secret is an access change, so it is
+Michael's to make — a session must not provision it.
+
+**Check it out; do not put it in a pip URL.** The obvious form —
+`pip install "git+https://<token>@github.com/..."` — puts the credential on
+pip's command line, where it can reach logs through an error message or a
+re-encoding that defeats Actions' secret masking, and leaves it in the cached
+clone's git config. Use the documented cross-repo checkout instead, in
+`daily.yml` and `test.yml`:
 
 ```yaml
-pip install "git+https://x-access-token:${{ secrets.RATE_BLASTER_TOKEN }}@github.com/IdealX-dev/rate-blaster.git@main"
+- uses: actions/checkout@v5
+  with:
+    repository: IdealX-dev/rate-blaster
+    token: ${{ secrets.RATE_BLASTER_TOKEN }}
+    path: .rate-blaster
+    persist-credentials: false
+
+- run: pip install ./.rate-blaster
 ```
 
-Creating that secret is an access change, so it is Michael's to make — a
-session must not provision it.
+`pip` never sees the token. `actions/checkout`'s own docs describe `token` as
+*"configured with the local git config"* with *"the post-job step removes the
+PAT"*, and `persist-credentials: false` keeps it out of that config in the
+first place. `.rate-blaster` needs a `.gitignore` line so the nested checkout
+does not show up as untracked.
 
-**Size is not a reason to hesitate.** Per pip's own docs (topics/vcs-support):
-*"Pip defaults to partial clones for Git 2.17 or later."* It does not pull
-rate-blaster's full ~176 MB of history — it fetches the tree at the named ref,
-in which `geo_master.db` is 6.2 MB. Pin `@main` or, better, a commit SHA; the
-same docs note full commit hashes are preferred for efficiency.
+**Size is not a reason to hesitate either way.** `actions/checkout` defaults to
+`fetch-depth: 1`, so it takes the tip tree, not rate-blaster's ~176 MB of
+history; `geo_master.db` in it is 6.2 MB. (For the record, the pip route is not
+slow either — pip's docs, `topics/vcs-support`: *"Pip defaults to partial
+clones for Git 2.17 or later."* Size was never the objection; credential
+handling is.)
 
 ---
 
