@@ -62,6 +62,8 @@ HOW TO TALK TO ME
 
 SHARED REFERENCE DATA — ports, airports, rail, carriers; do not rebuild it here
 
+<!-- BEGIN IDEALX SHARED REFERENCE DATA -->
+
 Ports, airports, inland depots, rail yards and carrier codes are maintained ONCE,
 in `IdealX-dev/rate-blaster`. Never build a port / airport / rail / LOCODE /
 carrier list in any other repo, and never hard-code a UN/LOCODE, IATA code or
@@ -70,7 +72,11 @@ SCAC. Finding one is a finding — report it.
 **`rate_blaster/geo/geo_master.db`** — committed SQLite, on `main`:
 `seaports` 11,928 (key `locode`) · `airports` 7,883 (key `iata_code`, plus
 `icao_code`) · `icds` 12,949 (key `icd_code`) · `rail_yards` 9,177 (key
-`yard_id`). All carry name, city, country_code, lat, lon.
+`yard_id`). All carry name, city, country_code, lat, lon. `is_major = 1` is
+the quotable-terminal gate on seaports (136 gateways), rail_yards (112 ramps
+steamship lines actually call — BNSF/UP/NS/CSX/CONCOR) and icds (117 operated
+depots); the other ~22,000 rail/ICD rows are UN/LOCODE fill — resolvable as
+places, never presented as the nearest quotable terminal.
 
 **`rate_blaster/util/carrier_registry.py`** — 28 ocean lines (SCAC) + 25
 airlines (IATA/ICAO); `canonical_for_code()` resolves any of them.
@@ -90,20 +96,26 @@ Five rules. Each is a defect that already shipped:
    more than one LOCODE; 'Lagos' returns two Nigerian ports AND `PTLOS` in
    Portugal. A reverse join eventually ships to the wrong continent.
 3. **Resolution is unrestricted; MATCHING in prose is gated** on
-   `seaports.is_major = 1` (136 ports, covering every lane actually quoted).
+   `is_major = 1` — the same gate on seaports (136), rail_yards (112) and
+   icds (117). "Nearest rail/ICD" must rank `is_major` first: a UN/LOCODE
+   fill row is a domestic siding no steamship line calls.
 4. **Never match a bare 2-letter carrier code in free text.** `PO` is a
    purchase order, `CM` is centimetres, `FX` is foreign exchange, `5X` is
    `5x40HC`, `VS` is what a comparison prints BETWEEN two carriers.
-5. **3-letter IATA codes ARE the identifier — match them, but mind POSITION.**
-   Seven incoterms are live IATA codes: `FOB Shanghai` resolves FOB to Fort
-   Bragg, `CPT Hamburg` to Cape Town; `12.4 CBM` is Columbus. A 3-letter token
-   after a number is a unit; an incoterm before a place name is the incoterm.
+5. **3-letter IATA codes ARE the identifier — match them, but mind POSITION,
+   and do not re-implement the position logic.** Ten incoterms and 28 common
+   freight abbreviations are live IATA codes: `FOB Shanghai` is Fort Bragg,
+   `CPT Hamburg` is Cape Town, `12.4 CBM` is Columbus. The ONE gate is
+   `rate_blaster.geo.place_gate.iata_token_is_a_place(token, text)` — vendor
+   it; a local copy is the seventh table.
 
 Local to each repo: **aliases** ("port of los angeles", "san pedro") and
 **match policy** (which subset your parser recognises). Data is shared; those
 two are not. Need a FIELD upstream does not carry? Add it in rate-blaster and
 publish — never locally. Corrections are a PR against rate-blaster so every
 repo gets them at once.
+
+<!-- END IDEALX SHARED REFERENCE DATA -->
 
 Canonical text for this block: `IdealX-dev/idealx-claude-standards` →
 `user-claude-md/CLAUDE.md`. It is duplicated into each consuming repo on
