@@ -3,7 +3,73 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-08-31 (latest) — the reference-data blocker is one missing secret, not a design question
+### 2026-08-31 (latest) — the blocker was one row, and NO PREAMBLE finally landed
+
+Michael, on the entry directly below this one: *"what do you need with the
+secret? what does this have to do with hilmar?"*
+
+**He was right and it was overstated.** The measurement nobody had taken:
+
+| table | entries |
+|---|---|
+| `core.PORT_LOCODES` | **1** — `{"JPYOK": "Yokohama"}` |
+| `core.CARRIER_ALIASES` | 42 |
+| `core._TRADE_REGION_MAP` | 81 |
+| `body_parser.KNOWN_ORIGINS` | 22 |
+
+`PORT_LOCODES` is **one row**. Consuming `rate_blaster.geo` would delete a
+one-line dict in exchange for a private cross-repo dependency on the daily
+fire. `REFERENCE_DATA_PROMPT.md` called that an OPEN VIOLATION and led three
+PRs (#245-#247) with a `RATE_BLASTER_TOKEN` ask, and `core.py` had been
+arguing the other way the whole time, right above the dict:
+
+> SEEDED FROM EVIDENCE, NOT FROM MEMORY. JPYOK is the only entry because it is
+> the only code this book has actually produced and the only one the operator
+> has confirmed.
+
+with `test_every_locode_value_is_a_real_corpus_port` refusing anything
+unconfirmed. The rule exists to stop a 12,000-row port list being duplicated
+and drifting; one operator-confirmed row behind a test is not that.
+
+**Michael's call: do not create the secret.** Revisit when `PORT_LOCODES`
+starts growing a row per fire, or QC-015 fires on ports the local tables do not
+carry. The credential mechanics stay recorded for that day - cross-repo
+`actions/checkout`, never a token in a pip URL - because they are right, just
+not yet needed. `_TRADE_REGION_MAP` is not replaceable upstream at all: trade
+region is a classification `geo_master` does not carry.
+
+#### THE FAILURE WAS NOT THE CONCLUSION, IT WAS THE METHOD
+
+Nobody ran `len()`. The finding was inherited from an audit page and repeated
+across three PRs as fact. **Second time in one week** - the KOBE lane split,
+which `title_case_destination` already merged, was the first. So it is now a
+rule rather than a resolution, in `CLAUDE.md`:
+
+> MEASURE THE THING BEFORE YOU WRITE IT UP. [...] An inherited claim is not a
+> verified one - run it, or label it [ASSUMPTION].
+
+#### NO PREAMBLE, LANDED AT LAST
+
+Michael confirmed the instruction was his (*"oh yes.. all into .md and you
+handle"*). It had been written down on 2026-08-24 and pushed to a branch whose
+PR had merged two days earlier, so it never reached `main` and no session
+reading `CLAUDE.md` ever saw it. Now in HOW TO TALK TO ME, with the confidence
+tags explicitly surviving it: a tag is precision, not hedging, and brevity
+never buys an unverified claim.
+
+**Upstream is still owed these three bullets.** The working standard is
+duplicated into each repo from `IdealX-dev/idealx-claude-standards` ->
+`user-claude-md/CLAUDE.md`; they landed here only, so the next sync would
+overwrite them.
+
+`REFERENCE_DATA_PROMPT.md` and `HANDOFF.md` both rewritten to lead with the
+measurement instead of the ask.
+
+3645 passed, 1 skipped; ruff clean.
+
+---
+
+### 2026-08-31 — the reference-data blocker is one missing secret, not a design question
 
 `REFERENCE_DATA_PROMPT.md` carried a probe snapshot from 2026-08-28 that is no
 longer true, and it was stale in the direction that keeps work from happening:

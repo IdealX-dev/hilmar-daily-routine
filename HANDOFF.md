@@ -78,61 +78,52 @@ it is reversible by hand if a number looks wrong.
 
 ---
 
-## 3. The one thing that genuinely waits on Michael
+## 3. CORRECTED — the reference-data "blocker" was overstated. Nothing waits on Michael.
 
-**Add a repo secret: `RATE_BLASTER_TOKEN`** — a fine-grained PAT with
-**read-only Contents on `IdealX-dev/rate-blaster`**.
+**Read this before you act on anything reference-data shaped.** An earlier
+version of this very file, and `REFERENCE_DATA_PROMPT.md`, and PRs #245–#247,
+all led with *"add a `RATE_BLASTER_TOKEN` secret and the shared-reference-data
+rule stops being blocked."* Michael pushed back — *"what does this have to do
+with hilmar?"* — and the measurement settles it:
 
-Why, measured 2026-08-31:
+| table | entries |
+|---|---|
+| `core.PORT_LOCODES` | **1** — `{"JPYOK": "Yokohama"}` |
+| `core.CARRIER_ALIASES` | 42 |
+| `core._TRADE_REGION_MAP` | 81 |
+| `body_parser.KNOWN_ORIGINS` | 22 |
 
-- `IdealX-dev/rate-blaster` is **private** (`"private": true`, GitHub API).
-- Every workflow in `.github/workflows/` checks out with `actions/checkout@v5`
-  and **no** `repository:` override; the only GitHub token in play is
-  `${{ github.token }}`, scoped to `IdealX-dev/hilmar-daily-routine` alone.
-- The nine `secrets.*` this repo uses are Graph, Sentry, Azure, Anthropic,
-  Teams and QT credentials. **None is a GitHub PAT.**
+Consuming `rate_blaster.geo` would delete a **one-row dict** in exchange for
+putting a private cross-repo dependency into the daily fire. Bad trade.
+**Michael's call, 2026-08-31: do not create the secret.**
 
-So `pip install "git+https://github.com/IdealX-dev/rate-blaster.git@main"`
-works in an agent session that already has the repo attached, and **fails on
-the Actions runner that fires the daily report.**
+`core.py` already argued this above the dict — *"SEEDED FROM EVIDENCE, NOT FROM
+MEMORY. JPYOK is the only entry because it is the only code this book has
+actually produced"* — with a test refusing unconfirmed additions. The rule in
+`CLAUDE.md` exists to stop a 12,000-row port list being duplicated and
+drifting. One operator-confirmed row behind a test is not that.
+`_TRADE_REGION_MAP` cannot be replaced upstream at all — trade region is a
+classification `geo_master` does not carry.
 
-**Check the repo out; do not put the token in a pip URL.** The obvious form
-puts the credential on pip's command line, where an error message or a
-re-encoding can carry it past Actions' secret masking, and leaves it in the
-cached clone's git config. Use the documented cross-repo checkout in
-`daily.yml` and `test.yml`:
+**Revisit when** `PORT_LOCODES` grows a row per fire, or QC-015 starts firing
+on ports the local tables do not carry. The credential mechanics (cross-repo
+`actions/checkout`, never a token in a pip URL) are recorded in
+`REFERENCE_DATA_PROMPT.md` for that day.
 
-```yaml
-- uses: actions/checkout@v5
-  with:
-    repository: IdealX-dev/rate-blaster
-    token: ${{ secrets.RATE_BLASTER_TOKEN }}
-    path: .rate-blaster
-    persist-credentials: false
-
-- run: pip install ./.rate-blaster
-```
-
-`pip` never sees the token. `actions/checkout`'s docs describe `token` as
-*"configured with the local git config"* with *"the post-job step removes the
-PAT"*; `persist-credentials: false` keeps it out of that config at all.
-`.rate-blaster` needs a `.gitignore` line so the nested checkout is not
-untracked.
-
-Size is not a reason to hesitate either way: `fetch-depth` defaults to 1, so
-this takes the tip tree — `geo_master.db` at 6.2 MB — not rate-blaster's
-~176 MB of history.
-
-**Until that secret exists, write no code against `rate_blaster.geo`.** A
-consumption path CI cannot install is worse than the violation it replaces: it
-ships code that never runs in production and tests that skip.
+**The transferable lesson, and why it is now in `CLAUDE.md`:** this claim was
+inherited from an audit page and repeated across three PRs without anyone
+running `len()` on the table. It is the second time in one week — the KOBE lane
+split, which the parser already merged, was the first. An inherited finding is
+not a verified one.
 
 ---
 
-## 3b. FINDING — an instruction of Michael's never reached `main` (written 2026-08-24, still missing 2026-08-31)
+## 3b. FIXED 2026-08-31 — an instruction of Michael's had never reached `main`
 
-Found while writing this handoff, verified 2026-08-31, **not fixed** (he said
-write the handoff, so this is reported rather than actioned):
+Found while writing this handoff. **Now landed** — Michael confirmed the
+instruction was his (*"oh yes.. all into .md and you handle"*, 2026-08-31) and
+it is in `CLAUDE.md` under HOW TO TALK TO ME. Kept on the record because the
+failure mode is the interesting part, not the fix:
 
 Commit **`cb4e88a`** — *"No preamble — Michael's standing instruction, in the
 working standard"*, authored 2026-08-24 — adds this to `CLAUDE.md`:
@@ -157,11 +148,16 @@ reading `CLAUDE.md` from `main` in that window never saw it. **Re-check before
 acting on this section** — `git grep -c "NO PREAMBLE" origin/main -- CLAUDE.md`
 answers it in one line, and a non-zero count means someone has since landed it.
 
-**To land it:** cherry-pick `cb4e88a` onto a fresh branch off `main`. It
-conflicts — `main` has since appended the SHARED REFERENCE DATA block directly
-after the `HOW TO TALK TO ME` list. The resolution is keep-both: the two
-bullets belong inside that list, the reference-data block stays where it is.
-It was deliberately not done in this session because the ask was the handoff.
+**How it was landed:** the two bullets were written into the `HOW TO TALK TO
+ME` list directly rather than cherry-picked, because `main` had since appended
+the SHARED REFERENCE DATA block right after that list and the commit would not
+apply cleanly. A third bullet was added at the same time — MEASURE THE THING
+BEFORE YOU WRITE IT UP — for the failure in §3.
+
+**Still to do upstream:** `CLAUDE.md`'s working standard is duplicated into
+each consuming repo from `IdealX-dev/idealx-claude-standards` →
+`user-claude-md/CLAUDE.md`. These three bullets landed in THIS repo only. They
+belong upstream too, or the next repo to sync will overwrite them.
 
 **Also note the branch itself.** `claude/pr-65-passoff-docs-0rjg0y` is named
 like a docs branch and is not one — it carried the #222 time-system work (19
@@ -261,24 +257,28 @@ runs, is far lower and deliberately ungated. The gate is a one-way ratchet.
 
 ## 7. Open, ranked
 
-1. **`RATE_BLASTER_TOKEN`** — Michael's, one secret, unblocks everything below.
-2. **Retire `core.PORT_LOCODES` / `resolve_locode()`** — an open violation of
-   the shared-reference-data rule since #230. Replace with a `locode` → `city`
-   lookup against `rate_blaster.geo`, **code→place only** (rule 2: 262 of
-   11,629 city names map to more than one LOCODE; `Lagos` returns two Nigerian
-   ports *and* `PTLOS` in Portugal). Blocked on 1.
-3. **Retire `core.CARRIER_ALIASES` (42 entries)** in favour of
-   `rate_blaster.util.carrier_registry.canonical_for_code()`. No longer blocked
-   upstream — `carrier_registry` reached rate-blaster `main`; blocked on 1 only.
-4. **`core._TRADE_REGION_MAP`** — trade region is a classification
-   `geo_master` does not carry. By the rule it is a field to **add in
-   rate-blaster and publish**, never to keep here.
-5. **`body_parser.KNOWN_ORIGINS`**, and **`Huangpu`** (added locally in #228,
-   present upstream in neither `name` nor `city`) — a PR against rate-blaster.
-6. **Vendor `rate_blaster.geo.place_gate.iata_token_is_a_place`** rather than
-   re-implementing the IATA position logic. `CLAUDE.md` is explicit: *"a local
-   copy is the seventh table."*
+**Nothing here is blocked on Michael.** The `RATE_BLASTER_TOKEN` ask that used
+to sit at #1 was withdrawn on 2026-08-31 — see §3.
 
-`[ASSUMPTION]` on 2–6: that Michael still wants full consumption rather than a
-narrower subset. He settled the *mechanism* (consume the package, do not vendor
-an extract) on 2026-08-30; he has not scoped which tables come first.
+1. **Nothing.** As of 2026-08-31 this session's work is merged and no item
+   below is worth starting on its own. That is a real answer, not a gap.
+2. **Watch the first fire after #245** (§2). Two fewer losses is the intended
+   correction; anything else is worth a look.
+3. **Reference-data consumption — deliberately parked.** Retiring
+   `core.PORT_LOCODES` (1 row), `core.CARRIER_ALIASES` (42) or
+   `body_parser.KNOWN_ORIGINS` (22) in favour of `rate_blaster.geo` /
+   `carrier_registry` costs a private cross-repo dependency on the daily fire
+   and buys almost nothing today. Revisit on the trigger in §3, not on a
+   schedule. `core._TRADE_REGION_MAP` (81) is not replaceable upstream at all.
+4. **`Huangpu`** — added locally in #228, present upstream in neither `name`
+   nor `city`. A one-row PR against rate-blaster. Cheap, no dependency, and it
+   makes the shared data better for every repo. Worth doing on its own.
+5. **If rule-5 logic ever needs extending**, vendor
+   `rate_blaster.geo.place_gate.iata_token_is_a_place` rather than
+   re-implementing the IATA position logic — `CLAUDE.md`: *"a local copy is the
+   seventh table."* Not needed today; #241's word-bounded scan covers what this
+   ocean-only repo sees.
+
+**When you do reach for upstream, rule 2 still binds:** code → place only. 262
+of 11,629 city names map to more than one LOCODE, and `Lagos` returns two
+Nigerian ports *and* `PTLOS` in Portugal.

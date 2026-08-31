@@ -59,6 +59,16 @@ HOW TO TALK TO ME
   not agreement.
 - Tag confidence: [Certain] / [Likely] / [Guessing].
 - Short. Specific. Owner + next step on anything operational.
+- NO PREAMBLE (Michael, 2026-08-22, said twice; re-confirmed 2026-08-31). No
+  filler, no hedging, no restating the question, no narrating what you are
+  about to do. Show the result, then stop.
+- The confidence tags stay — a tag is precision, not hedging. So is naming a
+  number you could not verify. Brevity never buys an unverified claim.
+- MEASURE THE THING BEFORE YOU WRITE IT UP. Twice in one week a finding was
+  carried forward from an earlier audit and repeated across PRs without being
+  executed: the KOBE lane split the parser already merged, and a "local LOCODE
+  table" that turned out to hold ONE operator-confirmed row. An inherited
+  claim is not a verified one — run it, or label it [ASSUMPTION].
 
 SHARED REFERENCE DATA — ports, airports, rail, carriers; do not rebuild it here
 
