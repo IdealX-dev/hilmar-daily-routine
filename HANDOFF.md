@@ -59,22 +59,22 @@ that is the difference — not a code change in this repo.
 
 ---
 
-## 2. State right now: two open PRs, both green, both waiting on Michael
+## 2. State right now: nothing of this session's is left open
 
-| PR | branch | what | CI | mergeable |
-|---|---|---|---|---|
-| **#245** | `claude/absorb-superseded-reask` | QC-083 stops reporting, starts absorbing | green | `clean` |
-| **#246** | `claude/reference-data-status-refresh` | reference-data probe re-run; docs only | green | `clean` |
+Michael approved all three on 2026-08-31 and they merged the same morning.
 
-Both are **drafts on purpose.**
+| PR | what | note |
+|---|---|---|
+| **#245** | QC-083 stops reporting, starts absorbing | **changes live numbers on the next fire** |
+| **#246** | reference-data probe re-run; docs only | carries the `RATE_BLASTER_TOKEN` ask below |
+| **#247** | this file | — |
 
-**#245 changes live numbers on merge.** It deletes rows from
-`tracking-data-v2.json` — specifically two HCMC pairs currently counted as Q&L
-losses on shipments that shipped. That is why it did not self-merge.
-
-**Merge-order note:** #245 and #246 both insert a CHANGELOG entry at the top of
-the file. Whichever merges second conflicts there. It is a keep-both
-resolution — take both entries, newest first, drop neither.
+**Watch the first report after #245.** It deletes rows from
+`tracking-data-v2.json` — two HCMC pairs that were counted as Q&L losses on
+shipments that shipped — so the loss count drops by two and the win rate moves.
+That is the intended correction, not a regression. `backup` runs first in the
+pipeline and every absorb is recorded in the surviving row's `merge_notes`, so
+it is reversible by hand if a number looks wrong.
 
 ---
 
@@ -151,7 +151,7 @@ already-merged history.
 
 ## 4. What the last session did — do not redo it
 
-Merged: **#229–#234, #238–#241, #243–#244.** Open: **#245, #246** (above).
+Merged: **#229–#234, #238–#241, #243–#247** — everything, as of 2026-08-31.
 
 - **#239** — the dead schedule gate. #228 moved the crons and left the hour
   matcher on the old values, so three "successful" runs sent nothing. Fixed to
@@ -166,8 +166,10 @@ Merged: **#229–#234, #238–#241, #243–#244.** Open: **#245, #246** (above).
   intake). Both numbers were right; the report now says which day it means.
 - **#244** — lanes bucket on the canonical port, not the spelling, so HCMC's
   two terminal spellings stop splitting one lane's median.
-- **#245** — QC-083 absorb (open).
-- **#246** — reference-data probe re-run (open).
+- **#245** — QC-083 absorb: a superseded re-ask stops being counted as its own
+  shipment. Three guards, each mutation-checked.
+- **#246** — reference-data probe re-run; the blocker is the secret in §3.
+- **#247** — this file.
 
 ### Corrections made on the record last session — inherit them, do not re-derive
 
