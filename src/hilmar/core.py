@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
@@ -1524,7 +1525,9 @@ def decide_status(
     )
     lane_med = None
     if lane_winning_median and lane:
-        lane_med = lane_winning_median.get(lane)
+        # Raw first, canonical as a fallback — mirrors scripts/core.
+        lane_med = (lane_winning_median.get(lane)
+                    or lane_winning_median.get(canonical_lane_id(lane)))
     if rate_val is not None and lane_med and lane_med > 0:
         if rate_val > lane_med * PRICE_GAP_THRESHOLD_MULT:
             gap_pct = (rate_val - lane_med) / lane_med * 100.0
@@ -1877,12 +1880,85 @@ def aggregate_summary(requests: list[dict]) -> dict:
     }
 
 
+ARROW = "→"
+
+
+def canonical_lane_id(lane, origin=None, destination=None):
+    """THE bucket key for a lane. Not a display value — never render this.
+
+    WHY THIS EXISTS. `aggregate_lanes` and `compute_lane_winning_medians` both
+    keyed on the raw "Oakland → X" DISPLAY string. The note above PORT_LOCODES
+    already named that as the reason the Yokohama split starved its own
+    winning median in 2026-08; #230 fixed the JPYOK spelling at parse time and
+    left the keying alone. So the cause is still live, and it is not
+    hypothetical — six operator corrections pin destination='KOBE' while the
+    parser corpus spells it 'Kobe'. Measured 2026-08-31:
+
+        same_port('KOBE', 'Kobe')                 -> True
+        canonical_port_key('KOBE') == ...('Kobe') -> True   ('kobe')
+        aggregate_lanes(...)                      -> ['Oakland -> KOBE',
+                                                      'Oakland -> Kobe']
+
+    The repo knew they were one port at every level except the one that
+    counts. Two buckets means half the wins each, and PRICE_GAP_MIN_LANE_WINS
+    is 3 — so a lane with four wins split 2/2 produces NO median, and every
+    Q&L loss on it falls from PRICE to UNDIFFERENTIATED. That is the Yokohama
+    defect exactly, wearing a different spelling.
+
+    THE MERGE IS AN OPERATOR RULING, NOT AN INFERENCE. canonical_port_key's
+    own docstring calls itself "a MATCHING key, not a display value", built for
+    booking->request linking — so reusing it to bucket a REPORTING aggregate
+    needed a decision, and the decision was Michael's, 2026-08-31: *"no they
+    are all hcmc with two different terminal requests in ho chi minh"*. Cat
+    Lai and Cai Mep are two terminals of ONE lane, priced as one lane. That is
+    what _PORT_ALIASES already said ("Lonny asks for 'HCMC'; OL confirms
+    whichever terminal the vessel calls") and it is now confirmed for pricing
+    as well as for matching.
+
+    Routes BOTH ends through canonical_port_key, which already carries the
+    alias table and the "unknown" sentinel for a lane it cannot resolve. Two
+    unresolved ends therefore bucket together under unknown/unknown, which is
+    correct here: they are equally unattributable, and the caller displays
+    whatever spelling the rows actually carried.
+    """
+    if origin is not None or destination is not None:
+        return canonical_port_key(origin) + ARROW + canonical_port_key(destination)
+    if not lane:
+        return None
+    parts = str(lane).split(ARROW)
+    if len(parts) != 2:
+        # A degenerate or single-token lane. Key it on itself rather than
+        # inventing an origin — a lane we cannot split is its own bucket.
+        return canonical_port_key(lane)
+    return canonical_port_key(parts[0]) + ARROW + canonical_port_key(parts[1])
+
+
+def _display_lane_for(spellings) -> str:
+    """Pick ONE display spelling for a merged bucket, deterministically.
+
+    Most frequent wins; ties break alphabetically. Deterministic matters more
+    than pretty — a display that flipped between fires would make the
+    dashboard and the PDF disagree about the same lane on the same day.
+    """
+    counts = Counter(spellings)
+    return min(counts, key=lambda s: (-counts[s], s))
+
+
 def aggregate_lanes(requests: list[dict]) -> dict[str, dict]:
+    # Canonical buckets, display spelling chosen deterministically —
+    # see canonical_lane_id. Mirrors scripts/core.aggregate_lanes.
+    _spellings: dict[str, list[str]] = {}
+    for r in requests:
+        _o = r.get("origin", "Oakland")
+        _d = r.get("destination", "Unknown")
+        _spellings.setdefault(canonical_lane_id(None, _o, _d), []).append(f"{_o} → {_d}")
+    _display = {k: _display_lane_for(v) for k, v in _spellings.items()}
+
     lanes: dict[str, dict] = {}
     for r in requests:
         dest = r.get("destination", "Unknown")
         origin = r.get("origin", "Oakland")
-        lane_key = f"{origin} → {dest}"
+        lane_key = _display[canonical_lane_id(None, origin, dest)]
         lm = lanes.setdefault(lane_key, {
             "lane": lane_key,
             "requests": 0, "wins": 0, "quoted_lost": 0, "not_quoted": 0, "pending": 0,
@@ -1951,6 +2027,7 @@ def compute_lane_winning_medians(
     — tests/test_core_parity.py guards drift.
     """
     by_lane: dict[str, list[float]] = {}
+    _seen: dict[str, set[str]] = {}
     for r in requests or []:
         if r.get("status") != STATUS_WIN:
             continue
@@ -1970,18 +2047,22 @@ def compute_lane_winning_medians(
         )
         if rate is None or rate <= 0:
             continue
-        by_lane.setdefault(lane, []).append(rate)
+        _ck = canonical_lane_id(lane)
+        by_lane.setdefault(_ck, []).append(rate)
+        _seen.setdefault(_ck, set()).add(lane)
 
     medians: dict[str, float] = {}
-    for lane, rates in by_lane.items():
+    for canon, rates in by_lane.items():
         if len(rates) < min_wins:
             continue
         rates_sorted = sorted(rates)
         n = len(rates_sorted)
-        if n % 2 == 1:
-            medians[lane] = rates_sorted[n // 2]
-        else:
-            medians[lane] = (rates_sorted[n // 2 - 1] + rates_sorted[n // 2]) / 2.0
+        med = (rates_sorted[n // 2] if n % 2 == 1
+               else (rates_sorted[n // 2 - 1] + rates_sorted[n // 2]) / 2.0)
+        # Under every spelling that fed the bucket, and only those — mirrors
+        # scripts/core.compute_lane_winning_medians.
+        for spelling in _seen.get(canon, {canon}):
+            medians[spelling] = med
     return medians
 
 

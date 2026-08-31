@@ -206,23 +206,58 @@ def test_merging_the_destination_changes_the_request_id():
     assert core.request_id(imid, ts, "JPYOK") == old
 
 
-def test_locode_split_would_fragment_the_lane_rollup():
-    """The damage, measured on core's own aggregation. aggregate_lanes keys on
-    the raw display string, so before the merge one port produced two lanes."""
+def test_the_lane_rollup_no_longer_fragments_on_a_spelling():
+    """The damage this file was written for, and the second layer that now
+    stops it.
+
+    ORIGINALLY (2026-08-27) this asserted `len(split) == 2` — proving that
+    aggregate_lanes keyed on the raw display string, so one port spelled two
+    ways produced two lanes and starved its own winning median below
+    PRICE_GAP_MIN_LANE_WINS. The fix shipped then was at PARSE time: normalise
+    JPYOK to "Yokohama" before it is ever stored.
+
+    THE KEYING ITSELF WAS LEFT ALONE, and the note above core.PORT_LOCODES
+    said so in as many words. 2026-08-31 closed it: aggregate_lanes and
+    compute_lane_winning_medians bucket on core.canonical_lane_id, so a
+    spelling that gets past the parser can no longer fragment the rollup.
+
+    So the old pre-condition can no longer be constructed with THIS pair, and
+    that is the improvement, not a lost guard: both layers now merge it. What
+    still has to hold — one lane, one median, under the display spelling the
+    rows carried — is asserted below, and a genuinely different port is
+    asserted NOT to merge so the bucketing cannot pass by collapsing
+    everything.
+    """
     def _rows(dest):
         return [{"status": "WIN", "origin": "Oakland", "destination": dest,
                  "lane": f"Oakland → {dest}", "teu_requested": 2, "teu_won": 2,
                  "ol_rate": 3000.0} for _ in range(2)]
-    split = core.aggregate_lanes(_rows("Jpyok") + _rows("Yokohama"))
-    assert len(split) == 2, "fixture no longer demonstrates the split"
+
+    # DEFENCE IN DEPTH: the raw, un-normalised spelling now merges too.
+    raw_split = core.aggregate_lanes(_rows("Jpyok") + _rows("Yokohama"))
+    assert len(raw_split) == 1, (
+        f"a spelling that got past the parser still fragments the rollup: "
+        f"{sorted(raw_split)}")
+
     merged_dest = ingest.title_case_destination("Jpyok")
     merged = core.aggregate_lanes(_rows(merged_dest) + _rows("Yokohama"))
     assert len(merged) == 1, merged
     assert next(iter(merged)) == "Oakland → Yokohama"
-    # And with 4 wins on one lane the winning median exists, where 2+2 split
-    # left both halves under PRICE_GAP_MIN_LANE_WINS and unbenchmarked.
+
+    # THE POINT OF THE MERGE. Four wins on one lane clear
+    # PRICE_GAP_MIN_LANE_WINS; the 2+2 split left both halves unbenchmarked
+    # and every Q&L on the lane fell from PRICE to UNDIFFERENTIATED.
     assert core.compute_lane_winning_medians(_rows(merged_dest) + _rows("Yokohama"))
-    assert not core.compute_lane_winning_medians(_rows("Jpyok") + _rows("Yokohama"))
+    assert core.compute_lane_winning_medians(_rows("Jpyok") + _rows("Yokohama")), (
+        "the raw spelling still starves the median — the aggregation-layer "
+        "bucketing is not doing its job")
+
+    # AND IT MUST STILL DISCRIMINATE. A bucketer that merged everything would
+    # satisfy every assertion above.
+    two_ports = core.aggregate_lanes(_rows("Yokohama") + _rows("Tokyo"))
+    assert len(two_ports) == 2, (
+        f"Yokohama and Tokyo are different ports and must stay different "
+        f"lanes: {sorted(two_ports)}")
 
 
 def test_every_destination_writer_goes_through_one_normalizer():
