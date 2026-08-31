@@ -94,16 +94,34 @@ Why, measured 2026-08-31:
 
 So `pip install "git+https://github.com/IdealX-dev/rate-blaster.git@main"`
 works in an agent session that already has the repo attached, and **fails on
-the Actions runner that fires the daily report.** With the secret:
+the Actions runner that fires the daily report.**
+
+**Check the repo out; do not put the token in a pip URL.** The obvious form
+puts the credential on pip's command line, where an error message or a
+re-encoding can carry it past Actions' secret masking, and leaves it in the
+cached clone's git config. Use the documented cross-repo checkout in
+`daily.yml` and `test.yml`:
 
 ```yaml
-pip install "git+https://x-access-token:${{ secrets.RATE_BLASTER_TOKEN }}@github.com/IdealX-dev/rate-blaster.git@main"
+- uses: actions/checkout@v5
+  with:
+    repository: IdealX-dev/rate-blaster
+    token: ${{ secrets.RATE_BLASTER_TOKEN }}
+    path: .rate-blaster
+    persist-credentials: false
+
+- run: pip install ./.rate-blaster
 ```
 
-Size is not a reason to hesitate — pip's own docs (`topics/vcs-support`):
-*"Pip defaults to partial clones for Git 2.17 or later."* It fetches the tree
-at the named ref, where `geo_master.db` is 6.2 MB, not rate-blaster's ~176 MB
-of history.
+`pip` never sees the token. `actions/checkout`'s docs describe `token` as
+*"configured with the local git config"* with *"the post-job step removes the
+PAT"*; `persist-credentials: false` keeps it out of that config at all.
+`.rate-blaster` needs a `.gitignore` line so the nested checkout is not
+untracked.
+
+Size is not a reason to hesitate either way: `fetch-depth` defaults to 1, so
+this takes the tip tree — `geo_master.db` at 6.2 MB — not rate-blaster's
+~176 MB of history.
 
 **Until that secret exists, write no code against `rate_blaster.geo`.** A
 consumption path CI cannot install is worse than the violation it replaces: it
@@ -111,7 +129,7 @@ ships code that never runs in production and tests that skip.
 
 ---
 
-## 3b. FINDING — an instruction of Michael's has been stranded on a dead branch for 9 days
+## 3b. FINDING — an instruction of Michael's never reached `main` (written 2026-08-24, still missing 2026-08-31)
 
 Found while writing this handoff, verified 2026-08-31, **not fixed** (he said
 write the handoff, so this is reported rather than actioned):
@@ -133,8 +151,11 @@ returns nothing. It sits only on `claude/pr-65-passoff-docs-0rjg0y`, whose PR
 commit was written. The commit was pushed to a branch whose PR was already
 closed, so it had nothing left to ride into `main` on.
 
-So a standing instruction Michael gave twice has not been reaching sessions
-that read `CLAUDE.md` from `main`.
+So a standing instruction Michael gave on 2026-08-22 and a commit wrote down
+on 2026-08-24 was still absent from `main` on 2026-08-31, and every session
+reading `CLAUDE.md` from `main` in that window never saw it. **Re-check before
+acting on this section** — `git grep -c "NO PREAMBLE" origin/main -- CLAUDE.md`
+answers it in one line, and a non-zero count means someone has since landed it.
 
 **To land it:** cherry-pick `cb4e88a` onto a fresh branch off `main`. It
 conflicts — `main` has since appended the SHARED REFERENCE DATA block directly
