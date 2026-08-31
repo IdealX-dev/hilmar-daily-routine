@@ -3,7 +3,57 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-08-31 (latest) — QC-083 stops reporting and starts absorbing
+### 2026-08-31 (latest) — the reference-data blocker is one missing secret, not a design question
+
+`REFERENCE_DATA_PROMPT.md` carried a probe snapshot from 2026-08-28 that is no
+longer true, and it was stale in the direction that keeps work from happening:
+it recorded `carrier_registry` as LOCAL ONLY and the probe itself as living on
+a branch. **Re-ran the probe** against `rate-blaster` `main` @ `6b8f8b57`:
+
+```
+[SHAREABLE] geo_master.db        seaports 11928  airports 7883
+                                 icds 12949      rail_yards 9177
+                                 is_major: seaports 136, rail_yards 112, icds 117
+[SHAREABLE] carrier_registry     53 carriers (28 ocean, 25 air)
+[SHAREABLE] turso carrier_codes  publisher present
+EXIT=0
+```
+
+`EXIT=0`. Nothing upstream is held back any more. The block recorded against
+`core.CARRIER_ALIASES` — *"staying that way until `carrier_registry` reaches
+`rate-blaster` `main`"* — has cleared.
+
+#### THE ACTUAL BLOCKER, MEASURED
+
+`IdealX-dev/rate-blaster` is **private** (`"private": true`, GitHub API), and
+this repo's runner cannot read it. Every workflow checks out with
+`actions/checkout@v5` and no `repository:` override; the only GitHub token in
+play is `${{ github.token }}`, scoped to `IdealX-dev/hilmar-daily-routine`
+alone. The nine `secrets.*` this repo uses are Graph, Sentry, Azure, Anthropic,
+Teams and QT credentials — **none is a GitHub PAT.**
+
+So `pip install "git+https://github.com/IdealX-dev/rate-blaster.git@main"`
+installs fine in a session with the repo attached and **fails on the runner
+that fires the daily report**. That is the entire gap.
+
+Unblocked by one fine-grained PAT (read-only Contents on rate-blaster) stored
+as `RATE_BLASTER_TOKEN`. Creating it is an access change, so it is Michael's.
+
+Size is not a reason to hesitate — pip's own docs (topics/vcs-support):
+*"Pip defaults to partial clones for Git 2.17 or later."* It fetches the tree
+at the named ref, where `geo_master.db` is 6.2 MB; it does not pull
+rate-blaster's ~176 MB of history.
+
+#### WHY NOTHING WAS WRITTEN AGAINST IT YET
+
+`core.PORT_LOCODES` / `resolve_locode()` stay an open violation for now, on
+purpose. A consumption path that CI cannot install is worse than the violation
+it replaces: it would ship code that never executes in production and tests
+that skip. The design decision is settled (consume the package; do not vendor
+an extract — Michael, 2026-08-30); only the credential is outstanding.
+
+Also recorded: rule 5 moved from NOT YET ASSESSED to assessed, in #241.
+### 2026-08-31 — QC-083 stops reporting and starts absorbing
 
 It shipped **DETECT-ONLY on 2026-08-28** and the days since are the whole
 justification. From that entry, verbatim: *"the heal gets written
