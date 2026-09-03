@@ -56,10 +56,23 @@ the live findings and none of (1)-(3) do:
       OTHER row's `mdolx_refs_all`, which QC-069 also scans. Nothing
       un-stamps it: CLAUDE.md's standing corollary, in one field.
 
-      It has THREE shapes, split because they need different heals: the
-      matcher's stale copy can land in another row's `mdolx_refs_all` (4a),
-      in a whole standalone WIN row it emitted instead (4b), or in another
-      row's own `mdolx_ref` (4c). Only 4a is safe to clear automatically.
+      It has three shapes and they CO-OCCUR, so this reports the SET, not
+      the first match: the matcher's stale copy can sit in another row's
+      `mdolx_refs_all` (4a), in a whole standalone WIN row it emitted
+      instead (4b), and in another row's own `mdolx_ref` (4c) — all at once,
+      for one ref. Only a ref that is EXCLUSIVELY 4a can be healed by
+      clearing a field; if any other row also claims it outright, clearing
+      the list entry moves the headline win count and leaves the duplicate
+      standing. The label says which.
+
+      `mdolx_refs_all` IS NOT ONLY A COUNTER. `patch_carriers.py:701-704`
+      joins on it to find a booking PDF, and that PDF supplies `pod`, from
+      which `destination` and `lane` are recovered. A row whose lane comes
+      that way loses it when the entry is cleared, and
+      `gen_client_email._lane_resolved` then drops the row from every client
+      bucket — Lonny told one FEWER booking for a shipment OL confirmed.
+      Any heal has to survive that, not just keep the row's ref set
+      non-empty.
 
       The fingerprint is exact and mechanical, so this script does not
       guess it — for each duplicated ref it asks whether some correction
@@ -152,59 +165,65 @@ def _classify(ref: str, rows_for_ref: list[dict], corrections: list[dict]) -> st
                  if ref in {_norm(x) for x in (r.get("mdolx_refs_all") or [])}
                  and _norm(r.get("mdolx_ref")) != ref]
 
-    # (4) A correction NAMES this ref and it is the mdolx_ref on exactly the
-    #     row the correction names. The collision then takes one of two
-    #     shapes, and they are SPLIT because they need different heals — a
-    #     single "(4)" label would hide that half of them cannot be fixed by
-    #     clearing a field.
+    # (4) A correction NAMES this ref and holds it as mdolx_ref. The stale
+    #     copy can then be in THREE places at once, so this reports every
+    #     shape present rather than the first one it finds.
+    #
+    #     IT USED TO REPORT THE FIRST. 2026-09-03, verified by running
+    #     _classify on three materially different row-sets: a bare 4a, a 4a
+    #     WITH a stand_ row also claiming the ref, and a 4a WITH a rival
+    #     req_ row also claiming it — all three returned the identical
+    #     "(4a) ... stale list entry" string, and the label never named the
+    #     stand_/rival row it had already computed. So "5 cases of 4a" was
+    #     not a statement this tool could support, and a heal scoped from it
+    #     would have stripped a list entry, moved the headline win count,
+    #     and left QC-069 still firing on the same ref.
+    #
+    #     A priority chain is the wrong shape for a question whose answer is
+    #     a SET. EXCLUSIVE matters because only an exclusively-4a ref can be
+    #     healed by clearing a field: if any other row also claims the ref
+    #     outright, clearing the list entry does not resolve the duplicate.
     named = {c.get("request_id") for c in corrections}
     owned = [r for r in primary if r.get("request_id") in named]
     if owned:
-        # core.has_no_rfq_chain, not a bare stand_ test. Both stand_ (the
-        # matcher's own unmatched-booking row) and ol_ (the 49 rows backfilled
-        # from OL's export) are rows with no RFQ thread behind them, and
-        # either can hold a ref a correction also claims. A bare stand_ check
-        # here would report the ol_ shape as UNCLASSIFIED — the exact miss
-        # tests/test_no_rfq_chain_predicate.py exists to stop repeating.
-        stands = [r for r in rows_for_ref if C.has_no_rfq_chain(r)]
+        stands = [r for r in rows_for_ref
+                  if C.has_no_rfq_chain(r) and r not in owned]
+        stand_ids = {id(r) for r in stands}
+        rivals = [r for r in primary
+                  if r.get("request_id") not in named and id(r) not in stand_ids]
+        parts = []
         if secondary:
-            # 4a: the stale copy is a LIST ENTRY on another row. Clearing it
+            # 4a: stale copy is a LIST ENTRY on another row. Clearing it
             # removes no row and no evidence — the correction's row keeps the
             # ref, the other row keeps its own.
-            return ("(4a) OPERATOR CORRECTION vs MATCHER, stale list entry — "
-                    f"correction owns {owned[0].get('request_id')}; stale on "
-                    + ", ".join(f"{r.get('request_id')}.mdolx_refs_all"
-                                for r in secondary))
+            parts.append("(4a) stale list entry on "
+                         + ", ".join(f"{r.get('request_id')}.mdolx_refs_all"
+                                     for r in secondary))
         if stands:
             # 4b: the matcher could not place the booking and emitted a whole
-            # standalone WIN row for it. Both rows claim the ref outright, so
-            # the shipment is counted twice. Resolving it means REMOVING a
-            # win row, which is destructive and is not this script's call.
-            return ("(4b) OPERATOR CORRECTION vs MATCHER, orphan standalone — "
-                    f"correction owns {owned[0].get('request_id')}; "
-                    + ", ".join(r.get("request_id") for r in stands)
-                    + " is the same shipment counted again")
-        rivals = [r for r in primary if r.get("request_id") not in named]
+            # standalone WIN row for it, so the shipment is counted twice.
+            # Resolving it means REMOVING a win row — destructive, and not
+            # this script's call.
+            parts.append("(4b) orphan standalone "
+                         + ", ".join(r.get("request_id") for r in stands))
         if rivals:
-            # 4c: BOTH rows hold it as mdolx_ref, and one of them is the
-            # operator's. Added 2026-09-03 after the first live run put
-            # MDOLX261031 in bucket (3) "genuinely ambiguous" — which was a
-            # MISLABEL, and the kind that licenses leaving a real defect
-            # alone. It is the same collision as 4a; only the field the
-            # matcher's copy landed in differs.
-            #
-            # It reaches this shape when the matcher's chosen row is one the
-            # `req_ts > bk_ts` guard would normally exclude: MDOLX261031's
+            # 4c: another ordinary row claims it as its OWN mdolx_ref.
+            # Reaches this shape when the matcher's chosen row is one the
+            # `req_ts > bk_ts` guard should have excluded: MDOLX261031's
             # rival is dated 2026-08-26, AFTER the 08-13 confirmation, and
             # the thread also carries an 08-27 "Export Invoice available"
             # message that collect_bookings admits — so the booking the
-            # matcher scored against can be dated later than the booking
-            # itself. Named, not fixed here.
-            return ("(4c) OPERATOR CORRECTION vs MATCHER, rival mdolx_ref — "
-                    f"correction owns {owned[0].get('request_id')}; "
-                    + ", ".join(f"{r.get('request_id')}.mdolx_ref"
-                                for r in rivals)
-                    + " claims it too")
+            # matcher scored against can be dated later than the booking.
+            parts.append("(4c) rival mdolx_ref on "
+                         + ", ".join(f"{r.get('request_id')}.mdolx_ref"
+                                     for r in rivals))
+        if parts:
+            excl = " [EXCLUSIVELY 4a — a field clear resolves it]" if (
+                secondary and not stands and not rivals) else (
+                " [NOT exclusively 4a — clearing the list entry leaves the "
+                "duplicate standing]")
+            return (f"(4) OPERATOR CORRECTION vs MATCHER — correction owns "
+                    f"{owned[0].get('request_id')}; " + "; ".join(parts) + excl)
 
     if any(r.get("preserved_from_prior") for r in rows_for_ref):
         return "(1) CARRY-FORWARD, STALE — a row is preserved_from_prior"

@@ -120,13 +120,21 @@ jobs:
         run: python3 scripts/diag_shared_mailbox.py || true
 
       - name: Trace QC-069 duplicate MDOLX refs, mechanism by mechanism (read-only)
-        # 2026-09-03 fire: QC-069 flagged 11 duplicate_mdolx pairs (one
-        # shipment stored twice, TEU double-counted). Before writing a heal —
-        # collapsing the wrong row is destructive, per QC-069's own docstring
-        # — this settles WHICH mechanism produced each pair: a stale
-        # ingest._merge_prior_win_into carry-forward (preserved_from_prior on
-        # one side, fixable), an unlinked stand_<mdolx> beside its request
-        # (needs the lane match, not a duplicate-ref rule), or two live
-        # matches in one fire (genuinely ambiguous). Never fails the job.
+        # 2026-09-03: QC-069 flags 11 duplicate_mdolx pairs (one shipment
+        # stored twice). Before writing a heal — collapsing the wrong row is
+        # destructive, per QC-069's own docstring — this settles WHICH
+        # mechanism produced each pair, and a heal is scoped from its tally.
+        #
+        # NO `|| true`. It had one until 2026-09-03, and that is the exact
+        # pattern CLAUDE.md names as the 2026-08-20 defect: "A diagnostic that
+        # cannot fail loudly is worse than none ... one died on its first line
+        # and the step went green in zero seconds because of a trailing
+        # `|| true`." This step's whole purpose is to produce a number a heal
+        # gets scoped from, so a silent green here is worse than most: it
+        # would leave the previous run's tally standing as if it were current.
+        # The script already emits `::error::` and returns 2 on a failed pull;
+        # `|| true` threw that exit code away. `if: always()` is what keeps
+        # the step running when an EARLIER step failed — that is the part
+        # worth having, and it is kept.
         if: always()
-        run: python3 scripts/diag_duplicate_mdolx.py || true
+        run: python3 scripts/diag_duplicate_mdolx.py

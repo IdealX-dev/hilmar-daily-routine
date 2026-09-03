@@ -60,7 +60,7 @@ def test_norm_never_returns_empty_for_an_all_zero_ref():
     assert D._norm("000") == "000"
 
 
-# ── 4a: the stale copy is a list entry ────────────────────────────────
+# ── case (4) reports the SET of shapes, not the first match ───────────
 
 def _pair_4a():
     rows = [
@@ -69,22 +69,19 @@ def _pair_4a():
         {"request_id": "req_3b1d82eaa1d6450f", "status": "WIN",
          "mdolx_ref": "261026", "mdolx_refs_all": ["261028"]},
     ]
-    corr = [{"request_id": "req_1debac530d998acb",
+    corr = [{"request_id": "req_3b1d82eaa1d6450f",
              "source": "ol-booking-recap-2026-08-12"}]
     return rows, corr
 
 
-def test_4a_is_named_when_a_correction_owns_one_row_and_a_list_holds_the_other():
-    # 261026 is the ref that is genuinely on two rows in this shape: the
-    # correction put it in req_3b1d82's mdolx_ref, and the matcher's earlier
-    # assignment survives in req_1debac's mdolx_refs_all.
-    rows, _ = _pair_4a()
-    v = D._classify("261026", rows,
-                    [{"request_id": "req_3b1d82eaa1d6450f",
-                      "source": "ol-booking-recap-2026-08-12"}])
-    assert v.startswith("(4a)"), v
-    assert "req_3b1d82eaa1d6450f" in v
+def test_a_bare_stale_list_entry_reports_4a_and_says_it_is_exclusive():
+    # 261026: the correction put it in req_3b1d82's mdolx_ref, and the
+    # matcher's earlier assignment survives in req_1debac's mdolx_refs_all.
+    rows, corr = _pair_4a()
+    v = D._classify("261026", rows, corr)
+    assert "(4a)" in v
     assert "req_1debac530d998acb.mdolx_refs_all" in v
+    assert "EXCLUSIVELY 4a" in v, v
 
 
 def test_a_ref_on_only_one_row_is_not_case_4_even_with_a_correction():
@@ -95,45 +92,84 @@ def test_a_ref_on_only_one_row_is_not_case_4_even_with_a_correction():
     assert not D._classify("261029", rows, corr).startswith("(4")
 
 
-def test_4a_names_the_field_a_heal_would_clear():
-    # The label has to say WHERE the stale copy lives, because the fix for
-    # 4a is "clear that list entry" and the fix for 4b is not.
-    _, corr = _pair_4a()
-    v = D._classify("261026", [
-        {"request_id": "req_3b1d82eaa1d6450f", "mdolx_ref": "261026",
-         "mdolx_refs_all": []},
-        {"request_id": "req_1debac530d998acb", "mdolx_ref": "261029",
-         "mdolx_refs_all": ["261026"]},
-    ], [{"request_id": "req_3b1d82eaa1d6450f", "source": "recap"}])
-    assert "mdolx_refs_all" in v
-
-
-# ── 4b: the stale copy is a whole standalone WIN row ──────────────────
-
-def test_4b_is_named_when_the_matcher_emitted_a_standalone_instead():
+def test_an_orphan_standalone_reports_4b_and_is_never_called_exclusive():
     rows = [
         {"request_id": "req_da035af71f7ec39d", "status": "WIN",
          "mdolx_ref": "261027", "mdolx_refs_all": []},
         {"request_id": "stand_261027", "status": "WIN",
-         "mdolx_ref": "261027", "mdolx_refs_all": []},
-    ]
-    corr = [{"request_id": "req_da035af71f7ec39d", "source": "recap"}]
-    v = D._classify("261027", rows, corr)
-    assert v.startswith("(4b)"), v
-    assert "stand_261027" in v
-
-
-def test_4b_is_not_reported_as_4a_because_the_heals_differ():
-    # 4a clears a field. 4b removes a WIN row, which is destructive and needs
-    # a human. Collapsing them would license the destructive heal on the
-    # evidence of the safe one.
-    rows = [
-        {"request_id": "req_da035af71f7ec39d", "mdolx_ref": "261027"},
-        {"request_id": "stand_261027", "mdolx_ref": "261027"},
+         "mdolx_ref": "261027", "mdolx_refs_all": ["261027"]},
     ]
     v = D._classify("261027", rows,
                     [{"request_id": "req_da035af71f7ec39d", "source": "r"}])
-    assert "(4a)" not in v
+    assert "(4b)" in v and "stand_261027" in v
+    assert "NOT exclusively 4a" in v, v
+
+
+def test_a_rival_row_claiming_it_outright_reports_4c():
+    # MDOLX261031, live 2026-09-03.
+    rows = [
+        {"request_id": "req_b789e573316ead86", "status": "WIN",
+         "mdolx_ref": "261031", "mdolx_refs_all": []},
+        {"request_id": "req_f942b9672ff756ab", "status": "WIN",
+         "mdolx_ref": "261031", "mdolx_refs_all": ["261031"]},
+    ]
+    v = D._classify("261031", rows,
+                    [{"request_id": "req_b789e573316ead86", "source": "r"}])
+    assert "(4c)" in v and "req_f942b9672ff756ab.mdolx_ref" in v
+    assert "NOT exclusively 4a" in v, v
+
+
+# THE REGRESSION THIS SECTION EXISTS FOR. Until 2026-09-03 _classify was a
+# priority chain: it computed `stands` and `rivals`, returned on the 4a branch
+# BEFORE testing either, and the label named neither. Verified by running it —
+# all three of the row-sets below returned the identical "(4a) ... stale list
+# entry" string. So "5 cases of 4a" was not a claim the tool could support, and
+# a heal scoped from it would have cleared a list entry, moved the headline win
+# count, and left QC-069 firing on the same ref.
+
+def test_4a_beside_a_standalone_reports_BOTH_and_refuses_the_exclusive_label():
+    rows = [
+        {"request_id": "req_A", "mdolx_ref": "261029"},
+        {"request_id": "req_W", "mdolx_ref": "261099",
+         "mdolx_refs_all": ["261029"]},
+        {"request_id": "stand_261029", "mdolx_ref": "261029"},
+    ]
+    v = D._classify("261029", rows, [{"request_id": "req_A", "source": "r"}])
+    assert "(4a)" in v, v
+    assert "(4b)" in v and "stand_261029" in v, "the standalone went unnamed"
+    assert "NOT exclusively 4a" in v, v
+
+
+def test_4a_beside_a_rival_reports_BOTH_and_refuses_the_exclusive_label():
+    rows = [
+        {"request_id": "req_A", "mdolx_ref": "261029"},
+        {"request_id": "req_W", "mdolx_ref": "261099",
+         "mdolx_refs_all": ["261029"]},
+        {"request_id": "req_R", "mdolx_ref": "261029"},
+    ]
+    v = D._classify("261029", rows, [{"request_id": "req_A", "source": "r"}])
+    assert "(4a)" in v, v
+    assert "(4c)" in v and "req_R.mdolx_ref" in v, "the rival went unnamed"
+    assert "NOT exclusively 4a" in v, v
+
+
+def test_the_exclusive_marker_is_the_only_thing_a_heal_may_gate_on():
+    # A heal that clears a list entry is correct ONLY when nothing else claims
+    # the ref. Every non-exclusive shape must say so in the same words, so the
+    # gate is a substring test and not a parse of the shape list.
+    rows, corr = _pair_4a()
+    assert "EXCLUSIVELY 4a" in D._classify("261026", rows, corr)
+    for rows in (
+        [{"request_id": "req_A", "mdolx_ref": "1"},
+         {"request_id": "stand_1", "mdolx_ref": "1"}],
+        [{"request_id": "req_A", "mdolx_ref": "1"},
+         {"request_id": "req_R", "mdolx_ref": "1"}],
+        [{"request_id": "req_A", "mdolx_ref": "1"},
+         {"request_id": "req_W", "mdolx_ref": "2", "mdolx_refs_all": ["1"]},
+         {"request_id": "stand_1", "mdolx_ref": "1"}],
+    ):
+        v = D._classify("1", rows, [{"request_id": "req_A", "source": "r"}])
+        assert "NOT exclusively 4a" in v, v
 
 
 # ── the negatives: (4) must not swallow the other mechanisms ──────────
@@ -212,17 +248,15 @@ def test_every_source_file_is_utf8_clean():
 
 def test_case_4b_catches_the_ol_backfill_shape_not_only_stand():
     # The 49 rows backfilled from OL's export carry an "ol_" prefix and no
-    # RFQ chain either. A bare stand_ test would report this pair as
-    # UNCLASSIFIED — the exact miss test_no_rfq_chain_predicate.py records
-    # ("that was the SECOND surface to miss it").
+    # RFQ chain either. A bare stand_ test would miss this — the exact miss
+    # test_no_rfq_chain_predicate.py records ("the SECOND surface to miss it").
     rows = [
         {"request_id": "req_da035af71f7ec39d", "mdolx_ref": "261027"},
         {"request_id": "ol_261027", "mdolx_ref": "261027"},
     ]
     v = D._classify("261027", rows,
                     [{"request_id": "req_da035af71f7ec39d", "source": "r"}])
-    assert v.startswith("(4b)"), v
-    assert "ol_261027" in v
+    assert "(4b)" in v and "ol_261027" in v, v
 
 
 def test_the_classifier_asks_core_rather_than_keeping_its_own_prefix_list():
@@ -231,41 +265,10 @@ def test_the_classifier_asks_core_rather_than_keeping_its_own_prefix_list():
         "a private copy of the prefix list — core owns it")
 
 
-# ── 4c: both rows hold it as mdolx_ref, one of them the operator's ────
-
-def test_4c_is_named_when_a_rival_row_claims_the_ref_as_its_own_mdolx_ref():
-    # MDOLX261031, live 2026-09-03. The first run of this classifier put it
-    # in bucket (3) "genuinely ambiguous" — a mislabel, and the kind that
-    # licenses leaving a real defect alone. It is the same collision as 4a.
-    rows = [
-        {"request_id": "req_b789e573316ead86", "status": "WIN",
-         "request_date": "2026-07-30",
-         "mdolx_ref": "261031", "mdolx_refs_all": []},
-        {"request_id": "req_f942b9672ff756ab", "status": "WIN",
-         "request_date": "2026-08-26",
-         "mdolx_ref": "261031", "mdolx_refs_all": ["261031"]},
-    ]
-    corr = [{"request_id": "req_b789e573316ead86",
-             "source": "ol-booking-recap-2026-08-12"}]
-    v = D._classify("261031", rows, corr)
-    assert v.startswith("(4c)"), v
-    assert "req_b789e573316ead86" in v
-    assert "req_f942b9672ff756ab.mdolx_ref" in v
-
-
-def test_4c_is_not_reported_as_3_which_would_license_doing_nothing():
-    rows = [
-        {"request_id": "req_owner", "mdolx_ref": "261031"},
-        {"request_id": "req_rival", "mdolx_ref": "261031"},
-    ]
-    v = D._classify("261031", rows, [{"request_id": "req_owner", "source": "r"}])
-    assert not v.startswith("(3)"), v
-
-
 def test_3_survives_when_no_correction_is_involved():
     # The (3) bucket still has to exist: two rows claiming one ref with NO
-    # operator verdict behind either is genuinely ambiguous, and 4c's heal
-    # (defer to the operator's row) has nothing to defer to.
+    # operator verdict behind either is genuinely ambiguous, and case (4)'s
+    # "defer to the operator's row" has nothing to defer to.
     rows = [
         {"request_id": "req_a", "mdolx_ref": "261031"},
         {"request_id": "req_b", "mdolx_ref": "261031"},
@@ -273,12 +276,10 @@ def test_3_survives_when_no_correction_is_involved():
     assert D._classify("261031", rows, []).startswith("(3)")
 
 
-def test_4b_still_wins_over_4c_when_the_rival_is_a_standalone():
-    # A stand_ row is both a rival mdolx_ref AND chain-less. It must report
-    # as 4b, because 4b's heal removes a row and 4c's does not.
-    rows = [
-        {"request_id": "req_owner", "mdolx_ref": "261027"},
-        {"request_id": "stand_261027", "mdolx_ref": "261027"},
-    ]
-    v = D._classify("261027", rows, [{"request_id": "req_owner", "source": "r"}])
-    assert v.startswith("(4b)"), v
+def test_the_docstring_records_that_refs_all_is_a_pdf_join_key():
+    # The heal that nearly shipped guarded only on "the row keeps a ref".
+    # patch_carriers joins on mdolx_refs_all to find a booking PDF, and that
+    # PDF supplies pod -> destination/lane; a row that loses its lane is
+    # dropped from every client bucket by gen_client_email._lane_resolved.
+    # The next reader must not have to rediscover that.
+    assert "patch_carriers" in SRC and "_lane_resolved" in SRC
