@@ -118,3 +118,15 @@ jobs:
         # for the record. Never fails the job; the output IS the deliverable.
         if: always()
         run: python3 scripts/diag_shared_mailbox.py || true
+
+      - name: Trace QC-069 duplicate MDOLX refs, mechanism by mechanism (read-only)
+        # 2026-09-03 fire: QC-069 flagged 11 duplicate_mdolx pairs (one
+        # shipment stored twice, TEU double-counted). Before writing a heal —
+        # collapsing the wrong row is destructive, per QC-069's own docstring
+        # — this settles WHICH mechanism produced each pair: a stale
+        # ingest._merge_prior_win_into carry-forward (preserved_from_prior on
+        # one side, fixable), an unlinked stand_<mdolx> beside its request
+        # (needs the lane match, not a duplicate-ref rule), or two live
+        # matches in one fire (genuinely ambiguous). Never fails the job.
+        if: always()
+        run: python3 scripts/diag_duplicate_mdolx.py || true
