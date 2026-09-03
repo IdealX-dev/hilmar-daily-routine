@@ -3,7 +3,74 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-08-31 (latest) — the blocker was one row, and NO PREAMBLE finally landed
+### 2026-09-03 (latest) — the "we are losing mail" finding was wrong; the alarm was
+
+Yesterday's entry led with *"we are losing booking mail, quietly, every
+fire"* and built a whole folder-enumeration fallback on top of one log line:
+
+```
+##[error] refresh_stage: [MBD_OceanExportBookingShared@ol-usa.com] date sweep
+FAILED: ... Default folder AllItems not found. — falling back to $search
+only, which is known to drop recent mail
+```
+
+**It was not a data gap.** `CHANGELOG.md`, 2026-08-14: *"THE SHARED MAILBOX
+IS CLOSED, PERMANENTLY. Full Access was the only route... Michael: 'ol won't
+grant more access.'"* `refresh_stage.SHARED_MAILBOX`'s own comment says the
+same and names why coverage still holds: Michael is on the ops distribution,
+so Hilmar mail reaches `/me` regardless. Both were already in the file the
+folder-sweep PR edited.
+
+Ran `scripts/diag_shared_mailbox.py` against the live mailbox before merging
+- CLAUDE.md's own rule, "measure before you write it up" - and it settled
+the question the code review had already raised: every endpoint 404s, not
+only the one being replaced.
+
+```
+[1] directory object      : PASS
+[2] folder list           : FAIL 404 — Default folder Root not found.
+[3] inbox folder read     : FAIL 404 — Default folder Inbox not found.
+[5] mailbox-wide /messages: FAIL 404 — Default folder AllItems not found.
+```
+
+`Root not found` is not survivable by any Graph endpoint - a folder-scoped
+read fails exactly like the mailbox-wide one. The reviewed, mutation-tested,
+17-test folder-enumeration fix (recursive folders, `internetMessageId`
+dedupe, date-budgeted truncation, per-folder `::error::`) was correct and
+untriggerable on the only mailbox that needed it. **Deleted rather than
+merged** - untriggerable code claiming completeness is how this file got
+into trouble in the first place.
+
+#### WHAT ACTUALLY SHIPPED
+
+One line. The `::error::` this session mistook for an open bug now fires
+only for a genuinely new failure - a different mailbox, or this one failing
+a way that is not the confirmed-dead signature. The known signature (this
+mailbox, `AllItems` 404) gets a plain line naming it as known and permanent,
+pointing at `SHARED_MAILBOX` for the history, with the fallback and the
+`continue` unchanged. `::error::` on a dead end that cannot be fixed trains
+the next reader - a future session, or this one on a later day - to go
+looking for a fix that does not exist. That is what happened here.
+
+Four tests pin the split: the known signature is quiet and names where the
+story lives; anything else stays exactly as loud as before, verified by
+slicing the source into its `if`/`else` branches rather than trusting a
+single substring search (which is what let the first test-suite's coverage
+gap through). The pre-existing `test_a_failed_sweep_is_loud_rather_than_a_
+quiet_fallback` and the zero-yield-mailbox tests needed no changes - the
+general path is untouched.
+
+3649 passed, 1 skipped; ruff clean; coverage gate green.
+
+**QC-069's 11 duplicate-MDOLX rows are still next.** They are a real,
+measured defect (`_restore_prior_win` unions `mdolx_refs_all` with nothing
+that ever narrows it, so a booking mismatched in an earlier fire is
+immortal, and `core.booking_count` then counts one shipment as two wins) -
+unlike this one, which was never a defect.
+
+---
+
+### 2026-08-31 — the blocker was one row, and NO PREAMBLE finally landed
 
 Michael, on the entry directly below this one: *"what do you need with the
 secret? what does this have to do with hilmar?"*
