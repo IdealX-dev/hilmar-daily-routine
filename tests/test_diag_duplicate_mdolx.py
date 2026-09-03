@@ -229,3 +229,56 @@ def test_the_classifier_asks_core_rather_than_keeping_its_own_prefix_list():
     assert "has_no_rfq_chain" in SRC
     assert 'startswith("stand_")' not in SRC, (
         "a private copy of the prefix list — core owns it")
+
+
+# ── 4c: both rows hold it as mdolx_ref, one of them the operator's ────
+
+def test_4c_is_named_when_a_rival_row_claims_the_ref_as_its_own_mdolx_ref():
+    # MDOLX261031, live 2026-09-03. The first run of this classifier put it
+    # in bucket (3) "genuinely ambiguous" — a mislabel, and the kind that
+    # licenses leaving a real defect alone. It is the same collision as 4a.
+    rows = [
+        {"request_id": "req_b789e573316ead86", "status": "WIN",
+         "request_date": "2026-07-30",
+         "mdolx_ref": "261031", "mdolx_refs_all": []},
+        {"request_id": "req_f942b9672ff756ab", "status": "WIN",
+         "request_date": "2026-08-26",
+         "mdolx_ref": "261031", "mdolx_refs_all": ["261031"]},
+    ]
+    corr = [{"request_id": "req_b789e573316ead86",
+             "source": "ol-booking-recap-2026-08-12"}]
+    v = D._classify("261031", rows, corr)
+    assert v.startswith("(4c)"), v
+    assert "req_b789e573316ead86" in v
+    assert "req_f942b9672ff756ab.mdolx_ref" in v
+
+
+def test_4c_is_not_reported_as_3_which_would_license_doing_nothing():
+    rows = [
+        {"request_id": "req_owner", "mdolx_ref": "261031"},
+        {"request_id": "req_rival", "mdolx_ref": "261031"},
+    ]
+    v = D._classify("261031", rows, [{"request_id": "req_owner", "source": "r"}])
+    assert not v.startswith("(3)"), v
+
+
+def test_3_survives_when_no_correction_is_involved():
+    # The (3) bucket still has to exist: two rows claiming one ref with NO
+    # operator verdict behind either is genuinely ambiguous, and 4c's heal
+    # (defer to the operator's row) has nothing to defer to.
+    rows = [
+        {"request_id": "req_a", "mdolx_ref": "261031"},
+        {"request_id": "req_b", "mdolx_ref": "261031"},
+    ]
+    assert D._classify("261031", rows, []).startswith("(3)")
+
+
+def test_4b_still_wins_over_4c_when_the_rival_is_a_standalone():
+    # A stand_ row is both a rival mdolx_ref AND chain-less. It must report
+    # as 4b, because 4b's heal removes a row and 4c's does not.
+    rows = [
+        {"request_id": "req_owner", "mdolx_ref": "261027"},
+        {"request_id": "stand_261027", "mdolx_ref": "261027"},
+    ]
+    v = D._classify("261027", rows, [{"request_id": "req_owner", "source": "r"}])
+    assert v.startswith("(4b)"), v

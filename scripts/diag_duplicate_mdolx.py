@@ -56,6 +56,11 @@ the live findings and none of (1)-(3) do:
       OTHER row's `mdolx_refs_all`, which QC-069 also scans. Nothing
       un-stamps it: CLAUDE.md's standing corollary, in one field.
 
+      It has THREE shapes, split because they need different heals: the
+      matcher's stale copy can land in another row's `mdolx_refs_all` (4a),
+      in a whole standalone WIN row it emitted instead (4b), or in another
+      row's own `mdolx_ref` (4c). Only 4a is safe to clear automatically.
+
       The fingerprint is exact and mechanical, so this script does not
       guess it — for each duplicated ref it asks whether some correction
       NAMES that ref, and whether the ref reaches each row as `mdolx_ref`
@@ -179,6 +184,27 @@ def _classify(ref: str, rows_for_ref: list[dict], corrections: list[dict]) -> st
                     f"correction owns {owned[0].get('request_id')}; "
                     + ", ".join(r.get("request_id") for r in stands)
                     + " is the same shipment counted again")
+        rivals = [r for r in primary if r.get("request_id") not in named]
+        if rivals:
+            # 4c: BOTH rows hold it as mdolx_ref, and one of them is the
+            # operator's. Added 2026-09-03 after the first live run put
+            # MDOLX261031 in bucket (3) "genuinely ambiguous" — which was a
+            # MISLABEL, and the kind that licenses leaving a real defect
+            # alone. It is the same collision as 4a; only the field the
+            # matcher's copy landed in differs.
+            #
+            # It reaches this shape when the matcher's chosen row is one the
+            # `req_ts > bk_ts` guard would normally exclude: MDOLX261031's
+            # rival is dated 2026-08-26, AFTER the 08-13 confirmation, and
+            # the thread also carries an 08-27 "Export Invoice available"
+            # message that collect_bookings admits — so the booking the
+            # matcher scored against can be dated later than the booking
+            # itself. Named, not fixed here.
+            return ("(4c) OPERATOR CORRECTION vs MATCHER, rival mdolx_ref — "
+                    f"correction owns {owned[0].get('request_id')}; "
+                    + ", ".join(f"{r.get('request_id')}.mdolx_ref"
+                                for r in rivals)
+                    + " claims it too")
 
     if any(r.get("preserved_from_prior") for r in rows_for_ref):
         return "(1) CARRY-FORWARD, STALE — a row is preserved_from_prior"
