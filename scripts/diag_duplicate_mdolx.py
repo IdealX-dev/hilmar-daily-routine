@@ -41,8 +41,9 @@ mentioning "Prior-build WIN restored" or "Absorbed" — the fingerprint that
 tells (1) apart from (2) and (3).
 
 READ-ONLY. Pulls state into a temp dir, prints. No writes to the blob, no
-mutation of the working tree, no email. PII: request_id, status, dates,
-lane, MDOLX refs only — no subjects, no bodies, no addresses.
+mutation of the working tree, no email. Prints request_id, status, dates,
+lane, conversation_id, preserved_from_prior, and MDOLX refs — no subjects,
+no bodies, no addresses.
 """
 from __future__ import annotations
 
