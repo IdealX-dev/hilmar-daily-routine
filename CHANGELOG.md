@@ -3,7 +3,124 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-03 (latest) — the "we are losing mail" finding was wrong; the alarm was
+### 2026-09-03 (latest) — QC-069's 11 duplicates are one bug, and it is not the one I named
+
+I reported to Michael last session that the MDOLX261026-261046 duplicates
+came from eight near-identical booking confirmations tying in
+`_pick_best_request`'s carrier+container scoring, and asked him whether the
+emails carried a stronger disambiguating signal. He said: *"check your mcp
+connector to my ol email and look yourself."*
+
+**The connector cannot reach that mailbox** — it is signed into
+`michael.deitchman@idealx.us`, and `ol-usa.com` is a different tenant
+(`ErrorInvalidUser`, Graph 404). That mailbox holds the tracker's own output,
+not OL's confirmations. Read the staged mail instead, which is the better
+source anyway: the matcher can only use what is staged.
+
+**My root cause was wrong.** MEASURED (diag-bookings `33783443620`,
+diag-blob `33784550128`), all ELEVEN live findings are one mechanism:
+
+```
+ 5  (4a) OPERATOR CORRECTION vs MATCHER, stale list entry
+ 5  (4b) OPERATOR CORRECTION vs MATCHER, orphan standalone
+ 1  (4c) OPERATOR CORRECTION vs MATCHER, rival mdolx_ref
+```
+
+Zero carry-forward. Zero lane-mismatch standalone — the shape QC-069's own
+docstring leads with, and the one a heal would have been written against.
+
+Eight corrections back-entered the batch from Linda Echevarria's Aug-12
+recap, each noting *"The confirmation never reached [this mailbox]"*. True
+when written, false now: the confirmations arrived **2026-08-13 20:04-20:21**,
+one day after the recap. So every fire runs both writers over the same refs —
+`link_bookings_to_requests` writes `mdolx_ref` AND appends to
+`mdolx_refs_all` on the row IT scored best; `apply_operator_corrections` does
+`row.update(changes)`, overwriting `mdolx_ref` on the row the OPERATOR named
+and touching `mdolx_refs_all` not at all. They do not name the same row.
+Nothing un-stamps the matcher's copy: the standing corollary, in one field.
+
+**Shipped the measurement; the heal was designed, adversarially verified, and
+NOT shipped** (#251). Four independent passes over the proposed 4a heal — "a
+ref an operator correction names may appear on exactly one row; strip the
+stale copy where the row retains another ref" — and all four refuted it. Two
+were decisive, and both were verified here by execution rather than on report:
+
+1. **The instrument that scoped it could not tell the shapes apart.**
+   `_classify` was a priority chain: it computed the standalone and rival
+   rows, returned on the 4a branch BEFORE testing either, and the label named
+   neither. Ran it on three materially different row-sets — bare 4a; 4a WITH
+   a `stand_` row also claiming the ref; 4a WITH a rival `req_` row — and all
+   three returned one identical string. So "5 cases of 4a", reported this
+   morning, was not a claim the tool could support. That is the exact failure
+   CLAUDE.md's measure rule exists to prevent, committed by the instrument
+   built to prevent it.
+
+2. **`mdolx_refs_all` is a PDF join key, not only a counter.**
+   `patch_carriers.py:701-704` joins on it to find a booking PDF; the PDF
+   supplies `pod`, and PASS 2b recovers `destination`/`lane`. A row whose lane
+   comes that way loses it when the entry is cleared, and
+   `gen_client_email._lane_resolved` then drops the row from every client
+   bucket — Lonny told one FEWER booking for a shipment OL confirmed, with
+   every guard the heal leaned on still green. Same class as 2026-08-10 ("you
+   sent lonny we won no shipment last week"), against QC-065-locked
+   renderers.
+
+Also measured: `core.booking_count` counts the UNION of both fields and is
+numerator AND denominator of every win and request count, so the heal is not
+count-neutral; TEU (summed per row) does not move.
+
+`_classify` now reports the SET of shapes and marks each finding
+`[EXCLUSIVELY 4a]` or `[NOT exclusively 4a]` — the only thing a heal may gate
+on. AUTHORITATIVE COUNT, diag-blob run 33788252407:
+
+```
+ 5  (4) 4a EXCLUSIVE — a field clear resolves it
+ 5  (4) 4b NOT exclusive — needs a row removed or a ref blanked
+ 1  (4) 4c NOT exclusive — needs a row removed or a ref blanked
+```
+
+**5 of 11, not the 10 the first tally implied.** 4b removes a WIN row; 4c
+blanks `req_f942b9672ff756ab`'s only booking ref (`teu_won=8`). Both are
+destructive and wait on Michael.
+
+Four things this session got wrong and corrected on the record:
+
+- The first live run put MDOLX261031 in bucket `(3) genuinely ambiguous; no
+  heal should touch it`. That is a licence to leave a real defect alone, and
+  it was a mislabel — a correction names one of the two rows. It became 4c.
+- The first draft of the classifier used a bare `startswith("stand_")`.
+  `test_no_rfq_chain_predicate.py` failed it, correctly: the 49 rows
+  backfilled from OL's export are `ol_`-prefixed and equally chain-less, so
+  the bare check would have reported that shape as UNCLASSIFIED. Now asks
+  `core.has_no_rfq_chain`, with a test for the `ol_` shape.
+- `.github/workflows/diag-blob.yml` ran the step as `... || true` — shipped
+  in #250 two days ago, and the exact pattern CLAUDE.md names as the
+  2026-08-20 defect. The script already emits `::error::` and returns 2;
+  `|| true` threw the exit code away. Removed; `if: always()` kept.
+- Reported that step as hanging for 13 minutes. It ran in 68 seconds.
+  GitHub's jobs API held it at `in_progress` for ~12 minutes after it
+  finished and the log endpoint 404'd over the same window. Nothing was
+  broken, and the conclusion was drawn from a stale API rather than measured.
+
+Recorded, not fixed, and needs its own change: `scripts/core.decide_status`
+and `src/hilmar/core.decide_status` DISAGREE on a row whose only ref is in
+`mdolx_refs_all` — production LOSS, library WIN (`src/hilmar/core.py:1381`
+has `or bool(mdolx_refs_all)`; the production signature has no such
+parameter). Both library callers pass it; production's three cannot. No case
+in `test_core_parity.py` passes `mdolx_refs_all`, so the parity suite is
+green over the drift, and `_LEGACY_SRC_CONTRACT` is scoped to `body_parser`
+and says nothing about it. Undeclared drift is what that block exists to
+catch.
+
+Recorded, not fixed: MDOLX261031's thread carries an 08-27 *"Export Invoice
+available"* message that `collect_bookings` admits alongside the 08-13
+confirmation, so the booking `_pick_best_request` scores against can be dated
+LATER than the booking — which is how a row dated 2026-08-26 got past the
+`req_ts > bk_ts` guard. Separate change, separate blast radius.
+
+3673 passed, 1 skipped; ruff clean. No production behaviour changed.
+
+### 2026-09-03 — the "we are losing mail" finding was wrong; the alarm was
 
 Yesterday's entry led with *"we are losing booking mail, quietly, every
 fire"* and built a whole folder-enumeration fallback on top of one log line:
