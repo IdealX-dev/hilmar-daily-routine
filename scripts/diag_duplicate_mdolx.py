@@ -299,7 +299,18 @@ def main() -> int:
         nref = _norm(ref)
         present = [by_id[rid] for rid in ids if by_id.get(rid) is not None]
         verdict = _classify(nref, present, corrections.get(nref) or [])
-        tally[verdict.split(" —")[0]] = tally.get(verdict.split(" —")[0], 0) + 1
+        # Key the tally on the SHAPES and the exclusivity marker, not on the
+        # verdict's leading label. Keying on the label collapsed all eleven
+        # findings into one "(4) OPERATOR CORRECTION vs MATCHER" row in the
+        # 2026-09-03 run — true, and useless: the number a heal is scoped
+        # from is how many are EXCLUSIVELY 4a, and that row did not print it.
+        _shapes = "+".join(t for t in ("4a", "4b", "4c") if f"({t})" in verdict)
+        _key = (f"(4) {_shapes} "
+                + ("EXCLUSIVE — a field clear resolves it"
+                   if "EXCLUSIVELY 4a" in verdict
+                   else "NOT exclusive — needs a row removed or a ref blanked")
+                ) if _shapes else verdict.split(" —")[0]
+        tally[_key] = tally.get(_key, 0) + 1
 
         print(f"=== MDOLX{ref} — {len(ids)} row(s): {', '.join(ids)} ===")
         print(f"  MECHANISM: {verdict}")
@@ -323,6 +334,11 @@ def main() -> int:
     print("── mechanism tally ─────────────────────────────────────────────")
     for k, n in sorted(tally.items(), key=lambda kv: -kv[1]):
         print(f"  {n:>3}  {k}")
+    _excl = sum(n for k, n in tally.items() if "EXCLUSIVE —" in k)
+    print(f"\n  EXCLUSIVELY 4a: {_excl} of {len(dup_refs)} — the only findings a "
+          "field clear can resolve.\n  The rest need a WIN row removed (4b) or a "
+          "WIN's only ref blanked (4c);\n  both are destructive and are an "
+          "operator's call, not a heal's.")
     return 0
 
 

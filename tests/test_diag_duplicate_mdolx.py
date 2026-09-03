@@ -283,3 +283,21 @@ def test_the_docstring_records_that_refs_all_is_a_pdf_join_key():
     # dropped from every client bucket by gen_client_email._lane_resolved.
     # The next reader must not have to rediscover that.
     assert "patch_carriers" in SRC and "_lane_resolved" in SRC
+
+
+def test_the_tally_key_separates_exclusive_from_the_rest():
+    """The tally is the number a heal gets scoped from, so it must not
+    collapse.
+
+    2026-09-03, live run 33787614159: the tally keyed on the verdict's leading
+    label and printed one row — `11  (4) OPERATOR CORRECTION vs MATCHER`.
+    True, and useless: every finding shares that label, and the figure that
+    decides the heal's scope is how many are EXCLUSIVELY 4a. This pins the key
+    to the shapes plus the exclusivity marker so a single-bucket tally cannot
+    come back.
+    """
+    src = SRC.split("def main(")[1]
+    assert "EXCLUSIVELY 4a" in src, "the tally key ignores the exclusivity marker"
+    assert '"4a", "4b", "4c"' in src, "the tally key ignores the shape set"
+    # and the summary line that states the scope in one place
+    assert "EXCLUSIVELY 4a: " in src
