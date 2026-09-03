@@ -1197,9 +1197,19 @@ def main() -> int:
             swept = list_messages_since(mtoken, cutoff.isoformat(), base=base,
                                         max_results=args.max_window_messages)
         except Exception as e:
-            print(f"::error::refresh_stage: [{mbox}] date sweep FAILED: "
-                  f"{type(e).__name__}: {e} — falling back to $search only, "
-                  "which is known to drop recent mail")
+            # THE SHARED MAILBOX IS CLOSED, PERMANENTLY (2026-08-14; Michael:
+            # "ol won't grant more access"; see SHARED_MAILBOX above). Not an
+            # open bug — ::error:: on a dead end that cannot be fixed sends
+            # the next reader chasing a fix that does not exist.
+            if mbox == SHARED_MAILBOX and "AllItems" in str(e):
+                print(f"refresh_stage: [{mbox}] date sweep skipped — no "
+                      "readable store (known dead end; see "
+                      "refresh_stage.SHARED_MAILBOX). $search runs for it "
+                      "below; coverage holds via /me.")
+            else:
+                print(f"::error::refresh_stage: [{mbox}] date sweep FAILED: "
+                      f"{type(e).__name__}: {e} — falling back to $search "
+                      "only, which is known to drop recent mail")
             continue
         print(f"refresh_stage: [{mbox}] date sweep since {cutoff.date()}: "
               f"{len(swept)} message(s) in window")
