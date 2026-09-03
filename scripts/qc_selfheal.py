@@ -53,7 +53,8 @@ class _QC032Done(Exception):
 
 # Single source of truth for "is this a Hilmar ocean RFQ" — shared with
 # ingest.py so the QC backstop and the intake filter never drift (QC-040).
-from ingest import apply_operator_corrections, out_of_scope_reason
+from ingest import age_requests as _ingest_age_requests
+from ingest import apply_operator_corrections, claim_corrected_mdolx_refs, out_of_scope_reason
 
 # ─────────────────────────────────────────────────────────────────────
 # COVERED-loss reason heuristics — promote OTHER → COVERED when we have
@@ -1254,6 +1255,37 @@ def phase_3_entries(log: Log, data: dict):
     # enforces the same verdicts and the two can never drift. Runs before the
     # per-row decide loop so corrected rows are manual_locked and not re-decided.
     _op_corrected = apply_operator_corrections(data["requests"])
+    # Same backstop reasoning as the applier it follows: one source of truth,
+    # so the intake claim and the QC claim cannot drift. Idempotent — a demoted
+    # ref no longer counts as a claim, so the second qc_selfheal pass of the
+    # fire finds nothing left to do.
+    #
+    # It REMOVES WIN rows (4b) and strips refs (4c), so it is logged with
+    # log.fix like its sibling and never with log.ok — `Log.ok()` only PRINTS,
+    # it is not recorded on the Log and never reaches qc-result.json, so an
+    # `ok` here would delete a destructive edit from the audit entirely.
+    _op_claimed, _op_released = claim_corrected_mdolx_refs(data["requests"])
+    if _op_claimed:
+        log.fix(
+            f"PHASE 3: MDOLX claim resolved {_op_claimed} duplicate booking-ref "
+            f"holding(s) — a ref an operator correction names belongs to that "
+            f"row alone (QC-069; see ingest.claim_corrected_mdolx_refs)"
+        )
+        if _sentry is not None:
+            with contextlib.suppress(Exception):
+                _sentry.metric_increment("qc.mdolx_claims_resolved", _op_claimed)
+    if _op_released:
+        # The SAME re-derive the intake path runs, for the same reason: a
+        # released 4c row is a WIN with no booking ref until something
+        # re-decides it, and QC-049 errors on exactly that. `only=` because
+        # ingest.age_requests has no manual_locked guard and this runs AFTER
+        # the operator layer — see its docstring.
+        _ingest_age_requests(data["requests"], only=_op_released)
+        log.fix(
+            f"PHASE 3: re-derived {len(_op_released)} row(s) left with no "
+            f"booking ref by the MDOLX claim — a WIN whose ref was reassigned "
+            f"to the row an operator named is no longer a confirmed win"
+        )
     if _op_corrected:
         log.fix(
             f"PHASE 3: re-applied {_op_corrected} operator correction(s) "
