@@ -211,6 +211,31 @@ scrubbed env.)
     "Oakland → Oakland", a degenerate lane that is QC-073's territory and may
     be a different defect wearing QC-019's message.
 
+14. **The transcript now contains the checks' OWN output, and that broke the
+    anchor a third time.** Reported by an automated reviewer on PR #254.
+    QC-021 and QC-055 both located "where today's fire starts" with `rfind`
+    on a bare date string — sound while run-log.txt held only the wrapper's
+    terse step echoes, unsound the moment run_pipeline teed the whole
+    transcript into it. QC-021 prints
+    `✅ QC-021: transcript open for 2026-09-04 ...`, which carries today's ISO
+    date and runs BEFORE QC-055 in the same `phase_6_rules` pass. MEASURED on
+    a transcript shaped exactly as the tee writes one:
+
+        sentinel IS in the file: True
+        QC-055 recorded: (NOTHING)
+        QC-055 printed : ✅ QC-055: Sentry cron heartbeat registered on this fire
+
+    A real Sentry cron-start failure reported as registered, on every normal
+    fire. Both checks now anchor on the fire HEADER via a line-anchored regex
+    covering both host forms (`HILMAR FIRE <iso> ...` and
+    `Hilmar daily on <BOX> — <us> ...`), in one shared helper.
+
+    THIS IS THE THIRD INSTANCE OF ONE MISTAKE IN THIS PR — QC-055's 50 KB byte
+    tail, QC-021's 40 KB byte tail, and now a bare date substring. The rule
+    the three share: **a byte offset or a bare date is the wrong anchor for a
+    file whose content this change controls.** Each was found by review, not
+    by me, and each was found only after the previous one was fixed.
+
 12. **A SCHEDULED FIRE IS ALWAYS `send_to=full`, so merging IS the send
     decision.** Verified in `.github/workflows/daily.yml:381`:
 

@@ -1141,6 +1141,45 @@ def _intake_diag_snippet(body: str, max_chars: int = 500) -> str:
     return " | ".join(out)
 
 
+def fire_header_index(text: str, iso: str, us: str) -> int:
+    """Offset of the LAST fire header for today in `text`, or -1.
+
+    ANCHOR ON THE HEADER, NEVER ON A BARE DATE. Both QC-021 and QC-055 used
+    `rfind("2026-09-04")` to find "where today's fire starts". That worked
+    while reports/run-log.txt held only the wrapper's terse step echoes. It
+    stopped working the moment run_pipeline began teeing the WHOLE transcript
+    into it, because the transcript now contains the checks' own output — and
+    QC-021 prints `QC-021: transcript open for 2026-09-04 ...`, which carries
+    today's ISO date and runs BEFORE QC-055 in the same phase_6_rules pass.
+
+    MEASURED on a transcript shaped exactly as the tee writes one — fire
+    header, the Sentry sentinel at pipeline start, then QC-021's own ok line:
+
+        sentinel IS in the file: True
+        QC-055 recorded: (NOTHING)
+        QC-055 printed : ✅ QC-055: Sentry cron heartbeat registered on this fire
+
+    i.e. a real cron-start failure reported as registered, on every normal
+    fire, because rfind landed on QC-021's line and `_tail` began after the
+    sentinel. Reported by an automated reviewer on PR #254 and reproduced
+    before changing anything.
+
+    Two header forms, one per host:
+      run_pipeline   "HILMAR FIRE 2026-09-04 (09/04/2026 06:30:00) host=..."
+      the wrapper    "Hilmar daily on MBD-BOX — 09/04/2026  6:30:01.23"
+    Both are line-anchored, which is what a content line can never be.
+    """
+    import re as _re
+    pat = _re.compile(
+        rf"^(?:HILMAR FIRE {_re.escape(iso)}\b"
+        rf"|Hilmar daily on .*{_re.escape(us)})",
+        _re.MULTILINE)
+    last = -1
+    for m in pat.finditer(text):
+        last = m.start()
+    return last
+
+
 def _intake_acked_notes(stage_rows, acks=None) -> list:
     """(subject, reason) for each staged lonny_outbound email covered by an
     acknowledged-note entry — printed as OK lines so the acknowledgment
@@ -3494,7 +3533,7 @@ def phase_6_rules(log: Log, data: dict):
             # and by the send flag; what IS checkable here is that today's
             # fire opened a transcript at all.
             _tail = _text21
-            _idx21h = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
+            _idx21h = fire_header_index(_tail, _today_iso, _today_us)
             if _idx21h >= 0:
                 import re as _re21h
                 # Count markers from THIS fire's header forward, not from the
@@ -3545,7 +3584,12 @@ def phase_6_rules(log: Log, data: dict):
                 # set, so each fire there starts a fresh file and can only
                 # hold one. It bites the Cloud-PC path, where the log
                 # accumulates and two scheduled fires a day were normal.
-                _idx = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
+                # Header first. A bare-date rfind lands on the transcript's
+                # OWN content — QC-021's ok line carries today's ISO date —
+                # so it is only a fallback for a legacy log with no header.
+                _idx = fire_header_index(_tail, _today_iso, _today_us)
+                if _idx < 0:
+                    _idx = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
                 _after = _tail[_idx:] if _idx >= 0 else _tail
                 if "Sent. request-id=" in _after:
                     log.ok("QC-021: today's wrapper completed send step")
@@ -5018,7 +5062,7 @@ def phase_6_rules(log: Log, data: dict):
             _all55 = _log_path.read_text(encoding="utf-8", errors="ignore")
             _today55 = (_dt55.now().strftime("%Y-%m-%d"),
                         _dt55.now().strftime("%m/%d/%Y"))
-            _idx55 = max(_all55.rfind(t) for t in _today55)
+            _idx55 = fire_header_index(_all55, _today55[0], _today55[1])
             if _idx55 >= 0:
                 _tail = _all55[_idx55:]          # today's fire only
             elif len(_all55) > 50000:

@@ -486,3 +486,124 @@ def test_qc021_cloud_pc_finds_the_send_line_past_a_full_transcript(
     assert "completed send step" in printed, (
         "QC-021 never located today's fire — it fell through to the "
         "'no fire today' branch, which is silent before 7 PM ET")
+
+
+# ── the transcript now contains the checks' OWN output ───────────────────
+# Reported by an automated reviewer on PR #254 and reproduced before changing
+# anything. Both QC-021 and QC-055 located "where today's fire starts" with
+# rfind() on a bare date string. That was sound while run-log.txt held only
+# the wrapper's terse step echoes. It stopped being sound the moment
+# run_pipeline began teeing the WHOLE transcript into the same file, because
+# QC-021 prints
+#
+#     ✅ QC-021: transcript open for 2026-09-04 on the ephemeral runner ...
+#
+# which carries today's ISO date and runs BEFORE QC-055 in the same
+# phase_6_rules pass. rfind landed on that line, `_tail` began after it, and
+# the Sentry sentinel — printed at pipeline start — fell outside. MEASURED:
+#
+#     sentinel IS in the file: True
+#     QC-055 recorded: (NOTHING)
+#     QC-055 printed : ✅ QC-055: Sentry cron heartbeat registered on this fire
+#
+# A real cron-start failure reported as registered, on every normal fire.
+# Third instance in this PR of one underlying mistake: a byte offset or a bare
+# date is the wrong anchor for a file whose content this change controls.
+_SENTINEL_LINE = ("⚠️  Sentry cron start failed (pipeline continues): "
+                  "No module named 'sentry_sdk'")
+
+
+def _transcript(*, sentinel: bool, qc021_line: bool, host: str = "gh") -> str:
+    from datetime import datetime
+    now = datetime.now()
+    head = (f"HILMAR FIRE {now:%Y-%m-%d} ({now:%m/%d/%Y} 06:30:00) "
+            f"host=github-actions\n") if host == "gh" else (
+            f"Hilmar daily on MBD-BOX — {now:%m/%d/%Y}  6:30:01.23\n")
+    body = head + "--- Backup snapshot ---\n"
+    if sentinel:
+        body += _SENTINEL_LINE + "\n"
+    body += "--- QC self-heal (post-patch) ---\n"
+    if qc021_line:
+        # qc_selfheal's own stdout, which the tee now captures into this file.
+        body += (f"  ✅ QC-021: transcript open for {now:%Y-%m-%d} on the "
+                 f"ephemeral runner (7 step marker(s))\n")
+    return body
+
+
+def test_qc055_is_not_fooled_by_the_checks_own_dated_output(
+        tmp_path, monkeypatch):
+    """THE reported bug. The sentinel is in the file and must be found even
+    though a LATER line also carries today's date."""
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=_transcript(sentinel=True, qc021_line=True))
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-055" in m]
+    assert msgs, (
+        "QC-055 reported a dead cron heartbeat as registered — its anchor "
+        "landed on QC-021's own output line instead of the fire header")
+    assert "NOT registering" in msgs[0]
+
+
+def test_qc055_still_passes_a_healthy_fire_that_prints_the_same_line(
+        tmp_path, monkeypatch):
+    """The negative control: the fix must not turn the anchor change into a
+    false alarm on the ordinary case."""
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=_transcript(sentinel=False, qc021_line=True))
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    assert not [m for m in _fired(_base_data()) if "QC-055" in m]
+
+
+def test_qc055_finds_the_sentinel_under_the_wrapper_header_too(
+        tmp_path, monkeypatch):
+    """Two header forms, one per host. The Cloud-PC wrapper writes
+    'Hilmar daily on <BOX> — MM/DD/YYYY ...' and must anchor the same way."""
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=_transcript(sentinel=True, qc021_line=True,
+                                        host="wrapper"))
+    monkeypatch.setattr(q, "_BLOB_HOST", False)
+    msgs = [m for m in _fired(_base_data()) if "QC-055" in m]
+    assert msgs and "NOT registering" in msgs[0]
+
+
+def test_fire_header_index_ignores_a_bare_date_in_content():
+    """The helper directly: a date inside a content line is not a header."""
+    from datetime import datetime
+    now = datetime.now()
+    iso, us = f"{now:%Y-%m-%d}", f"{now:%m/%d/%Y}"
+    text = (f"HILMAR FIRE {iso} ({us} 06:30:00) host=github-actions\n"
+            f"  ✅ QC-021: transcript open for {iso} on the ephemeral runner\n")
+    idx = q.fire_header_index(text, iso, us)
+    assert idx == 0, "the header is at offset 0; a content line stole the anchor"
+
+
+def test_fire_header_index_takes_the_latest_fire():
+    """An accumulating wrapper log holds many; today's LAST one is this fire."""
+    from datetime import datetime
+    now = datetime.now()
+    iso, us = f"{now:%Y-%m-%d}", f"{now:%m/%d/%Y}"
+    first = f"HILMAR FIRE {iso} ({us} 06:30:00) host=github-actions\n"
+    text = first + "  work\n" + f"HILMAR FIRE {iso} ({us} 18:00:00) host=x\n"
+    assert q.fire_header_index(text, iso, us) == len(first) + len("  work\n")
+
+
+def test_fire_header_index_requires_a_LINE_START_not_a_mention():
+    """The `^` anchor, pinned.
+
+    The whole bug class is a content line stealing the anchor, and the next
+    instance is a line that QUOTES the header rather than merely sharing its
+    date — a diagnostic echoing what it read, an operator note pasted into the
+    wrapper log. Without the line anchor the regex matches mid-line and the
+    anchor moves past the sentinel again.
+
+    Mutation-tested: dropping `^` from the pattern fails this and nothing else.
+    """
+    from datetime import datetime
+    now = datetime.now()
+    iso, us = f"{now:%Y-%m-%d}", f"{now:%m/%d/%Y}"
+    header = f"HILMAR FIRE {iso} ({us} 06:30:00) host=github-actions\n"
+    text = (header
+            + "  ⚠️  Sentry cron start failed (pipeline continues): boom\n"
+            + f"  note: expected marker HILMAR FIRE {iso} was present\n")
+    assert q.fire_header_index(text, iso, us) == 0, (
+        "a mid-line mention of the header text was taken as the fire header")
