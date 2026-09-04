@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import json
 import os
@@ -242,8 +243,167 @@ STEP_TIMEOUTS_S = {
 }
 
 
+#: Where the fire's transcript lands. The Cloud-PC wrapper
+#: (deploy/run_daily_laptop.cmd) has always appended to this path with
+#: `>> "%LOG%"`; on GitHub Actions NOTHING wrote it, so every consumer that
+#: reads it has been inert on the only host that actually fires.
+RUN_LOG = ROOT / "reports" / "run-log.txt"
+
+
+def should_tee_run_log(env=None) -> bool:
+    """Should run_pipeline write reports/run-log.txt itself this run?
+
+    NOT on the Cloud PC. There the wrapper already redirects our stdout INTO
+    that file, so teeing would write every line twice — and QC-021 counts
+    markers in it.
+
+    On an ephemeral runner there is no wrapper, and the absence is not
+    cosmetic. Measured on production fire 33864188808 (2026-09-04):
+
+        ##[warning]No files were found with the provided path:
+        reports/run-log.txt reports/qc-result.json reports/test-result.json
+        reports/coverage.json. No artifacts will be uploaded.
+
+    — the "Upload run artifacts" step went green having uploaded NOTHING, and
+    list_workflow_run_artifacts on that run returns total_count 0. So the one
+    channel that carries a failed fire's evidence off the runner was empty,
+    which is why "QC self-heal (post-patch) TIMEOUT @ 180s" ran 31 fires
+    before anyone could see it, and why QC-057's PII-scrubbed body snippets
+    — written expressly so a parser fix could be scoped from them — have
+    never once been readable.
+
+    The default keys off AZURE_STORAGE_CONNECTION_STRING, the same predicate
+    qc_selfheal already calls _BLOB_HOST for "ephemeral runner". Explicit
+    HILMAR_RUN_LOG_TEE=0/1 overrides it in both directions, so a Cloud PC that
+    ever gains the connection string cannot start double-logging silently.
+    """
+    env = os.environ if env is None else env
+    explicit = str(env.get("HILMAR_RUN_LOG_TEE", "")).strip().lower()
+    if explicit in ("1", "true", "yes", "on"):
+        return True
+    if explicit in ("0", "false", "no", "off"):
+        return False
+    return bool(env.get("AZURE_STORAGE_CONNECTION_STRING"))
+
+
+class RunLogTee:
+    """Duplicate everything written to fd 1 and fd 2 into `path`, appending.
+
+    MUST be done at the FILE-DESCRIPTOR level, not by swapping sys.stdout.
+    run_step calls subprocess.run without capture, so every step's real
+    output — the QC check lines, the tracebacks, the "TIMEOUT ... was killed"
+    banner — is written by a CHILD process straight to the inherited fd. A
+    Python-level sys.stdout wrapper never sees any of it, which would tee the
+    orchestrator's own banners and lose the entire contents.
+
+    Opens in APPEND mode: the wrapper's history and successive same-day fires
+    accumulate, which is what QC-021 (searches for today's marker, then reads
+    forward) and QC-055 (reads the tail) both expect.
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._fh = None
+        self._thread = None
+        self._saved = {}
+        self._write_fd = None
+
+    def __enter__(self):
+        import threading
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self.path, "ab", buffering=0)
+        read_fd, self._write_fd = os.pipe()
+        # Keep the ORIGINAL destinations so the runner's own console (and the
+        # Actions log) still gets every line — a tee that swallows its input
+        # would trade one blind channel for another.
+        for fd in (1, 2):
+            self._saved[fd] = os.dup(fd)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        real_out = self._saved[1]
+
+        def _pump():
+            with os.fdopen(read_fd, "rb", buffering=0) as pipe:
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        break
+                    for sink in (real_out, None):
+                        try:
+                            if sink is None:
+                                self._fh.write(chunk)
+                            else:
+                                os.write(sink, chunk)
+                        except OSError:
+                            pass
+
+        self._thread = threading.Thread(target=_pump, name="run-log-tee",
+                                        daemon=True)
+        self._thread.start()
+        os.dup2(self._write_fd, 1)
+        os.dup2(self._write_fd, 2)
+        # Line buffering keeps our own banners interleaved with the children's
+        # output in the order they actually happened.
+        with contextlib.suppress(Exception):
+            sys.stdout.reconfigure(line_buffering=True)
+            sys.stderr.reconfigure(line_buffering=True)
+        return self
+
+    def __exit__(self, *exc):
+        # ORDER IS LOAD-BEARING and the first draft got it wrong: it closed
+        # the saved console fd before joining the pump, so anything still in
+        # flight hit a closed descriptor and vanished from the console while
+        # landing in the file. Measured — "PARENT: after child" reached the
+        # log and never reached the terminal.
+        #
+        #   1. flush our own buffers into the pipe
+        #   2. restore fds 1/2, which closes the pipe's duplicated write ends
+        #   3. close the original write end — only now can the reader see EOF
+        #   4. join the pump; it may still be writing to the saved console fd
+        #   5. only then close the saved fds and the file
+        with contextlib.suppress(Exception):
+            sys.stdout.flush()
+            sys.stderr.flush()
+        for fd, saved in self._saved.items():
+            with contextlib.suppress(OSError):
+                os.dup2(saved, fd)
+        with contextlib.suppress(OSError):
+            os.close(self._write_fd)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        for saved in self._saved.values():
+            with contextlib.suppress(OSError):
+                os.close(saved)
+        with contextlib.suppress(Exception):
+            self._fh.close()
+        return False
+
+
+def run_log_header(started, host: str) -> str:
+    """The wrapper-compatible preamble for one fire.
+
+    QC-021 locates today's fire by finding either %m/%d/%Y or %Y-%m-%d in the
+    log and then reading FORWARD, so both spellings go in. `PY:` is the line
+    QC-055's sibling diagnostics and the qc_actions_from_sentry runbook tell
+    an operator to read for the interpreter that actually ran.
+    """
+    return (
+        "\n" + "=" * 70 + "\n"
+        f"HILMAR FIRE {started.strftime('%Y-%m-%d')} "
+        f"({started.strftime('%m/%d/%Y')} {started.strftime('%H:%M:%S')}) "
+        f"host={host}\n"
+        f"PY: {PY}\n"
+        + "=" * 70 + "\n"
+    )
+
+
 def run_step(name, cmd, dry_run=False, extra_env=None):
     print()
+    # QC-021 reads these markers out of the run log to name the step a dead
+    # fire stopped at: re.findall(r"^---\s*(.+?)\s*---\s*$", ...). The
+    # wrapper writes them for its own steps; without one per PIPELINE step the
+    # best QC-021 could ever say was "run_pipeline".
+    print(f"--- {name} ---")
     print("═" * 70)
     print(f"▶  {name}")
     print(f"   cmd: {' '.join(cmd)}")
@@ -271,6 +431,22 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
     import os as _os
     import time as _time
     sub_env = _os.environ.copy()
+    # UNBUFFERED, ALWAYS. A step that exceeds its timeout is SIGKILLed by
+    # subprocess.run, and SIGKILL discards whatever is still sitting in the
+    # child's stdio buffer. Python block-buffers stdout whenever it is not a
+    # TTY, which on a runner it never is — so the output of a killed step was
+    # thrown away precisely when it was the only evidence of what went wrong.
+    #
+    # MEASURED, same harness, only this variable differing:
+    #   child prints a line, sleeps past the timeout, is killed
+    #   buffered          -> line LOST
+    #   PYTHONUNBUFFERED=1 -> line SURVIVES
+    #
+    # That is the whole reason QC-057's PII-scrubbed body snippets have never
+    # been readable: the post-patch pass computed them and died holding them.
+    # Fire 33864188808 shows both QC passes killed mid-write, their last log
+    # line physically fused with the next process's first line.
+    sub_env["PYTHONUNBUFFERED"] = "1"
     if extra_env:
         sub_env.update(extra_env)
 
@@ -352,11 +528,23 @@ def main():
                     help="Print the steps that would run without executing them")
     args = ap.parse_args()
 
+    started = datetime.now()
+
+    # Start the transcript BEFORE anything else can fail. A --dry-run prints
+    # what it would do and must not append a fire header to the real log.
+    if should_tee_run_log() and not args.dry_run:
+        _tee = RunLogTee(RUN_LOG)
+        _tee.__enter__()
+        # atexit, not `with`: main() ends via sys.exit() on a blocking
+        # failure, and the transcript of a FAILED fire is the one that has to
+        # survive. SystemExit still runs atexit handlers.
+        atexit.register(_tee.__exit__, None, None, None)
+        print(run_log_header(started, host="github-actions"), end="")
+
     # Initialize Sentry FIRST so any subsequent error gets captured.
     if _sentry is not None:
         _sentry.init(component="run_pipeline")
 
-    started = datetime.now()
     print(f"🚀 Hilmar Tracker pipeline — started {started.isoformat(timespec='seconds')}")
     print(f"   Repo: {ROOT}")
     print(f"   Python: {PY}")
@@ -574,6 +762,9 @@ def main():
         print(f"   Client-blocking failures: {', '.join(blocking_failures)}")
         if best_effort_failures:
             print(f"   Also (best-effort): {', '.join(best_effort_failures)}")
+        # Same wording the Cloud-PC wrapper writes, so QC-021 parses one
+        # format on both hosts rather than two.
+        print("Pipeline exit code: 1")
         sys.exit(1)
     if best_effort_failures:
         # Successful client deliverable, but telemetry/sync misbehaved. Exit 0
@@ -587,6 +778,7 @@ def main():
         print(f"✅ PIPELINE COMPLETE in {elapsed:.1f}s")
     print(f"   Reports: {ROOT / 'reports'}")
     print(f"   Data:    {ROOT / 'tracking-data-v2.json'}")
+    print("Pipeline exit code: 0")
 
     # FOOTGUN GUARD (2026-06-25): run_pipeline BUILDS but does not SEND — the
     # wrapper's outlook_send step does. A hand-run that stops here produces

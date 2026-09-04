@@ -2257,6 +2257,7 @@ def decide_status(
     etd_fit_days: int | None,
     request_timestamp: str | None = None,
     send_signal_events: list | None = None,
+    mdolx_refs_all: list | None = None,
     now: datetime | None = None,
     ol_rate: float | str | None = None,
     lane: str | None = None,
@@ -2295,7 +2296,36 @@ def decide_status(
     lane key, PRICE never fires — UNDIFFERENTIATED is the safe fallback.
     """
     now = now or now_utc()
-    has_mdolx = bool(mdolx_ref and str(mdolx_ref).strip())
+    # A BOOKING REF IS A BOOKING REF, WHICHEVER FIELD HOLDS IT.
+    #
+    # This read the primary scalar only, while src/hilmar/core.py:1381 has
+    # always read the union — so the two trees returned different verdicts for
+    # the same row and no parity case covered it, because production's
+    # signature could not even accept the argument (TypeError, measured).
+    #
+    #   has_send=True, mdolx_ref=None, mdolx_refs_all=['261031']
+    #     production  LOSS / SEND_NO_BOOKING  "booking never confirmed"
+    #     library     WIN                     "MDOLX booking confirmed"
+    #
+    # Production was the wrong one, on three counts:
+    #   * Reading B (Michael 2026-04-27) requires "an OL-side MDOLX booking
+    #     confirmation" — not one in a particular field. A ref only reaches
+    #     mdolx_refs_all by parsing a real OL booking email.
+    #   * booking_count (the counting rule) and is_confirmed_win (what the
+    #     client report renders) BOTH already read the union. decide_status
+    #     was the outlier — and it WRITES the status those two then read.
+    #   * The row was calling itself a loss while holding the booking.
+    #
+    # And it erased its own evidence: booking_count gates on the stored
+    # status, so once qc_selfheal wrote LOSS the count fell 1 -> 0 and the two
+    # agreed again. Nothing was left to detect.
+    #
+    # NOT a return to the pre-Reading-B "has_send OR mdolx" rule that produced
+    # phantom WINs for a month — BOTH signals are still required, and an empty
+    # mdolx_refs_all is still no booking. test_old_or_rule_is_gone_in_both
+    # holds either way.
+    has_mdolx = (bool(mdolx_ref and str(mdolx_ref).strip())
+                 or bool(mdolx_refs_all))
 
     # WIN — strict: requires BOTH signals.
     if has_send and has_mdolx:

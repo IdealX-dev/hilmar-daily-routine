@@ -1,0 +1,301 @@
+"""The fire's transcript: run_pipeline must write reports/run-log.txt on the
+host that actually fires, and a killed step's output must survive.
+
+WHY THIS EXISTS — measured on production fire 33864188808 (2026-09-04):
+
+    ##[warning]No files were found with the provided path: reports/run-log.txt
+    reports/qc-result.json reports/test-result.json reports/coverage.json.
+    No artifacts will be uploaded.
+
+The "Upload run artifacts" step went green having uploaded NOTHING;
+list_workflow_run_artifacts on that run returns total_count 0. Two separate
+defects produced that, and both are covered here:
+
+  1. NOBODY WROTE THE FILE ON ACTIONS. reports/run-log.txt was only ever
+     written by the Cloud-PC wrapper's `>> "%LOG%"` redirect. On the runner
+     the path in the upload list could never resolve, and QC-021 — which
+     parses that file — sat behind `if _log_path.exists():` with no else, so
+     it emitted NOTHING at all on the only host that fires. A check that
+     prints no line is indistinguishable from a passing one.
+
+  2. A KILLED STEP DISCARDED ITS OWN EVIDENCE. run_step SIGKILLs a step that
+     exceeds its timeout, and SIGKILL throws away whatever is still in the
+     child's stdio buffer. Python block-buffers stdout whenever it is not a
+     TTY, which on a runner it never is. Both QC passes were killed at their
+     180s cap that fire, and their last log lines are physically fused with
+     the next process's first line — the signature of a write cut in half.
+     That is why QC-057's PII-scrubbed body snippets, written expressly so a
+     parser fix could be scoped from them, have never once been readable.
+
+Between them: 31 fires of "QC self-heal (post-patch) TIMEOUT @ 180s" with no
+retrievable evidence of what the step was doing when it died.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import qc_selfheal as q  # noqa: E402
+import run_pipeline as rp  # noqa: E402
+
+
+# ── the gate: which host writes the transcript ────────────────────────────
+def test_tee_is_off_on_the_cloud_pc():
+    """The wrapper already redirects our stdout INTO run-log.txt there.
+    Teeing as well would write every line twice, and QC-021 counts markers."""
+    assert rp.should_tee_run_log({}) is False
+
+
+def test_tee_is_on_for_the_ephemeral_runner():
+    """AZURE_STORAGE_CONNECTION_STRING is the same predicate qc_selfheal
+    already calls _BLOB_HOST for 'ephemeral runner'."""
+    assert rp.should_tee_run_log({"AZURE_STORAGE_CONNECTION_STRING": "x"}) is True
+
+
+@pytest.mark.parametrize("value,want", [("0", False), ("false", False),
+                                        ("1", True), ("on", True)])
+def test_explicit_override_wins_in_both_directions(value, want):
+    """A Cloud PC that ever gains the connection string must not start
+    double-logging silently, and a runner must be forceable on."""
+    env = {"AZURE_STORAGE_CONNECTION_STRING": "x", "HILMAR_RUN_LOG_TEE": value}
+    assert rp.should_tee_run_log(env) is want
+
+
+# ── the tee itself ────────────────────────────────────────────────────────
+# pytest's default capture is fd-level: it dup2s fd 1 to its own temp file and
+# swaps sys.stdout. The tee dup2s fd 1 too, so under capture the two fight and
+# the test measures pytest rather than production. capfd.disabled() hands the
+# real descriptors back for the duration, which is the state a fire runs in.
+def test_tee_captures_child_process_output(tmp_path, capfd):
+    """THE load-bearing property. run_step calls subprocess.run WITHOUT
+    capture, so every step's real output is written by a CHILD straight to
+    the inherited fd. A sys.stdout wrapper would tee the orchestrator's own
+    banners and lose the entire contents — hence the fd-level dup2."""
+    log = tmp_path / "reports" / "run-log.txt"
+    with capfd.disabled(), rp.RunLogTee(log):
+        print("PARENT: banner")
+        subprocess.run([sys.executable, "-c",
+                        "import sys; print('CHILD: stdout');"
+                        " print('CHILD: stderr', file=sys.stderr)"], check=True)
+    text = log.read_text(encoding="utf-8")
+    assert "PARENT: banner" in text
+    assert "CHILD: stdout" in text, "child stdout must reach the transcript"
+    assert "CHILD: stderr" in text, "child stderr must reach the transcript"
+
+
+def test_tee_does_not_swallow_the_console(tmp_path, capfd):
+    """A tee that eats its input trades one blind channel for another — the
+    Actions log must still receive every line.
+
+    This bites the teardown-ordering bug the first draft shipped: it closed
+    the saved console fd BEFORE joining the pump thread, so anything still in
+    flight hit a closed descriptor and vanished from the console while
+    landing in the file. Measured that way round before the fix.
+    """
+    console = tmp_path / "console.txt"
+    log = tmp_path / "reports" / "run-log.txt"
+    with capfd.disabled():
+        saved = os.dup(1)
+        try:
+            with open(console, "wb") as fh:
+                os.dup2(fh.fileno(), 1)
+                with rp.RunLogTee(log):
+                    print("FIRST LINE")
+                    print("LAST LINE BEFORE TEARDOWN")
+                sys.stdout.flush()
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
+    seen = console.read_text(encoding="utf-8")
+    assert "FIRST LINE" in seen
+    assert "LAST LINE BEFORE TEARDOWN" in seen, (
+        "the final line reached the file but not the console — the pump was "
+        "joined after the saved fd was closed")
+
+
+def test_tee_appends_so_successive_fires_accumulate(tmp_path, capfd):
+    """QC-021 searches for TODAY's marker and reads forward; QC-055 reads the
+    tail. Truncating would delete the wrapper's history on a shared host."""
+    log = tmp_path / "reports" / "run-log.txt"
+    with capfd.disabled():
+        with rp.RunLogTee(log):
+            print("FIRE ONE")
+        with rp.RunLogTee(log):
+            print("FIRE TWO")
+    text = log.read_text(encoding="utf-8")
+    assert "FIRE ONE" in text and "FIRE TWO" in text
+
+
+# ── the killed step keeps its evidence ────────────────────────────────────
+def test_killed_step_still_lands_its_output(tmp_path, monkeypatch, capfd):
+    """The 31-fire blind spot, reproduced.
+
+    A step that prints a diagnostic and then outlives its timeout is
+    SIGKILLed. With Python's default block buffering on a non-TTY the
+    diagnostic dies in the buffer; run_step forces PYTHONUNBUFFERED=1 so it
+    is already on disk when the kill lands.
+
+    MEASURED both ways with this exact harness — buffered: line LOST;
+    unbuffered: line SURVIVES. Remove the sub_env["PYTHONUNBUFFERED"] line in
+    run_step and this test fails.
+    """
+    # Scrub the variable from the ambient env so the assertion measures
+    # run_step's behaviour and not the shell's. (A first run of this
+    # measurement was invalid for exactly that reason.)
+    monkeypatch.delenv("PYTHONUNBUFFERED", raising=False)
+    monkeypatch.setattr(rp, "STEP_TIMEOUT_S", 2)
+    monkeypatch.setattr(rp, "STEP_TIMEOUTS_S", {})
+
+    log = tmp_path / "reports" / "run-log.txt"
+    # ASSEMBLE THE MARKER AT RUNTIME. run_step's banner echoes the command
+    # line verbatim — `cmd: {" ".join(cmd)}` — so a literal in the child's
+    # source appears in the transcript whether or not the child ever runs.
+    # The first draft of this test asserted on such a literal and passed with
+    # the unbuffering removed: it was matching the banner, certifying nothing.
+    child = ("import time\n"
+             "tag = 'QC-057' + '-DIAG'\n"
+             "print(tag + ': subject=Please confirm below has_body=True')\n"
+             "time.sleep(30)\n")
+    with capfd.disabled(), rp.RunLogTee(log):
+        rc = rp.run_step("Slow step", [sys.executable, "-c", child])
+
+    text = log.read_text(encoding="utf-8")
+    assert rc == 124, "a timeout must report the GNU timeout convention"
+    assert "QC-057-DIAG:" in text, (
+        "the killed step's diagnostic was discarded with its stdio buffer — "
+        "run_step must set PYTHONUNBUFFERED=1 in the child env")
+    assert "TIMEOUT" in text and "Slow step" in text
+
+
+def test_run_step_emits_the_marker_qc021_parses(tmp_path, capfd):
+    """QC-021 names the step a dead fire stopped at with
+    re.findall(r"^---\\s*(.+?)\\s*---\\s*$", ...). Without one marker per
+    PIPELINE step the best it could ever say was 'run_pipeline'."""
+    import re
+    log = tmp_path / "reports" / "run-log.txt"
+    with capfd.disabled(), rp.RunLogTee(log):
+        rp.run_step("QC self-heal (post-patch)", ["true"], dry_run=True)
+    found = re.findall(r"^---\s*(.+?)\s*---\s*$",
+                       log.read_text(encoding="utf-8"), re.MULTILINE)
+    assert "QC self-heal (post-patch)" in found
+
+
+def test_header_carries_both_date_spellings_and_the_interpreter():
+    """QC-021 locates today's fire by %m/%d/%Y OR %Y-%m-%d; the runbook in
+    qc_actions_from_sentry tells an operator to read the 'PY:' line for the
+    interpreter that actually ran."""
+    from datetime import datetime
+    started = datetime(2026, 9, 4, 6, 30, 0)
+    head = rp.run_log_header(started, host="github-actions")
+    assert "2026-09-04" in head
+    assert "09/04/2026" in head
+    assert "PY: " in head
+    assert "github-actions" in head
+
+
+# ── QC-021 must not be silent, and must not cry wolf ──────────────────────
+def _base_data() -> dict:
+    return {
+        "version": "2", "requests": [],
+        "summary": {
+            "wins": 0, "quoted_lost": 0, "not_quoted": 0, "pending_hilmar": 0,
+            "win_rate": 0.0, "quote_rate": 0.0, "teu_requested": 0, "teu_won": 0,
+            "teu_quoted_lost": 0, "teu_not_quoted": 0, "teu_pending": 0,
+            "total_entries": 0,
+        },
+    }
+
+
+def _fired(data: dict) -> list[str]:
+    log = q.Log()
+    q.phase_6_rules(log, data)
+    return log.warnings + log.errors
+
+
+def _fake_root(tmp_path, monkeypatch, run_log_text: str | None):
+    """Point qc_selfheal's __file__ at a tmp tree, the technique
+    tests/test_qc_054_055_runtime_observability.py already uses."""
+    (tmp_path / "reports").mkdir(exist_ok=True)
+    if run_log_text is not None:
+        (tmp_path / "reports" / "run-log.txt").write_text(run_log_text,
+                                                         encoding="utf-8")
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    fake_self = tmp_path / "scripts" / "qc_selfheal.py"
+    fake_self.write_text("# fake — only __file__ needs to resolve here\n")
+    monkeypatch.setattr(q, "__file__", str(fake_self))
+
+
+def test_qc021_absent_transcript_on_a_runner_is_a_finding_not_silence(
+        tmp_path, monkeypatch):
+    """Before 2026-09-04 `if _log_path.exists():` had NO else, so on Actions
+    — every fire — QC-021 emitted nothing whatsoever. Not a warn, not even an
+    ok. Delete the `elif not _log_path.exists():` branch and this fails."""
+    _fake_root(tmp_path, monkeypatch, run_log_text=None)
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert msgs, "QC-021 must say something when the transcript it reads is missing"
+    assert "absent" in msgs[0]
+
+
+def test_qc021_does_not_demand_a_send_line_on_the_ephemeral_runner(
+        tmp_path, monkeypatch):
+    """The trap this fix had to avoid: writing the transcript on Actions makes
+    the file exist, and the old code would then hunt for 'Sent. request-id='
+    — a line that CANNOT be there, because outlook_send is a separate
+    workflow step that runs after run_pipeline exits, outside the tee. Left
+    alone it would manufacture a daily false alarm out of correct behaviour.
+    """
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=f"HILMAR FIRE {today} host=github-actions\n"
+                            "--- Backup snapshot ---\n"
+                            "--- QC self-heal (post-patch) ---\n")
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert not msgs, f"QC-021 must not warn on the ephemeral runner: {msgs}"
+
+
+def test_qc021_warns_when_the_runner_transcript_has_no_fire_header(
+        tmp_path, monkeypatch):
+    """A stale file with no header for today means the tee never opened."""
+    _fake_root(tmp_path, monkeypatch, run_log_text="something from last week\n")
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert msgs and "no" in msgs[0].lower()
+    assert "HILMAR_RUN_LOG_TEE" in msgs[0]
+
+
+def test_qc021_cloud_pc_path_is_unchanged(tmp_path, monkeypatch):
+    """The wrapper host keeps the original semantics exactly: a send line
+    after today's marker is the pass condition."""
+    from datetime import datetime
+    today = datetime.now().strftime("%m/%d/%Y")
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=f"{today} 06:30:00\n"
+                            "Pipeline exit code: 0\n"
+                            "Sent. request-id=abc123\n")
+    monkeypatch.setattr(q, "_BLOB_HOST", False)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert not msgs, f"a completed wrapper fire must not warn: {msgs}"
+
+
+def test_qc021_cloud_pc_still_catches_the_pipeline_that_never_sent(
+        tmp_path, monkeypatch):
+    """The original defect QC-021 exists for: wrappers that exited 255
+    between 'Pipeline exit code: 0' and the send step."""
+    from datetime import datetime
+    today = datetime.now().strftime("%m/%d/%Y")
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=f"{today} 06:30:00\nPipeline exit code: 0\n")
+    monkeypatch.setattr(q, "_BLOB_HOST", False)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert msgs, "a pipeline that completed without sending must still fire"
+    assert "Sent. request-id=" in msgs[0]
