@@ -157,6 +157,24 @@ scrubbed env.)
    introduced by the tee (run-log.txt is not in `state_store`'s synced set, so
    each Actions fire starts a fresh file), but live on the wrapper path.
 
+9. **QC-021 still read a byte tail, and at the real transcript size that was
+   a false alarm every fire.** Copilot's review on PR #254 caught it, and it
+   reproduced immediately: the fire HEADER is written at the START of a
+   transcript, QC-021 sliced `[-40000:]`, and a production fire carries ~89 KB.
+
+       5,087 bytes -> ok
+      39,053 bytes -> ok
+      89,084 bytes -> FALSE WARN "carries no fire header"
+
+   So the host-aware branch added in item 2 would have warned "the transcript
+   tee did not open" on every fire in which it *had* opened — the exact daily
+   false alarm that branch exists to prevent. Every QC-021 test written for
+   item 2 used a fixture of a few hundred bytes, so none of them could see it.
+   Same defect class as QC-055's 50 KB window, in the same PR, and I fixed one
+   and left the other. Both branches now read a bounded window off the END of
+   the file (2 MB — the Cloud-PC log appends for months) and locate today's
+   LATEST fire header inside it. Regression tests are sized like a real fire.
+
 **THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED.**
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
 from quoted-lost to won, and rows appearing under "Your confirmed bookings" in

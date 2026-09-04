@@ -416,3 +416,73 @@ def test_qc021_reads_the_latest_fire_not_the_first_of_the_day(
     assert "completed send step" not in printed, (
         "QC-021 credited the current fire with the EARLIER fire's send")
     assert msgs, "the in-flight fire has not sent — that must be reported"
+
+
+# ── size the fixture like a real fire, or the test proves nothing ─────────
+# Reported by Copilot on PR #254 and reproduced before changing anything.
+# QC-021 sliced `[-40000:]`, a window sized when run-log.txt held only the
+# wrapper's terse step echoes. The fire HEADER is written at the START of a
+# transcript, and production fire 33864188808 carried ~89 KB — so the header
+# scrolled out and the host-aware branch emitted a FALSE WARN on every fire,
+# the exact daily false alarm that branch exists to avoid. MEASURED:
+#
+#    5,087 bytes -> ok
+#   39,053 bytes -> ok
+#   89,084 bytes -> FALSE WARN "carries no fire header"
+#
+# The earlier QC-021 tests in this file all used fixtures of a few hundred
+# bytes, so none of them could see it. Same defect class as QC-055's 50 KB
+# window: a byte tail is the wrong instrument for a file whose size this
+# change controls.
+def _fire_sized_log(*, header=True, trailing="", size=89_000) -> str:
+    from datetime import datetime
+    now = datetime.now()
+    head = (f"HILMAR FIRE {now:%Y-%m-%d} ({now:%m/%d/%Y} {now:%H:%M:%S}) "
+            f"host=github-actions\n--- Backup snapshot ---\n") if header else ""
+    filler = "  QC-0xx: ordinary pipeline transcript output line\n"
+    return head + filler * (size // len(filler)) + trailing
+
+
+@pytest.mark.parametrize("size", [5_000, 89_000, 400_000])
+def test_qc021_finds_the_fire_header_in_a_real_sized_transcript(
+        size, tmp_path, monkeypatch):
+    """89_000 is the measured size of a production fire; 39_000 and below
+    passed even against the byte-tail version, which is why the bug shipped."""
+    _fake_root(tmp_path, monkeypatch, run_log_text=_fire_sized_log(size=size))
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert not msgs, (
+        f"QC-021 warned on a {size}-byte transcript whose header is present — "
+        f"the header scrolled out of a byte tail: {msgs}")
+
+
+def test_qc021_still_warns_on_a_real_sized_log_with_no_fire_header(
+        tmp_path, monkeypatch):
+    """The negative control: reading more must not make the check toothless."""
+    _fake_root(tmp_path, monkeypatch,
+               run_log_text=_fire_sized_log(header=False))
+    monkeypatch.setattr(q, "_BLOB_HOST", True)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    assert msgs and "no" in msgs[0].lower()
+
+
+def test_qc021_cloud_pc_finds_the_send_line_past_a_full_transcript(
+        tmp_path, monkeypatch, capsys):
+    """The wrapper redirects run_pipeline's stdout into the same file, so the
+    Cloud-PC log carries the whole transcript too and had the same blindness.
+
+    ASSERT THE PASS, NOT JUST THE ABSENCE OF A WARNING. With the byte tail the
+    header scrolls out, the check falls to its "no fire today" branch, and
+    that branch only warns after 7 PM ET — so at any other hour it emits a
+    Log.ok and log.warnings stays empty. A test reading only log.warnings
+    therefore passed against the bug; this one requires the positive line.
+    """
+    _fake_root(tmp_path, monkeypatch, run_log_text=_fire_sized_log(
+        trailing="Pipeline exit code: 0\nSent. request-id=abc123\n"))
+    monkeypatch.setattr(q, "_BLOB_HOST", False)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    printed = capsys.readouterr().out
+    assert not msgs, f"a completed wrapper fire read as incomplete: {msgs}"
+    assert "completed send step" in printed, (
+        "QC-021 never located today's fire — it fell through to the "
+        "'no fire today' branch, which is silent before 7 PM ET")

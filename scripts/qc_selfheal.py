@@ -3459,6 +3459,30 @@ def phase_6_rules(log: Log, data: dict):
         _log_path = Path(__file__).resolve().parent.parent / "reports" / "run-log.txt"
         _today_us = _dt.now().strftime("%m/%d/%Y")  # 05/13/2026
         _today_iso = _dt.now().strftime("%Y-%m-%d")
+        # READ THE FIRE, NOT A BYTE TAIL. This sliced [-40000:], sized when
+        # run-log.txt held only the wrapper's terse step echoes. The fire
+        # HEADER is written at the START of a transcript and production fire
+        # 33864188808 carried ~89 KB of pipeline output, so the header scrolls
+        # out and every branch below misreads the file. MEASURED on the
+        # ephemeral branch, header at the top:
+        #
+        #    5,087 bytes -> ok
+        #   39,053 bytes -> ok
+        #   89,084 bytes -> FALSE WARN "carries no fire header"
+        #
+        # i.e. the exact daily false alarm this check was made host-aware to
+        # avoid, at the only size that actually occurs. Reported by Copilot on
+        # PR #254 and reproduced before changing anything. Same defect class
+        # as QC-055's 50 KB window, fixed in the same PR — a byte tail is the
+        # wrong instrument for a file whose size this change controls.
+        #
+        # Bounded, not unbounded: the Cloud-PC log appends for months, so read
+        # a generous window off the END. One fire is ~89 KB, so today's header
+        # is always inside it, and rfind then picks the LATEST fire.
+        _READ_CAP_21 = 2_000_000
+        if _log_path.exists():
+            _text21 = _log_path.read_text(encoding="utf-8",
+                                          errors="ignore")[-_READ_CAP_21:]
         if _log_path.exists() and _BLOB_HOST:
             # EPHEMERAL RUNNER. run_pipeline now tees its transcript here on
             # every host, so this file finally exists on Actions — but the
@@ -3469,11 +3493,15 @@ def phase_6_rules(log: Log, data: dict):
             # Delivery on this host is proved by deploy/assert_fire_integrity
             # and by the send flag; what IS checkable here is that today's
             # fire opened a transcript at all.
-            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-40000:]
-            if _today_us in _tail or _today_iso in _tail:
+            _tail = _text21
+            _idx21h = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
+            if _idx21h >= 0:
                 import re as _re21h
+                # Count markers from THIS fire's header forward, not from the
+                # whole window — a previous fire's steps are not evidence that
+                # this one opened.
                 _steps_h = _re21h.findall(r"^---\s*(.+?)\s*---\s*$",
-                                          _tail, _re21h.MULTILINE)
+                                          _tail[_idx21h:], _re21h.MULTILINE)
                 log.ok(
                     f"QC-021: transcript open for {_today_iso} on the ephemeral "
                     f"runner ({len(_steps_h)} step marker(s)); delivery is "
@@ -3500,7 +3528,7 @@ def phase_6_rules(log: Log, data: dict):
             else:
                 log.ok("QC-021: no run-log.txt (not a fire host)")
         elif _log_path.exists():
-            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-40000:]
+            _tail = _text21
             # Find today's wrapper header
             if _today_us in _tail or _today_iso in _tail:
                 # Look for "Sent. request-id=" AFTER today's marker — the
