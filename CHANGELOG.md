@@ -211,7 +211,31 @@ scrubbed env.)
     "Oakland → Oakland", a degenerate lane that is QC-073's territory and may
     be a different defect wearing QC-019's message.
 
-**THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED.**
+12. **A SCHEDULED FIRE IS ALWAYS `send_to=full`, so merging IS the send
+    decision.** Verified in `.github/workflows/daily.yml:381`:
+
+        SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
+
+    The `send_to=test` default guards MANUAL dispatch only, and
+    `HILMAR_REPORTS_PAUSED` is `"false"` (live). So merging PR #254 puts the
+    changed win numbers in front of the nine-person staff list and Lonny on
+    the next weekday cron (`30 10 * * 1-5`) with no further human step. A send
+    is irreversible; CLAUDE.md requires written approval first. The PR is
+    therefore green, mergeable and DELIBERATELY NOT MERGED.
+
+13. **`scripts/diag_refs_all_only.py` — so the decision has a number.** The
+    impact was `[ASSUMPTION]` and an assumption is not a basis for a client
+    send. The diagnostic counts rows in the hazard shape (a booking ref
+    present only in `mdolx_refs_all`), splits them by stored status, reports
+    how many are `preserved_from_prior`, and — the part that matters — runs
+    production's classifier BOTH ways to report the actual delta in bookings,
+    win rate and TEU rather than estimating it. Read-only: pulls to a temp
+    dir, computes every decision on copies, writes no blob, sends nothing,
+    and prints request_ids and refs but not lanes, rates or addresses (item 7
+    established the run log is not a PII-clean channel). Fails loudly —
+    `::error::` and exit 2 — with no `|| true`.
+
+**THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED UNTIL THAT DIAG RUNS.**
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
 from quoted-lost to won, and rows appearing under "Your confirmed bookings" in
 Lonny's report that were invisible yesterday. That is the CORRECT outcome when
