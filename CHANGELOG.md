@@ -147,6 +147,16 @@ scrubbed env.)
    has always used, whose exposure is unchanged. A scrubbed upload is
    available if Michael wants it — that is his call, not an engineering one.
 
+8. **QC-021 credited a fire with the PREVIOUS fire's send.** Pre-existing,
+   surfaced by the same adversarial pass. It located today's marker with
+   `.find` — the FIRST occurrence — so on the accumulating Cloud-PC log, on a
+   day with two scheduled fires, `_after` spanned from fire #1's header and
+   matched fire #1's `Sent. request-id=`. MEASURED: a second fire, mid-flight
+   and having sent nothing, printed "today's wrapper completed send step" —
+   a send monitor reporting a send that did not happen. Now `.rfind`. Not
+   introduced by the tee (run-log.txt is not in `state_store`'s synced set, so
+   each Actions fire starts a fresh file), but live on the wrapper path.
+
 **THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED.**
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
 from quoted-lost to won, and rows appearing under "Your confirmed bookings" in

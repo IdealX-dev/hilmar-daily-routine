@@ -3503,8 +3503,21 @@ def phase_6_rules(log: Log, data: dict):
             _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-40000:]
             # Find today's wrapper header
             if _today_us in _tail or _today_iso in _tail:
-                # Look for "Sent. request-id=" AFTER today's marker
-                _idx = max(_tail.find(_today_us), _tail.find(_today_iso))
+                # Look for "Sent. request-id=" AFTER today's marker — the
+                # LATEST one. `.find` returns the FIRST occurrence, so on a
+                # day with two fires on an accumulating wrapper log, `_after`
+                # spanned from fire #1's header and picked up fire #1's
+                # "Sent. request-id=" — reporting a completed send for a fire
+                # #2 that was mid-flight and dying. MEASURED: two fires dated
+                # today, the second with no send line, printed
+                # "QC-021: today's wrapper completed send step".
+                #
+                # Pre-existing, not introduced by the transcript tee: on the
+                # ephemeral runner run-log.txt is NOT in state_store's synced
+                # set, so each fire there starts a fresh file and can only
+                # hold one. It bites the Cloud-PC path, where the log
+                # accumulates and two scheduled fires a day were normal.
+                _idx = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
                 _after = _tail[_idx:] if _idx >= 0 else _tail
                 if "Sent. request-id=" in _after:
                     log.ok("QC-021: today's wrapper completed send step")

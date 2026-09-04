@@ -389,3 +389,30 @@ def test_qc055_scopes_to_today_so_a_fixed_failure_stops_re_raising(
     _fake_root(tmp_path, monkeypatch, run_log_text=body)
     msgs = [m for m in _fired(_base_data()) if "QC-055" in m]
     assert not msgs, f"re-raised a failure that predates today's fire: {msgs}"
+
+
+def test_qc021_reads_the_latest_fire_not_the_first_of_the_day(
+        tmp_path, monkeypatch, capsys):
+    """PRE-EXISTING, found by the adversarial pass over this change.
+
+    QC-021 located today's marker with `.find` — the FIRST occurrence. On the
+    Cloud-PC log, which accumulates and saw two scheduled fires a day, `_after`
+    therefore spanned from fire #1's header and matched fire #1's
+    "Sent. request-id=". MEASURED before the fix: a second fire that was
+    mid-flight and had sent nothing printed "today's wrapper completed send
+    step". A send monitor reporting a send that did not happen.
+    """
+    from datetime import datetime
+    today = datetime.now().strftime("%m/%d/%Y")
+    _fake_root(tmp_path, monkeypatch, run_log_text=(
+        f"Hilmar daily on BOX — {today} 06:30:00\n"
+        "--- run_pipeline ---\nPipeline exit code: 0\n"
+        "Sent. request-id=fire-one\n"
+        f"Hilmar daily on BOX — {today} 18:00:00\n"
+        "--- run_pipeline ---\n"))
+    monkeypatch.setattr(q, "_BLOB_HOST", False)
+    msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
+    printed = capsys.readouterr().out
+    assert "completed send step" not in printed, (
+        "QC-021 credited the current fire with the EARLIER fire's send")
+    assert msgs, "the in-flight fire has not sent — that must be reported"
