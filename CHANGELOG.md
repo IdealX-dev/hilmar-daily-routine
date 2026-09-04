@@ -260,6 +260,27 @@ scrubbed env.)
     established the run log is not a PII-clean channel). Fails loudly —
     `::error::` and exit 2 — with no `|| true`.
 
+15. **The diagnostic understated the one number it exists to produce.**
+    Reported by an automated reviewer. `_wins_teu` read `teu_won` raw while
+    the `flips` list two lines above used `teu_won or teu_requested or 0` —
+    and that is wrong for exactly this diagnostic's target population.
+    `ingest._clear_win_evidence_on_exit` zeroes `teu_won` on the WIN →
+    not-WIN edge, which is HOW a row reaches the hazard shape: the old
+    primary-only `decide_status` demoted a send-signal WIN and the volume was
+    cleared on the way out while `mdolx_refs_all` stayed populated. MEASURED,
+    one row with `teu_won=0` / `teu_requested=2`:
+
+        flips list says teu : 2
+        headline says TEU   : 0 -> 0
+        bookings            : 0 -> 1
+
+    A row counted as a new booking, reported as moving no volume — in the
+    figure an operator reads before approving a full-distribution send. The
+    fallback now applies to flipped rows only, and only in the AFTER arm, so
+    the baseline still matches what production reports today. It changes
+    nothing about the measured zero below (no rows were in the shape), but it
+    would have understated the next run.
+
 **MEASURED: THE PARITY FIX MOVES NOTHING.** diag-blob run 33922196166,
 against live state, 2026-09-04:
 

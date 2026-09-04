@@ -148,3 +148,50 @@ def test_main_errors_when_the_pull_fails(monkeypatch, capsys):
     assert D.main() == 2
     out = capsys.readouterr().out
     assert "::error::" in out and "pull FAILED" in out
+
+
+# ── the headline must agree with the rows it summarises ──────────────────
+# Reported by an automated reviewer on PR #254. `_wins_teu` read `teu_won`
+# raw while the `flips` list two lines above used
+# `teu_won or teu_requested or 0`. That is not a stylistic difference: it is
+# wrong for exactly the population this diagnostic targets.
+#
+# ingest._clear_win_evidence_on_exit zeroes teu_won on the WIN -> not-WIN edge,
+# which is HOW a row reaches the hazard shape — the old primary-only
+# decide_status demoted a send-signal WIN and the volume was cleared on the way
+# out while mdolx_refs_all stayed populated. MEASURED before the fix, one row
+# with teu_won=0 and teu_requested=2:
+#
+#     flips list says teu : 2
+#     headline says TEU   : 0 -> 0
+#     bookings            : 0 -> 1
+#
+# A row counted as a new booking, reported as moving no volume — in the number
+# an operator reads before approving a full-distribution send.
+def _demoted_row():
+    """The real shape: demoted out of WIN, so teu_won was cleared and only
+    teu_requested still carries the volume."""
+    return _row("req_demoted", "LOSS", None, ["261031"],
+                teu_won=0, teu_requested=2)
+
+
+def test_the_teu_headline_agrees_with_the_per_row_flip_list():
+    s = D.summarise([_demoted_row()])
+    assert s["wins_after"] - s["wins_before"] == 1
+    assert s["teu_after"] == s["flips"][0]["teu"], (
+        "the headline and the per-row list disagree about the same row's "
+        "volume — the headline read teu_won raw on a row whose teu_won was "
+        "cleared when it left WIN")
+    assert s["teu_after"] > s["teu_before"]
+
+
+def test_the_teu_fallback_does_not_leak_onto_rows_the_union_left_alone():
+    """NEGATIVE CONTROL. The fallback must apply only to flipped rows, and
+    only in the AFTER arm — otherwise the baseline stops matching what
+    production reports today and the delta is flattered from both ends."""
+    already_win = _row("req_ok", "WIN", "261099", ["261099"],
+                       teu_won=0, teu_requested=9)
+    s = D.summarise([already_win])
+    assert s["flips"] == []
+    assert s["teu_before"] == 0 and s["teu_after"] == 0, (
+        "teu_requested was substituted on a row the union did not flip")

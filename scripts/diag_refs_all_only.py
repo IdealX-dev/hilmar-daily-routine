@@ -99,14 +99,45 @@ def summarise(rows: list) -> dict:
 
     # Headline movement, computed on COPIES so the pulled file is untouched.
     def _wins_teu(apply_new: bool) -> tuple:
+        """Bookings and won-TEU under the OLD or the NEW rule.
+
+        THE TEU FALLBACK IS NOT COSMETIC. `ingest._clear_win_evidence_on_exit`
+        zeroes `teu_won` on exactly the WIN -> not-WIN edge — which is how a
+        row in the hazard shape got here: the old primary-only decide_status
+        demoted a send-signal WIN, and the volume was cleared on the way out
+        while `mdolx_refs_all` stayed populated. So the stored `teu_won` on a
+        flip candidate is 0, and reading it raw reports NO TEU movement for a
+        row the same function counts as a new booking.
+
+        MEASURED before the fix, one row, teu_won=0 / teu_requested=2:
+
+            flips list says teu : 2
+            headline says TEU   : 0 -> 0
+            bookings            : 0 -> 1
+
+        The per-row list and the headline disagreeing is bad enough; the
+        headline understating is worse, because it is the number an operator
+        reads before approving a full-distribution send. The fallback is
+        applied ONLY to rows the union actually flips to WIN, and only in the
+        AFTER arm — every other row keeps its stored value in both arms, so
+        the baseline still matches what production reports today.
+
+        Rebuild-not-merge is why `teu_requested` is the right proxy: the next
+        fire re-derives the row from staged mail, so a row decided WIN from
+        the start never passes through the clearing edge at all.
+        """
         wins = teu = 0
         flip_map = {f["request_id"]: f["new"] for f in flips} if apply_new else {}
         for r in rows:
-            status = flip_map.get(r.get("request_id"), r.get("status"))
+            rid = r.get("request_id")
+            status = flip_map.get(rid, r.get("status"))
             probe = dict(r, status=status)
             wins += core.booking_count(probe)
             if (status or "").upper() == "WIN":
-                teu += r.get("teu_won") or 0
+                if rid in flip_map:
+                    teu += r.get("teu_won") or r.get("teu_requested") or 0
+                else:
+                    teu += r.get("teu_won") or 0
         return wins, teu
 
     wins_before, teu_before = _wins_teu(False)
