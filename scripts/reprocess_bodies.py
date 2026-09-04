@@ -17,6 +17,7 @@ Idempotent and ATOMIC (temp file + os.replace) — safe to run on every fire.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -37,6 +38,76 @@ def _resolve(p: Path) -> Path:
     legacy = p.with_suffix(".jsonl")
     return txt if txt.exists() or not legacy.exists() else legacy
 BODIES = _resolve(ROOT / "scripts" / "stage_emails_bodies")
+
+
+#: Modules whose OUTPUT is the cached parse. `reprocess` derives every cached
+#: record by calling exactly these two — BP.html_to_text then FB._parse_all —
+#: so their source is what decides whether a stored parse is current.
+_PARSER_SOURCES = ("body_parser.py", "fetch_bodies.py")
+
+
+def parser_fingerprint() -> str:
+    """A short hash of the parser code that produces a cached parse.
+
+    THE POINT: it makes "is this cache current?" answerable WITHOUT re-parsing
+    the cache. QC-059 asked that question by re-deriving all 4,510 bodies and
+    diffing — a check that cost as much as the work it was checking, run twice
+    per fire on top of the real backfill. Profiled 2026-09-04 on a
+    production-scale fixture: `reprocess(write=False)` was 49.4s of a 50.9s
+    cProfile (html_to_text 30.2s + _parse_all 18.8s over 4,510 bodies), which
+    is what walked the post-patch pass into its 180s step timeout
+    (HILMAR-DAILY-TRACKER-6, 31 occurrences). Sentry Seer attributed the
+    growth to the tracking ROWS; measured, the rows alone are 2s — the cost
+    tracks the MAILBOX, so it grew as the cache grew.
+
+    Reads the source bytes rather than a hand-maintained version constant: a
+    constant is one more thing to forget to bump, and forgetting it is
+    indistinguishable from a fresh cache. Any edit to either module — even a
+    comment — changes the fingerprint and so re-stamps the cache on the next
+    fire. That is the intended direction: over-refresh is a wasted minute,
+    under-refresh is the stale-parse data-flow break QC-059 exists to catch.
+    """
+    h = hashlib.sha1()
+    for name in _PARSER_SOURCES:
+        try:
+            h.update((ROOT / "scripts" / name).read_bytes())
+        except OSError:
+            # A missing parser module is not a fingerprint — return a sentinel
+            # that can never match a stamped record, so QC-059 reports stale
+            # (loud) rather than clean (silent) when the tree is broken.
+            return "unreadable"
+    return h.hexdigest()[:12]
+
+
+def cache_staleness() -> dict:
+    """{present, total, stale, fingerprint} — WITHOUT re-parsing anything.
+
+    A record is stale when it does not carry the CURRENT parser fingerprint:
+    either the pre-ingest backfill did not run this fire, or a parser change
+    landed after it. Same question `reprocess(write=False)` answered, one
+    string comparison per record instead of a full re-parse.
+
+    Records written before this stamp existed carry no `parser_fp` and count
+    as stale. That needs no migration: the backfill step runs BEFORE both QC
+    passes in run_pipeline, so the first fire stamps the whole cache and
+    QC-059 sees zero stale in the same run.
+    """
+    out = {"present": False, "total": 0, "stale": 0,
+           "fingerprint": parser_fingerprint()}
+    if not BODIES.exists():
+        return out
+    out["present"] = True
+    for line in BODIES.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out["total"] += 1
+        try:
+            if json.loads(line).get("parser_fp") != out["fingerprint"]:
+                out["stale"] += 1
+        except Exception:
+            out["stale"] += 1   # unparseable record: stale, never silently ok
+    return out
 
 
 def _material(parsed: dict) -> tuple:
@@ -70,6 +141,7 @@ def reprocess(*, write: bool = True) -> dict:
     if not BODIES.exists():
         return stats
     stats["present"] = True
+    _fp = parser_fingerprint()
     rows = []
     for line in BODIES.read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -96,6 +168,12 @@ def reprocess(*, write: bool = True) -> dict:
             stats["changed"] += 1
         rec["text_body"] = text
         rec["parsed"] = new
+        # STAMP: this record was produced by THIS parser. cache_staleness()
+        # reads it back so QC-059 can verify the backfill ran without
+        # re-deriving the cache. Written on every record reprocess touches,
+        # including unchanged ones — the stamp records WHO parsed it, not
+        # whether the value moved.
+        rec["parser_fp"] = _fp
         rows.append(rec)
     stats["total"] = len(rows)
     if write and rows:

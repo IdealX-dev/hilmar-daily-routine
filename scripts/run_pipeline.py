@@ -514,13 +514,29 @@ def main():
         except Exception:
             pass
 
-    # Cron heartbeat — finish check-in. status=ok if all steps succeeded
-    # (or only QC-self-heal had warnings); status=error otherwise. This
-    # pairs with the start check-in above so Sentry knows the pipeline
-    # completed (and how long it took).
+    # Cron heartbeat — finish check-in. THE CHECK-IN REPORTS THE SAME VERDICT
+    # AS THE EXIT CODE, and it did not until 2026-09-04.
+    #
+    # It used `success=not failures` — the FULL list, including best-effort
+    # steps — while the exit code below is gated on `blocking_failures` only.
+    # So a best-effort step failing sent Sentry status=error on a run that
+    # exited 0 and shipped the report. That is the whole of
+    # HILMAR-DAILY-TRACKER-H "Cron failure: hilmar-daily-pipeline" (16
+    # occurrences): every fire the post-patch QC self-heal timed out, Sentry
+    # paged a pipeline failure for a pipeline that succeeded, and the next
+    # fire's ok check-in auto-resolved it — a daily alarm that named the
+    # wrong thing and trained its reader to ignore it.
+    #
+    # A monitor that cries failure on success is worse than no monitor. The
+    # best-effort failure is NOT silenced: it still raises
+    # pipeline.step_failure to Sentry (see _run_step) and still prints in the
+    # summary below. This changes only what the CRON check-in claims about
+    # the run as a whole.
+    _cron_blocking = [f for f in failures
+                      if "QC self-heal" not in f and f not in BEST_EFFORT_STEPS]
     if _sentry is not None and cron_id is not None:
         with contextlib.suppress(Exception):
-            _sentry.finish_cron_checkin(cron_id, success=not failures)
+            _sentry.finish_cron_checkin(cron_id, success=not _cron_blocking)
 
     # Flush Sentry queue before exit so events aren't lost on quick pipeline runs
     if _sentry is not None:
@@ -539,8 +555,9 @@ def main():
     # Partition failures into client-blocking vs best-effort. The pipeline's
     # exit code is gated only on client-blocking ones so a single bad
     # telemetry/sync step can't drop the daily email.
-    blocking_failures = [f for f in failures
-                         if "QC self-heal" not in f and f not in BEST_EFFORT_STEPS]
+    # SAME list the cron check-in used above — computed once, so the check-in
+    # and the exit code cannot drift apart again.
+    blocking_failures = list(_cron_blocking)
     best_effort_failures = [f for f in failures if f not in blocking_failures]
     # Option A (CLAUDE.md rule #2): the post-patch parser-accuracy gate is
     # client-blocking even though it's a "QC self-heal" step — reclassify it so

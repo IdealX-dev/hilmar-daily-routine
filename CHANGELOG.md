@@ -3,7 +3,99 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-03 (latest) — the QC-069 heal: 4b and 4c, approved and shipped
+### 2026-09-04 (latest) — the daily "Cron failure" was a QC check costing more than the work it checked
+
+Michael forwarded the Sentry mail again (HILMAR-DAILY-TRACKER-H, "Cron
+failure: hilmar-daily-pipeline", seen 16 times) and said: **"you need to work
+with sentry and get the alerts yourself."** Done — and the alert was real, but
+it was not about the cron.
+
+**The chain, measured end to end:**
+
+| | |
+|---|---|
+| HILMAR-DAILY-TRACKER-H | "Cron failure", last 11:14:53 UTC. Reason: *"An error check-in was detected"* — NOT a missed check-in, and not a runtime timeout (`max_runtime` 60m vs 35m actual) |
+| HILMAR-DAILY-TRACKER-6 | `QC self-heal (post-patch) TIMEOUT @ 180s` at 11:12:07, same run, release `aa9924e`. **31 occurrences, substatus regressed**, first seen 2026-05-17 |
+
+`run_pipeline.py` sent the cron check-in with `success=not failures` — the FULL
+failure list — while its exit code excluded anything named "QC self-heal". So
+the timeout paged a pipeline failure for a pipeline that succeeded and shipped,
+and the next fire's ok check-in auto-resolved it. A daily alarm that named the
+wrong thing and trained its reader to skip it.
+
+Worse than the alarm: on timeout `run_pipeline` KILLS the subprocess
+(rc=124), so the entire post-patch pass — heals, recomputed aggregates,
+`qc-result.json` — was discarded every fire, and the report shipped from
+pre-patch state. That pass is the one that runs AFTER `patch_carriers`, so it
+sees enrichment the first pass cannot.
+
+**ROOT CAUSE, PROFILED — and Sentry Seer had it wrong.** Seer said
+`qc_selfheal` reprocesses every historical ROW with no retention window so
+runtime grows linearly. Measured on a production-scale fixture:
+
+```
+427 rows, no mail cache ...................  2s
++ 4,510 cached bodies + 7,146 stage rows ... 41s
+
+cProfile:  phase_6_rules ................... 50.4s of 50.9s
+             reprocess_bodies.reprocess() .. 49.4s
+               body_parser.html_to_text x4510  30.2s
+               fetch_bodies._parse_all  x4510  18.8s
+```
+
+The rows are 2s. **QC-059 was calling `reprocess(write=False)` — re-parsing
+every cached body — purely to ASK whether the pre-ingest backfill step had
+run.** A check costing as much as the work it checks, in BOTH `qc_selfheal`
+passes, on top of the real backfill: three full re-parses of the mail cache
+per fire. The cost tracks the MAILBOX, not the row count, which is why it grew
+into the timeout.
+
+**THE FIX.** `reprocess()` now stamps every record it writes with
+`parser_fingerprint()` — a sha1 of `body_parser.py` + `fetch_bodies.py`, the
+two modules whose output IS the cached parse. `cache_staleness()` compares
+that stamp: one string per record, no parsing. QC-059 asks the cheap question
+and falls through to the unchanged, expensive backfill only when the answer is
+"stale".
+
+**Measured, production sequence (backfill step, then QC): 41s → 2s**, all 7
+phases and 65 checks intact. No migration needed — the backfill step runs
+BEFORE both QC passes, so the first fire stamps the whole cache and QC-059
+sees zero stale in the same run.
+
+Source bytes, not a version constant: a constant is one more thing to forget
+to bump, and forgetting it is indistinguishable from a fresh cache. Any parser
+edit re-stamps on the next fire — over-refresh costs a minute, under-refresh is
+the stale-parse break QC-059 exists to catch.
+
+**And the check-in now reports the same verdict as the exit code**, computed
+from one list so they cannot drift apart again. The best-effort failure is not
+silenced — it still raises `pipeline.step_failure` to Sentry and still prints
+in the summary. Only the claim the CRON makes about the run as a whole changed.
+
+Deliberately NOT shipped alone: fixing the check-in without fixing QC-059
+would have silenced the alert while the post-patch pass was still being killed
+and discarded every fire — removing the signal without fixing the defect.
+
+**One hypothesis I tested and threw away.** Before profiling I guessed the cost
+was `_load_bodies_index` being called at four sites without memoisation.
+Implemented it, measured 30s → 30s, and reverted it. Shipping a no-op with a
+docstring claiming it fixed the timeout is exactly the unverified claim this
+repo keeps paying for. The profiler found the real answer in one run.
+
+Also caught while measuring: a cleanup `rm` executed in the wrong directory
+deleted my fixture and produced a false "1s — fixed!" result. Spotted because
+the check count dropped 65 → 63.
+
+Still open, recorded not fixed: `reports/run-log.txt` is never written on the
+Actions path, so the run-artifact upload has been empty every fire ("No files
+were found") — which is why this went 31 fires undiagnosed. And two live QC
+issues: HILMAR-DAILY-TRACKER-C (QC-057, 3/387 staged Lonny RFQs silently
+dropped by ingest) and HILMAR-DAILY-TRACKER-3 (QC-019, a status change with no
+carrier).
+
+3720 passed, 1 skipped; ruff clean; src/hilmar coverage 91.11% (gate 90%).
+
+### 2026-09-03 — the QC-069 heal: 4b and 4c, approved and shipped
 
 Michael, on the measurement: **"fix 4b and 4c both approved"**.
 

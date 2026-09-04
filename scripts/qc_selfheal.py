@@ -5465,27 +5465,42 @@ def phase_6_rules(log: Log, data: dict):
     # so SELF-HEAL by backfilling now (takes effect next fire) and WARN with
     # what was stale. Never ERROR — a stale cache degrades fields, it doesn't
     # lose live data (tracking-data rebuilds from Outlook each fire).
+    # VERIFY BY FINGERPRINT, NOT BY RE-DERIVING (2026-09-04). This check used
+    # to call reprocess(write=False), which re-parses every cached body — a
+    # verification that costs as much as the work it verifies, run in BOTH
+    # qc_selfheal passes on top of the real pre-ingest backfill, so the cache
+    # was parsed three times a fire. Profiled on a production-scale fixture it
+    # was 49.4s of a 50.9s cProfile, and it is what walked the post-patch pass
+    # into its 180s step timeout — where run_pipeline KILLS the subprocess
+    # (rc=124) and the whole pass, heals and recomputed aggregates included,
+    # is discarded while the fire still exits 0 and ships.
+    #
+    # reprocess() now stamps each record with parser_fingerprint(); comparing
+    # that is one string per record. The EXPENSIVE path still exists and is
+    # unchanged — it just runs only when the cheap check says it must.
     try:
         import reprocess_bodies as _rp
-        _drift = _rp.reprocess(write=False)
+        _drift = _rp.cache_staleness()
         if not _drift.get("present"):
             log.ok("QC-059: skipped — no cached bodies present (ephemeral runner / pre-fetch)")
-        elif _drift.get("changed", 0) == 0:
+        elif _drift.get("stale", 0) == 0:
             log.ok(f"QC-059: data-flow integrity verified — all {_drift['total']} "
-                   f"cached parses match the current parser")
+                   f"cached parses carry the current parser fingerprint "
+                   f"({_drift['fingerprint']})")
         else:
             _healed = _rp.reprocess(write=True)
             _bits = ", ".join(
-                f"{k.replace('delta_', '+')}={_drift[k]}"
+                f"{k.replace('delta_', '+')}={_healed[k]}"
                 for k in ("delta_carrier", "delta_rate", "delta_dest",
-                          "delta_signer", "delta_vessel") if _drift.get(k))
-            log.fix(f"QC-059: backfilled {_healed.get('changed', _drift['changed'])} "
-                    f"stale parse(s) [{_bits or 'fields changed'}] — the pre-ingest "
-                    f"reprocess step did not keep the cache fresh this fire")
-            log.warn(f"QC-059: {_drift['changed']}/{_drift['total']} cached parses were "
-                     f"STALE vs the current parser (data-flow break) — backfilled now; "
-                     f"re-ingest to surface them this report, else they land next fire. "
-                     f"Check the 'Parser backfill (reprocess cache)' pipeline step.")
+                          "delta_signer", "delta_vessel") if _healed.get(k))
+            log.fix(f"QC-059: backfilled {_healed.get('total', 0)} cached parse(s) "
+                    f"[{_bits or 'fingerprint refreshed'}] — the pre-ingest reprocess "
+                    f"step did not keep the cache fresh this fire")
+            log.warn(f"QC-059: {_drift['stale']}/{_drift['total']} cached parses did NOT "
+                     f"carry the current parser fingerprint ({_drift['fingerprint']}) "
+                     f"— data-flow break; backfilled now. Re-ingest to surface them in "
+                     f"this report, else they land next fire. Check the 'Parser backfill "
+                     f"(reprocess cache)' pipeline step.")
     except Exception as _e:
         log.warn(f"QC-059: check failed with exception: {_e}")
 
