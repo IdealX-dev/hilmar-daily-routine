@@ -76,14 +76,36 @@ def test_reprocess_absent_cache_is_clean_skip(tmp_path, monkeypatch):
 
 # ── QC-059 (driven through the real phase_6_rules) ─────────────────────────
 def _qc(monkeypatch, drift_stats, heal_stats=None):
+    """Drive QC-059 with a stubbed cache.
+
+    THE SEAM MOVED 2026-09-04, the contract did not. QC-059 used to ASK its
+    question by calling reprocess(write=False) — re-deriving all 4,510 cached
+    bodies to find out whether the pre-ingest backfill had run. That check
+    cost 49.4s of a 50.9s profile and is what walked the post-patch pass into
+    its 180s step timeout (HILMAR-DAILY-TRACKER-6). It now compares a parser
+    fingerprint instead: cache_staleness(), one string per record.
+
+    So the DETECT stub is cache_staleness and the HEAL stub is still
+    reprocess(write=True) — the expensive path survives, it just only runs
+    when the cheap check says it must. Every behavioural assertion below is
+    unchanged: verified -> ok and no write; drift -> warn + fix + exactly one
+    write; absent -> skip; never an error, because a stale cache degrades
+    fields and does not lose live data.
+    """
     import qc_selfheal as q
     calls = {"write_true": 0}
+
+    def fake_staleness():
+        return drift_stats
 
     def fake_reprocess(*, write=True):
         if write:
             calls["write_true"] += 1
             return heal_stats or drift_stats
-        return drift_stats
+        raise AssertionError(
+            "QC-059 called reprocess(write=False) — that is the full re-parse "
+            "this check was moved off; it is the 180s timeout coming back")
+    monkeypatch.setattr(RP, "cache_staleness", fake_staleness)
     monkeypatch.setattr(RP, "reprocess", fake_reprocess)
     log = q.Log()
     q.phase_6_rules(log, {"version": "2", "requests": [],
@@ -95,9 +117,13 @@ def _qc(monkeypatch, drift_stats, heal_stats=None):
 
 
 def _clean(**kw):
-    base = {"present": True, "total": 5, "changed": 0, "delta_carrier": 0,
-            "delta_rate": 0, "delta_dest": 0, "delta_signer": 0, "delta_vessel": 0,
-            "wrote": False}
+    """A cache_staleness() result. `stale` replaced `changed` when the check
+    stopped re-deriving the cache to compute it; the heal path still returns
+    the reprocess() shape, so both key sets appear here."""
+    base = {"present": True, "total": 5, "stale": 0, "changed": 0,
+            "fingerprint": "abc123456789",
+            "delta_carrier": 0, "delta_rate": 0, "delta_dest": 0,
+            "delta_signer": 0, "delta_vessel": 0, "wrote": False}
     base.update(kw)
     return base
 
@@ -111,8 +137,10 @@ def test_qc059_ok_when_cache_fresh(monkeypatch, capsys):
 
 
 def test_qc059_warns_and_self_heals_on_drift(monkeypatch):
-    drift = _clean(changed=2, delta_carrier=1, delta_rate=1)
-    log, calls = _qc(monkeypatch, drift, heal_stats=_clean(changed=2, wrote=True))
+    drift = _clean(stale=2, delta_carrier=1, delta_rate=1)
+    log, calls = _qc(monkeypatch, drift,
+                     heal_stats=_clean(stale=0, changed=2, total=2,
+                                       delta_carrier=1, delta_rate=1, wrote=True))
     assert any("QC-059" in m for m in log.warnings), log.warnings
     assert any("QC-059" in m for m in log.fixes), log.fixes   # backfilled
     assert not any("QC-059" in m for m in log.errors)          # never gates
@@ -120,7 +148,8 @@ def test_qc059_warns_and_self_heals_on_drift(monkeypatch):
 
 
 def test_qc059_skips_when_no_cache(monkeypatch, capsys):
-    log, calls = _qc(monkeypatch, {"present": False, "total": 0, "changed": 0})
+    log, calls = _qc(monkeypatch, {"present": False, "total": 0, "stale": 0,
+                                   "fingerprint": "abc123456789"})
     out = capsys.readouterr().out
     assert "QC-059" in out and "skipped" in out
     assert not any("QC-059" in m for m in log.warnings + log.errors)
