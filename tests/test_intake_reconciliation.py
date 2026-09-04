@@ -123,8 +123,16 @@ def test_drop_diag_surfaces_lane_bearing_body_lines():
     assert "Algeciras" in d["snippet"]
     # PII scrubbed: the email address must not survive into the snippet.
     assert "lupfold@hilmaringredients.com" not in d["snippet"]
-    # Non-lane chatter is filtered out by the line hints.
-    assert "Hi team" not in d["snippet"]
+    # CHANGED 2026-09-04, deliberately. This assertion used to read
+    # `assert "Hi team" not in d["snippet"]` — "non-lane chatter is filtered
+    # out by the line hints". That filter is exactly what made the diagnostic
+    # useless in production: it kept only hint-matching lines, and for the
+    # real dropped RFQ "Please confirm below" the ONLY hint-matching line was
+    # the confidentiality footer (the hint " to " matching "...entity to whom
+    # they are addressed..."). The operator was shown boilerplate and none of
+    # the email. Head lines are now always included, so an opening line
+    # survives — that is the fix, not a regression.
+    assert "Hi team" in d["snippet"]
 
 
 def test_drop_diag_skips_resolved_and_out_of_scope_rows():
@@ -202,3 +210,98 @@ def test_shipped_ack_file_covers_the_two_reefer_notes():
     for a in acks:
         assert a.get("sent_before"), "every ack entry must be date-scoped"
         assert a.get("reason")
+
+
+# ── QC-057 diagnostic: it must diagnose, not print the footer ─────────────
+# Added 2026-09-04. HILMAR-DAILY-TRACKER-C has fired 57 times since June
+# naming three subjects — "Please confirm below", "Rates to a few
+# destinations for a study", "Updated reefer rates" — and the whole point of
+# _intake_drop_diag is to show the body text a parser fix would be scoped
+# from. It has never done that: the hint " to " matched the standard
+# confidentiality footer, so a body whose only hinted line was the disclaimer
+# reported the disclaimer and nothing else.
+
+_FOOTER = ("This message is intended only for the use of the individual or "
+           "entity to whom they are addressed and may contain confidential "
+           "and privileged information.")
+
+
+def test_diag_no_longer_matches_the_confidentiality_footer():
+    """The removed hint, pinned. MEASURED: ' to ' was the single hint that
+    matched the footer."""
+    assert " to " not in q._INTAKE_DIAG_LINE_HINTS
+    assert not any(h in _FOOTER.lower() for h in q._INTAKE_DIAG_LINE_HINTS), (
+        "a hint still matches the standard footer — the diagnostic will "
+        "report boilerplate as evidence again")
+
+
+def test_diag_shows_the_email_when_only_the_footer_would_have_hinted():
+    """THE production case. Before the fix this returned the disclaimer and
+    the real line was absent entirely."""
+    body = ("Please send updated reefer rates for the below via Oakland\n"
+            "Rotterdam, Shanghai, Tokyo — 20' and 40'\n"
+            "\n" + _FOOTER + "\n")
+    snip = q._intake_diag_snippet(body)
+    assert "updated reefer rates" in snip
+    assert "Rotterdam" in snip, "the destination list must reach the operator"
+    assert "intended only for" not in snip, "the footer must never be evidence"
+    assert "confidential" not in snip.lower()
+
+
+def test_diag_keeps_head_lines_even_when_later_lines_hint():
+    """Head lines are ALWAYS included, not a fallback. The old code suppressed
+    them whenever anything at all hinted, which is how the opening line of a
+    real RFQ went missing."""
+    body = ("Please confirm below\n"
+            "See the attached sheet.\n"
+            "3x40HC reefer, ETD next week\n")
+    snip = q._intake_diag_snippet(body)
+    assert "Please confirm below" in snip
+    assert "attached sheet" in snip
+    assert "3x40HC" in snip
+
+
+def test_diag_head_lines_get_first_claim_on_the_budget():
+    """A long tail must never starve the opening lines out of the snippet."""
+    body = "OPENING LINE THAT MUST SURVIVE\n" + "\n".join(
+        f"{i} x40HC container filler line padded out to eat the budget" * 2
+        for i in range(40))
+    snip = q._intake_diag_snippet(body, max_chars=200)
+    assert snip.startswith("OPENING LINE THAT MUST SURVIVE")
+    assert len(snip) <= 200
+
+
+def test_diag_reads_only_the_top_message_not_the_quoted_chain():
+    """A quoted reply chain is somebody else's lane — same treatment
+    fetch_bodies._parse_all gives a body before pulling offered dates."""
+    body = ("Need rates via Oakland\n"
+            "\n"
+            "From: someone@example.com\n"
+            "Sent: Monday\n"
+            "> 5x40HC to Yokohama on the OLD thread\n")
+    snip = q._intake_diag_snippet(body)
+    assert "Oakland" in snip
+    assert "OLD thread" not in snip
+
+
+def test_diag_scrubbing_still_runs_last(monkeypatch):
+    """WIDENING WHAT IS PRINTED WIDENS THE PII SURFACE. The snippet helper
+    decides WHICH lines; sentry_setup._scrub_string decides what is safe, and
+    it must stay the final step in _intake_drop_diag."""
+    stage = [_row("lonny_outbound", "Please confirm below", "d9")]
+    bodies = {"d9": {"parsed": {}, "text_body": (
+        "Please confirm below\n"
+        "reach me at lupfold@hilmaringredients.com\n")}}
+    d = q._intake_drop_diag(stage, bodies)[0]
+    assert "Please confirm below" in d["snippet"]
+    assert "lupfold@hilmaringredients.com" not in d["snippet"]
+
+
+def test_diag_says_so_when_a_body_is_all_boilerplate():
+    """Silence would read as 'no evidence needed'. An empty snippet must name
+    its own reason."""
+    d = q._intake_drop_diag(
+        [_row("lonny_outbound", "Please confirm below", "dA")],
+        {"dA": {"parsed": {}, "text_body": _FOOTER + "\n"}})[0]
+    assert d["has_body"] is True
+    assert "boilerplate" in d["snippet"]

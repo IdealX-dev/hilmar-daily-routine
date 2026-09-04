@@ -1889,6 +1889,7 @@ def age_requests(requests: list[dict], now: datetime | None = None,
             etd_fit_days=r.get("etd_fit_days"),
             request_timestamp=r.get("request_timestamp") or r.get("request_date"),
             send_signal_events=r.get("send_signal_events"),
+            mdolx_refs_all=r.get("mdolx_refs_all"),
             now=now,
             ol_rate=r.get("ol_rate"),
             lane=r.get("lane"),
@@ -2384,6 +2385,15 @@ def _merge_prior_win_into(existing: dict, prior_win: dict, prior_mtime: str) -> 
     for k in _PRIOR_WIN_EVIDENCE:
         if prior_win.get(k) not in (None, "", 0) and not existing.get(k):
             existing[k] = prior_win[k]
+    # HOLD THE INVARIANT AT THE WRITER: a row with any booking ref has a
+    # PRIMARY booking ref. The loop above skips a falsy prior value, so a
+    # prior win whose mdolx_ref is "" — or one already carrying its only ref
+    # in the list — merges into a row with mdolx_ref=None beside a populated
+    # mdolx_refs_all. MEASURED, both cases produce it. That shape is what
+    # made decide_status and its own booking_count disagree; the same
+    # survivor promotion _demote_ref already performs closes it here.
+    if not existing.get("mdolx_ref") and existing.get("mdolx_refs_all"):
+        existing["mdolx_ref"] = existing["mdolx_refs_all"][0]
     if not existing.get("teu_won"):
         existing["teu_won"] = prior_win.get("teu_won") or existing.get("teu_requested") or 0
     existing["quoted"] = True

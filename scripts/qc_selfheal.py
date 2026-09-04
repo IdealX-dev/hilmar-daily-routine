@@ -1079,8 +1079,105 @@ def _intake_reconciliation(stage_rows, bodies, acks=None):
 #: destination the parser missed. Lowercase substring match.
 _INTAKE_DIAG_LINE_HINTS = (
     "x40", "40'", "40ft", "40 ft", " hc", "reefer", "teu", "container",
-    " to ", "->", "→", "port of", "etd", "eta", "free time", "dest",
+    "->", "→", "port of", "etd", "eta", "free time", "dest",
 )
+
+#: Lines that are never evidence. MEASURED 2026-09-04: the hint " to " (since
+#: removed above) matched "...entity to whom they are addressed..." in the
+#: standard confidentiality footer, so for a body whose only hinted line was
+#: the disclaimer the QC-057 diagnostic printed the disclaimer and NOTHING
+#: else. Every QC-057-DIAG an operator has ever been shown for "Please
+#: confirm below" was boilerplate; the email's actual content has never once
+#: reached the run log. A diagnostic that reports the footer is worse than
+#: none — it reads like evidence.
+_INTAKE_DIAG_NOISE = (
+    "confidential", "intended only for", "if you are not the intended",
+    "unsubscribe", "this e-mail", "this email and any", "privileged",
+    "disclaimer", "virus", "sender immediately",
+)
+
+#: How many head lines of the TOP message always go in the snippet.
+_INTAKE_DIAG_HEAD_LINES = 6
+
+
+def _intake_diag_snippet(body: str, max_chars: int = 500) -> str:
+    """The lines of `body` worth showing an operator, unscrubbed.
+
+    TWO SOURCES, HEAD FIRST. The old version took hinted lines and fell back
+    to head lines ONLY when nothing hinted — so a body with one junk hint
+    suppressed its own opening lines, which is where "Please send updated
+    reefer rates for the below via Oakland" and its list actually live. Head
+    lines now ALWAYS go in, and they get first claim on the character budget
+    so a long footer can never consume the whole snippet.
+
+    Reads the TOP message only (core._strip_chain), the same thing
+    fetch_bodies._parse_all does before pulling offered dates — a quoted
+    reply chain is somebody else's lane.
+
+    Returns raw text. SCRUBBING STAYS THE CALLER'S LAST STEP, deliberately:
+    this decides WHICH lines, never whether they are safe to print.
+    """
+    try:
+        top = core._strip_chain(body or "")
+    except Exception:
+        top = body or ""
+
+    def _usable(ln: str) -> bool:
+        low = ln.lower()
+        return bool(ln) and not any(n in low for n in _INTAKE_DIAG_NOISE)
+
+    lines = [ln.strip() for ln in top.splitlines() if ln.strip()]
+    lines = [ln for ln in lines if _usable(ln)]
+    head = lines[:_INTAKE_DIAG_HEAD_LINES]
+    hinted = [ln for ln in lines[_INTAKE_DIAG_HEAD_LINES:]
+              if any(h in ln.lower() for h in _INTAKE_DIAG_LINE_HINTS)]
+
+    out, used = [], 0
+    for ln in head + hinted:
+        if used + len(ln) + 3 > max_chars:
+            break
+        out.append(ln)
+        used += len(ln) + 3
+    return " | ".join(out)
+
+
+def fire_header_index(text: str, iso: str, us: str) -> int:
+    """Offset of the LAST fire header for today in `text`, or -1.
+
+    ANCHOR ON THE HEADER, NEVER ON A BARE DATE. Both QC-021 and QC-055 used
+    `rfind("2026-09-04")` to find "where today's fire starts". That worked
+    while reports/run-log.txt held only the wrapper's terse step echoes. It
+    stopped working the moment run_pipeline began teeing the WHOLE transcript
+    into it, because the transcript now contains the checks' own output — and
+    QC-021 prints `QC-021: transcript open for 2026-09-04 ...`, which carries
+    today's ISO date and runs BEFORE QC-055 in the same phase_6_rules pass.
+
+    MEASURED on a transcript shaped exactly as the tee writes one — fire
+    header, the Sentry sentinel at pipeline start, then QC-021's own ok line:
+
+        sentinel IS in the file: True
+        QC-055 recorded: (NOTHING)
+        QC-055 printed : ✅ QC-055: Sentry cron heartbeat registered on this fire
+
+    i.e. a real cron-start failure reported as registered, on every normal
+    fire, because rfind landed on QC-021's line and `_tail` began after the
+    sentinel. Reported by an automated reviewer on PR #254 and reproduced
+    before changing anything.
+
+    Two header forms, one per host:
+      run_pipeline   "HILMAR FIRE 2026-09-04 (09/04/2026 06:30:00) host=..."
+      the wrapper    "Hilmar daily on MBD-BOX — 09/04/2026  6:30:01.23"
+    Both are line-anchored, which is what a content line can never be.
+    """
+    import re as _re
+    pat = _re.compile(
+        rf"^(?:HILMAR FIRE {_re.escape(iso)}\b"
+        rf"|Hilmar daily on .*{_re.escape(us)})",
+        _re.MULTILINE)
+    last = -1
+    for m in pat.finditer(text):
+        last = m.start()
+    return last
 
 
 def _intake_acked_notes(stage_rows, acks=None) -> list:
@@ -1138,14 +1235,10 @@ def _intake_drop_diag(stage_rows, bodies, max_emails: int = 5,
             if ingest.clean_destination(subj) or parsed.get("destination"):
                 continue  # resolved — not a drop
             body = body_rec.get("text_body") or ""
-            lane_lines = [ln.strip() for ln in body.splitlines()
-                          if ln.strip() and any(h in ln.lower()
-                                                for h in _INTAKE_DIAG_LINE_HINTS)]
-            if not lane_lines:  # nothing hinted — first non-empty lines instead
-                lane_lines = [ln.strip() for ln in body.splitlines()
-                              if ln.strip()][:6]
-            raw = " | ".join(lane_lines)[:max_chars] if lane_lines else \
+            raw = _intake_diag_snippet(body, max_chars=max_chars) or (
                 "(no body cached — Graph fetch missing for this message)"
+                if not body else
+                "(body cached but every line was boilerplate)")
             try:
                 from sentry_setup import _scrub_string
                 raw = _scrub_string(raw)[:max_chars]
@@ -1569,6 +1662,24 @@ def phase_3_entries(log: Log, data: dict):
             quoted=r.get("quoted", False),
             etd_fit_days=r.get("etd_fit_days"),
             request_timestamp=r.get("request_timestamp") or r.get("request_date"),
+            # THE UNGUARDED PATH. ingest.age_requests skips a WIN that holds
+            # a ref in EITHER field (`if r.get("status") == "WIN" and
+            # (r.get("mdolx_ref") or r.get("mdolx_refs_all")): continue`);
+            # this loop has no such guard and re-decides every unlocked row,
+            # twice per fire. Passing the union is what stops it demoting a
+            # confirmed booking to SEND_NO_BOOKING because the ref happened to
+            # live in the list rather than the scalar. Fixing the predicate,
+            # not adding a skip guard: rebuild-not-merge requires the row stay
+            # re-derivable.
+            #
+            # NOT ALSO PASSING send_signal_events, deliberately. ingest does;
+            # this call site does not, which is a second divergence — but line
+            # ~1587 writes `r["has_send"] = decision.has_send` back onto the
+            # row, so folding events into has_send would STAMP an evidence
+            # field from a derived one. Inert today (nothing in scripts/
+            # writes send_signal_events) and left alone until that write-back
+            # is settled. Recorded, not fixed.
+            mdolx_refs_all=r.get("mdolx_refs_all"),
             ol_rate=r.get("ol_rate"),
             lane=r.get("lane"),
             lane_winning_median=lane_winning_median,
@@ -3385,14 +3496,100 @@ def phase_6_rules(log: Log, data: dict):
     try:
         from datetime import datetime as _dt
         _log_path = Path(__file__).resolve().parent.parent / "reports" / "run-log.txt"
+        _today_us = _dt.now().strftime("%m/%d/%Y")  # 05/13/2026
+        _today_iso = _dt.now().strftime("%Y-%m-%d")
+        # READ THE FIRE, NOT A BYTE TAIL. This sliced [-40000:], sized when
+        # run-log.txt held only the wrapper's terse step echoes. The fire
+        # HEADER is written at the START of a transcript and production fire
+        # 33864188808 carried ~89 KB of pipeline output, so the header scrolls
+        # out and every branch below misreads the file. MEASURED on the
+        # ephemeral branch, header at the top:
+        #
+        #    5,087 bytes -> ok
+        #   39,053 bytes -> ok
+        #   89,084 bytes -> FALSE WARN "carries no fire header"
+        #
+        # i.e. the exact daily false alarm this check was made host-aware to
+        # avoid, at the only size that actually occurs. Reported by Copilot on
+        # PR #254 and reproduced before changing anything. Same defect class
+        # as QC-055's 50 KB window, fixed in the same PR — a byte tail is the
+        # wrong instrument for a file whose size this change controls.
+        #
+        # Bounded, not unbounded: the Cloud-PC log appends for months, so read
+        # a generous window off the END. One fire is ~89 KB, so today's header
+        # is always inside it, and rfind then picks the LATEST fire.
+        _READ_CAP_21 = 2_000_000
         if _log_path.exists():
-            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-40000:]
-            _today_us = _dt.now().strftime("%m/%d/%Y")  # 05/13/2026
-            _today_iso = _dt.now().strftime("%Y-%m-%d")
+            _text21 = _log_path.read_text(encoding="utf-8",
+                                          errors="ignore")[-_READ_CAP_21:]
+        if _log_path.exists() and _BLOB_HOST:
+            # EPHEMERAL RUNNER. run_pipeline now tees its transcript here on
+            # every host, so this file finally exists on Actions — but the
+            # send is a SEPARATE workflow step that runs AFTER the pipeline
+            # exits, outside the tee. "Sent. request-id=" therefore CANNOT be
+            # in this file while qc_selfheal is running, and asserting on it
+            # would manufacture a daily false alarm out of correct behaviour.
+            # Delivery on this host is proved by deploy/assert_fire_integrity
+            # and by the send flag; what IS checkable here is that today's
+            # fire opened a transcript at all.
+            _tail = _text21
+            _idx21h = fire_header_index(_tail, _today_iso, _today_us)
+            if _idx21h >= 0:
+                import re as _re21h
+                # Count markers from THIS fire's header forward, not from the
+                # whole window — a previous fire's steps are not evidence that
+                # this one opened.
+                _steps_h = _re21h.findall(r"^---\s*(.+?)\s*---\s*$",
+                                          _tail[_idx21h:], _re21h.MULTILINE)
+                log.ok(
+                    f"QC-021: transcript open for {_today_iso} on the ephemeral "
+                    f"runner ({len(_steps_h)} step marker(s)); delivery is "
+                    f"asserted by the integrity gate, not by this log"
+                )
+            else:
+                log.warn(
+                    f"QC-021: run-log.txt exists but carries no {_today_iso} "
+                    f"fire header — run_pipeline's transcript tee did not open. "
+                    f"Check should_tee_run_log / HILMAR_RUN_LOG_TEE."
+                )
+        elif not _log_path.exists():
+            # NOT SILENCE. Until 2026-09-04 this branch did not exist: the
+            # check simply emitted nothing when the file was absent, which on
+            # Actions was every single fire. A check listed in QC-INDEX that
+            # produces no line is indistinguishable from a passing one, and
+            # Log.ok() is not enough on the host where the log is now expected.
+            if _BLOB_HOST:
+                log.warn(
+                    "QC-021: reports/run-log.txt absent on a runner that should "
+                    "be teeing it — run_pipeline.should_tee_run_log returned "
+                    "False, or the tee failed to open."
+                )
+            else:
+                log.ok("QC-021: no run-log.txt (not a fire host)")
+        elif _log_path.exists():
+            _tail = _text21
             # Find today's wrapper header
             if _today_us in _tail or _today_iso in _tail:
-                # Look for "Sent. request-id=" AFTER today's marker
-                _idx = max(_tail.find(_today_us), _tail.find(_today_iso))
+                # Look for "Sent. request-id=" AFTER today's marker — the
+                # LATEST one. `.find` returns the FIRST occurrence, so on a
+                # day with two fires on an accumulating wrapper log, `_after`
+                # spanned from fire #1's header and picked up fire #1's
+                # "Sent. request-id=" — reporting a completed send for a fire
+                # #2 that was mid-flight and dying. MEASURED: two fires dated
+                # today, the second with no send line, printed
+                # "QC-021: today's wrapper completed send step".
+                #
+                # Pre-existing, not introduced by the transcript tee: on the
+                # ephemeral runner run-log.txt is NOT in state_store's synced
+                # set, so each fire there starts a fresh file and can only
+                # hold one. It bites the Cloud-PC path, where the log
+                # accumulates and two scheduled fires a day were normal.
+                # Header first. A bare-date rfind lands on the transcript's
+                # OWN content — QC-021's ok line carries today's ISO date —
+                # so it is only a fallback for a legacy log with no header.
+                _idx = fire_header_index(_tail, _today_iso, _today_us)
+                if _idx < 0:
+                    _idx = max(_tail.rfind(_today_us), _tail.rfind(_today_iso))
                 _after = _tail[_idx:] if _idx >= 0 else _tail
                 if "Sent. request-id=" in _after:
                     log.ok("QC-021: today's wrapper completed send step")
@@ -4730,40 +4927,6 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-020: check failed with exception: {_e}")
 
-    # QC-019: status-change rows on the report date must have carrier_quoted.
-    # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
-    # carrier and no rate". When OL responds with a rate quote, the row's
-    # status transitions PENDING -> QUOTED/WIN/LOSS, and that response body
-    # carries the carrier+rate. If the parser fails to extract them (new
-    # multi-line pipe-table template surfaced this week), the status change
-    # appears in the email body but the carrier/rate columns are empty —
-    # broken UX and broken negotiation depth. This QC catches the failure
-    # at the data level so the email doesn't ship with empty cells.
-    try:
-        from datetime import datetime as _dt
-        _now_et = _dt.now(core.ET).date()
-        # Report day = today's now-complete biz day (core.report_business_day,
-        # the single source of truth shared with gen_email._report_date).
-        _report_iso = core.report_business_day(_now_et).isoformat()
-        _missing = []
-        for r in requests:
-            for h in (r.get("status_history") or []):
-                at = (h.get("at") or "")[:10]
-                if (at == _report_iso and h.get("from") and h.get("to")
-                        and h["from"] != h["to"] and h["to"] in ("QUOTED","WIN","LOSS")):
-                    if not r.get("carrier_quoted") and not r.get("carrier_won"):
-                        _missing.append(f"{(h.get('at') or '')[11:19]} {r.get('lane','?')}")
-                    break
-        if _missing:
-            log.error(
-                f"QC-019: {len(_missing)} status-change(s) on {_report_iso} have no "
-                f"carrier — parser missed extraction. Rows: " + "; ".join(_missing[:5])
-                + (f" + {len(_missing)-5} more" if len(_missing) > 5 else "")
-            )
-        else:
-            log.ok(f"QC-019: all status changes on {_report_iso} have carrier attribution")
-    except Exception as _e:
-        log.warn(f"QC-019: check failed with exception: {_e}")
 
     # QC-018: day-row math reconciliation. The KPI day-row in email + dashboard
     # showed Requests vs W/QL/NQ but hid Pending — Michael 2026-05-08 caught
@@ -4868,22 +5031,62 @@ def phase_6_rules(log: Log, data: dict):
     # (HILMAR-DAILY-TRACKER-9) — a misleading "the pipeline didn't run"
     # when actually it did. Added 2026-06-09.
     try:
+        from datetime import datetime as _dt55
         from pathlib import Path as _Path55
         _log_path = _Path55(__file__).resolve().parent.parent / "reports" / "run-log.txt"
+        _SENT55 = "Sentry cron start failed (pipeline continues)"
         if _log_path.exists():
-            # Look only at the recent tail so we don't keep flagging an old
-            # failure once the operator has fixed the root.
-            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-50000:]
-            if "Sentry cron start failed (pipeline continues)" in _tail:
-                _last = _tail.rfind("Sentry cron start failed (pipeline continues)")
+            # SCOPE TO TODAY'S FIRE, NOT TO A BYTE TAIL.
+            #
+            # This read `[-50000:]` — chosen when run-log.txt held only the
+            # Cloud-PC wrapper's terse step echoes. run_pipeline now tees the
+            # whole transcript into the same file, and the sentinel is printed
+            # at the START of the fire while QC-055 runs in PHASE 6, two
+            # pipeline steps later. MEASURED on this exact block:
+            #
+            #   transcript 10,052 bytes -> ERROR (correct)
+            #   transcript 45,026 bytes -> ERROR (correct)
+            #   transcript 60,048 bytes -> SILENT OK  ** FALSE PASS **
+            #   transcript 90,034 bytes -> SILENT OK  ** FALSE PASS **
+            #
+            # Production fire 33864188808 carried ~89 KB of pipeline output,
+            # so the tee would have pushed the sentinel out of the window
+            # every fire and QC-055 would have asserted "heartbeat registered"
+            # while blind — via Log.ok, which only PRINTS and never reaches
+            # qc-result.json. An honest "skipped" replaced by an invisible
+            # false pass is strictly worse than the gap this change set out to
+            # close, so it is fixed here rather than left as a risk note.
+            #
+            # Scoping to today's header also un-stamps correctly: a failure
+            # fixed last week no longer re-raises off an accumulated log.
+            _all55 = _log_path.read_text(encoding="utf-8", errors="ignore")
+            _today55 = (_dt55.now().strftime("%Y-%m-%d"),
+                        _dt55.now().strftime("%m/%d/%Y"))
+            _idx55 = fire_header_index(_all55, _today55[0], _today55[1])
+            if _idx55 >= 0:
+                _tail = _all55[_idx55:]          # today's fire only
+            elif len(_all55) > 50000:
+                # Can't locate this fire and can't read the whole thing
+                # safely — say so. NEVER ok(): a check that cannot see its
+                # evidence must not assert a pass.
+                log.warn(
+                    "QC-055: cannot verify the cron heartbeat — no fire header "
+                    "for today in a run-log larger than the read window. "
+                    "Not asserting a pass."
+                )
+                _tail = ""
+            else:
+                _tail = _all55
+            if _tail and _SENT55 in _tail:
+                _last = _tail.rfind(_SENT55)
                 _excerpt = _tail[_last:_last + 200].splitlines()[0]
                 log.error(
                     f"QC-055: Sentry cron heartbeat is NOT registering — alerts "
                     f"in HILMAR-DAILY-TRACKER-9 are false positives. Excerpt: "
                     f"{_excerpt}"
                 )
-            else:
-                log.ok("QC-055: Sentry cron heartbeat registered on the recent fire")
+            elif _tail:
+                log.ok("QC-055: Sentry cron heartbeat registered on this fire")
         elif _BLOB_HOST:
             # Ephemeral runner: run-log.txt is written by the Cloud-PC WRAPPER
             # (run_daily_laptop.cmd), which never runs here — the GH fire's
@@ -4961,6 +5164,7 @@ def phase_6_rules(log: Log, data: dict):
             log.ok(f"QC-056: healed {len(_healed)} rate-without-carrier row(s); none stuck")
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
+
 
     # A ROW THAT BORROWED A QUOTE'S RATE BORROWS ITS DATE TOO. Runs AFTER
     # QC-056 (which may have just completed the rate+carrier pair from a
@@ -5660,6 +5864,100 @@ def phase_6_rules(log: Log, data: dict):
                      f"scrubbed — manual review; fix the upstream parser")
     except Exception as _e:
         log.warn(f"QC-064: check failed with exception: {_e}")
+
+    # ── QC-019 RUNS HERE — AFTER EVERY WRITER THAT TOUCHES A CARRIER ──────
+    # MOVED TWICE ON 2026-09-04, and the first move was wrong.
+    #
+    # Originally it sat ~166 lines above QC-056, so it measured PRE-heal
+    # state and reported a defect the SAME pass repaired. Reproduced on the
+    # shape from production fire 33864188808 (stand_ WIN, ol_rate 2600, lane
+    # Oakland → Busan, vessel_voyage "HMM PROMISE 0091W"):
+    #
+    #   QC-019 ERROR : 1 status-change(s) ... have no carrier — parser missed
+    #                  extraction. Rows: 20:52:29 Oakland → Busan
+    #   QC-056 FIX   : backfilled carrier from row text — Oakland → Busan=HMM
+    #   carrier after the pass: HMM
+    #
+    # Sentry's Seer blamed body_parser for failing to read the carrier out of
+    # the pipe-table. That is refuted: the carrier is in the row's own
+    # evidence and qc_selfheal finds it unaided. COUNT CORRECTED: I first
+    # wrote "75 occurrences", read off issue HILMAR-DAILY-TRACKER-3's
+    # total. That issue is SHARED — capture_qc_error does not fingerprint
+    # per check, so eight checks group into it. Measured on the
+    # qc_check:QC-019 tag: FOUR events in 90 days (2026-09-04, 2026-08-28,
+    # 2026-07-20, 2026-07-18). An ERROR about a value the run already had
+    # about a value the same run already had.
+    #
+    # The FIRST move put it after QC-056 and 716 lines BEFORE QC-064, which
+    # NULLS a garbage carrier out of the client-visible fields. That turned a
+    # noisy false positive into a SILENT FALSE NEGATIVE — worse, because
+    # QC-019's clean path is log.ok(), which only prints and never reaches
+    # qc-result.json. Reproduced on a status-change WIN, both of QC-064's
+    # real garbage classes:
+    #
+    #   carrier_quoted='209-656'                        (phone fragment)
+    #   carrier_quoted='OL Ocean Export Booking mailbox' (mailbox name)
+    #     QC-019 said: NOTHING
+    #     carrier after the pass: None / None
+    #
+    # A blank carrier cell shipped and the check that exists to catch it was
+    # silent. So the rule is not "after the heals" but AFTER EVERY WRITER
+    # THAT CAN CHANGE A CARRIER — QC-056 fills them, QC-064 empties them.
+    # Severity UNCHANGED: Michael set it to ERROR on 2026-05-13 and a row
+    # still carrier-less here is still an error. Do not move this above
+    # QC-064; tests pin it against BOTH.
+    # QC-019: status-change rows on the report date must have carrier_quoted.
+    # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
+    # carrier and no rate". When OL responds with a rate quote, the row's
+    # status transitions PENDING -> QUOTED/WIN/LOSS, and that response body
+    # carries the carrier+rate. If the parser fails to extract them (new
+    # multi-line pipe-table template surfaced this week), the status change
+    # appears in the email body but the carrier/rate columns are empty —
+    # broken UX and broken negotiation depth. This QC catches the failure
+    # at the data level so the email doesn't ship with empty cells.
+    try:
+        from datetime import datetime as _dt
+        _now_et = _dt.now(core.ET).date()
+        # Report day = today's now-complete biz day (core.report_business_day,
+        # the single source of truth shared with gen_email._report_date).
+        _report_iso = core.report_business_day(_now_et).isoformat()
+        _missing = []
+        for r in requests:
+            for h in (r.get("status_history") or []):
+                at = (h.get("at") or "")[:10]
+                if (at == _report_iso and h.get("from") and h.get("to")
+                        and h["from"] != h["to"] and h["to"] in ("QUOTED","WIN","LOSS")):
+                    if not r.get("carrier_quoted") and not r.get("carrier_won"):
+                        # NAME THE ROW. The 2026-08-27 production event read
+                        # "Rows: 16:59:21 Lane unresolved" — a timestamp and a
+                        # placeholder, with no way to find the row it meant.
+                        _missing.append(
+                            f"{(h.get('at') or '')[11:19]} {r.get('lane','?')} "
+                            f"[{r.get('request_id','?')}]")
+                    break
+        if _missing:
+            log.error(
+                # WORDING CORRECTED WITH THE MOVE. "parser missed
+                # extraction" was written when this ran BEFORE the heals, and
+                # it was the sentence that sent Seer looking at body_parser.
+                # Running after QC-056/QC-064, a row that is still blank here
+                # has already survived every recovery this pass can attempt —
+                # so the honest statement is that no source holds a carrier,
+                # not that one parser fumbled it. Severity is unchanged
+                # (ERROR, Michael 2026-05-13). This does re-key the Sentry
+                # grouping: HILMAR-DAILY-TRACKER-3 will fall quiet and a new
+                # issue opens for genuine cases — the quiet is the false
+                # positives stopping, not the check being switched off.
+                f"QC-019: {len(_missing)} status-change(s) on {_report_iso} shipped "
+                f"with no carrier in ANY source — the row survived carrier "
+                f"recovery from its own text and from a same-lane sibling. "
+                f"Rows: " + "; ".join(_missing[:5])
+                + (f" + {len(_missing)-5} more" if len(_missing) > 5 else "")
+            )
+        else:
+            log.ok(f"QC-019: all status changes on {_report_iso} have carrier attribution")
+    except Exception as _e:
+        log.warn(f"QC-019: check failed with exception: {_e}")
 
     # QC-066: IMPOSSIBLE STATE — outcome predates its own request (merge /
     # carry-forward artifact from Lonny's recurring Outlook threads). This is

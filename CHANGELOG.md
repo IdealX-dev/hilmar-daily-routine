@@ -3,7 +3,356 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-04 (latest) — the daily "Cron failure" was a QC check costing more than the work it checked
+### 2026-09-04 (latest) — the fire had no transcript, so four defects hid behind one blind channel
+
+Michael: **"just bloody fix this all"** — the four items carried as open at the
+end of the prior session. Measuring them turned up a fifth that explains why
+the other four survived so long.
+
+**THE ARTIFACT UPLOAD WAS EMPTY. NOT SPARSE — EMPTY.** Production fire
+33864188808 (2026-09-04), the "Upload run artifacts" step, verbatim:
+
+    ##[warning]No files were found with the provided path: reports/run-log.txt
+    reports/qc-result.json reports/test-result.json reports/coverage.json.
+    No artifacts will be uploaded.
+
+`list_workflow_run_artifacts` on that run returns `total_count: 0`, and the
+step still went green on `if-no-files-found: warn`. Every file each of the
+four items would have been diagnosed from was missing, for four separate
+reasons:
+
+| file | why it was absent |
+|---|---|
+| `run-log.txt` | only the Cloud-PC wrappers ever wrote it (`>> "%LOG%"`). `grep -n run-log scripts/run_pipeline.py` returns nothing |
+| `qc-result.json` | **BOTH** qc_selfheal passes were SIGKILLed at their 180s cap, before PHASE 7 PERSIST. Not just post-patch — the pre-patch pass too |
+| `test-result.json`, `coverage.json` | `HILMAR_SKIP_PIPELINE_TESTS=1`; test.yml is the authoritative gate |
+
+So the fire shipped to nine staff recipients AND to Lonny with **no completed
+QC pass behind it**, and `assert_fire_integrity` printed "Fire integrity OK".
+
+**A KILLED STEP ALSO THREW AWAY ITS OWN EVIDENCE.** `subprocess.run` SIGKILLs
+on timeout and SIGKILL discards the child's stdio buffer; Python block-buffers
+stdout whenever it is not a TTY, which on a runner it never is. Measured with
+one variable changed — a child that prints, sleeps past the timeout, and is
+killed:
+
+    buffered           -> line LOST
+    PYTHONUNBUFFERED=1 -> line SURVIVES
+
+That is why QC-057's body snippets, written expressly so a parser fix could be
+scoped from them, have never once been readable: the pass computed them and
+died holding them. (A first run of that measurement was INVALID — the shell
+exported `PYTHONUNBUFFERED=1`, so both arms were unbuffered. Re-run with a
+scrubbed env.)
+
+**Shipped:**
+
+1. `run_pipeline` writes `reports/run-log.txt` on every host, via an
+   fd-level tee — `dup2` onto fds 1 and 2, not a `sys.stdout` wrapper, because
+   `run_step` calls `subprocess.run` WITHOUT capture and every step's real
+   output comes from a child writing to the inherited fd. Gated off on the
+   Cloud PC, where the wrapper already redirects into the same file.
+   Children now run `PYTHONUNBUFFERED=1`. Per-step `--- name ---` markers,
+   the two date spellings and a `PY:` line, so the existing parsers read one
+   format on both hosts. THE FIRST DRAFT'S TEARDOWN ORDER WAS WRONG — it
+   closed the saved console fd before joining the pump, so the last line
+   reached the file and not the console; caught by measuring, and the test
+   for it fails against that ordering.
+
+2. **QC-021 was not merely skipped on Actions — it emitted NOTHING.** Its body
+   sat inside `if _log_path.exists():` with no else. A check with a QC-INDEX
+   row, making zero Log calls on every production fire, is indistinguishable
+   from a passing one. Now host-aware: on the ephemeral runner it asserts the
+   transcript opened, and does NOT hunt for `Sent. request-id=`, which cannot
+   be there — `outlook_send` is a separate workflow step that runs after
+   `run_pipeline` exits, outside the tee. Writing the file without this would
+   have converted silence into a daily false alarm. Cloud-PC path untouched.
+
+3. **QC-019 is an ordering bug, and Seer
+   was wrong.** Seer: "body_parser.py fails to extract the carrier from the
+   pipe-table or prose." Reproduced instead, driving the real `phase_6_rules`
+   on the production row shape:
+
+       ERROR: QC-019: ... have no carrier — parser missed extraction
+       FIX:   QC-056: backfilled carrier from row text — Oakland → Busan=HMM
+       carrier_quoted after the pass: HMM
+
+   One pass, both lines: QC-019 sat ~166 lines above QC-056 and reported a
+   defect the same run repaired. Moved below the heals, with a structural test
+   pinning the order. Severity UNCHANGED — Michael set it to ERROR on
+   2026-05-13 and a row still blank after every recovery is still an error.
+   The message now names the `request_id` (the 2026-08-27 event read only
+   "16:59:21 Lane unresolved") and says "no carrier in ANY source". That
+   re-keys the Sentry grouping: TRACKER-3 will fall quiet, and the quiet is
+   the false positives stopping, not the check being switched off. Second Seer
+   misdiagnosis this month.
+
+4. **QC-057's diagnostic was blind.** Its hint list contained `" to "`, which
+   matches the standard confidentiality footer ("...entity **to** whom they
+   are addressed..."), and a hinted line SUPPRESSED the head-line fallback —
+   so for a body whose only hinted line was the disclaimer, the operator saw
+   the disclaimer and none of the email. Measured. Head lines of the top
+   message (after `core._strip_chain`) are now always included and get first
+   claim on the budget, boilerplate is dropped, scrubbing stays last. An
+   existing test asserted the old behaviour (`"Hi team" not in snippet`); it
+   was updated deliberately, with the reason recorded in place — that filter
+   is what dropped the real content.
+
+5. **A booking ref is a booking ref, whichever field holds it.**
+   `scripts/core.decide_status` read `mdolx_ref` only; the library has always
+   read the union with `mdolx_refs_all`. Same row, two verdicts — production
+   LOSS/`SEND_NO_BOOKING` "booking never confirmed", library WIN. The parity
+   suite could not catch it: production's signature did not accept the
+   argument, so the call raised rather than disagreed. Production was wrong on
+   three counts — Reading B asks for a booking confirmation, not one in a
+   particular field; `booking_count` and `is_confirmed_win` already read the
+   union; and the row was calling itself a loss while holding the booking. It
+   also erased its own evidence: `booking_count` gates on the stored status,
+   so once the QC pass wrote LOSS the count fell 1 → 0 and the contradiction
+   vanished. `qc_selfheal`'s decide loop is the one that flipped them — unlike
+   `ingest.age_requests` it has no union-aware skip guard, and it runs twice
+   per fire. Both call sites now pass the union, and
+   `_merge_prior_win_into` holds the invariant at the writer.
+
+**The adversarial pass caught two defects in this change, before merge:**
+
+6. **The tee would have made QC-055 LIE.** QC-055 reads `[-50000:]` of
+   run-log.txt looking for `Sentry cron start failed (pipeline continues)` —
+   a window sized when that file held only the wrapper's terse step echoes.
+   The sentinel prints at the START of the fire; QC-055 runs two pipeline
+   steps later. Measured against the pre-fix block, sentinel present each time:
+
+       10,052 bytes -> ERROR (correct)
+       45,026 bytes -> ERROR (correct)
+       60,048 bytes -> SILENT OK   ** false pass **
+       90,034 bytes -> SILENT OK   ** false pass **
+
+   Fire 33864188808 carried ~89 KB. So the tee would have replaced an honest
+   "skipped — ephemeral runner" with an invisible false pass every fire —
+   through `Log.ok`, which never reaches `qc-result.json`. Strictly worse than
+   the gap being closed. QC-055 now scopes to TODAY's fire header instead of a
+   byte tail, warns (never `ok`) when it cannot find its evidence, and no
+   longer re-raises a failure that predates today's fire.
+
+7. **The transcript is not the non-PII debug artifact that upload list was
+   written for.** `daily.yml`'s own comment forbids uploading plaintext
+   carrying "client name, lanes, carriers, OL rates, the distribution list,
+   MDOLX booking refs". Fire 33864188808's pipeline output carries 29 distinct
+   email addresses (Lonny's included), 95 MDOLX refs, OL rates and lanes, and
+   `sentry_setup._scrub_string` redacts addresses and refs but NOT lanes or
+   rates — so scrubbing would not satisfy the rule. `reports/run-log.txt` was
+   therefore REMOVED from the artifact path in the same change that started
+   writing it. The transcript stays on the runner where the QC checks read it;
+   the per-step detail is already in the job log, the channel this evidence
+   has always used, whose exposure is unchanged. A scrubbed upload is
+   available if Michael wants it — that is his call, not an engineering one.
+
+8. **QC-021 credited a fire with the PREVIOUS fire's send.** Pre-existing,
+   surfaced by the same adversarial pass. It located today's marker with
+   `.find` — the FIRST occurrence — so on the accumulating Cloud-PC log, on a
+   day with two scheduled fires, `_after` spanned from fire #1's header and
+   matched fire #1's `Sent. request-id=`. MEASURED: a second fire, mid-flight
+   and having sent nothing, printed "today's wrapper completed send step" —
+   a send monitor reporting a send that did not happen. Now `.rfind`. Not
+   introduced by the tee (run-log.txt is not in `state_store`'s synced set, so
+   each Actions fire starts a fresh file), but live on the wrapper path.
+
+9. **QC-021 still read a byte tail, and at the real transcript size that was
+   a false alarm every fire.** Copilot's review on PR #254 caught it, and it
+   reproduced immediately: the fire HEADER is written at the START of a
+   transcript, QC-021 sliced `[-40000:]`, and a production fire carries ~89 KB.
+
+       5,087 bytes -> ok
+      39,053 bytes -> ok
+      89,084 bytes -> FALSE WARN "carries no fire header"
+
+   So the host-aware branch added in item 2 would have warned "the transcript
+   tee did not open" on every fire in which it *had* opened — the exact daily
+   false alarm that branch exists to prevent. Every QC-021 test written for
+   item 2 used a fixture of a few hundred bytes, so none of them could see it.
+   Same defect class as QC-055's 50 KB window, in the same PR, and I fixed one
+   and left the other. Both branches now read a bounded window off the END of
+   the file (2 MB — the Cloud-PC log appends for months) and locate today's
+   LATEST fire header inside it. Regression tests are sized like a real fire.
+
+10. **The QC-019 move was wrong, and I shipped it before the review caught
+    it.** Landing QC-019 after QC-056 put it 716 lines BEFORE QC-064, which
+    NULLS a garbage carrier out of the client-visible fields. Reproduced on a
+    status-change WIN, both of QC-064's real garbage classes:
+
+        carrier_quoted='209-656'                         (phone fragment)
+        carrier_quoted='OL Ocean Export Booking mailbox' (mailbox name)
+          QC-019 said: NOTHING
+          carrier after the pass: None / None
+
+    A blank carrier cell shipped and the check that exists to catch it was
+    silent — a noisy false POSITIVE traded for a silent false NEGATIVE, which
+    is worse, and QC-019's clean path is `log.ok`, which never reaches
+    `qc-result.json`. My own comment and the QC-INDEX row both claimed "Runs
+    AFTER QC-056/QC-064", which was false by line number. The rule is not
+    "after the heals" but AFTER EVERY WRITER THAT CAN CHANGE A CARRIER:
+    QC-056 fills them, QC-064 empties them. Now placed after QC-064, and the
+    structural guard pins it against BOTH — the first guard asserted only
+    `qc019 > qc056` and passed with the hole wide open.
+
+11. **"75 Sentry events" was wrong — it is 4.** I read the occurrence count
+    off issue HILMAR-DAILY-TRACKER-3 and attributed it to QC-019.
+    `capture_qc_error` does not set a per-check fingerprint, so eight checks
+    group into that one issue; an issue-level total is not a check's count.
+    Measured on the `qc_check:QC-019` tag: **4 events in 90 days** —
+    2026-09-04, 2026-08-28, 2026-07-20, 2026-07-18. Corrected in the source
+    comment, the test docstring, QC-INDEX and here. Related and recorded, not
+    fixed: the missing fingerprint is why QC-019 shared an issue, an
+    occurrence count and a Seer analysis with seven other checks.
+
+    SCOPE, honestly: the ordering mechanism is proven on the 2026-09-04 row
+    shape only. The other three events are NOT established as the same cause —
+    2026-08-27 read "Lane unresolved", and the two 2026-07-17 events read
+    "Oakland → Oakland", a degenerate lane that is QC-073's territory and may
+    be a different defect wearing QC-019's message.
+
+14. **The transcript now contains the checks' OWN output, and that broke the
+    anchor a third time.** Reported by an automated reviewer on PR #254.
+    QC-021 and QC-055 both located "where today's fire starts" with `rfind`
+    on a bare date string — sound while run-log.txt held only the wrapper's
+    terse step echoes, unsound the moment run_pipeline teed the whole
+    transcript into it. QC-021 prints
+    `✅ QC-021: transcript open for 2026-09-04 ...`, which carries today's ISO
+    date and runs BEFORE QC-055 in the same `phase_6_rules` pass. MEASURED on
+    a transcript shaped exactly as the tee writes one:
+
+        sentinel IS in the file: True
+        QC-055 recorded: (NOTHING)
+        QC-055 printed : ✅ QC-055: Sentry cron heartbeat registered on this fire
+
+    A real Sentry cron-start failure reported as registered, on every normal
+    fire. Both checks now anchor on the fire HEADER via a line-anchored regex
+    covering both host forms (`HILMAR FIRE <iso> ...` and
+    `Hilmar daily on <BOX> — <us> ...`), in one shared helper.
+
+    THIS IS THE THIRD INSTANCE OF ONE MISTAKE IN THIS PR — QC-055's 50 KB byte
+    tail, QC-021's 40 KB byte tail, and now a bare date substring. The rule
+    the three share: **a byte offset or a bare date is the wrong anchor for a
+    file whose content this change controls.** Each was found by review, not
+    by me, and each was found only after the previous one was fixed.
+
+12. **A SCHEDULED FIRE IS ALWAYS `send_to=full`, so merging IS the send
+    decision.** Verified in `.github/workflows/daily.yml:381`:
+
+        SEND_TO: ${{ github.event_name == 'schedule' && 'full' || github.event.inputs.send_to }}
+
+    The `send_to=test` default guards MANUAL dispatch only, and
+    `HILMAR_REPORTS_PAUSED` is `"false"` (live). So merging PR #254 puts the
+    changed win numbers in front of the nine-person staff list and Lonny on
+    the next weekday cron (`30 10 * * 1-5`) with no further human step. A send
+    is irreversible; CLAUDE.md requires written approval first. The PR is
+    therefore green, mergeable and DELIBERATELY NOT MERGED.
+
+13. **`scripts/diag_refs_all_only.py` — so the decision has a number.** The
+    impact was `[ASSUMPTION]` and an assumption is not a basis for a client
+    send. The diagnostic counts rows in the hazard shape (a booking ref
+    present only in `mdolx_refs_all`), splits them by stored status, reports
+    how many are `preserved_from_prior`, and — the part that matters — runs
+    production's classifier BOTH ways to report the actual delta in bookings,
+    win rate and TEU rather than estimating it. Read-only: pulls to a temp
+    dir, computes every decision on copies, writes no blob, sends nothing,
+    and prints request_ids and refs but not lanes, rates or addresses (item 7
+    established the run log is not a PII-clean channel). Fails loudly —
+    `::error::` and exit 2 — with no `|| true`.
+
+15. **The diagnostic understated the one number it exists to produce.**
+    Reported by an automated reviewer. `_wins_teu` read `teu_won` raw while
+    the `flips` list two lines above used `teu_won or teu_requested or 0` —
+    and that is wrong for exactly this diagnostic's target population.
+    `ingest._clear_win_evidence_on_exit` zeroes `teu_won` on the WIN →
+    not-WIN edge, which is HOW a row reaches the hazard shape: the old
+    primary-only `decide_status` demoted a send-signal WIN and the volume was
+    cleared on the way out while `mdolx_refs_all` stayed populated. MEASURED,
+    one row with `teu_won=0` / `teu_requested=2`:
+
+        flips list says teu : 2
+        headline says TEU   : 0 -> 0
+        bookings            : 0 -> 1
+
+    A row counted as a new booking, reported as moving no volume — in the
+    figure an operator reads before approving a full-distribution send. The
+    fallback now applies to flipped rows only, and only in the AFTER arm, so
+    the baseline still matches what production reports today. It changes
+    nothing about the measured zero below (no rows were in the shape), but it
+    would have understated the next run.
+
+**MEASURED: THE PARITY FIX MOVES NOTHING.** diag-blob run 33922196166,
+against live state, 2026-09-04:
+
+    tracking rows scanned              432
+    rows in the hazard shape           0
+      of those, preserved_from_prior   0
+    rows the union CHANGES             0
+
+    bookings counted   156  ->  156   (+0)
+    win rate           35.7%  ->  35.7%   (over 437 entries)
+    TEU won            571  ->  571   (+0)
+
+ZERO live rows carry a booking reference only in `mdolx_refs_all`, so the
+union changes no status, no count, and nothing in Lonny's report. The whole
+"this moves client numbers upward, size unmeasured" warning I carried through
+this session — in the commit messages, the PR body and to Michael directly —
+was TRUE as a risk and FALSE as a fact. Measuring took one read-only run and
+one dispatch. That is the rule working: an unmeasured risk is not a finding,
+and I had been reporting it as though it were.
+
+The fix still earns its place: it closes a real divergence between the two
+trees, and the shape IS reachable — `_merge_prior_win_into` produced it from a
+prior ref of `""`, measured earlier this session — so this is defence against
+a shape that does not currently exist rather than a repair of one that does.
+The writer invariant now stops it being created at all.
+
+Caveat, stated rather than buried: zero as of the state the last fire left.
+Every fire rebuilds rows from staged mail, so the count is a measurement of
+today, not a guarantee about Monday. Re-run the diag if that matters.
+Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
+from quoted-lost to won, and rows appearing under "Your confirmed bookings" in
+Lonny's report that were invisible yesterday. That is the CORRECT outcome when
+the ref is real — a ref only reaches `mdolx_refs_all` by parsing an actual OL
+booking email — but the live incidence is **[ASSUMPTION]**: it needs a
+diag-blob run over the 58 preserved-from-prior WINs before a `full` send, not
+after. Michael's call whether Monday goes out `test` first.
+
+**Corrections made this session, by name:**
+- I told Michael #253 fixed "the post-patch pass". Both passes were timing
+  out. Same root cause, so #253 should clear both — unverified until a fire.
+- I concluded `_merge_prior_win_into` could not create the no-primary-ref
+  shape because `mdolx_ref` is in `_PRIOR_WIN_EVIDENCE`. True only for a
+  healthy prior win: the fill loop skips a FALSY value, so a prior ref of `""`
+  originates it, and an already-shaped row propagates. Both measured.
+- My first buffering measurement was invalid (ambient `PYTHONUNBUFFERED=1`).
+- My first version of the killed-step test asserted on a string that also
+  appears in `run_step`'s `cmd:` banner, so it passed with the fix removed —
+  it certified nothing. Caught by mutation-testing every new test.
+
+**Not shipped, deliberately, and why:**
+- No parser extension for QC-057's three subjects. "Rates to a few
+  destinations for a study" is a genuinely multi-destination RFQ (Rotterdam,
+  Shanghai, Nhava Sheva, Tokyo — OL quoted it) that the one-destination-
+  per-row schema cannot hold, and a body scan recovers only 3 of 4. The other
+  two are unmeasurable until the fixed diagnostic runs once. Inventing a lane
+  is the failure QC-057 exists to catch.
+- No `intake_acknowledged.json` entry. That is an operator's signature.
+- No QC-019 severity downgrade, and no widening of `patch_carriers` to write
+  carriers onto WIN rows — that is the machinery that twice manufactured
+  attribution (the 2026-08-31 `NAM` substring match, the 2026-08-12 phantom
+  quotes).
+- `qc_selfheal` still does not pass `send_signal_events` while `ingest` does.
+  It is inert (nothing in `scripts/` writes the field) and line ~1587 writes
+  `r["has_send"] = decision.has_send` back onto the row, so passing it would
+  stamp an evidence field from a derived one. Recorded, not fixed.
+
+**Found in passing, not in scope, not fixed:** `refresh_stage` spends 22m41s
+of the 35-minute fire sweeping 9,569 messages to keep 186; `sentry_seer.py`
+gets a hard `400 Invalid stats_period` every fire and triggers nothing; the
+shared mailbox still emits `::error::` after #249 declared it closed.
+
+### 2026-09-04 — the daily "Cron failure" was a QC check costing more than the work it checked
 
 Michael forwarded the Sentry mail again (HILMAR-DAILY-TRACKER-H, "Cron
 failure: hilmar-daily-pipeline", seen 16 times) and said: **"you need to work

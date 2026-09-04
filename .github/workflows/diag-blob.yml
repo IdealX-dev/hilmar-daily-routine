@@ -138,3 +138,23 @@ jobs:
         # worth having, and it is kept.
         if: always()
         run: python3 scripts/diag_duplicate_mdolx.py
+
+      - name: Size the parity change before it ships (read-only)
+        # Answers the one question blocking PR #254: production's
+        # decide_status now reads the UNION of mdolx_ref + mdolx_refs_all, and
+        # nobody has measured how many live rows that moves. It is not
+        # cosmetic — booking_count gates on the STORED status, so a flipped
+        # row changes wins, win_rate and TEU, and gen_client_email renders
+        # is_confirmed_win rows under "Your confirmed bookings".
+        #
+        # daily.yml:381 resolves SEND_TO to 'full' for github.event_name ==
+        # 'schedule', so the send_to=test default guards MANUAL dispatch only
+        # and a scheduled fire always goes to the whole distribution. Michael
+        # should see N before the numbers reach Lonny, not after.
+        #
+        # Read-only: pulls to a temp dir, computes every decision on copies,
+        # writes no blob and sends nothing. NO `|| true` — the script emits
+        # ::error:: and returns 2, and throwing that away is the 2026-08-20
+        # defect CLAUDE.md names.
+        if: always()
+        run: python3 scripts/diag_refs_all_only.py
