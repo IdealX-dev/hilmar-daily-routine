@@ -260,7 +260,35 @@ scrubbed env.)
     established the run log is not a PII-clean channel). Fails loudly —
     `::error::` and exit 2 — with no `|| true`.
 
-**THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED UNTIL THAT DIAG RUNS.**
+**MEASURED: THE PARITY FIX MOVES NOTHING.** diag-blob run 33922196166,
+against live state, 2026-09-04:
+
+    tracking rows scanned              432
+    rows in the hazard shape           0
+      of those, preserved_from_prior   0
+    rows the union CHANGES             0
+
+    bookings counted   156  ->  156   (+0)
+    win rate           35.7%  ->  35.7%   (over 437 entries)
+    TEU won            571  ->  571   (+0)
+
+ZERO live rows carry a booking reference only in `mdolx_refs_all`, so the
+union changes no status, no count, and nothing in Lonny's report. The whole
+"this moves client numbers upward, size unmeasured" warning I carried through
+this session — in the commit messages, the PR body and to Michael directly —
+was TRUE as a risk and FALSE as a fact. Measuring took one read-only run and
+one dispatch. That is the rule working: an unmeasured risk is not a finding,
+and I had been reporting it as though it were.
+
+The fix still earns its place: it closes a real divergence between the two
+trees, and the shape IS reachable — `_merge_prior_win_into` produced it from a
+prior ref of `""`, measured earlier this session — so this is defence against
+a shape that does not currently exist rather than a repair of one that does.
+The writer invariant now stops it being created at all.
+
+Caveat, stated rather than buried: zero as of the state the last fire left.
+Every fire rebuilds rows from staged mail, so the count is a measurement of
+today, not a guarantee about Monday. Re-run the diag if that matters.
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
 from quoted-lost to won, and rows appearing under "Your confirmed bookings" in
 Lonny's report that were invisible yesterday. That is the CORRECT outcome when
