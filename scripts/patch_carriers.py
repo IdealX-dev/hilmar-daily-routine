@@ -206,7 +206,11 @@ def _find_related_rate_response(row: dict, by_thread: dict[tuple, dict]) -> str 
         body = _ok(by_thread.get(("conv", conv)))
         if body:
             return body
-    for cand in [row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or []):
+    # mdolx_refs_seen included — see ingest._demote_ref. A ref moved out of
+    # the counting fields by claim_corrected_mdolx_refs must STAY joinable,
+    # or the row loses the enrichment it had yesterday.
+    for cand in ([row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or [])
+                 + (row.get("mdolx_refs_seen") or [])):
         if cand:
             body = _ok(by_thread.get(("mdolx", str(cand))))
             if body:
@@ -530,7 +534,8 @@ def main():
         out = []
         if row.get("mdolx_ref"):
             out.append(row["mdolx_ref"])
-        for m in row.get("mdolx_refs_all", []) or []:
+        for m in ((row.get("mdolx_refs_all") or [])
+                  + (row.get("mdolx_refs_seen") or [])):  # see ingest._demote_ref
             out.append(m)
         if row.get("booking_id"):
             out.append(row["booking_id"])
@@ -698,7 +703,11 @@ def main():
                     break
             # Cross-reference by MDOLX if no direct match
             if pdf_path is None:
-                for cand in [r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or []):
+                # mdolx_refs_seen included: this is THE booking-PDF join, and
+                # the PDF supplies `pod`, from which PASS 2b recovers
+                # destination/lane. See ingest._demote_ref.
+                for cand in ([r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or [])
+                             + (r.get("mdolx_refs_seen") or [])):
                     if cand and cand in pdfs_by_mdolx:
                         pdf_path = pdfs_by_mdolx[cand]
                         break

@@ -3,7 +3,123 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-03 (latest) — QC-069's 11 duplicates are one bug, and it is not the one I named
+### 2026-09-03 (latest) — the QC-069 heal: 4b and 4c, approved and shipped
+
+Michael, on the measurement: **"fix 4b and 4c both approved"**.
+
+`ingest.claim_corrected_mdolx_refs` — a booking ref an operator correction
+NAMES belongs to that row alone. For every other row holding it, the ref is
+DEMOTED into a new `mdolx_refs_seen` field, and then:
+
+  4a  the row keeps a ref of its own          → nothing else changes
+  4b  the row is chain-less (`stand_`/`ol_`)  → absorbed into the owner and
+                                                REMOVED; it existed only for
+                                                this booking
+  4c  the row has a real RFQ thread           → kept, and `age_requests`
+                                                re-derives its status off WIN
+
+**Demoted, not deleted, and that is the whole design.** `mdolx_refs_all` has
+two kinds of reader that want opposite things: `core.booking_count` COUNTS it
+(so a ref on two rows is counted twice) and `patch_carriers` JOINS on it to
+find the booking PDF (:701), the rate response (:209) and the carrier (:533).
+That PDF supplies `pod`, and PASS 2b recovers `destination`/`lane` from it — so
+deleting the ref outright fixes the count and severs the join, the row falls to
+"Lane unresolved", and `gen_client_email._lane_resolved` drops it from every
+client bucket. Lonny told one FEWER booking for a shipment OL confirmed, with
+`is_confirmed_win` still True, QC-049 silent and QC-069 quiet. `mdolx_refs_seen`
+is read by the three enrichment lookups and by nothing that counts.
+
+Rehearsed over a fixture reproducing all eleven live findings:
+
+```
+                          BEFORE   AFTER
+  rows                        17      12
+  QC-069 duplicates           11       0
+  bookings counted            22      11
+  teu_won total               27      15
+  WIN rows                    17      11
+```
+
+The −12 TEU is two effects, both corrections: −8 is `req_f942b9672ff756ab`
+leaving WIN (a booking it never owned; `_clear_win_evidence_on_exit` zeroes
+volume on that edge), and −4 is two shipments that were stored at 2 TEU on
+BOTH their rows and are now stored once.
+
+**TWO DEFECTS FOUND IN MY OWN CHANGE BY REHEARSING IT, not by a test:**
+
+1. `teu_won` was missing from the absorbable set. Several owner rows carry
+   `teu_won=None` while the orphan beside them holds the volume — the orphan
+   was built FROM the confirmation, which names the containers. Absorbing
+   without it meant REMOVING the orphan silently deleted booked TEU: the
+   client-report under-count the design exists to avoid, committed by the fix
+   for it.
+2. Adding `teu_won` then introduced a worse one. Absorption ran from EVERY
+   loser, so the 4c owner took `req_f942b9672ff756ab`'s own 8 TEU —
+   fabricating volume on a confirmed win. A `stand_`/`ol_` row IS the booking
+   and its evidence belongs to the owner; an ordinary `req_` row is a
+   DIFFERENT ask the matcher merely stamped. Absorption is now gated on
+   `core.has_no_rfq_chain`; only the ref moves off a real request row.
+
+Neither was caught by the 25 tests then passing. Both now have tests, verified
+to fail against the defective version.
+
+**THEN AN ADVERSARIAL PASS OVER THE REAL DIFF FOUND THREE MORE**, two of them
+blocking, all three confirmed by executing the code rather than reading it:
+
+3. **The re-derive reversed operator verdicts.** The first version called
+   `age_requests(all_requests)` after the claim. `age_requests` has NO
+   `manual_locked` guard and `apply_operator_corrections` is documented as
+   "applied LAST so they win over every automatic classification" — so an
+   unrestricted call after the operator layer undoes human verdicts. Measured:
+   a correction setting LOSS/SEND_NO_BOOKING on a fresh send-signal came back
+   PENDING/AWAITING_MDOLX. `age_requests` now takes `only=`, and the claim
+   returns the rows it emptied so exactly those are re-derived. Medians stay
+   computed from the FULL list — a subset would skew the PRICE classifier.
+4. **Demoting one ref stranded a row's OTHER real booking.** `_demote_ref`
+   cleared `mdolx_ref` without promoting a survivor out of `mdolx_refs_all`.
+   A row holding 261031 (disputed) and 261099 (real) came out
+   `mdolx_ref=None`, and `decide_status` — which reads only the primary, as
+   does qc_selfheal's decide loop at :1540 — returned LOSS/SEND_NO_BOOKING.
+   The surviving booking silently stops being a win while `is_confirmed_win`
+   (which reads the union) stays True, so nothing notices.
+5. **The QC backstop path had neither logging nor the re-derive.** It called a
+   function that REMOVES WIN rows and assigned the count to a variable nothing
+   read. `run_pipeline.py --skip-ingest` makes that path the ONLY one that
+   runs. Now `log.fix` + a Sentry metric + the same `only=` re-derive —
+   `log.fix`, never `log.ok`, because `Log.ok()` only prints and never reaches
+   `qc-result.json`.
+
+And where two corrections disagree — one assigning a booking to row A, another
+locking row B's verdict — the claim does NOT pick. It leaves the human's row
+alone and emits `::warning::` naming both, because the contradiction is in
+`operator_corrections.json` and only a human can settle it.
+
+Five defects, none caught by the tests passing at the time each was found.
+Every one now has a test verified to fail against the defective version.
+
+Guards, each earned: the owner must actually HOLD the ref (a correction naming
+a row that does not carry the number is not this collision); the owner is never
+emptied; a ref no correction names is untouched (QC-069 case 3, genuinely
+ambiguous, no verdict to defer to); `exclude` corrections are not claims;
+`_demote_ref` always writes lists, because `ingest.py:1054` does
+`set(.get(k, []) + [mdolx])` and TypeErrors on None. Idempotent — a demoted ref
+no longer counts as a claim, which matters because this runs at intake and
+twice more inside `qc_selfheal`, every fire, while the matcher recreates the
+duplicate every fire. The 4a idempotence test is the load-bearing one: 4b's
+loser is removed, so a second pass there is trivially safe even when the
+predicate is wrong.
+
+`main()` re-runs `age_requests` after the claim: corrections apply AFTER aging,
+so a 4c row would otherwise publish as a ref-less WIN for a whole fire — QC-049
+errors on it, and it is the "worse than the duplicate it replaced" state.
+
+QC-INDEX's QC-069 row updated from "Detect-only" to name the exception, the
+demotion, and why the PDF join must survive; `tests/test_qc_governance.py`
+binds the pair.
+
+3707 passed, 1 skipped; ruff clean; src/hilmar coverage 91.11% (gate 90%).
+
+### 2026-09-03 — QC-069's 11 duplicates are one bug, and it is not the one I named
 
 I reported to Michael last session that the MDOLX261026-261046 duplicates
 came from eight near-identical booking confirmations tying in

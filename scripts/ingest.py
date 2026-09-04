@@ -1849,12 +1849,29 @@ def _clear_win_evidence_on_exit(r: dict, prior_status, new_status) -> None:
         r["teu_won"] = 0
 
 
-def age_requests(requests: list[dict], now: datetime | None = None) -> None:
+def age_requests(requests: list[dict], now: datetime | None = None,
+                 only: list[dict] | None = None) -> None:
+    """Re-derive status. `only` restricts WHICH rows are re-decided.
+
+    `only` exists because this function has no `manual_locked` guard and is
+    normally called BEFORE apply_operator_corrections, which is what makes the
+    applier's "runs LAST so it wins over every automatic classification" true.
+    A second unrestricted call after the operator layer silently un-does human
+    verdicts: measured 2026-09-03, a correction setting LOSS/SEND_NO_BOOKING on
+    a fresh send-signal came back PENDING/AWAITING_MDOLX. The medians are still
+    computed from the FULL list — a subset would skew the PRICE classifier.
+    """
     now = now or C.now_utc()
     # Compute lane winning medians ONCE before the per-row decide loop —
     # see core.decide_status docstring (2026-06-02 PRICE classifier).
     lane_winning_median = C.compute_lane_winning_medians(requests)
-    for r in requests:
+    _targets = requests if only is None else only
+    for r in _targets:
+        if r.get("manual_locked") and only is not None:
+            # An explicit re-derive never overrules a human. The ref this row
+            # lost was reassigned BY a correction; the row's own verdict, if
+            # it has one, still stands.
+            continue
         # CONFIRMED wins (have an MDOLX booking) are terminal — skip.
         # But a row that's WIN with NO mdolx is a send-signal-only
         # promotion that must stay re-evaluable: if it never booked it
@@ -1989,9 +2006,15 @@ def apply_operator_corrections(requests: list[dict]) -> int:
             # because it has the email behind it. So this heals a gap without
             # becoming a second source of the same win.
             _ref = str(changes.get("mdolx_ref") or "").lstrip("0")
+            # mdolx_refs_seen included: a ref demoted by
+            # claim_corrected_mdolx_refs is still HELD by the dataset, just no
+            # longer counted. Omitting it would let this branch create a
+            # second row for a booking that is already represented.
             _seen = {str(x).lstrip("0")
                      for r in requests
-                     for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])]
+                     for x in [r.get("mdolx_ref"),
+                               *(r.get("mdolx_refs_all") or []),
+                               *(r.get("mdolx_refs_seen") or [])]
                      if x}
             if _ref and _ref in _seen:
                 continue
@@ -2069,6 +2092,262 @@ def apply_operator_corrections(requests: list[dict]) -> int:
             row["reason_detail"] = corr["note"]
         applied += 1
     return applied
+
+
+#: Booking-derived fields an absorbed duplicate may hand to the row that keeps
+#: the ref. FILL-ONLY, never overwrite — the surviving row's own value came
+#: from its own thread and is the better evidence. Same rule, same reason, as
+#: `_merge_prior_win_into`: "evidence fields fill only where the rebuilt row
+#: has nothing."
+_ABSORBABLE_BOOKING_FIELDS = (
+    # teu_won FIRST because it is the one that under-counts if forgotten.
+    # Measured 2026-09-03 rehearsing this heal over all eleven live findings:
+    # several owner rows carry teu_won=None while the orphan booking row
+    # beside them holds the volume (the orphan was built FROM the booking
+    # confirmation, which names the containers; the owner's RFQ thread may
+    # not). Absorb without it and removing the orphan silently deletes booked
+    # TEU for a shipment OL confirmed — the client-report under-count this
+    # whole design is arranged to avoid, committed by the fix for it.
+    # Fill-only like the rest, so an owner with its own volume keeps it.
+    "teu_won",
+    "carrier_won", "booking_timestamp", "vessel_voyage", "mdolx_date",
+    "erd", "doc_cutoff", "port_cutoff", "origin_free_time", "dest_free_time",
+    "rate_expiry", "product", "temperature", "pod", "booking_no",
+)
+
+
+def _demote_ref(row: dict, ref: str) -> None:
+    """Move `ref` out of the counting fields into `mdolx_refs_seen`.
+
+    NOT a delete, and the difference is the whole design. `mdolx_refs_all` is
+    read by TWO kinds of consumer and they want opposite things:
+
+      COUNTERS   core.booking_count unions mdolx_ref + mdolx_refs_all and
+                 returns len(); it is the numerator AND denominator of every
+                 win and request count. A ref on two rows is counted twice.
+      JOIN KEYS  patch_carriers looks a booking PDF up by
+                 [mdolx_ref] + mdolx_refs_all (:701), and the same list finds
+                 the related rate response (:209) and the carrier (:533). The
+                 PDF is where `pod` comes from, and PASS 2b recovers
+                 `destination` / `lane` from `pod`.
+
+    Deleting the ref outright fixes the count and severs the join. A row whose
+    lane came from that PDF then falls to "Lane unresolved", and
+    gen_client_email._lane_resolved drops it from every client bucket — Lonny
+    told one FEWER booking, and less TEU, for a shipment OL really confirmed.
+    Every guard the first draft of this heal leaned on stays green while that
+    happens: is_confirmed_win still True on the surviving ref, QC-049 needs
+    BOTH fields empty, and QC-069 goes quiet. Same defect class as 2026-08-10,
+    "you sent lonny we won no shipment last week".
+
+    So the ref stops being COUNTED and stays JOINABLE. `mdolx_refs_seen` is
+    read by the three enrichment lookups and by nothing that counts.
+
+    Always writes lists. ingest.py:1054 does
+    `set(best.get("mdolx_refs_all", []) + [mdolx])`, which TypeErrors on None.
+    """
+    ref = str(ref)
+    cleared_primary = str(row.get("mdolx_ref") or "") == ref
+    if cleared_primary:
+        row["mdolx_ref"] = None
+    row["mdolx_refs_all"] = sorted(
+        {str(m) for m in (row.get("mdolx_refs_all") or []) if m and str(m) != ref})
+    row["mdolx_refs_seen"] = sorted(
+        {str(m) for m in (row.get("mdolx_refs_seen") or []) if m} | {ref})
+
+    # PROMOTE A SURVIVOR. A row can hold more than one booking, and losing the
+    # DISPUTED one must not strand the others: `mdolx_ref` is the primary that
+    # decide_status reads, and it is the ONLY ref qc_selfheal's decide loop
+    # passes (qc_selfheal.py:1540 `mdolx_ref=r.get("mdolx_ref")`). Measured
+    # 2026-09-03 without this: a row holding 261031 (disputed) and 261099
+    # (real, undisputed) came out mdolx_ref=None, and decide_status returned
+    # LOSS/SEND_NO_BOOKING — the surviving booking silently stops being a win,
+    # its TEU crosses to quoted-lost, and the row leaves every client bucket.
+    # is_confirmed_win reads the union and stays True the whole time, so
+    # nothing else notices.
+    if cleared_primary and row["mdolx_refs_all"]:
+        row["mdolx_ref"] = row["mdolx_refs_all"][0]
+
+
+def _row_holds(row: dict, ref: str) -> bool:
+    """Does this row CLAIM the ref — as its primary, or in the counted list?
+
+    `mdolx_refs_seen` deliberately does not count: a demoted ref is exactly
+    the state this heal produces, so treating it as a claim would make the
+    pass non-idempotent and it would re-absorb the same row every fire.
+    """
+    ref = str(ref)
+    if str(row.get("mdolx_ref") or "") == ref:
+        return True
+    return any(str(m) == ref for m in (row.get("mdolx_refs_all") or []))
+
+
+def claim_corrected_mdolx_refs(requests: list[dict]) -> tuple[int, list[dict]]:
+    """A booking ref an operator correction names belongs to ONE row: that one.
+
+    2026-09-03, approved by Michael after the mechanism was measured. QC-069
+    flagged 11 duplicate_mdolx findings and ALL ELEVEN are the same collision
+    (diag-blob run 33788252407, `scripts/diag_duplicate_mdolx.py`):
+
+      link_bookings_to_requests   writes mdolx_ref AND appends to
+                                  mdolx_refs_all on the row IT scored best
+      apply_operator_corrections  row.update(changes) overwrites mdolx_ref on
+                                  the row the OPERATOR named — and touches
+                                  mdolx_refs_all not at all, and never clears
+                                  the ref off the matcher's row
+
+    They do not name the same row. Eight corrections back-entered the
+    MDOLX261026-261046 batch from Linda Echevarria's Aug-12 recap, each noting
+    "The confirmation never reached [this mailbox]" — true when written, false
+    now: the confirmations arrived 2026-08-13 20:04-20:21, one day after the
+    recap. So every fire since has run both writers over the same refs and
+    nothing un-stamped the loser. CLAUDE.md's standing corollary, in one field.
+
+    THE OPERATOR'S ROW WINS. Not a preference — operator_corrections.json is
+    this repo's single durable human override, and the source here is OL's own
+    system of record. The correction also names a row with a real RFQ thread;
+    the matcher's loser is frequently a `stand_<ref>` row with none.
+
+    Three shapes, measured, each handled differently because the damage differs:
+
+      4a  the loser holds it only in mdolx_refs_all and keeps a ref of its own.
+          DEMOTE (see _demote_ref) — no row removed, no status changed.
+      4b  the loser is a whole standalone WIN row (stand_/ol_, no RFQ chain)
+          that exists ONLY because of this booking. Its evidence is absorbed
+          into the owner and the row is REMOVED — the shipment stops being
+          counted twice.
+      4c  the loser is an ordinary request row claiming it as its own
+          mdolx_ref. Demoting leaves it a WIN with no booking ref, so its
+          status is re-derived by the age_requests call that follows.
+
+    NEVER touches a ref no correction names — that is case (3) in
+    diag_duplicate_mdolx, genuinely ambiguous, and there is no operator
+    verdict to defer to. NEVER empties the owner. Idempotent: a second pass
+    finds nothing, because a demoted ref no longer counts as a claim.
+
+    Returns (acted, released) — the number of losing rows acted on, and the
+    rows left with NO booking ref that a caller must re-derive. NOT a count of
+    rows to re-age wholesale: `age_requests` has no `manual_locked` guard, so
+    re-running it over the whole dataset AFTER the operator layer overwrites
+    human verdicts. Measured 2026-09-03: a correction setting
+    LOSS/SEND_NO_BOOKING on a FRESH send-signal came back PENDING /
+    AWAITING_MDOLX, because decide_status re-derives what the human overruled.
+    """
+    if not CORRECTIONS_PATH.exists():
+        return 0, []
+    try:
+        doc = json.loads(CORRECTIONS_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARN: operator_corrections.json unreadable — no ref claim ({e})")
+        return 0, []
+
+    by_id = {r.get("request_id"): r for r in requests}
+    acted = 0
+    drop: list[dict] = []
+    released: list[dict] = []
+
+    for corr in doc.get("corrections", []):
+        if corr.get("exclude"):
+            continue
+        ref = str((corr.get("set") or {}).get("mdolx_ref") or "").strip()
+        if not ref:
+            continue
+        owner = by_id.get(corr.get("request_id"))
+        # The owner must actually HOLD the ref. A correction naming a row that
+        # does not carry the number is not this collision, and acting on it
+        # would clear a field on evidence that never mentioned these rows.
+        if owner is None or not _row_holds(owner, ref):
+            continue
+
+        for loser in requests:
+            if loser is owner or loser in drop or not _row_holds(loser, ref):
+                continue
+
+            chainless = C.has_no_rfq_chain(loser)
+
+            # ABSORB ONLY FROM A ROW WITH NO RFQ CHAIN, and the distinction is
+            # not a nicety — it is the difference between recovering evidence
+            # and inflating a win.
+            #
+            # A `stand_`/`ol_` row IS the booking: it was built from the
+            # confirmation email and represents the SAME shipment as the
+            # owner, so its containers, carrier and dates belong to the owner
+            # and would be lost with the row.
+            #
+            # An ordinary `req_` row is a DIFFERENT ASK that the matcher
+            # merely stamped with this booking. Caught 2026-09-03 rehearsing
+            # the heal on the live 4c pair: req_f942b9672ff756ab is its own
+            # 2026-08-26 RFQ carrying teu_won=8, and absorbing that moved 8
+            # TEU onto req_b789e573316ead86's shipment — a fabricated volume
+            # on a confirmed win, which is the worst thing this file can do.
+            # Its evidence stays with it; only the REF moves.
+            if chainless:
+                owner["source_imids"] = sorted(
+                    {i for i in ((owner.get("source_imids") or [])
+                                 + (loser.get("source_imids") or [])) if i})
+                owner["source_ids"] = sorted(
+                    {i for i in ((owner.get("source_ids") or [])
+                                 + (loser.get("source_ids") or [])) if i})
+                for k in _ABSORBABLE_BOOKING_FIELDS:
+                    if not owner.get(k) and loser.get(k):
+                        owner[k] = loser[k]
+
+            _demote_ref(loser, ref)
+            acted += 1
+
+            emptied = not loser.get("mdolx_ref") and not (loser.get("mdolx_refs_all") or [])
+
+            if emptied and chainless:
+                # 4b. This row exists ONLY because link_bookings_to_requests
+                # could not place the booking. With the ref gone it represents
+                # nothing, and leaving it would keep the shipment counted
+                # twice — which is the finding.
+                drop.append(loser)
+                owner.setdefault("merge_notes", []).append(
+                    f"Absorbed orphan booking row {loser.get('request_id')} for "
+                    f"MDOLX{ref}: operator correction "
+                    f"({corr.get('source') or 'operator_corrections.json'}) "
+                    f"assigns this booking here, and that row carried no RFQ "
+                    f"thread of its own.")
+                print(f"MDOLX claim: absorbed {loser.get('request_id')} into "
+                      f"{owner.get('request_id')} (MDOLX{ref}) — orphan booking "
+                      f"row, no RFQ chain; shipment was counted twice")
+            elif emptied:
+                # 4c. A REAL request row the matcher stamped WIN with someone
+                # else's booking. Its status is now unsupported; age_requests
+                # re-derives it (it is no longer terminal at ingest.py:1864,
+                # which skips a WIN only while it still holds a ref).
+                released.append(loser)
+                if loser.get("manual_locked"):
+                    # TWO CORRECTIONS DISAGREE, and neither is mine to overrule.
+                    # One correction assigns this booking to `owner`; another
+                    # locked THIS row's verdict. The re-derive skips locked
+                    # rows, so the row stays as the human left it — which for a
+                    # locked WIN means a WIN with no booking ref, and QC-049
+                    # errors on exactly that. That is the honest outcome (the
+                    # alternative is silently reversing a human), but it must
+                    # not be silent: the contradiction is in the corrections
+                    # FILE and only a human can settle it.
+                    print(f"::warning::MDOLX claim: {loser.get('request_id')} "
+                          f"lost MDOLX{ref} to {owner.get('request_id')} but "
+                          f"carries an operator correction of its own — NOT "
+                          f"re-derived. Two corrections disagree about this "
+                          f"booking; resolve it in operator_corrections.json.")
+                else:
+                    print(f"MDOLX claim: {loser.get('request_id')} released "
+                          f"MDOLX{ref} to {owner.get('request_id')} per operator "
+                          f"correction — it holds no other booking ref, so its "
+                          f"status is re-derived below")
+            else:
+                # 4a. Keeps a ref of its own; nothing else changes.
+                print(f"MDOLX claim: {loser.get('request_id')} released MDOLX{ref} "
+                      f"to {owner.get('request_id')} per operator correction "
+                      f"(still holds {loser.get('mdolx_ref') or loser.get('mdolx_refs_all')})")
+
+    for row in drop:
+        if row in requests:
+            requests.remove(row)
+    return acted, [r for r in released if r in requests]
 
 
 #: Win EVIDENCE carried back onto a rebuilt row. Everything here is a fact the
@@ -2431,6 +2710,28 @@ def main() -> int:
     corrected = apply_operator_corrections(all_requests)
     if corrected:
         print(f"Operator corrections applied: {corrected}")
+
+    # A ref a correction names belongs to that row alone. Runs AFTER the
+    # corrections (it reads what they wrote) and BEFORE the aggregates.
+    claimed, released = claim_corrected_mdolx_refs(all_requests)
+    if claimed:
+        print(f"MDOLX claim: {claimed} duplicate ref holding(s) resolved")
+    if released:
+        # RE-DERIVE ONLY THE RELEASED ROWS. The claim can leave a 4c row a WIN
+        # with no booking ref, and age_requests already ran (before the
+        # corrections). Leaving it would publish a ref-less WIN for a whole
+        # fire — QC-049 errors on it, and it is the "worse than the duplicate
+        # it replaced" state this heal exists to avoid.
+        #
+        # `only=`, NOT a second unrestricted call. age_requests has no
+        # manual_locked guard and the applier above is documented as running
+        # LAST so it wins over every automatic classification; re-aging the
+        # whole dataset after it silently reverses human verdicts. Measured
+        # 2026-09-03 before this was scoped: a correction setting
+        # LOSS/SEND_NO_BOOKING on a fresh send-signal came back
+        # PENDING/AWAITING_MDOLX.
+        print(f"MDOLX claim: re-deriving {len(released)} released row(s)")
+        age_requests(all_requests, only=released)
 
     summary = C.aggregate_summary(all_requests)
     lanes   = C.aggregate_lanes(all_requests)
