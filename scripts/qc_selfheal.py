@@ -4946,22 +4946,62 @@ def phase_6_rules(log: Log, data: dict):
     # (HILMAR-DAILY-TRACKER-9) — a misleading "the pipeline didn't run"
     # when actually it did. Added 2026-06-09.
     try:
+        from datetime import datetime as _dt55
         from pathlib import Path as _Path55
         _log_path = _Path55(__file__).resolve().parent.parent / "reports" / "run-log.txt"
+        _SENT55 = "Sentry cron start failed (pipeline continues)"
         if _log_path.exists():
-            # Look only at the recent tail so we don't keep flagging an old
-            # failure once the operator has fixed the root.
-            _tail = _log_path.read_text(encoding="utf-8", errors="ignore")[-50000:]
-            if "Sentry cron start failed (pipeline continues)" in _tail:
-                _last = _tail.rfind("Sentry cron start failed (pipeline continues)")
+            # SCOPE TO TODAY'S FIRE, NOT TO A BYTE TAIL.
+            #
+            # This read `[-50000:]` — chosen when run-log.txt held only the
+            # Cloud-PC wrapper's terse step echoes. run_pipeline now tees the
+            # whole transcript into the same file, and the sentinel is printed
+            # at the START of the fire while QC-055 runs in PHASE 6, two
+            # pipeline steps later. MEASURED on this exact block:
+            #
+            #   transcript 10,052 bytes -> ERROR (correct)
+            #   transcript 45,026 bytes -> ERROR (correct)
+            #   transcript 60,048 bytes -> SILENT OK  ** FALSE PASS **
+            #   transcript 90,034 bytes -> SILENT OK  ** FALSE PASS **
+            #
+            # Production fire 33864188808 carried ~89 KB of pipeline output,
+            # so the tee would have pushed the sentinel out of the window
+            # every fire and QC-055 would have asserted "heartbeat registered"
+            # while blind — via Log.ok, which only PRINTS and never reaches
+            # qc-result.json. An honest "skipped" replaced by an invisible
+            # false pass is strictly worse than the gap this change set out to
+            # close, so it is fixed here rather than left as a risk note.
+            #
+            # Scoping to today's header also un-stamps correctly: a failure
+            # fixed last week no longer re-raises off an accumulated log.
+            _all55 = _log_path.read_text(encoding="utf-8", errors="ignore")
+            _today55 = (_dt55.now().strftime("%Y-%m-%d"),
+                        _dt55.now().strftime("%m/%d/%Y"))
+            _idx55 = max(_all55.rfind(t) for t in _today55)
+            if _idx55 >= 0:
+                _tail = _all55[_idx55:]          # today's fire only
+            elif len(_all55) > 50000:
+                # Can't locate this fire and can't read the whole thing
+                # safely — say so. NEVER ok(): a check that cannot see its
+                # evidence must not assert a pass.
+                log.warn(
+                    "QC-055: cannot verify the cron heartbeat — no fire header "
+                    "for today in a run-log larger than the read window. "
+                    "Not asserting a pass."
+                )
+                _tail = ""
+            else:
+                _tail = _all55
+            if _tail and _SENT55 in _tail:
+                _last = _tail.rfind(_SENT55)
                 _excerpt = _tail[_last:_last + 200].splitlines()[0]
                 log.error(
                     f"QC-055: Sentry cron heartbeat is NOT registering — alerts "
                     f"in HILMAR-DAILY-TRACKER-9 are false positives. Excerpt: "
                     f"{_excerpt}"
                 )
-            else:
-                log.ok("QC-055: Sentry cron heartbeat registered on the recent fire")
+            elif _tail:
+                log.ok("QC-055: Sentry cron heartbeat registered on this fire")
         elif _BLOB_HOST:
             # Ephemeral runner: run-log.txt is written by the Cloud-PC WRAPPER
             # (run_daily_laptop.cmd), which never runs here — the GH fire's

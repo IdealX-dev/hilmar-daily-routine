@@ -837,14 +837,27 @@ jobs:
         # path strips these via _before_send, but an artifact upload has no
         # redaction and is downloadable by anyone with repo read access for
         # the retention window. Upload only the non-PII debug artifacts
-        # (run-log / qc-result / test-result / coverage), which are sufficient
+        # (qc-result / test-result / coverage), which are sufficient
         # to verify what the run did without leaking the client report.
+        #
+        # reports/run-log.txt was REMOVED from this list on 2026-09-04, the
+        # same change that started writing it. run_pipeline now tees the whole
+        # fire transcript there so QC-021 and QC-055 can read it on this host,
+        # and that transcript is not the terse step echoes this list was
+        # written for: fire 33864188808's pipeline output carries 29 distinct
+        # email addresses (Lonny's included), 95 MDOLX refs, OL rates and
+        # lanes. sentry_setup._scrub_string redacts addresses and refs but NOT
+        # lanes or rates, so scrubbing would not satisfy the rule above. The
+        # transcript stays ON the runner, where the QC checks read it; the
+        # per-step detail it carries is already in the job log, which is the
+        # channel this fire's evidence has always used and whose exposure is
+        # unchanged. Uploading a scrubbed transcript is available if Michael
+        # wants it — that is a data-handling call, not an engineering one.
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: production-fire-${{ github.run_id }}
           path: |
-            reports/run-log.txt
             reports/qc-result.json
             reports/test-result.json
             reports/coverage.json

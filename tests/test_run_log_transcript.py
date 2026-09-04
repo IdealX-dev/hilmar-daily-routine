@@ -299,3 +299,93 @@ def test_qc021_cloud_pc_still_catches_the_pipeline_that_never_sent(
     msgs = [m for m in _fired(_base_data()) if "QC-021" in m]
     assert msgs, "a pipeline that completed without sending must still fire"
     assert "Sent. request-id=" in msgs[0]
+
+
+# ── QC-055 must not start lying because the file got bigger ──────────────
+# Added with the tee, not after it. QC-055 read `[-50000:]` — a window chosen
+# when run-log.txt held only the wrapper's terse step echoes. The tee writes
+# the whole fire transcript into that same file, and the sentinel is printed
+# at the START of the fire while QC-055 runs two pipeline steps later.
+#
+# MEASURED against the pre-fix block, sentinel present in every case:
+#   10,052 bytes -> ERROR (correct)
+#   45,026 bytes -> ERROR (correct)
+#   60,048 bytes -> SILENT OK   ** false pass **
+#   90,034 bytes -> SILENT OK   ** false pass **
+#
+# Production fire 33864188808 carried ~89 KB of pipeline output. Shipping the
+# tee without this would have converted an honest "skipped — ephemeral runner"
+# into an invisible false pass on every fire, through Log.ok, which never
+# reaches qc-result.json.
+_SENTINEL_55 = ("Sentry cron start failed (pipeline continues): "
+                "No module named 'sentry_sdk'")
+
+
+def _run_log(tmp_path, monkeypatch, *, size, header=True, sentinel=True):
+    from datetime import datetime
+    now = datetime.now()
+    body = ""
+    if header:
+        body += (f"HILMAR FIRE {now:%Y-%m-%d} ({now:%m/%d/%Y} {now:%H:%M:%S}) "
+                 f"host=github-actions\n")
+    if sentinel:
+        body += _SENTINEL_55 + "\n"
+    filler = "  QC-0xx: ordinary pipeline transcript output line\n"
+    body += filler * (size // len(filler))
+    _fake_root(tmp_path, monkeypatch, run_log_text=body)
+    return _fired(_base_data())
+
+
+@pytest.mark.parametrize("size", [10_000, 60_000, 200_000])
+def test_qc055_catches_the_dead_heartbeat_at_any_transcript_size(
+        size, tmp_path, monkeypatch):
+    """The regression the tee would otherwise have caused. 60_000 and 200_000
+    both false-passed against the byte-tail version."""
+    msgs = [m for m in _run_log(tmp_path, monkeypatch, size=size)
+            if "QC-055" in m]
+    assert msgs, (
+        f"QC-055 missed a dead heartbeat in a {size}-byte transcript — the "
+        f"sentinel scrolled out of its read window")
+    assert "NOT registering" in msgs[0]
+
+
+def test_qc055_still_passes_a_healthy_fire(tmp_path, monkeypatch):
+    """Scoping to today's header must not turn every fire into a finding."""
+    msgs = [m for m in _run_log(tmp_path, monkeypatch, size=90_000,
+                                sentinel=False) if "QC-055" in m]
+    assert not msgs, f"false alarm on a healthy heartbeat: {msgs}"
+
+
+def test_qc055_warns_rather_than_asserting_a_pass_when_it_cannot_see(
+        tmp_path, monkeypatch, capsys):
+    """A check that cannot find its evidence must never assert a pass.
+
+    Two halves, and the second needs stdout: Log.ok() is not recorded on the
+    Log at all, so a spurious "registered" line printed alongside the warn is
+    invisible to log.warnings — an operator reading the run would see a
+    finding and a pass for the same check in the same pass. The first draft of
+    this test checked only log.warnings and could not tell the difference.
+    """
+    msgs = [m for m in _run_log(tmp_path, monkeypatch, size=90_000,
+                                header=False, sentinel=True) if "QC-055" in m]
+    assert msgs, "QC-055 asserted a pass while blind"
+    assert "cannot verify" in msgs[0]
+    printed = capsys.readouterr().out
+    assert "heartbeat registered" not in printed, (
+        "QC-055 printed a pass line beside its own 'cannot verify' warning")
+
+
+def test_qc055_scopes_to_today_so_a_fixed_failure_stops_re_raising(
+        tmp_path, monkeypatch):
+    """Nothing un-stamps a bad value: on an accumulating log, last week's
+    already-fixed failure must not be reported again today."""
+    from datetime import datetime
+    now = datetime.now()
+    body = ("HILMAR FIRE 2026-08-20 (08/20/2026 06:30:00) host=github-actions\n"
+            + _SENTINEL_55 + "\n"
+            + f"HILMAR FIRE {now:%Y-%m-%d} ({now:%m/%d/%Y} {now:%H:%M:%S}) "
+              f"host=github-actions\n"
+            + "  QC-0xx: this fire's heartbeat registered fine\n")
+    _fake_root(tmp_path, monkeypatch, run_log_text=body)
+    msgs = [m for m in _fired(_base_data()) if "QC-055" in m]
+    assert not msgs, f"re-raised a failure that predates today's fire: {msgs}"

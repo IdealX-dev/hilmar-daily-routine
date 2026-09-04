@@ -114,6 +114,39 @@ scrubbed env.)
    per fire. Both call sites now pass the union, and
    `_merge_prior_win_into` holds the invariant at the writer.
 
+**The adversarial pass caught two defects in this change, before merge:**
+
+6. **The tee would have made QC-055 LIE.** QC-055 reads `[-50000:]` of
+   run-log.txt looking for `Sentry cron start failed (pipeline continues)` —
+   a window sized when that file held only the wrapper's terse step echoes.
+   The sentinel prints at the START of the fire; QC-055 runs two pipeline
+   steps later. Measured against the pre-fix block, sentinel present each time:
+
+       10,052 bytes -> ERROR (correct)
+       45,026 bytes -> ERROR (correct)
+       60,048 bytes -> SILENT OK   ** false pass **
+       90,034 bytes -> SILENT OK   ** false pass **
+
+   Fire 33864188808 carried ~89 KB. So the tee would have replaced an honest
+   "skipped — ephemeral runner" with an invisible false pass every fire —
+   through `Log.ok`, which never reaches `qc-result.json`. Strictly worse than
+   the gap being closed. QC-055 now scopes to TODAY's fire header instead of a
+   byte tail, warns (never `ok`) when it cannot find its evidence, and no
+   longer re-raises a failure that predates today's fire.
+
+7. **The transcript is not the non-PII debug artifact that upload list was
+   written for.** `daily.yml`'s own comment forbids uploading plaintext
+   carrying "client name, lanes, carriers, OL rates, the distribution list,
+   MDOLX booking refs". Fire 33864188808's pipeline output carries 29 distinct
+   email addresses (Lonny's included), 95 MDOLX refs, OL rates and lanes, and
+   `sentry_setup._scrub_string` redacts addresses and refs but NOT lanes or
+   rates — so scrubbing would not satisfy the rule. `reports/run-log.txt` was
+   therefore REMOVED from the artifact path in the same change that started
+   writing it. The transcript stays on the runner where the QC checks read it;
+   the per-step detail is already in the job log, the channel this evidence
+   has always used, whose exposure is unchanged. A scrubbed upload is
+   available if Michael wants it — that is his call, not an engineering one.
+
 **THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED.**
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving
 from quoted-lost to won, and rows appearing under "Your confirmed bookings" in
