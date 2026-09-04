@@ -68,7 +68,7 @@ scrubbed env.)
    `run_pipeline` exits, outside the tee. Writing the file without this would
    have converted silence into a daily false alarm. Cloud-PC path untouched.
 
-3. **QC-019 (HILMAR-DAILY-TRACKER-3, 75 events) is an ordering bug, and Seer
+3. **QC-019 is an ordering bug, and Seer
    was wrong.** Seer: "body_parser.py fails to extract the carrier from the
    pipe-table or prose." Reproduced instead, driving the real `phase_6_rules`
    on the production row shape:
@@ -174,6 +174,42 @@ scrubbed env.)
    and left the other. Both branches now read a bounded window off the END of
    the file (2 MB — the Cloud-PC log appends for months) and locate today's
    LATEST fire header inside it. Regression tests are sized like a real fire.
+
+10. **The QC-019 move was wrong, and I shipped it before the review caught
+    it.** Landing QC-019 after QC-056 put it 716 lines BEFORE QC-064, which
+    NULLS a garbage carrier out of the client-visible fields. Reproduced on a
+    status-change WIN, both of QC-064's real garbage classes:
+
+        carrier_quoted='209-656'                         (phone fragment)
+        carrier_quoted='OL Ocean Export Booking mailbox' (mailbox name)
+          QC-019 said: NOTHING
+          carrier after the pass: None / None
+
+    A blank carrier cell shipped and the check that exists to catch it was
+    silent — a noisy false POSITIVE traded for a silent false NEGATIVE, which
+    is worse, and QC-019's clean path is `log.ok`, which never reaches
+    `qc-result.json`. My own comment and the QC-INDEX row both claimed "Runs
+    AFTER QC-056/QC-064", which was false by line number. The rule is not
+    "after the heals" but AFTER EVERY WRITER THAT CAN CHANGE A CARRIER:
+    QC-056 fills them, QC-064 empties them. Now placed after QC-064, and the
+    structural guard pins it against BOTH — the first guard asserted only
+    `qc019 > qc056` and passed with the hole wide open.
+
+11. **"75 Sentry events" was wrong — it is 4.** I read the occurrence count
+    off issue HILMAR-DAILY-TRACKER-3 and attributed it to QC-019.
+    `capture_qc_error` does not set a per-check fingerprint, so eight checks
+    group into that one issue; an issue-level total is not a check's count.
+    Measured on the `qc_check:QC-019` tag: **4 events in 90 days** —
+    2026-09-04, 2026-08-28, 2026-07-20, 2026-07-18. Corrected in the source
+    comment, the test docstring, QC-INDEX and here. Related and recorded, not
+    fixed: the missing fingerprint is why QC-019 shared an issue, an
+    occurrence count and a Seer analysis with seven other checks.
+
+    SCOPE, honestly: the ordering mechanism is proven on the 2026-09-04 row
+    shape only. The other three events are NOT established as the same cause —
+    2026-08-27 read "Lane unresolved", and the two 2026-07-17 events read
+    "Oakland → Oakland", a degenerate lane that is QC-073's territory and may
+    be a different defect wearing QC-019's message.
 
 **THIS MOVES CLIENT-FACING NUMBERS, UPWARD, AND THE SIZE IS UNMEASURED.**
 Item 5 flips `refs_all`-only rows to WIN: wins up, win rate up, TEU moving

@@ -5121,79 +5121,6 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-056: check failed with exception: {_e}")
 
-    # ── QC-019 RUNS HERE, NOT EARLIER — MOVED 2026-09-04 ──────────────────
-    # It used to sit ~166 lines above, before QC-056. So it measured PRE-heal
-    # state and reported it as a parser defect while the SAME pass repaired
-    # it. Reproduced by execution on the shape from production fire
-    # 33864188808 (stand_ WIN, ol_rate 2600, lane Oakland → Busan,
-    # vessel_voyage "HMM PROMISE 0091W"):
-    #
-    #   QC-019 ERROR : 1 status-change(s) ... have no carrier — parser missed
-    #                  extraction. Rows: 20:52:29 Oakland → Busan
-    #   QC-056 FIX   : backfilled carrier from row text — Oakland → Busan=HMM
-    #   carrier after the pass: HMM
-    #
-    # Sentry's Seer blamed body_parser for failing to read the carrier out of
-    # the pipe-table. That is refuted: the carrier is in the row's own
-    # evidence and qc_selfheal finds it unaided — 75 occurrences of an ERROR
-    # about a value the same run already had.
-    #
-    # QC-019 is an ERROR about what SHIPS, so it must measure the state that
-    # ships — after the heals, not before. Its severity is UNCHANGED: Michael
-    # set it to ERROR on 2026-05-13 and a row that is still carrier-less here
-    # is still an error. Do not move this back above QC-056.
-    # QC-019: status-change rows on the report date must have carrier_quoted.
-    # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
-    # carrier and no rate". When OL responds with a rate quote, the row's
-    # status transitions PENDING -> QUOTED/WIN/LOSS, and that response body
-    # carries the carrier+rate. If the parser fails to extract them (new
-    # multi-line pipe-table template surfaced this week), the status change
-    # appears in the email body but the carrier/rate columns are empty —
-    # broken UX and broken negotiation depth. This QC catches the failure
-    # at the data level so the email doesn't ship with empty cells.
-    try:
-        from datetime import datetime as _dt
-        _now_et = _dt.now(core.ET).date()
-        # Report day = today's now-complete biz day (core.report_business_day,
-        # the single source of truth shared with gen_email._report_date).
-        _report_iso = core.report_business_day(_now_et).isoformat()
-        _missing = []
-        for r in requests:
-            for h in (r.get("status_history") or []):
-                at = (h.get("at") or "")[:10]
-                if (at == _report_iso and h.get("from") and h.get("to")
-                        and h["from"] != h["to"] and h["to"] in ("QUOTED","WIN","LOSS")):
-                    if not r.get("carrier_quoted") and not r.get("carrier_won"):
-                        # NAME THE ROW. The 2026-08-27 production event read
-                        # "Rows: 16:59:21 Lane unresolved" — a timestamp and a
-                        # placeholder, with no way to find the row it meant.
-                        _missing.append(
-                            f"{(h.get('at') or '')[11:19]} {r.get('lane','?')} "
-                            f"[{r.get('request_id','?')}]")
-                    break
-        if _missing:
-            log.error(
-                # WORDING CORRECTED WITH THE MOVE. "parser missed
-                # extraction" was written when this ran BEFORE the heals, and
-                # it was the sentence that sent Seer looking at body_parser.
-                # Running after QC-056/QC-064, a row that is still blank here
-                # has already survived every recovery this pass can attempt —
-                # so the honest statement is that no source holds a carrier,
-                # not that one parser fumbled it. Severity is unchanged
-                # (ERROR, Michael 2026-05-13). This does re-key the Sentry
-                # grouping: HILMAR-DAILY-TRACKER-3 will fall quiet and a new
-                # issue opens for genuine cases — the quiet is the false
-                # positives stopping, not the check being switched off.
-                f"QC-019: {len(_missing)} status-change(s) on {_report_iso} shipped "
-                f"with no carrier in ANY source — the row survived carrier "
-                f"recovery from its own text and from a same-lane sibling. "
-                f"Rows: " + "; ".join(_missing[:5])
-                + (f" + {len(_missing)-5} more" if len(_missing) > 5 else "")
-            )
-        else:
-            log.ok(f"QC-019: all status changes on {_report_iso} have carrier attribution")
-    except Exception as _e:
-        log.warn(f"QC-019: check failed with exception: {_e}")
 
     # A ROW THAT BORROWED A QUOTE'S RATE BORROWS ITS DATE TOO. Runs AFTER
     # QC-056 (which may have just completed the rate+carrier pair from a
@@ -5893,6 +5820,100 @@ def phase_6_rules(log: Log, data: dict):
                      f"scrubbed — manual review; fix the upstream parser")
     except Exception as _e:
         log.warn(f"QC-064: check failed with exception: {_e}")
+
+    # ── QC-019 RUNS HERE — AFTER EVERY WRITER THAT TOUCHES A CARRIER ──────
+    # MOVED TWICE ON 2026-09-04, and the first move was wrong.
+    #
+    # Originally it sat ~166 lines above QC-056, so it measured PRE-heal
+    # state and reported a defect the SAME pass repaired. Reproduced on the
+    # shape from production fire 33864188808 (stand_ WIN, ol_rate 2600, lane
+    # Oakland → Busan, vessel_voyage "HMM PROMISE 0091W"):
+    #
+    #   QC-019 ERROR : 1 status-change(s) ... have no carrier — parser missed
+    #                  extraction. Rows: 20:52:29 Oakland → Busan
+    #   QC-056 FIX   : backfilled carrier from row text — Oakland → Busan=HMM
+    #   carrier after the pass: HMM
+    #
+    # Sentry's Seer blamed body_parser for failing to read the carrier out of
+    # the pipe-table. That is refuted: the carrier is in the row's own
+    # evidence and qc_selfheal finds it unaided. COUNT CORRECTED: I first
+    # wrote "75 occurrences", read off issue HILMAR-DAILY-TRACKER-3's
+    # total. That issue is SHARED — capture_qc_error does not fingerprint
+    # per check, so eight checks group into it. Measured on the
+    # qc_check:QC-019 tag: FOUR events in 90 days (2026-09-04, 2026-08-28,
+    # 2026-07-20, 2026-07-18). An ERROR about a value the run already had
+    # about a value the same run already had.
+    #
+    # The FIRST move put it after QC-056 and 716 lines BEFORE QC-064, which
+    # NULLS a garbage carrier out of the client-visible fields. That turned a
+    # noisy false positive into a SILENT FALSE NEGATIVE — worse, because
+    # QC-019's clean path is log.ok(), which only prints and never reaches
+    # qc-result.json. Reproduced on a status-change WIN, both of QC-064's
+    # real garbage classes:
+    #
+    #   carrier_quoted='209-656'                        (phone fragment)
+    #   carrier_quoted='OL Ocean Export Booking mailbox' (mailbox name)
+    #     QC-019 said: NOTHING
+    #     carrier after the pass: None / None
+    #
+    # A blank carrier cell shipped and the check that exists to catch it was
+    # silent. So the rule is not "after the heals" but AFTER EVERY WRITER
+    # THAT CAN CHANGE A CARRIER — QC-056 fills them, QC-064 empties them.
+    # Severity UNCHANGED: Michael set it to ERROR on 2026-05-13 and a row
+    # still carrier-less here is still an error. Do not move this above
+    # QC-064; tests pin it against BOTH.
+    # QC-019: status-change rows on the report date must have carrier_quoted.
+    # Surfaced 2026-05-13 — Michael "status change of pending to quoted with no
+    # carrier and no rate". When OL responds with a rate quote, the row's
+    # status transitions PENDING -> QUOTED/WIN/LOSS, and that response body
+    # carries the carrier+rate. If the parser fails to extract them (new
+    # multi-line pipe-table template surfaced this week), the status change
+    # appears in the email body but the carrier/rate columns are empty —
+    # broken UX and broken negotiation depth. This QC catches the failure
+    # at the data level so the email doesn't ship with empty cells.
+    try:
+        from datetime import datetime as _dt
+        _now_et = _dt.now(core.ET).date()
+        # Report day = today's now-complete biz day (core.report_business_day,
+        # the single source of truth shared with gen_email._report_date).
+        _report_iso = core.report_business_day(_now_et).isoformat()
+        _missing = []
+        for r in requests:
+            for h in (r.get("status_history") or []):
+                at = (h.get("at") or "")[:10]
+                if (at == _report_iso and h.get("from") and h.get("to")
+                        and h["from"] != h["to"] and h["to"] in ("QUOTED","WIN","LOSS")):
+                    if not r.get("carrier_quoted") and not r.get("carrier_won"):
+                        # NAME THE ROW. The 2026-08-27 production event read
+                        # "Rows: 16:59:21 Lane unresolved" — a timestamp and a
+                        # placeholder, with no way to find the row it meant.
+                        _missing.append(
+                            f"{(h.get('at') or '')[11:19]} {r.get('lane','?')} "
+                            f"[{r.get('request_id','?')}]")
+                    break
+        if _missing:
+            log.error(
+                # WORDING CORRECTED WITH THE MOVE. "parser missed
+                # extraction" was written when this ran BEFORE the heals, and
+                # it was the sentence that sent Seer looking at body_parser.
+                # Running after QC-056/QC-064, a row that is still blank here
+                # has already survived every recovery this pass can attempt —
+                # so the honest statement is that no source holds a carrier,
+                # not that one parser fumbled it. Severity is unchanged
+                # (ERROR, Michael 2026-05-13). This does re-key the Sentry
+                # grouping: HILMAR-DAILY-TRACKER-3 will fall quiet and a new
+                # issue opens for genuine cases — the quiet is the false
+                # positives stopping, not the check being switched off.
+                f"QC-019: {len(_missing)} status-change(s) on {_report_iso} shipped "
+                f"with no carrier in ANY source — the row survived carrier "
+                f"recovery from its own text and from a same-lane sibling. "
+                f"Rows: " + "; ".join(_missing[:5])
+                + (f" + {len(_missing)-5} more" if len(_missing) > 5 else "")
+            )
+        else:
+            log.ok(f"QC-019: all status changes on {_report_iso} have carrier attribution")
+    except Exception as _e:
+        log.warn(f"QC-019: check failed with exception: {_e}")
 
     # QC-066: IMPOSSIBLE STATE — outcome predates its own request (merge /
     # carry-forward artifact from Lonny's recurring Outlook threads). This is
