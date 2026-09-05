@@ -3,7 +3,80 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-05 (latest) — review of the QC-039 fix: the guard proved the predicate, not the call sites
+### 2026-09-05 (latest) — one QC check is one Sentry issue, and the attached stack stops carrying the raw message
+
+HILMAR-DAILY-TRACKER-K — "QC-072: request [REQ_ID] — status=PENDING but
+status_history ends at QUOTED", 23 occurrences, last 2026-08-13. The CHECK
+was already fixed at the predicate (#208, c659f16: QUOTED-on-PENDING is
+ingest's designed sub-state, not a contradiction; both directions pinned in
+`test_undated_quote_ages.py` — re-proven by mutation this session, the
+carve-out removed → 1 red). Issue K itself was the defect, one layer up.
+
+**23 occurrences, of which 2 are QC-072.** The other 21 are QC-073
+(`stand_260928 — degenerate lane Oakland → Oakland`, 2026-07-27..08-12) under
+a QC-072 title and a QC-072 Seer analysis. `capture_qc_error`'s docstring has
+said since May that the check name "becomes the issue fingerprint"; the code
+set a tag and passed NO fingerprint, and with `attach_stacktrace=True` Sentry
+grouped every `capture_message` by the stack of the ONE `Log.error →
+capture_qc_error` path every check shares. Measured over 90 days of
+`component:qc_selfheal`, grouping was wrong in BOTH directions:
+
+    TRACKER-3  QC-077 30 · QC-055 11 · QC-015 7 · QC-052 6 · QC-054 4 · QC-019 4 · QC-039 2 · QC-061 1
+    TRACKER-K  QC-073 21 · QC-072 2
+    TRACKER-8  QC-039 106 · QC-040 6 · QC-041 4
+    QC-039 alone sits in TRACKER-8, -F AND -3: the fingerprinted stack moves
+    whenever qc_selfheal.py gains a line, so a check re-keys with every edit.
+
+Every consumer of "one issue = one check" was wrong with it: the 2026-09-04
+item 11 count (75 read off an issue, for a check that fired 4 times), every
+Seer analysis on a shared issue, and `qc_actions_from_sentry._action_lookup`,
+which routes a WHOLE issue — `auto_resolve_safe` included — off the first
+`qc_check` tag it finds on it.
+
+**Shipped:**
+
+1. `sentry_setup.qc_fingerprint` returns `[check_name]` for a QC-NNN id, and
+   `capture_qc_error` / `capture_qc_warning` compose through ONE `_capture_qc`
+   that passes it as `capture_message(..., fingerprint=)` — sentry-sdk 2.x
+   `Scope.update_from_kwargs`, verified on the pinned 2.68.1 source (Context7
+   was not authorised in this session; the installed source is the pinned
+   surface). A non-QC name keeps Sentry's default grouping rather than folding
+   every prefix-less message into one catch-all issue. The `qc_check` tag now
+   rides the EVENT (`tags=`) instead of `set_tag` on the isolation scope,
+   which outlives the call and stamped the LAST check's id on every later
+   event in the process. Titles no longer read `QC-072: QC-072: …`.
+
+2. **The production-shaped test found a PII leak sitting beside the
+   fingerprint.** Driving the real SDK on the production options through
+   `qc_selfheal.Log.error`: the event's `message` read `[REQ_ID] …
+   [EMAIL_REDACTED]` while its `threads` frame locals (`msg`, `summary`,
+   `text`) carried the raw request id and a raw email address three times.
+   `_before_send` scrubbed `exception` frames only; `attach_stacktrace` files
+   a message's stack under `threads`; and STANDARDS §6's `with_locals=False`
+   (`include_local_variables` in 2.x) was never set. Now: locals off at
+   `init`, both stack interfaces scrubbed through one `_scrub_frame_vars`,
+   and `threads` in the fail-closed drop list. The options `init()` passes
+   are exposed as `_sdk_options()` so the tests run the real configuration,
+   not a copy of it that drifts.
+
+3. Tests: `tests/test_sentry_qc_fingerprint.py` — both directions (two checks
+   from one call path never share a fingerprint; one check across rows and
+   wordings always does; unknown name → default grouping; tag per event, not
+   per process) and the live-SDK path with issue K's own two message shapes —
+   plus two cases in `test_auditfix_sentry_scrubber_failclosed.py`. Each
+   protection was removed in turn and its test went red: no fingerprint (5
+   red), tag via `set_tag` (4), `include_local_variables` (1), the `threads`
+   walk (2), the fail-closed key (2), the double prefix (2).
+
+**Not changed, flagged:** `reports/QC-INDEX.md`'s QC-072 row does not mention
+the #208 QUOTED-on-PENDING carve-out — operator-owned path, not edited here.
+Sentry: HILMAR-DAILY-TRACKER-K is to be resolved as fixed — both shapes it
+holds stopped on 2026-08-13/14 (QC-072 by #208; QC-073 by the "LOAD APPTS"
+gate and the stand_260928 exclude) and have 0 events in 22 days; from the
+first fire on this change QC-072 and QC-073 each open their own issue, and a
+resolve of one can no longer be "regressed" by the other.
+
+### 2026-09-05 — review of the QC-039 fix: the guard proved the predicate, not the call sites
 
 Six findings on the entry below (two medium, mutation-proven; four low).
 Every one fixed at the layer it lives in; nothing deferred.
@@ -675,8 +748,9 @@ scrubbed env.)
     Measured on the `qc_check:QC-019` tag: **4 events in 90 days** —
     2026-09-04, 2026-08-28, 2026-07-20, 2026-07-18. Corrected in the source
     comment, the test docstring, QC-INDEX and here. Related and recorded, not
-    fixed: the missing fingerprint is why QC-019 shared an issue, an
-    occurrence count and a Seer analysis with seven other checks.
+    fixed [historic — fixed 2026-09-05, see that entry]: the missing
+    fingerprint is why QC-019 shared an issue, an occurrence count and a
+    Seer analysis with seven other checks.
 
     SCOPE, honestly: the ordering mechanism is proven on the 2026-09-04 row
     shape only. The other three events are NOT established as the same cause —

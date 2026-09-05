@@ -31,7 +31,12 @@ Every event has these tags:
 
 QC-specific events also have:
 
-- `qc_check`: the QC-NNN identifier (issues group by this — one Sentry issue per check, not per row)
+- `qc_check`: the QC-NNN identifier. One Sentry issue per check, not per row —
+  delivered by `capture_qc_error` passing `fingerprint=[check_name]` on every
+  event (since 2026-09-05; before that the line above was a claim only, and
+  `attach_stacktrace` grouped by the shared `Log.error` stack — eight checks in
+  one issue, one check across three). The tag is per-event, never on the
+  process scope, so a later step failure cannot inherit a check's id.
 
 ## PII Scrubbing — what NEVER leaves the machine
 

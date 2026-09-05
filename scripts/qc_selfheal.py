@@ -6004,8 +6004,10 @@ def phase_6_rules(log: Log, data: dict):
     # the pipe-table. That is refuted: the carrier is in the row's own
     # evidence and qc_selfheal finds it unaided. COUNT CORRECTED: I first
     # wrote "75 occurrences", read off issue HILMAR-DAILY-TRACKER-3's
-    # total. That issue is SHARED — capture_qc_error does not fingerprint
-    # per check, so eight checks group into it. Measured on the
+    # total. That issue WAS shared — capture_qc_error did not fingerprint
+    # per check until 2026-09-05 (sentry_setup.qc_fingerprint; one issue
+    # per check from the first fire after it), so eight checks grouped
+    # into it. Measured on the
     # qc_check:QC-019 tag: FOUR events in 90 days (2026-09-04, 2026-08-28,
     # 2026-07-20, 2026-07-18). An ERROR about a value the run already had
     # about a value the same run already had.

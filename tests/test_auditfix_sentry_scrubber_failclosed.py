@@ -23,6 +23,12 @@ def _event_with_pii():
         "extra": {"req": "req_00aabbccddeeff11", "lane": "Oakland to Tokyo"},
         "tags": {"phase": "post-patch"},
         "fingerprint": ["pipeline.step_failure"],
+        # attach_stacktrace=True puts a capture_message's stack HERE, not
+        # under "exception" — and frame locals hold the raw message.
+        "threads": {"values": [{"stacktrace": {"frames": [
+            {"function": "error", "vars": {
+                "msg": "QC-072: request req_00aabbccddeeff11 for lupfold@hilmaringredients.com"}},
+        ]}}]},
     }
 
 
@@ -53,9 +59,20 @@ def test_scrub_fault_does_not_return_raw_event(monkeypatch):
     assert out["tags"] == {"phase": "post-patch"}
 
 
+def test_threads_frame_locals_are_scrubbed():
+    """2026-09-05 (HILMAR-DAILY-TRACKER-K): the scrubber walked `exception`
+    frames only. A QC event's stack lives under `threads`, so its `msg` /
+    `summary` / `text` locals shipped the raw request id and email beside
+    the redacted message. Both interfaces go through one helper now."""
+    out = S._before_send(_event_with_pii(), None)
+    frame = out["threads"]["values"][0]["stacktrace"]["frames"][0]
+    assert frame["vars"]["msg"] == "QC-072: request [REQ_ID] for [EMAIL_REDACTED]"
+    assert "lupfold@hilmaringredients.com" not in json.dumps(out)
+
+
 def test_fail_closed_event_drops_pii_bearing_keys():
     redacted = S._fail_closed_event(_event_with_pii())
-    for k in ("exception", "extra", "breadcrumbs", "request", "user"):
+    for k in ("exception", "threads", "extra", "breadcrumbs", "request", "user"):
         assert k not in redacted
     assert "message" in redacted and redacted["message"].startswith("[SCRUBBER_FAILED")
 

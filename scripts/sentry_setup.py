@@ -95,6 +95,17 @@ def _walk_scrub(obj):
     return obj
 
 
+def _scrub_frame_vars(stacktrace) -> None:
+    """Scrub the local-variable snapshot of every frame in one stacktrace
+    dict, in place. Shared by the `exception` and `threads` interfaces so
+    the scrubber cannot walk one and not the other."""
+    if not isinstance(stacktrace, dict):
+        return
+    for fr in stacktrace.get("frames") or []:
+        if isinstance(fr, dict) and isinstance(fr.get("vars"), dict):
+            fr["vars"] = _walk_scrub(fr["vars"])
+
+
 def _before_send(event, hint):
     """Sentry hook: scrub PII from the event before transmission.
 
@@ -113,10 +124,15 @@ def _before_send(event, hint):
             for exc in event["exception"]["values"]:
                 if "value" in exc:
                     exc["value"] = _scrub_string(exc.get("value", ""))
-                if "stacktrace" in exc and "frames" in exc["stacktrace"]:
-                    for fr in exc["stacktrace"]["frames"]:
-                        if "vars" in fr and isinstance(fr["vars"], dict):
-                            fr["vars"] = _walk_scrub(fr["vars"])
+                _scrub_frame_vars(exc.get("stacktrace"))
+        # `attach_stacktrace=True` puts a capture_message's stack under
+        # `threads`, NOT `exception` — and its frame locals hold the RAW
+        # message (`msg` / `summary` / `text`) that the line above has just
+        # redacted. Measured 2026-09-05: one QC event, scrubbed message,
+        # the request id and an email address raw three times in `threads`.
+        if "threads" in event and "values" in event["threads"]:
+            for th in event["threads"]["values"]:
+                _scrub_frame_vars(th.get("stacktrace"))
         if "extra" in event:
             event["extra"] = _walk_scrub(event["extra"])
         if "breadcrumbs" in event and "values" in event["breadcrumbs"]:
@@ -148,7 +164,7 @@ def _before_send(event, hint):
 
 # Fields that carry free-text and therefore client PII. On a scrub fault we
 # blunt-redact these wholesale rather than risk shipping them unscrubbed.
-_PII_BEARING_KEYS = ("message", "exception", "extra", "breadcrumbs",
+_PII_BEARING_KEYS = ("message", "exception", "threads", "extra", "breadcrumbs",
                      "logentry", "request", "user")
 
 
@@ -239,6 +255,35 @@ _RUN_ID = uuid.uuid4().hex[:12]
 _INITIALIZED = False
 
 
+def _sdk_options(dsn: str, env: str, release: str, *, sample_rate: float = 1.0) -> dict:
+    """The `sentry_sdk.init` options, as ONE dict, so a test can run the real
+    SDK on the production configuration (plus a recording transport) instead
+    of a copy of it that drifts."""
+    return dict(
+        dsn=dsn,
+        environment=env,
+        release=release,
+        # Performance transactions: capture every step (low volume — ~14/fire/day)
+        traces_sample_rate=sample_rate,
+        # PII handling: opt OUT of automatic PII capture. We control what
+        # gets sent via explicit capture_message() calls + the scrubber.
+        send_default_pii=False,
+        # STANDARDS §6: `with_locals=False` (the 1.x name; 2.x spells it
+        # include_local_variables). Never set until 2026-09-05 — with
+        # attach_stacktrace on, every QC event carried the RAW message in
+        # the `threads` frame locals beside its scrubbed copy.
+        include_local_variables=False,
+        # Limit context to keep payload small
+        max_breadcrumbs=50,
+        attach_stacktrace=True,
+        # The scrubber — strips emails / MDOLX / conv IDs / IMIDs / req IDs
+        before_send=_before_send,
+        before_send_transaction=_before_send,
+        # Don't auto-instrument network libs (not needed for this pipeline)
+        auto_enabling_integrations=False,
+    )
+
+
 def init(component: str = "unknown", *, sample_rate: float = 1.0) -> bool:
     """Initialize Sentry for an entry-point script.
 
@@ -268,24 +313,7 @@ def init(component: str = "unknown", *, sample_rate: float = 1.0) -> bool:
     env = _detect_environment()
     release = f"hilmar-daily-tracker@{_git_sha_short()}"
 
-    sentry_sdk.init(
-        dsn=dsn,
-        environment=env,
-        release=release,
-        # Performance transactions: capture every step (low volume — ~14/fire/day)
-        traces_sample_rate=sample_rate,
-        # PII handling: opt OUT of automatic PII capture. We control what
-        # gets sent via explicit capture_message() calls + the scrubber.
-        send_default_pii=False,
-        # Limit context to keep payload small
-        max_breadcrumbs=50,
-        attach_stacktrace=True,
-        # The scrubber — strips emails / MDOLX / conv IDs / IMIDs / req IDs
-        before_send=_before_send,
-        before_send_transaction=_before_send,
-        # Don't auto-instrument network libs (not needed for this pipeline)
-        auto_enabling_integrations=False,
-    )
+    sentry_sdk.init(**_sdk_options(dsn, env, release, sample_rate=sample_rate))
 
     # Set default tags on every subsequent event
     sentry_sdk.set_tag("component", component)
@@ -315,23 +343,76 @@ def qc_event_message(check_name: str, summary: str) -> str:
     return f"{check_name}: {text}"
 
 
+# A QC finding's identity for Sentry grouping is the CHECK, never the call
+# path. Same shape qc_selfheal._extract_check_name emits (QC-NNN plus the
+# optional sub-variant letter: QC-014a / QC-020b).
+_QC_CHECK_ID_RX = re.compile(r"QC-\d+[a-z]?")
+
+
+def qc_fingerprint(check_name: str) -> list[str] | None:
+    """The Sentry fingerprint for a QC finding: ``[check_name]`` — one issue
+    per check — or ``None`` (keep Sentry's default grouping) when the name
+    is not a QC-NNN id, so a prefix-less message such as the parser-accuracy
+    warning is never lumped into one catch-all "QC-unknown" issue.
+
+    WHY (2026-09-05, HILMAR-DAILY-TRACKER-K). For four months the
+    ``capture_qc_error`` docstring promised per-check grouping while the code
+    set a tag and passed NO fingerprint. With ``attach_stacktrace=True``
+    Sentry then grouped every ``capture_message`` by the stack of the ONE
+    shared ``Log.error -> capture_qc_error`` path, so grouping was wrong in
+    both directions — measured on 90 days of ``component:qc_selfheal``:
+    issue TRACKER-3 held EIGHT checks (QC-077/055/015/052/054/019/039/061),
+    TRACKER-K held 21 QC-073 events under a QC-072 title and a QC-072 Seer
+    analysis, and QC-039 alone was spread over THREE issues, because the
+    fingerprinted stack moves whenever qc_selfheal.py gains a line. Every
+    consumer of "one issue = one check" was wrong with it: occurrence counts
+    (CHANGELOG 2026-09-04 item 11 read 75 for a check that fired 4 times),
+    Seer analyses, and ``qc_actions_from_sentry._action_lookup``, which
+    routes a WHOLE issue — ``auto_resolve_safe`` included — off the first
+    ``qc_check`` tag it finds on it.
+    """
+    if isinstance(check_name, str) and _QC_CHECK_ID_RX.fullmatch(check_name):
+        return [check_name]
+    return None
+
+
+def _capture_qc(check_name: str, summary: str, level: str) -> None:
+    """ONE composition for both QC capture paths, so the identity rules
+    cannot hold for ERRORs and not for WARNs.
+
+    Per-EVENT data only: ``tags`` and ``fingerprint`` ride the event through
+    ``capture_message``'s scope kwargs (sentry-sdk 2.x
+    ``Scope.update_from_kwargs``; verified on the pinned 2.68.1 source). The
+    old ``sentry_sdk.set_tag("qc_check", ...)`` wrote the ISOLATION scope,
+    which outlives the call — every later event in the process (a step
+    failure, an uncaught exception) inherited the LAST check's id, and
+    ``_action_lookup`` keys on exactly that tag.
+
+    The summary already carries its own ``QC-NNN:`` prefix on every
+    qc_selfheal path, so it is not prefixed twice (the issue titles read
+    ``QC-072: QC-072: request ...`` before this).
+    """
+    import sentry_sdk
+    kwargs: dict = {"tags": {"qc_check": check_name}}
+    fp = qc_fingerprint(check_name)
+    if fp is not None:
+        kwargs["fingerprint"] = fp
+    text = qc_event_message(check_name, summary)
+    sentry_sdk.capture_message(text, level=level, **kwargs)
+
+
 def capture_qc_error(check_name: str, summary: str, **extras) -> None:
     """Capture a QC ERROR-severity finding as a Sentry event.
 
     Use from qc_selfheal.py when log.error() fires. The check_name
-    (e.g. "QC-039") becomes the issue fingerprint, so all instances
-    of the same check failing group together in Sentry.
+    (e.g. "QC-039") IS the issue fingerprint (``qc_fingerprint``), so all
+    instances of the same check failing group into ONE issue — across
+    rows, fires and releases — and no other check can join it.
     """
     try:
-        import sentry_sdk
         if not _INITIALIZED:
             return
-        sentry_sdk.set_tag("qc_check", check_name)
-        sentry_sdk.capture_message(
-            qc_event_message(check_name, summary),
-            level="error",
-            scope=None,
-        )
+        _capture_qc(check_name, summary, "error")
     except Exception:
         pass  # observability must never crash the pipeline
 
@@ -339,17 +420,11 @@ def capture_qc_error(check_name: str, summary: str, **extras) -> None:
 def capture_qc_warning(check_name: str, summary: str, **extras) -> None:
     """Like capture_qc_error but at warning level — for QC WARNs that
     are worth surfacing in real time (e.g. parser regressions just under
-    the error threshold)."""
+    the error threshold). Same per-check fingerprint."""
     try:
-        import sentry_sdk
         if not _INITIALIZED:
             return
-        sentry_sdk.set_tag("qc_check", check_name)
-        sentry_sdk.capture_message(
-            qc_event_message(check_name, summary),
-            level="warning",
-            scope=None,
-        )
+        _capture_qc(check_name, summary, "warning")
     except Exception:
         pass
 
