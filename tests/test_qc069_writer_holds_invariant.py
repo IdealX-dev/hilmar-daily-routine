@@ -184,7 +184,7 @@ def test_every_booking_lands_on_exactly_the_operators_row(corrections):
     for rid, ref, _ in YOKOHAMA:
         assert by_id[rid]["mdolx_ref"] == ref, (rid, by_id[rid]["mdolx_ref"])
         assert by_id[rid]["mdolx_refs_all"] == [ref]
-        assert by_id[rid]["_booking_match_via"] == "operator_correction"
+        assert by_id[rid]["_booking_match_via"] == IN.OPERATOR_CORRECTION_VIA
         assert by_id[rid]["status"] == "WIN"
 
 
@@ -277,7 +277,7 @@ def test_a_header_chain_pointing_at_the_rival_does_not_overrule_the_operator(cor
     requests, standalones = IN.link_bookings_to_requests([owner, rival], {"261031": bk})
     assert standalones == []
     assert owner["mdolx_ref"] == "261031"
-    assert owner["_booking_match_via"] == "operator_correction"
+    assert owner["_booking_match_via"] == IN.OPERATOR_CORRECTION_VIA
     assert not rival.get("mdolx_ref") and rival["status"] == "PENDING", (
         "the header chain overruled the operator's verdict")
 
@@ -317,7 +317,7 @@ def test_a_named_ref_whose_row_is_absent_still_links_by_score(corrections):
     requests, standalones = IN.link_bookings_to_requests([ask], bookings)
     assert standalones == []
     assert ask["mdolx_ref"] == "261099"
-    assert ask["_booking_match_via"] != "operator_correction"
+    assert ask["_booking_match_via"] != IN.OPERATOR_CORRECTION_VIA
 
 
 def test_a_named_ref_whose_row_is_absent_still_becomes_a_standalone(corrections):
@@ -325,11 +325,6 @@ def test_a_named_ref_whose_row_is_absent_still_becomes_a_standalone(corrections)
     bookings = {"261099": _confirmation("261099", "2026-08-13T20:04:00Z")}
     requests, standalones = IN.link_bookings_to_requests([], bookings)
     assert [r["request_id"] for r in standalones] == ["stand_261099"]
-
-
-def test_an_exclude_correction_names_no_owner(corrections):
-    corrections([{"request_id": "req_x", "exclude": True}])
-    assert IN._corrected_ref_owners() == {}
 
 
 def test_a_missing_or_unreadable_corrections_file_consults_nothing(tmp_path, monkeypatch):
@@ -341,16 +336,288 @@ def test_a_missing_or_unreadable_corrections_file_consults_nothing(tmp_path, mon
     assert IN._corrected_ref_owners() == {}
 
 
-def test_the_matcher_reads_the_same_file_as_the_applier():
-    """One source. A second path, a second predicate, or a re-spelled key is
-    how the two writers came to disagree in the first place."""
-    src = (ROOT / "scripts" / "ingest.py").read_text(encoding="utf-8")
-    body = src.split("def _corrected_ref_owners")[1].split("\ndef ")[0]
-    assert "CORRECTIONS_PATH" in body
-    assert 'corr.get("exclude")' in body
-    link = src.split("def link_bookings_to_requests")[1].split("\ndef ")[0]
-    assert "_corrected_ref_owners()" in link, (
-        "link_bookings_to_requests no longer consults the corrections file")
+# ── ONE predicate, three readers — proven by RUNNING them ───────────────
+#
+# The first version of this guard searched scripts/ingest.py for the string
+# 'corr.get("exclude")' inside _corrected_ref_owners. It went red on the
+# refactor that hoisted the predicate into the shared _named_ref (the very
+# "one source, no re-spelling" it claimed to prove) and stayed green with the
+# exclude gate deleted outright — review, 2026-09-05. A guard pins the
+# PROPERTY: feed one corrections list to the consult, the applier and the
+# claim, and assert they agree row for row.
+
+#: Every shape the predicate must rule on, each named so a failure names it.
+_SHAPES = [
+    _corr("req_a", "261026"),                             # plain set: A owns 261026
+    {"request_id": "req_x", "exclude": True,               # an exclude that CARRIES a ref —
+     "set": {"mdolx_ref": "261050"}},                      #   the shape the gate defends
+    {"request_id": "req_b", "set": {"status": "WIN"}},     # a set naming no ref
+    {"set": {"mdolx_ref": "261060"}},                      # a ref naming no row
+    _corr("req_c", "261070"),                             # two corrections, one ref:
+    _corr("req_d", "261070"),                             #   the FIRST wins
+]
+
+
+def _rows(pairs):
+    """Rows built through build_requests (the production shape), one per
+    (request_id, ref); a ref, when given, is held verbatim as a WIN."""
+    out = []
+    for i, (rid, ref) in enumerate(pairs):
+        (r,) = IN.build_requests([_staged_rfq(f"<{rid}>", f"2026-08-{1 + i:02d}T16:00:00Z")])
+        r["request_id"] = rid
+        if ref:
+            r["mdolx_ref"], r["mdolx_refs_all"], r["status"] = ref, [ref], "WIN"
+        out.append(r)
+    return out
+
+
+def _holders(rows, ref):
+    return sorted(r["request_id"] for r in rows if IN._row_holds(r, ref))
+
+
+def test_the_consult_names_exactly_the_refs_a_set_correction_carries(corrections):
+    corrections(_SHAPES)
+    assert IN._corrected_ref_owners() == {"261026": "req_a", "261070": "req_c"}
+
+
+def test_an_exclude_correction_that_carries_a_ref_names_no_owner(corrections):
+    """The shipped fixture had no `set`, so it was dropped for emptiness
+    before the exclude gate was ever consulted and passed with the gate
+    deleted. This one carries the ref the gate must refuse."""
+    excl = {"request_id": "req_x", "exclude": True, "set": {"mdolx_ref": "261050"}}
+    corrections([excl])
+    assert IN._corrected_ref_owners() == {}
+    assert IN._named_ref(excl) is None
+    assert IN._named_ref({"request_id": "req_x", "set": {"mdolx_ref": " 261050 "}}) == "261050"
+    assert IN._named_ref({"request_id": "req_x", "set": {"status": "WIN"}}) is None
+    assert IN._named_ref({"request_id": "req_x", "exclude": True}) is None
+
+
+def test_the_three_callers_agree_about_which_row_owns_each_ref(corrections):
+    """One list, three readers. The consult decides where the WRITER places a
+    booking; the applier decides what it STAMPS; the claim decides what it
+    RESOLVES. They must name the same owner for every ref and the same
+    non-owners. Deleting the exclude gate from _named_ref turns this red in
+    the consult and the claim at once."""
+    corrections(_SHAPES)
+    owners = IN._corrected_ref_owners()
+
+    # THE WRITER — one booking per candidate ref, every row on the same lane.
+    rows = _rows([(rid, None) for rid in ("req_a", "req_x", "req_b", "req_c", "req_d", "req_e")])
+    bookings = {ref: _confirmation(ref, STAGED.format(4 + 2 * i))
+                for i, ref in enumerate(("261026", "261050", "261060", "261070"))}
+    requests, standalones = IN.link_bookings_to_requests(rows, bookings)
+    assert standalones == []
+    placed = {r["mdolx_ref"]: r["request_id"] for r in requests
+              if r.get("_booking_match_via") == IN.OPERATOR_CORRECTION_VIA}
+    assert placed == owners == {"261026": "req_a", "261070": "req_c"}
+    scored = {r["mdolx_ref"] for r in requests
+              if r.get("mdolx_ref") and r.get("_booking_match_via") != IN.OPERATOR_CORRECTION_VIA}
+    assert scored == {"261050", "261060"}, "an excluded or row-less ref was placed as if named"
+
+    # THE APPLIER — removes the excluded row, stamps the named rows, writes
+    # nothing for a set naming no ref or a ref naming no row. It stamps BOTH
+    # rows two corrections name: that is the contradiction the claim resolves.
+    rows = _rows([(rid, None) for rid in ("req_a", "req_x", "req_b", "req_c", "req_d")])
+    IN.apply_operator_corrections(rows)
+    by_id = {r["request_id"]: r for r in rows}
+    assert "req_x" not in by_id
+    assert by_id["req_a"]["mdolx_ref"] == "261026"
+    assert not by_id["req_b"].get("mdolx_ref")
+    assert not any(r.get("mdolx_ref") == "261060" for r in rows)
+    assert by_id["req_c"]["mdolx_ref"] == by_id["req_d"]["mdolx_ref"] == "261070"
+
+    # THE CLAIM — acts on exactly the refs the consult names, keeps the
+    # consult's owner, and leaves the holders of an excluded ref alone.
+    rows = _rows([("req_a", "261026"), ("req_rival_a", "261026"),
+                  ("req_x", "261050"), ("req_rival_x", "261050"),
+                  ("req_c", "261070"), ("req_d", "261070")])
+    acted, released = IN.claim_corrected_mdolx_refs(rows)
+    assert _holders(rows, "261026") == ["req_a"]
+    assert _holders(rows, "261070") == ["req_c"]
+    assert _holders(rows, "261050") == ["req_rival_x", "req_x"], "the claim acted on an excluded ref"
+    assert acted == 2 and sorted(r["request_id"] for r in released) == ["req_d", "req_rival_a"]
+
+
+def test_the_first_of_two_corrections_naming_one_ref_wins_at_the_writer_and_after_the_claim(corrections):
+    """Two corrections, one ref, two rows: a contradiction in the file. The
+    consult takes the FIRST (setdefault); the claim walks the file in order
+    and the first owner holding the ref demotes the other. Both must land on
+    the same row, or the writer places a booking the backstop then moves —
+    the two-writers-disagree mechanism, re-created inside the fix.
+    Last-wins at the consult (`owners[ref] = rid`) turns this red."""
+    corrections([_corr("req_first", "261099"), _corr("req_second", "261099")])
+    (first,) = IN.build_requests([_staged_rfq("<1>", "2026-08-01T16:00:00Z")])
+    first["request_id"] = "req_first"
+    (second,) = IN.build_requests([_staged_rfq("<2>", "2026-08-04T16:00:00Z")])
+    second["request_id"] = "req_second"          # the later ask: the tiebreak's own pick
+    bookings = {"261099": _confirmation("261099", "2026-08-13T20:04:00Z")}
+    requests, standalones = IN.link_bookings_to_requests([first, second], bookings)
+    assert standalones == []
+    assert first["mdolx_ref"] == "261099"
+    assert first["_booking_match_via"] == IN.OPERATOR_CORRECTION_VIA
+    assert not second.get("mdolx_ref"), "the second correction overruled the first at the writer"
+    rows = requests + standalones
+    IN.age_requests(rows)
+    IN.apply_operator_corrections(rows)          # stamps both — the contradiction
+    IN.claim_corrected_mdolx_refs(rows)          # resolves it in file order
+    assert _holders(rows, "261099") == ["req_first"]
+
+
+# ── the receipt is a composition, and it is RUN ─────────────────────────
+
+def test_the_receipt_reports_how_many_bookings_the_operator_placed(corrections):
+    """The commit named this log line as the production verification, and
+    its count compared a re-typed literal against the writer's stamp — a
+    receipt that could report 0 forever while the fix worked (measured:
+    changing the reader's literal alone left the whole suite green). The
+    composer and the writer now read ONE constant, and the composition is
+    run here over the live batch."""
+    corrections([_corr(*t) for t in YOKOHAMA])
+    asks, bookings = _live_fixture()
+    requests, standalones = IN.link_bookings_to_requests(asks, bookings)
+    assert IN.link_receipt(requests, bookings, standalones) == (
+        "Linked 10/10 bookings to requests; 0 standalone wins; "
+        "10 placed on the row an operator correction names, before scoring")
+
+
+def test_the_receipt_is_silent_about_the_operator_when_nothing_was_placed(corrections):
+    corrections([])
+    asks, bookings = _live_fixture()
+    requests, standalones = IN.link_bookings_to_requests(asks, bookings)
+    line = IN.link_receipt(requests, bookings, standalones)
+    wins = sum(1 for r in requests if r["status"] == "WIN")
+    assert line == f"Linked {wins}/10 bookings to requests; {len(standalones)} standalone wins"
+
+
+def test_ingest_main_prints_the_receipt(corrections, tmp_path, monkeypatch, capsys):
+    """main() end to end over the live shape — staged RFQs and confirmations
+    in, the receipt line out — so the print in main() is exercised, not just
+    the composer. request_ids are whatever build_requests derives from the
+    staged rows, so the corrections are written against THOSE."""
+    rfqs = [_staged_rfq(f"<rfq-{i}>", f"2026-08-{i:02d}T16:00:00Z") for i in range(1, 11)]
+    ids = [r["request_id"] for r in IN.build_requests(rfqs)]
+    assert len(set(ids)) == 10
+    refs = [ref for _, ref, _ in YOKOHAMA]
+    corrections([_corr(rid, ref) for rid, ref in zip(ids, refs, strict=True)])
+    confs = [_staged(_confirmation(ref, None)["subject"], STAGED.format(4 + 2 * i), f"<bk-{ref}>")
+             for i, ref in enumerate(refs)]
+    monkeypatch.setattr(IN, "load_stage", lambda: rfqs + confs)
+    monkeypatch.setattr(IN, "OUT_PATH_DEFAULT", tmp_path / "tracking-data-v2.json")
+    monkeypatch.setattr(sys, "argv", ["ingest"])
+    assert IN.main() == 0
+    out = capsys.readouterr().out
+    assert ("Linked 10/10 bookings to requests; 0 standalone wins; "
+            "10 placed on the row an operator correction names, before scoring") in out
+    assert "MDOLX claim:" not in out, "the backstop found work on a fresh build"
+    written = json.loads((tmp_path / "tracking-data-v2.json").read_text(encoding="utf-8"))
+    assert _dupes(written["requests"]) == []
+    assert sorted(r["mdolx_ref"] for r in written["requests"]) == sorted(refs)
+
+
+# ── a named booking with no clock still lands on the operator's row ─────
+
+@pytest.mark.parametrize("sent", [None, "", "not a timestamp"])
+def test_an_undated_named_booking_still_lands_on_the_operators_row(corrections, sent):
+    """`if not bk_ts and best is None: continue` — the carve-out, pinned.
+    Without it an undated booking is skipped by the matcher and falls through
+    to the standalone loop, which has NO timestamp guard: a `stand_<ref>`
+    WIN beside the operator's row, which the applier then stamps — the exact
+    duplicate this fix exists to prevent, produced by a missing date.
+    Reverting to `if not bk_ts: continue` turns this red.
+
+    What the writer stores for a booking with no clock: booking_timestamp
+    and the history entry's `at` carry what the stage said, VERBATIM — None,
+    or a string nothing can parse — never a substitute date. That is the
+    shape the standalone path has always written for an undated booking
+    (`"booking_timestamp": bk.get("sent")`, `"at": bk_ts_iso`), and every
+    reader parses and falls back: core.win_event_date lands on the ask's own
+    date, QC-066 and QC-072 stay quiet, gen_email's STATUS CHANGES skips it.
+    The applier that follows supplies the operator's clock when the
+    correction carries one."""
+    corrections([_corr("req_owner", "261031")])
+    (owner,) = IN.build_requests([_staged_rfq("<o>", "2026-07-30T18:00:00Z")])
+    owner["request_id"] = "req_owner"
+    (rival,) = IN.build_requests([_staged_rfq("<r>", "2026-08-01T16:00:00Z")])
+    rival["request_id"] = "req_rival"
+    requests, standalones = IN.link_bookings_to_requests(
+        [owner, rival], {"261031": _confirmation("261031", sent)})
+    assert standalones == [], "an undated named booking became a stand_ row beside its owner"
+    assert owner["mdolx_ref"] == "261031"
+    assert owner["_booking_match_via"] == IN.OPERATOR_CORRECTION_VIA
+    assert owner["status"] == "WIN" and owner["teu_won"] == owner["teu_requested"] == 2
+    assert owner["booking_timestamp"] == sent and C.parse_iso(owner["booking_timestamp"]) is None
+    assert owner.get("olusa_time_et") is None
+    assert owner["status_history"] == [{"at": sent, "from": "PENDING", "to": "WIN",
+                                        "reason": "MDOLX261031 booking confirmed"}]
+    assert not rival.get("mdolx_ref") and rival["status"] == "PENDING"
+    assert _dupes(requests) == []
+    # Readers of a None `at` fall back; none fails.
+    assert C.win_event_date(owner) == owner["request_date"] == "2026-07-30"
+    assert QC.qc066_impossible_states(requests) == []
+    assert QC.qc072_history_contradicts_status(requests) == []
+    # The applier supplies the operator's clock, and the win is dated by it.
+    corrections([_corr("req_owner", "261031", "2026-08-03T22:15:00Z")])
+    IN.apply_operator_corrections(requests)
+    assert owner["booking_timestamp"] == "2026-08-03T22:15:00Z"
+    assert C.win_event_date(owner) == "2026-08-03"
+
+
+# ── a correction spelled unlike the booking's key is REPORTED ───────────
+
+def _refs_of(r):
+    """The distinct spellings a row holds — mdolx_ref echoes into
+    mdolx_refs_all by design (ingest unions them), so this is a set."""
+    return {x for x in [r.get("mdolx_ref"), *(r.get("mdolx_refs_all") or [])] if x}
+
+
+def test_a_zero_padded_correction_is_reported_by_qc069_not_hidden(corrections):
+    """The reviewer's counter-case, pinned. A correction spelled "0261026"
+    for a booking keyed "261026": the consult compares spellings and misses,
+    the rival takes the booking by score, the applier writes "0261026" onto
+    the owner verbatim — one shipment on two rows — and QC-069's old
+    `.strip().upper()` key called those two different refs. Measured silent.
+    The check now keys on ingest.mdolx_identity and names both rows."""
+    corrections([_corr("req_owner", "0261026")])
+    (owner,) = IN.build_requests([_staged_rfq("<o>", "2026-08-01T16:00:00Z")])
+    owner["request_id"] = "req_owner"
+    (rival,) = IN.build_requests([_staged_rfq("<r>", "2026-08-04T16:00:00Z")])
+    rival["request_id"] = "req_rival"
+    rows = _run_both_writers([owner, rival],
+                             {"261026": _confirmation("261026", "2026-08-13T20:04:00Z")})
+    # The writers' identity is the spelling — stated, so the pair exists:
+    assert owner["mdolx_ref"] == "0261026" and rival["mdolx_ref"] == "261026"
+    # — and the check reports it under the collapsed ref, both rows named.
+    assert _dupes(rows) == [("duplicate_mdolx", "261026", ["req_owner", "req_rival"])]
+    # It is a PAIR OF ROWS, never two spellings on ONE row. That is the shape
+    # a zero-collapsing consult produces (measured 2026-09-05: the owner
+    # ended mdolx_ref="0261026" + mdolx_refs_all=["261026"], booking_count 2
+    # on one row, the rival emptied, QC-069 silent). core.booking_count
+    # unions the two fields verbatim, so that row counts one shipment twice
+    # with nothing to report it. A collapsing consult turns this red.
+    for r in rows:
+        assert len({IN.mdolx_identity(x) for x in _refs_of(r)}) == len(_refs_of(r)), (
+            f"{r['request_id']} carries two spellings of one ref: {_refs_of(r)}")
+    assert [C.booking_count(r) for r in rows] == [1, 1]
+
+
+def test_mdolx_identity_is_the_create_dedups_spelling_and_qc069s_key():
+    assert (IN.mdolx_identity("0261026") == IN.mdolx_identity("261026")
+            == IN.mdolx_identity(" 261026 ") == "261026")
+    assert IN.mdolx_identity("000") == "000"
+    assert IN.mdolx_identity(None) == ""
+
+
+def test_the_create_branch_still_dedups_across_a_leading_zero(corrections):
+    """apply_operator_corrections' `create` branch used two inline
+    `.lstrip("0")`; both now read mdolx_identity. Behaviour-identical, pinned:
+    a created "0261026" is skipped when a row already holds "261026"."""
+    corrections([{"request_id": "req_new", "create": True,
+                  "set": {"status": "WIN", "mdolx_ref": "0261026",
+                          "booking_timestamp": "2026-08-03T22:00:00Z"}}])
+    rows = _rows([("req_have", "261026")])
+    IN.apply_operator_corrections(rows)
+    assert [r["request_id"] for r in rows] == ["req_have"]
 
 
 # ── (d) the 4c sub-mechanism: an invoice is never the booking ─────────

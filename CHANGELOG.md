@@ -3,7 +3,141 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-05 (latest) — QC-069 held at the WRITER: the matcher reads the corrections before it scores
+### 2026-09-05 (latest) — QC-069 writer fix, review follow-up: the guards pin properties, and one counter-case is reported instead of hidden
+
+Adversarial review of the writer-side fix below returned "fix first" with
+seven findings, each mutation-proven against the shipped tree. Every one is
+fixed at the layer it lives in, in ONE commit on top of the fix; nothing in
+the fix's behaviour changed except where a finding named a defect.
+
+**Finding 1 (medium) — the "same file, same predicate" guard was a source
+scan.** `test_the_matcher_reads_the_same_file_as_the_applier` asserted the
+string `corr.get("exclude")` was inside `_corrected_ref_owners`. It stayed
+green with the exclude gate deleted (1 failed / 3807 in the full suite —
+only the string match) and went RED on the behaviour-identical refactor that
+hoisted the predicate into a shared helper: a guard pinning a spelling,
+reddening on the improvement it claimed to want. Deleted. The predicate is
+now ONE function, `ingest._named_ref(corr)` (non-exclude entry with
+`set.mdolx_ref`, verbatim), called by the consult AND the claim; and
+`test_the_three_callers_agree_about_which_row_owns_each_ref` RUNS all three
+readers — `_corrected_ref_owners`, `apply_operator_corrections`,
+`claim_corrected_mdolx_refs` — over one corrections list holding every shape
+(plain set; exclude that carries a ref; set naming no ref; ref naming no
+row; two corrections naming one ref) and asserts they agree row for row.
+
+**Finding 2 (medium) — the exclude test was vacuous.** Its fixture
+`{"request_id": "req_x", "exclude": True}` had no `set`, so the entry was
+dropped for emptiness before the exclude gate was consulted; the test passed
+with the gate deleted. `test_an_exclude_correction_that_carries_a_ref_names_
+no_owner` now feeds the shape the gate defends (`exclude: true` WITH
+`set.mdolx_ref`) to the consult, the predicate, the writer and the claim.
+
+**Finding 3 (medium) — the receipt and the writer spelled the literal
+independently, and nothing ran the receipt.** Changing only main()'s
+comparison literal left the full suite green (3808 passed), so the line
+named as the production verification could report 0 forever while the fix
+worked. `OPERATOR_CORRECTION_VIA` is the one constant: the writer stamps it,
+and `ingest.link_receipt(requests, bookings, standalones)` — the composed log
+line, hoisted out of main() — counts it. Pinned by running the composition
+over the live batch (`…; 10 placed on the row an operator correction names,
+before scoring`) and by `test_ingest_main_prints_the_receipt`, which runs
+`ingest.main()` END TO END over staged RFQs + confirmations with the
+corrections written against the request_ids build_requests derives, and
+reads the line off stdout. The harness for this finding caught a second
+instance the review did not name: two pre-existing tests compared
+`_booking_match_via` against the literal `"operator_correction"`, so changing
+the constant's VALUE reddened them — they re-spelled it too. Both (and the
+negative-direction `!=`) now read `IN.OPERATOR_CORRECTION_VIA`; changing the
+value is green, re-typing either side is red.
+
+**Finding 4 (low) — the `if not bk_ts and best is None` carve-out had no
+test, and the review asked for a DECISION.** Decision: the carve-out is
+CORRECT and REQUIRED, and it is kept. Reverting it (`if not bk_ts: continue`)
+does not skip the undated named booking — it hands it to the standalone
+loop, which has NO timestamp guard, so a `stand_<ref>` WIN is emitted beside
+the operator's row and the applier stamps the row too: the exact duplicate
+this fix exists to prevent, produced by a missing date. What the writer
+stores for a booking with no clock: `booking_timestamp` and the history
+entry's `at` carry what the stage said, VERBATIM (None, or a string nothing
+parses) — never a substitute — which is the shape the standalone path has
+always written for an undated booking (`"booking_timestamp": bk.get("sent")`,
+`"at": bk_ts_iso`). Every reader was checked: `core.win_event_date` filters
+a None `at` and falls back to the ask's own date; QC-066 (`_ed(h.get("at"))`
+filtered), QC-072 (reads `to` only), gen_email's STATUS CHANGES
+(`h.get("at") and …`) all skip it; `schema.json` types `at` as string but no
+runtime validator runs over live rows and the standalone path already
+emits the shape. Pinned both ways, parametrised over None / "" / garbage:
+linked to the owner, no standalone, no rival stamp, `booking_timestamp ==
+sent`, the history entry's exact shape, QC-066/QC-072 quiet, and the applier
+that follows supplying the operator's clock when the correction carries one
+(`win_event_date` then reads 2026-08-03).
+
+**Finding 5 (low) — first-wins was a docstring claim.** `owners.setdefault`
+→ `owners[ref] = rid` left the full suite green. `test_the_first_of_two_
+corrections_naming_one_ref_wins_at_the_writer_and_after_the_claim` pins it
+at the writer AND after the applier stamps both rows and the claim resolves
+the contradiction in file order — the same row both times, or the writer
+would place a booking the backstop then moves (the two-writers mechanism,
+re-created inside the fix).
+
+**Finding 6 (low) — the "cannot disagree" docstring overreached, and the
+counter-case was silent.** A correction spelled `0261026` beside a booking
+keyed `261026`: the consult compares spellings and misses, the rival takes
+the booking by score, the applier writes `0261026` on the owner verbatim,
+and QC-069's `.strip().upper()` key called those two different refs —
+measured: `duplicate_mdolx` findings `[]`. There is NO single normaliser in
+the repo (the applier's `create` branch had two inline `.lstrip("0")`,
+`extract_ol_recap.parse_mdolx` a regex, `diag_duplicate_mdolx._norm` a third
+spelling, everything else verbatim). Decision, MEASURED before it was
+written: the writers keep the verbatim spelling on purpose. A zero-collapsing
+consult was built and run on the repro — it put the booking on the owner,
+the applier then wrote `0261026` over `mdolx_ref` and left
+`mdolx_refs_all=["261026"]`, `core.booking_count` (which unions the two
+fields verbatim) counted that ONE shipment as TWO on ONE row, the rival was
+emptied, and QC-069 was silent because one row is not a pair. Worse than
+the defect. So: `ingest.mdolx_identity(ref)` is the ONE owner of "two
+spellings, one shipment" (hoisted from the applier's two inline `lstrip`,
+which now call it — behaviour-identical, pinned), and QC-069's shape-(a) key
+reads it. The check is deliberately WIDER than the writers (an audit must
+not ask the gate it polices what it may see): the pair is now reported under
+`261026` with both rows named, and the repair is the correction's spelling.
+The consult docstring now claims only what the tests establish.
+`test_a_zero_padded_correction_is_reported_by_qc069_not_hidden` pins the
+reviewer's repro exactly, plus the property behind the decision — no row
+ever holds two spellings of one ref — which is what goes red under the
+rejected design.
+
+**Finding 7 (low) — the mutation receipt was not the measurement.** The fix's
+commit said "consult removed: 6 failed, 12 passed"; the reviewer measured 7 /
+11. Every number below was produced by a harness that applied the mutation,
+ran `tests/test_qc069_writer_holds_invariant.py` (29 tests), restored the
+file from bytes and asserted the sha256 matched — run once, pasted, not
+recalled. Full suite at this commit: 3819 passed, 1 skipped (was 3808 / 1;
+2 tests deleted, 13 added). ruff clean.
+
+    F1/F2  exclude gate deleted from _named_ref            3 failed, 26 passed
+    F1     predicate re-inlined into the consult            29 passed  (must stay green)
+    F3     receipt compares a re-typed literal              2 failed, 27 passed
+    F3     writer stamps a re-typed literal                 9 failed, 20 passed
+    F3     constant VALUE changed                           29 passed  (must stay green)
+    F3     main() prints the old inline line                1 failed, 28 passed
+    F4     carve-out reverted (`if not bk_ts: continue`)    3 failed, 26 passed
+    F5     last-wins (`owners[ref] = rid`)                  3 failed, 26 passed
+    F6     QC-069 key back to .strip().upper()              1 failed, 28 passed
+    F6     zero-collapsing consult (rejected design)        1 failed, 28 passed
+    F6     create dedup compares verbatim                   1 failed, 28 passed
+    F7     consult removed (_operator_owner -> None)        14 failed, 15 passed
+           named-first ordering removed                     1 failed, 28 passed
+           invoice hints removed from both trees            3 failed, 26 passed
+           chain branch un-gated (`if bk_chain:`)           1 failed, 28 passed
+
+Not changed, deliberately: `scripts/diag_duplicate_mdolx._norm` and
+`scripts/backfill_ol_bookings.py` keep their own zero-collapse spellings
+(diagnostic and one-off surfaces; folding them onto `mdolx_identity` is a
+follow-up, not a review fix). `reports/QC-INDEX.md`'s QC-069 row records the
+identity key.
+
+### 2026-09-05 — QC-069 held at the WRITER: the matcher reads the corrections before it scores
 
 Sentry HILMAR-DAILY-TRACKER-N — `duplicate_mdolx`, 250 events since
 2026-08-14T03:50Z, the same eleven refs on every fire (261026/28/29/31/33/46
