@@ -5639,8 +5639,10 @@ def phase_6_rules(log: Log, data: dict):
     # this finds was written AFTER that scrub or by a writer the heal does not
     # run before — a new heal, a backfill script, a restored snapshot. Same
     # shape as QC-078: guard at the writer, un-stamp at phase 3, detect here.
-    # WARN for its first fire; promote to ERROR once one production fire has
-    # reported it clean (reports/QC-INDEX.md carries the promotion note).
+    # WARN. Raising it to ERROR is a CODE CHANGE to make once the first
+    # production fire after 2026-09-05 reports it clean — nothing here
+    # persists a clean-fire count, so no automatic escalation exists
+    # (reports/QC-INDEX.md says the same).
     try:
         _rows84 = data.get("requests", [])
         _fab84 = qc084_fabricated_source_fields(_rows84)
