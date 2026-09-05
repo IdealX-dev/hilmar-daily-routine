@@ -600,8 +600,23 @@ def has_own_source(row) -> bool:
     writer (patch_carriers), the un-stamp heal, QC-084 and the QC-039
     applicability rule all read, so they cannot disagree about which rows
     can carry a parsed value.
+
+    EITHER evidence list counts (2026-09-05 review, finding 2). ingest writes
+    `source_imids` and `source_ids` as a PAIR at every row birth — the ask
+    (build_requests), the standalone booking, the rate-response attach, and
+    the `create` branch, which writes both EMPTY. Two writers are asymmetric
+    and only ever touch `source_imids`: the send-signal match ADDS an imid,
+    and `drift_check.phase1_imid_uniqueness --auto-heal` — which runs one
+    pipeline step BEFORE qc_selfheal — STRIPS a shared imid from every row
+    but the first, leaving the Graph id where it was. A `stand_` booking
+    whose only imid was also on a chain row therefore reaches the QC-084
+    heal with `source_imids: []` and `source_ids: [<id>]`; reading the imid
+    list alone called that row source-less, and the heal would have cleared
+    the grid its own confirmation email really did supply. A row built from
+    a message keeps saying so through whichever list survives.
     """
-    return bool((row or {}).get("source_imids"))
+    r = row or {}
+    return bool(r.get("source_imids") or r.get("source_ids"))
 
 
 #: Fields a row can carry ONLY because an OL message or a booking PDF was

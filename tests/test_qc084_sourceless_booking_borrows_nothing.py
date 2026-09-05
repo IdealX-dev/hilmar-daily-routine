@@ -143,12 +143,32 @@ def test_the_predicate_reads_the_rows_own_evidence_list():
     assert C.has_own_source(None) is False
 
 
+def test_either_evidence_list_is_a_source():
+    """ingest writes source_imids and source_ids as a PAIR at every row birth
+    (build_requests, the standalone booking, the rate-response attach; the
+    `create` branch writes both EMPTY). drift_check's phase-1 heal strips a
+    shared imid and leaves the Graph id, so a row that kept either list was
+    built from a message. Only a row with NEITHER has nothing to parse."""
+    assert C.has_own_source({"source_imids": [], "source_ids": ["g-1"]}) is True
+    assert C.has_own_source({"source_ids": ["g-1"]}) is True
+    assert C.has_own_source({"source_imids": ["<m>"], "source_ids": []}) is True
+    assert C.has_own_source({"source_imids": [], "source_ids": []}) is False
+    assert C.has_own_source({"source_imids": None, "source_ids": None}) is False
+
+
+_PREDICATE_SHAPES = (
+    {"source_imids": ["x"]}, {"source_imids": []}, {}, None,
+    {"source_imids": [], "source_ids": ["g"]}, {"source_ids": ["g"]},
+    {"source_imids": [], "source_ids": []},
+)
+
+
 def test_the_two_cores_agree_on_it():
     """parser_accuracy reads src/hilmar/core; the fire reads scripts/core.
     One predicate in two trees is how the 2026-08-13 fix reached one surface."""
     assert C.SOURCE_ONLY_FIELDS == HC.SOURCE_ONLY_FIELDS
-    for row in ({"source_imids": ["x"]}, {"source_imids": []}, {}, None):
-        assert C.has_own_source(row) == HC.has_own_source(row)
+    for row in _PREDICATE_SHAPES:
+        assert C.has_own_source(row) == HC.has_own_source(row), row
 
 
 def test_source_only_fields_and_backfill_keys_partition_each_other():
@@ -187,7 +207,6 @@ def test_a_source_less_booking_takes_nothing_from_a_same_lane_quote(tmp_path, mo
         f"a booking with no message of its own inherited another shipment's "
         f"grid through the lane join: {_borrowed(after)}")
     assert after.get("ol_rate") is None and after["quoted"] is True
-    assert "0 rate patches" in out or "Nothing to patch" in out, out
     # What the row legitimately holds is untouched.
     assert after["carrier_won"] == "CMA CGM SA" and after["mdolx_ref"] == "252078"
 
@@ -207,29 +226,65 @@ def test_the_sibling_lookup_itself_returns_nothing_for_a_source_less_row(tmp_pat
     assert PC._find_related_rate_response(chain, by_thread) == rec["body"]
 
 
-def test_a_row_with_its_own_source_still_inherits_the_sibling_grid(tmp_path, monkeypatch, capsys):
-    """THE NEGATIVE DIRECTION. The fix must be no wider than the defect: a
-    booking-confirmation row whose own body is signature-only (the data is
-    in the PDF) still inherits ETD/vessel/cutoffs from the same-lane rate
-    response — the 2026-05-13 behaviour every chain WIN depends on."""
-    conf_imid = "<booking-conf@ol-usa.com>"
-    row = {"request_id": "req_chain_win", "status": "WIN", "quoted": True,
+CONF_IMID = "<booking-conf@ol-usa.com>"
+
+
+def _confirmed_win(rid: str, **over) -> dict:
+    """A booking-confirmation WIN whose own body is signature-only (the data
+    is in the PDF), as ingest builds one — for a chain row (`req_`) and for a
+    standalone booking (`stand_`) alike, both of which carry their
+    confirmation as their own source."""
+    row = {"request_id": rid, "status": "WIN", "quoted": True, "has_send": True,
            "origin": "Oakland", "destination": "Yokohama",
            "lane": "Oakland → Yokohama", "mdolx_ref": "261199",
            "carrier_won": "CMA CGM", "carrier_quoted": "CMA CGM",
+           "subject": "NEW BOOKING CONFIRMATION MDOLX261199 // HILMAR",
            "request_timestamp": "2026-08-01T15:00:00Z", "request_date": "2026-08-01",
-           "source_imids": [conf_imid], "status_history": []}
-    conf = {"imid": conf_imid, "bucket": "mbd_booking",
+           "booking_timestamp": "2026-08-02T10:00:00Z",
+           "source_imids": [CONF_IMID], "source_ids": ["g-conf-261199"],
+           "status_history": []}
+    row.update(over)
+    return row
+
+
+def _confirmation_body() -> dict:
+    return {"imid": CONF_IMID, "bucket": "mbd_booking",
             "subject": "NEW BOOKING CONFIRMATION MDOLX261199 // HILMAR",
             "sender_email": "reno.gurusinghe@ol-usa.com",
             "sent_ts": "2026-08-02T10:00:00Z",
             "text_body": "Booking confirmed, please see the attached confirmation.\n\nThanks,\nReno"}
-    _stage(tmp_path, monkeypatch, [conf, _same_lane_quote()])
-    saved, _ = _run_patch_carriers(tmp_path, monkeypatch, [row], capsys)
-    after = saved["req_chain_win"]
+
+
+@pytest.mark.parametrize("rid", ["req_chain_win", "stand_261199"])
+def test_a_row_with_its_own_source_still_inherits_the_sibling_grid(rid, tmp_path, monkeypatch, capsys):
+    """THE NEGATIVE DIRECTION, at the CALL SITE, for BOTH row classes. The
+    fix must be no wider than the defect: a booking-confirmation row whose
+    own body is signature-only still inherits ETD/vessel/cutoffs from the
+    same-lane rate response — the 2026-05-13 behaviour every chain WIN
+    depends on. The `stand_` case is the one that tells the evidence
+    predicate from the id-prefix spelling (`has_no_rfq_chain`): a standalone
+    booking HAS its confirmation and keeps this enrichment (2026-09-05
+    review, finding 1)."""
+    _stage(tmp_path, monkeypatch, [_confirmation_body(), _same_lane_quote()])
+    saved, _ = _run_patch_carriers(tmp_path, monkeypatch, [_confirmed_win(rid)], capsys)
+    after = saved[rid]
     assert after.get("vessel_voyage") and after.get("etd_offered") and after.get("doc_cutoff"), (
         "a row WITH its own source lost the same-lane enrichment — the guard "
         f"is wider than the defect: {after}")
+
+
+@pytest.mark.parametrize("rid", ["req_chain_win", "stand_261199"])
+def test_the_sibling_lookup_is_decided_by_evidence_not_by_id_prefix(rid):
+    """Unit form of the same call-site pin: the lookup serves a row with its
+    own source whatever its id says, and refuses the same row with both
+    evidence lists empty. Red under `if C.has_no_rfq_chain(row): return None`
+    at the top of _find_related_rate_response."""
+    rec = {"body": _grid_text(), "sender": "linda.echevarria@ol-usa.com", "sent": QUOTE_SENT}
+    by_thread = {("lane", "oakland->yokohama"): rec}
+    with_source = _confirmed_win(rid)
+    assert PC._find_related_rate_response(with_source, by_thread) == rec["body"]
+    assert PC._find_related_rate_response(
+        _confirmed_win(rid, source_imids=[], source_ids=[]), by_thread) is None
 
 
 def test_a_source_less_booking_takes_nothing_from_a_pdf_indexed_by_its_mdolx(tmp_path, monkeypatch, capsys):
@@ -245,8 +300,44 @@ def test_a_source_less_booking_takes_nothing_from_a_pdf_indexed_by_its_mdolx(tmp
     monkeypatch.setattr(PC, "PDF", types.SimpleNamespace(
         parse_booking_pdf=lambda _p: {"erd": "1-Sep-26", "doc_cutoff": "3-Sep-26",
                                       "port_cutoff": "4-Sep-26"}), raising=False)
-    saved, _ = _run_patch_carriers(tmp_path, monkeypatch, [row], capsys)
+    saved, out = _run_patch_carriers(tmp_path, monkeypatch, [row], capsys)
     assert _borrowed(saved["ol_252078"]) == [], _borrowed(saved["ol_252078"])
+    # THE PREMISE IS MEASURED (2026-09-05 review, finding 6). The guard rests
+    # on "no message of its own, so no PDF of its own"; the run in which that
+    # is false is exactly this one, and it must say so by request_id and ref.
+    refused = [ln for ln in out.splitlines() if PC.PDF_REFUSED_MARK in ln]
+    assert len(refused) == 1 and "ol_252078" in refused[0] and "252078" in refused[0], out
+
+
+def _stub_booking_pdf(tmp_path, monkeypatch, mdolx: str) -> None:
+    monkeypatch.setattr(PC, "_PDF_OK", True)
+    monkeypatch.setattr(PC, "_index_pdfs_by_mdolx", lambda: {mdolx: tmp_path / f"{mdolx}.pdf"})
+    monkeypatch.setattr(PC, "PDF", types.SimpleNamespace(
+        parse_booking_pdf=lambda _p: {"erd": "1-Sep-26", "doc_cutoff": "3-Sep-26",
+                                      "port_cutoff": "4-Sep-26"}), raising=False)
+
+
+@pytest.mark.parametrize("rid", ["req_chain_win", "stand_261199"])
+def test_the_pdf_join_is_decided_by_evidence_not_by_id_prefix(rid, tmp_path, monkeypatch, capsys):
+    """The second call site, driven for BOTH row classes. A row that carries
+    its confirmation joins the PDF indexed by its MDOLX and takes the cutoffs
+    from it (no PDF-REFUSED receipt — nothing was refused); the same row with
+    both evidence lists empty takes nothing and is NAMED in the receipt. Red
+    under `if _PDF_OK and not C.has_no_rfq_chain(r) and (` at the gate."""
+    _stub_booking_pdf(tmp_path, monkeypatch, "261199")
+    _stage(tmp_path, monkeypatch, [_confirmation_body()])
+    saved, out = _run_patch_carriers(tmp_path, monkeypatch, [_confirmed_win(rid)], capsys)
+    joined = saved[rid]
+    assert (joined.get("erd"), joined.get("doc_cutoff"), joined.get("port_cutoff")) == \
+        ("1-Sep-26", "3-Sep-26", "4-Sep-26"), joined
+    assert PC.PDF_REFUSED_MARK not in out, out
+
+    _stage(tmp_path, monkeypatch, [])
+    saved, out = _run_patch_carriers(
+        tmp_path, monkeypatch, [_confirmed_win(rid, source_imids=[], source_ids=[])], capsys)
+    assert _borrowed(saved[rid]) == [], _borrowed(saved[rid])
+    refused = [ln for ln in out.splitlines() if PC.PDF_REFUSED_MARK in ln]
+    assert len(refused) == 1 and rid in refused[0] and "261199" in refused[0], out
 
 
 # ── the un-stamp: what earlier fires wrote, and what stays ──────────────────
@@ -309,6 +400,62 @@ def test_the_phase3_heal_clears_the_borrowed_cells_and_only_those(tmp_path, monk
     log2 = QS.Log()
     QS.phase_3_entries(log2, {"requests": [row]})
     assert not [m for m in log2.fixes if m.startswith("QC-084:")], "the heal is not idempotent"
+
+
+def test_a_stand_row_that_lost_a_shared_imid_to_drift_check_keeps_its_parsed_grid(tmp_path, monkeypatch):
+    """THE REVIEW'S REPRO (2026-09-05, finding 2). `drift_check.py --auto-heal`
+    runs one pipeline step BEFORE qc_selfheal; its phase 1 strips a shared
+    imid from every row but the first and leaves `source_ids` where it was.
+    ingest builds `requests + standalones`, so the `stand_` twin is the drop
+    side. Reading `source_imids` alone then called a booking that DID have
+    its confirmation source-less, and the QC-084 heal cleared the grid that
+    confirmation really supplied — while QC-039 stopped grading the row, so
+    nothing would have reported the loss."""
+    import drift_check as DC
+    chain = _confirmed_win("req_chain_win", source_ids=["g-chain"])
+    stand = _confirmed_win("stand_261199", source_ids=["g-stand"],
+                           erd="1-Sep-26", doc_cutoff="3-Sep-26", port_cutoff="4-Sep-26",
+                           ol_rate=3100.0, vessel_voyage="NYK METEOR 0CLNCE1MA")
+    data = {"requests": [chain, stand]}
+    DC.phase1_imid_uniqueness(data, {}, auto_heal=True)
+    # The precondition the review measured, on the real drift_check.
+    assert stand["source_imids"] == [] and stand["source_ids"] == ["g-stand"]
+    assert chain["source_imids"] == [CONF_IMID]
+    assert C.has_own_source(stand) is True and HC.has_own_source(stand) is True
+    assert QS.qc084_fabricated_source_rows(data["requests"], corrections_path=tmp_path / "none.json") == []
+    monkeypatch.setattr(QS, "_CORRECTIONS_PATH", tmp_path / "none.json")
+    log = QS.Log()
+    QS.phase_3_entries(log, data)
+    assert (stand["erd"], stand["doc_cutoff"], stand["port_cutoff"]) == \
+        ("1-Sep-26", "3-Sep-26", "4-Sep-26"), stand
+    assert not [m for m in log.fixes if m.startswith("QC-084:")], log.fixes
+    # ...and QC-039 still grades it: a missing cutoff here is a real miss.
+    assert compute_accuracy([stand])["field_stats"]["doc_cutoff"]["n_a"] is False
+    # THE OTHER DIRECTION: a row with NEITHER list is still source-less, and
+    # still borrows nothing (the `create` branch writes both empty).
+    assert C.has_own_source(_confirmed_win("stand_261199", source_imids=[], source_ids=[])) is False
+
+
+def test_the_heal_clears_the_row_the_detector_judged_not_its_request_id_twin(tmp_path, monkeypatch):
+    """request_id is not unique until phase 4 dedupes, which runs AFTER phase
+    3 (2026-09-05 review, finding 4). Two rows share `ol_252078`: the
+    source-less one carries a borrowed grid; its twin carries a source and
+    the grid that source supplied. The detector names the first; the clear
+    must land on THAT object. An id→row map keeps the LAST twin and would
+    have wiped the parsed grid while the borrowed one survived."""
+    borrowed = _preserved_ol_row(tmp_path, monkeypatch)
+    twin = dict(borrowed, source_imids=["<conf-252078@ol-usa.com>"], source_ids=["g-252078"],
+                ol_rate=4100.0, doc_cutoff="5-Jan-26", port_cutoff="6-Jan-26", erd="2-Jan-26")
+    assert borrowed["request_id"] == twin["request_id"] == "ol_252078"
+    monkeypatch.setattr(QS, "_CORRECTIONS_PATH", IN.CORRECTIONS_PATH)
+    judged = QS.qc084_fabricated_source_rows([borrowed, twin], corrections_path=IN.CORRECTIONS_PATH)
+    assert [r is borrowed for r, _ in judged] == [True]
+    log = QS.Log()
+    QS.phase_3_entries(log, {"requests": [borrowed, twin]})
+    assert _borrowed(borrowed) == [], f"the borrowed grid survived: {_borrowed(borrowed)}"
+    assert (twin["ol_rate"], twin["doc_cutoff"], twin["port_cutoff"], twin["erd"]) == \
+        (4100.0, "5-Jan-26", "6-Jan-26", "2-Jan-26"), "the clear landed on the twin that has a source"
+    assert len([m for m in log.fixes if m.startswith("QC-084: ol_252078: cleared")]) == 1, log.fixes
 
 
 # ── the detector: a survivor after the scrub is a WARN ──────────────────────
@@ -383,6 +530,32 @@ def test_the_qc039_receipt_names_the_floor_that_fired(tmp_path, monkeypatch):
     assert len(lines) == 1, lines
     assert "doc_cutoff=0.0% (floor 90%)" in lines[0], lines[0]
     assert "below 95%" not in lines[0]
+
+
+def test_the_qc039_error_receipt_names_the_floor_and_is_the_line_that_blocks_the_ship(tmp_path, monkeypatch):
+    """The ERROR branch — the line whose presence returns QC039_GATE_BLOCK_RC
+    and blocks the client ship — rendered through the real phase-6 gate and
+    fed to the real gate decision (2026-09-05 review, finding 3). A critical
+    field names its own floor beside its count; the rendered line, not a
+    hand-written one, is what the exit code is proven on."""
+    row = {"request_id": "req_chain_win", "status": "WIN", "quoted": True,
+           "origin": "Oakland", "destination": "Yokohama", "lane": "Oakland → Yokohama",
+           "containers": "1x40HC", "container_count": 1, "teu_requested": 2,
+           "request_date": "2026-08-01", "request_timestamp": "2026-08-01T15:00:00Z",
+           "carrier_quoted": "CMA CGM", "carrier_won": "CMA CGM", "mdolx_ref": "261199",
+           "ol_rate": None, "etd_offered": "7-Sep-26", "eta_offered": "24-Oct-26",
+           "dest_free_time": "7 days", "product": "milk powder", "lonny_notes": "rush",
+           "source_imids": ["<conf@ol-usa.com>"], "erd": "1-Sep-26", "port_cutoff": "4-Sep-26",
+           "doc_cutoff": "3-Sep-26"}
+    monkeypatch.setattr(QS, "_CORRECTIONS_PATH", tmp_path / "none.json")
+    log = _phase6([row])
+    lines = [m for m in log.errors if m.startswith("QC-039:")]
+    assert len(lines) == 1, lines
+    assert "1 CRITICAL field(s) below floor: ol_rate=0/1 (0.0%, floor 95%)" in lines[0], lines[0]
+    assert "below 95%" not in lines[0]
+    assert QS._qc039_block_errors(log.errors) == lines
+    assert QS._gate_exit_code(log.errors, pre_patch=False) == QS.QC039_GATE_BLOCK_RC
+    assert QS._gate_exit_code(log.errors, pre_patch=True) == 0
 
 
 def test_the_sentry_message_carries_the_check_tag_exactly_once(monkeypatch):

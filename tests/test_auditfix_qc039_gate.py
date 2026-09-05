@@ -21,6 +21,16 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import qc_selfheal as Q  # noqa: E402
 
+# The shape the ERROR branch EMITS since 2026-09-05 (each critical field names
+# its own floor — "ol_rate=0/1 (0.0%, floor 95%)", never "below 95%"). The gate
+# keys on "QC-039" plus the FAILED TO EVALUATE marker, so the wording is not
+# load-bearing here; the fixture follows production so it cannot drift into a
+# line nothing emits. The rendered line itself is proven against the gate in
+# tests/test_qc084_sourceless_booking_borrows_nothing.py.
+_MEASURED_MISS = ("QC-039: parser accuracy 80.0% (weighted 82.0%) with 2 CRITICAL "
+                  "field(s) below floor: ol_rate=40/50 (80.0%, floor 95%), "
+                  "carrier_won=41/50 (82.0%, floor 95%)")
+
 
 def _const_in(rel: str) -> int:
     src = (ROOT / rel).read_text(encoding="utf-8")
@@ -38,8 +48,7 @@ def test_gate_code_matches_across_modules():
 
 
 def test_post_patch_qc039_measured_miss_blocks_the_ship():
-    rc = Q._gate_exit_code(["QC-039: parser accuracy 80.0% with 2 CRITICAL field(s) below 95%"],
-                           pre_patch=False)
+    rc = Q._gate_exit_code([_MEASURED_MISS], pre_patch=False)
     assert rc == Q.QC039_GATE_BLOCK_RC, "a MEASURED sub-95% miss must hard-block the ship"
 
 
@@ -55,7 +64,7 @@ def test_post_patch_qc039_eval_failure_does_NOT_block():
 
 def test_block_vs_uneval_partition():
     errs = [
-        "QC-039: parser accuracy 80.0% with 2 CRITICAL field(s) below 95%",
+        _MEASURED_MISS,
         "QC-039: parser-accuracy gate FAILED TO EVALUATE (failing closed): boom",
     ]
     assert len(Q._qc039_block_errors(errs)) == 1
@@ -66,8 +75,7 @@ def test_block_vs_uneval_partition():
 
 
 def test_pre_patch_never_blocks():
-    rc = Q._gate_exit_code(["QC-039: parser accuracy 10.0% with 5 CRITICAL field(s) below 95%"],
-                           pre_patch=True)
+    rc = Q._gate_exit_code([_MEASURED_MISS], pre_patch=True)
     assert rc == 0, "pre-patch is advisory and must never block the ship"
 
 

@@ -1362,17 +1362,19 @@ def phase_3_entries(log: Log, data: dict):
     # fires borrowed, patch_carriers no longer re-borrows, the post-patch pass
     # finds nothing — idempotent by construction. Cleared to None, the same
     # shape QC-064 and QC-078 leave behind, so every reader sees "absent".
-    _fab84 = qc084_fabricated_source_fields(data["requests"])
-    if _fab84:
-        _by_id84 = {r.get("request_id"): r for r in data["requests"]}
-        for _rid84, _fields84 in _fab84:
-            for _f84 in _fields84:
-                _by_id84[_rid84][_f84] = None
-            log.fix(
-                f"QC-084: {_rid84}: cleared {', '.join(_fields84)} — a booking "
-                f"with no message of its own cannot have parsed them; an "
-                f"earlier fire pasted another shipment's grid on through the "
-                f"same-lane join")
+    # BY IDENTITY, NOT BY request_id (2026-09-05 review, finding 4): duplicate
+    # ids are collapsed in phase 4, AFTER this phase, so an id→row map here
+    # keeps the LAST twin and the clear could land on a row the detector never
+    # inspected — the one that legitimately has a source. The detector hands
+    # back the row object it judged; the clear goes on that object.
+    for _row84, _fields84 in qc084_fabricated_source_rows(data["requests"]):
+        for _f84 in _fields84:
+            _row84[_f84] = None
+        log.fix(
+            f"QC-084: {_row84.get('request_id')}: cleared {', '.join(_fields84)} "
+            f"— a booking with no message of its own cannot have parsed them; "
+            f"an earlier fire pasted another shipment's grid on through the "
+            f"same-lane join")
     # Same backstop reasoning as the applier it follows: one source of truth,
     # so the intake claim and the QC claim cannot drift. Idempotent — a demoted
     # ref no longer counts as a claim, so the second qc_selfheal pass of the
@@ -2980,7 +2982,7 @@ def _fire_alert_github_configured() -> bool:
         return False
 
 
-def qc084_fabricated_source_fields(rows, corrections_path=None) -> list:
+def qc084_fabricated_source_rows(rows, corrections_path=None) -> list:
     """QC-084: a source-less booking carrying a cell nothing of its own supplied.
 
     2026-09-05 (HILMAR-DAILY-TRACKER-8, 119 daily WARNs). The 49 `ol_` wins
@@ -2998,11 +3000,14 @@ def qc084_fabricated_source_fields(rows, corrections_path=None) -> list:
     the un-stamp for what earlier fires wrote, and the detector for the next
     writer that reaches such a row.
 
-    Returns [(request_id, [field, ...]), ...] — per row, the
-    core.SOURCE_ONLY_FIELDS it holds that its own operator correction did
+    Returns [(row, [field, ...]), ...] — per row, THE ROW OBJECT judged and
+    the core.SOURCE_ONLY_FIELDS it holds that its own operator correction did
     not `set`. A human may legitimately write a rate onto a recovered
     booking; a parser cannot. The heal in phase_3_entries clears exactly
-    these; the phase-6 check reports any survivor.
+    these, on exactly these objects (request_id is not unique until phase 4
+    dedupes, so a lookup by id could clear a twin the detector never saw);
+    the phase-6 check reports any survivor through the id view,
+    qc084_fabricated_source_fields.
     """
     import json as _json
     from pathlib import Path as _Path
@@ -3027,8 +3032,16 @@ def qc084_fabricated_source_fields(rows, corrections_path=None) -> list:
         bad = [f for f in core.SOURCE_ONLY_FIELDS
                if f not in exempt and _present(r.get(f))]
         if bad:
-            out.append((r.get("request_id"), bad))
+            out.append((r, bad))
     return out
+
+
+def qc084_fabricated_source_fields(rows, corrections_path=None) -> list:
+    """The QC-084 verdict keyed by request_id — `[(request_id, [field, ...])]`
+    — for receipts and the phase-6 check. Same detector, same rows, same
+    order as qc084_fabricated_source_rows; only the key differs."""
+    return [(r.get("request_id"), fields)
+            for r, fields in qc084_fabricated_source_rows(rows, corrections_path)]
 
 
 def qc082_stale_operator_corrections(rows, corrections_path=None) -> list:

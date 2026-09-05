@@ -563,6 +563,25 @@ BACKFILL_KEYS = (
 ROW_DERIVED_KEYS = ("pol", "pod", "container_count", "teu_requested", "containers")
 
 
+def _booking_pdf_refs(row: dict) -> list:
+    """The refs the booking-PDF cross-reference joins a row to a staged PDF
+    on — mdolx_refs_seen included (see ingest._demote_ref). ONE list, so the
+    PDF-REFUSED receipt below measures exactly the join it reports on."""
+    return [c for c in ([row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or [])
+                        + (row.get("mdolx_refs_seen") or [])) if c]
+
+
+#: Tag of the PASS 2 receipt that names a source-less row whose MDOLX matched
+#: a staged booking PDF and was refused by the core.has_own_source guard.
+#: The guard rests on a premise nothing measured (2026-09-05 review, finding
+#: 6): a row with no message of its own — an `ol_` row built from OL's
+#: export — has no attachment in stage_pdfs either, so refusing the identity
+#: join costs nothing. If that premise is ever false, the refusal discards a
+#: real identity-joined fact, and without this line it would do so silently.
+#: One occurrence in a fire's run log is the premise failing, by request_id.
+PDF_REFUSED_MARK = "PDF-REFUSED"
+
+
 def main():
     cfg = C.load_config()
     data_path = Path(cfg["paths"]["data"])
@@ -670,6 +689,7 @@ def main():
     field_hits: dict[str, int] = {}
     # BACKFILL_KEYS is module-level (2026-09-05) so the QC-084 heal/check and
     # its test can read the writer's own list instead of restating it.
+    refused_pdf_sourceless: list[str] = []
 
     for r in requests:
         imids = r.get("source_imids") or []
@@ -728,6 +748,14 @@ def main():
         # its own has no attachment of its own either. The MDOLX cross-ref
         # below would otherwise fill an `ol_` row from a PDF it never received
         # and the QC-084 heal would clear it again every pass.
+        #
+        # MEASURE THE PREMISE. When a source-less row's MDOLX nevertheless
+        # matches a staged PDF, the refusal is counted and named in the
+        # PDF-REFUSED receipt after this loop (see PDF_REFUSED_MARK).
+        if _PDF_OK and not C.has_own_source(r):
+            _pdf_hit = next((str(c) for c in _booking_pdf_refs(r) if c in pdfs_by_mdolx), None)
+            if _pdf_hit is not None:
+                refused_pdf_sourceless.append(f"{r.get('request_id')}<-MDOLX{_pdf_hit}")
         if _PDF_OK and C.has_own_source(r) and (
                 not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
                 or _need_pdf_only):
@@ -743,10 +771,9 @@ def main():
             if pdf_path is None:
                 # mdolx_refs_seen included: this is THE booking-PDF join, and
                 # the PDF supplies `pod`, from which PASS 2b recovers
-                # destination/lane. See ingest._demote_ref.
-                for cand in ([r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or [])
-                             + (r.get("mdolx_refs_seen") or [])):
-                    if cand and cand in pdfs_by_mdolx:
+                # destination/lane. See ingest._demote_ref / _booking_pdf_refs.
+                for cand in _booking_pdf_refs(r):
+                    if cand in pdfs_by_mdolx:
                         pdf_path = pdfs_by_mdolx[cand]
                         break
             if pdf_path:
@@ -831,6 +858,18 @@ def main():
                 print(f"  LANE-DIAG {r.get('request_id')}: unresolved — "
                       f"pod={(r.get('pod') or parsed.get('pod')) or 'none'}; "
                       f"pdf_fields_present={'yes' if _pdf_saw else 'no'}")
+
+    # The PDF-REFUSED receipt prints here, BEFORE the "Nothing to patch" early
+    # return below: a refusal is not a patch, and the run in which the guard's
+    # premise fails is exactly the run that patches nothing on that row.
+    if refused_pdf_sourceless:
+        print(f"  {PDF_REFUSED_MARK}: {len(refused_pdf_sourceless)} source-less row(s) "
+              f"matched a staged booking PDF by MDOLX and were NOT filled from it "
+              f"(core.has_own_source) — the guard's premise, that a row with no "
+              f"message of its own has no PDF of its own, did not hold for: "
+              + ", ".join(refused_pdf_sourceless[:10])
+              + (f" +{len(refused_pdf_sourceless) - 10} more"
+                 if len(refused_pdf_sourceless) > 10 else ""))
 
     # ─────────────────────────────────────────────────────────────────
     # PASS 4 — Stage-scan for WINs still missing carrier_won
