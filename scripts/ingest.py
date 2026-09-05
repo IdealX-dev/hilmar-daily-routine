@@ -268,6 +268,18 @@ _OPERATIONAL_SUBJECT_HINTS = (
     "CMA UPDATES",             # Michael internal
     "NRA AMENDMENT", "CONFIRMATION OF NRA",
     "INVOICE QUERY", "INVOICE DISPUTE",
+    # 2026-09-05 (QC-069, Sentry HILMAR-DAILY-TRACKER-N): an INVOICE is a
+    # document about a booking that already exists — it is never the booking.
+    # "MDOLX261031_ EXPORT INVOICE AVAILABLE // HILMAR 1X40'RF Oakland to
+    # Yokohama" passed this gate, _booking_rank admits any non-confirmation
+    # subject at tier 0, and with the real confirmation not in the stage the
+    # invoice became "the booking" — dated 08-27, twenty-four days after the
+    # 08-03 booking it invoices. That date let an 08-26 ask pass the
+    # req_ts <= bk_ts guard and take a win it never had (the 4c pair). Two
+    # literal phrases, per this list's convention: "ORIGIN EXPORT DEMURRAGE
+    # INVOICE" still names its lane and container spec and stays a ranked
+    # tier-0 fallback (tests/test_booking_email_choice.py pins that ranking).
+    "EXPORT INVOICE", "INVOICE AVAILABLE",
     "TRANSPORT ORDER",         # ops follow-up tag, not a rate ask
     # 2026-05-07: DRAFT RATED is a quote draft, not a confirmed booking.
     # Without an accompanying NEW BOOKING CONFIRMATION email there's no
@@ -930,6 +942,120 @@ def collect_bookings(rows: list[dict], excluded_mdolx: dict[str, str] | None = N
 # Link bookings → requests
 # ─────────────────────────────────────────────────────────────────────
 
+#: The `_booking_match_via` value the writer stamps on a row the operator
+#: placed a booking on. `link_receipt` (ingest.main's log line) COUNTS this
+#: value, so the reader and the writer share one spelling — a receipt that
+#: compares against a re-typed literal reports 0 forever while the fix works
+#: (review finding, 2026-09-05; mutation-proven).
+OPERATOR_CORRECTION_VIA = "operator_correction"
+
+
+def _named_ref(corr: dict) -> str | None:
+    """THE predicate for "this correction names a booking ref".
+
+    A non-exclude entry whose `set.mdolx_ref` is present; returns the ref as
+    written (stripped), else None. `_corrected_ref_owners` (the matcher's
+    consult) and `claim_corrected_mdolx_refs` (the backstop) both call it, so
+    neither can re-spell the exclude gate or the key path apart from the
+    other. apply_operator_corrections does not branch on "names a ref" — it
+    removes an exclude entry's row and applies every other entry's `set`
+    verbatim — and tests/test_qc069_writer_holds_invariant.py runs all three
+    over ONE corrections list and asserts they agree row for row.
+
+    The spelling is VERBATIM on purpose: see mdolx_identity for why the
+    writers must not collapse it.
+    """
+    if corr.get("exclude"):
+        return None
+    ref = str((corr.get("set") or {}).get("mdolx_ref") or "").strip()
+    return ref or None
+
+
+def mdolx_identity(ref) -> str:
+    """The identity under which two SPELLINGS of a booking ref are one
+    shipment: the digits, upper-cased, leading zeros collapsed ("0261026" is
+    261026). An all-zero string keeps itself rather than becoming "".
+
+    Hoisted (2026-09-05) from the two inline `.lstrip("0")` in
+    apply_operator_corrections' `create` branch so that dedup and QC-069's
+    duplicate key read ONE definition; extract_ol_recap.parse_mdolx and
+    scripts/diag_duplicate_mdolx._norm already treat leading zeros as
+    insignificant.
+
+    THE WRITERS DO NOT MATCH UNDER THIS IDENTITY, AND THAT IS DELIBERATE.
+    The matcher's consult, the applier's `set` and the claim all compare the
+    verbatim spelling. Measured 2026-09-05 with a zero-collapsing consult: a
+    correction spelled "0261026" put booking "261026" on the operator's row,
+    the applier then wrote "0261026" over `mdolx_ref` and left
+    `mdolx_refs_all=["261026"]`, and core.booking_count — which unions those
+    two fields verbatim — counted that ONE shipment as TWO on ONE row, with
+    QC-069 silent because one row is not a pair. A correction spelled
+    differently from the booking's key is a defect in the corrections file;
+    the CHECK reports the pair it produces under this identity (both rows
+    named) and nothing papers over it at the writer.
+    """
+    t = str(ref or "").strip().upper()
+    return t.lstrip("0") or t
+
+
+def _corrected_ref_owners() -> dict[str, str]:
+    """{mdolx_ref: request_id} for every correction that names a booking.
+
+    Read from the SAME file (CORRECTIONS_PATH) with the SAME predicate
+    (`_named_ref`) as claim_corrected_mdolx_refs, over the same `set` field
+    apply_operator_corrections writes verbatim — so the matcher, the applier
+    and the backstop agree about which row owns each ref AS SPELLED. That
+    agreement is proven by RUNNING all three over one corrections list
+    (tests/test_qc069_writer_holds_invariant.py), not by inspection.
+
+    What this does NOT establish: a ref spelled differently from the
+    booking's key ("0261026" beside a booking keyed "261026") is not found
+    here, so that booking is scored like any other and the pair it produces
+    is REPORTED by QC-069 under mdolx_identity — pinned, not hidden.
+
+    When two corrections name one ref the FIRST wins (setdefault), which is
+    the order claim_corrected_mdolx_refs resolves that conflict in: it walks
+    the file in order, and the first owner that holds the ref demotes every
+    other holder (pinned both at the writer and after the claim). A missing
+    or unreadable file consults nothing, exactly as the applier applies
+    nothing.
+    """
+    if not CORRECTIONS_PATH.exists():
+        return {}
+    try:
+        doc = json.loads(CORRECTIONS_PATH.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARN: operator_corrections.json unreadable — the matcher "
+              f"consults no corrections ({e})")
+        return {}
+    owners: dict[str, str] = {}
+    for corr in doc.get("corrections", []):
+        ref = _named_ref(corr)
+        rid = corr.get("request_id")
+        if ref and rid:
+            owners.setdefault(ref, rid)
+    return owners
+
+
+def link_receipt(requests: list[dict], bookings: dict, standalones: list[dict]) -> str:
+    """The ingest-log line that says what link_bookings_to_requests DID.
+
+    Named as the production verification of the 2026-09-05 fix, so it is
+    composed here — where a test can run it over a real link result and
+    assert the number — rather than typed inline in main(). The count reads
+    OPERATOR_CORRECTION_VIA, the constant the writer stamps.
+    """
+    matched = sum(1 for r in requests if r.get("status") == "WIN")
+    by_operator = sum(1 for r in requests
+                      if r.get("_booking_match_via") == OPERATOR_CORRECTION_VIA)
+    line = (f"Linked {matched}/{len(bookings)} bookings to requests; "
+            f"{len(standalones)} standalone wins")
+    if by_operator:
+        line += (f"; {by_operator} placed on the row an operator correction "
+                 f"names, before scoring")
+    return line
+
+
 def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     """
     Match each booking to the most-recent Lonny outbound request with the same
@@ -937,6 +1063,32 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
     Unmatched bookings become standalone wins (prior-window rollovers).
 
     Returns (updated_requests, standalone_wins_as_requests).
+
+    THE OPERATOR'S VERDICT IS READ BEFORE ANY SCORE (2026-09-05, Sentry
+    HILMAR-DAILY-TRACKER-N — QC-069 duplicate_mdolx, 250 events, the same
+    eleven refs every fire since 2026-08-14). This function and
+    apply_operator_corrections are the two writers of `mdolx_ref`, and until
+    now only the applier read operator_corrections.json. For the eight
+    near-identical CMA CGM 1x40'RF Oakland→Yokohama bookings of Aug 3-5 every
+    candidate here tied, the tiebreak ("latest ask first") is a PERMUTATION of
+    the operator's mapping, and once the lane ran out of scoreable asks the
+    rest were emitted as `stand_<ref>` WIN rows with their own teu_won. The
+    applier then wrote the operator's ref onto the row the correction names
+    and cleared nothing off this function's row — one shipment on two rows,
+    TEU double counted, re-derived identically on every fire.
+
+    claim_corrected_mdolx_refs (2026-09-03) restores the invariant AFTER both
+    writers ran and stays wired as the backstop for carried-forward prior
+    state. But a heal that retracts a link cannot un-write the link's
+    stamps: the released 4c row still carried has_send / quoted / carrier_won
+    / booking_timestamp / olusa_time_et / product / temperature /
+    reason_detail and a PENDING→WIN history entry — CLAUDE.md's "nothing
+    un-stamps a bad value", applied to the heal itself. So the invariant is
+    held HERE, at the writer: a booking whose ref a correction names is
+    linked to the operator's row, before scoring, and no rival row and no
+    stand_ row is ever stamped with it. A named ref whose row is not in
+    `requests` falls through to ordinary matching — a narrow consult must
+    never drop a booking (QC-082 already reports the dangling correction).
     """
     # Index requests by destination (lane key)
     by_lane: dict[str, list[dict]] = defaultdict(list)
@@ -944,12 +1096,29 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         by_lane[canonical_lane_key(r.get("destination"))].append(r)
     for lane_reqs in by_lane.values():
         lane_reqs.sort(key=lambda r: r.get("request_timestamp") or "")
+    by_id = {r.get("request_id"): r for r in requests if r.get("request_id")}
+    ref_owners = _corrected_ref_owners()
 
     matched_mdolx: set[str] = set()
 
-    for mdolx, bk in bookings.items():
+    def _operator_owner(mdolx) -> dict | None:
+        rid = ref_owners.get(str(mdolx).strip())
+        return by_id.get(rid) if rid else None
+
+    # NAMED REFS FIRST. A row the operator has reserved for one booking must
+    # not be consumed by the scorer on behalf of an UNNAMED booking that
+    # happens to tie on the same lane — linking the named ones first puts a
+    # ref on those rows, and _pick_best_request's "already matched" skip then
+    # keeps them out of every later pool. Stable: stage order is preserved
+    # within each half, so nothing else about the outcome moves.
+    _ordered = sorted(bookings.items(),
+                      key=lambda kv: 0 if _operator_owner(kv[0]) is not None else 1)
+
+    for mdolx, bk in _ordered:
+        best = _operator_owner(mdolx)
+        best_via = OPERATOR_CORRECTION_VIA if best is not None else "lane+time"
         bk_ts = C.parse_iso(bk.get("sent"))
-        if not bk_ts:
+        if not bk_ts and best is None:
             continue
 
         # Figure out destination from booking subject via BP parser (handles
@@ -987,9 +1156,6 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         # Falls back to lane+time when the headers aren't populated (older
         # stage records pre-2026-05-19, or when the booking is a new thread
         # with no References).
-        best = None
-        best_via = "lane+time"
-
         bk_in_reply_to = (bk.get("in_reply_to") or "").strip()
         bk_references = bk.get("references") or []
         bk_chain: set[str] = set()
@@ -1007,7 +1173,7 @@ def link_bookings_to_requests(requests: list[dict], bookings: dict[str, dict]) -
         _ccm = re.search(r"(\d+)\s*[xX]\s*\d{2}", raw_subj)
         bk_ccount = int(_ccm.group(1)) if _ccm else None
 
-        if bk_chain:
+        if best is None and bk_chain:
             # The header chain is a strong signal, but it is a FILTER, not a
             # decision. Until 2026-07-27 the first row encountered whose imid
             # appeared anywhere in In-Reply-To/References won outright — so
@@ -2006,12 +2172,12 @@ def apply_operator_corrections(requests: list[dict]) -> int:
             # number, the created row is skipped — the derived row wins,
             # because it has the email behind it. So this heals a gap without
             # becoming a second source of the same win.
-            _ref = str(changes.get("mdolx_ref") or "").lstrip("0")
+            _ref = mdolx_identity(changes.get("mdolx_ref"))
             # mdolx_refs_seen included: a ref demoted by
             # claim_corrected_mdolx_refs is still HELD by the dataset, just no
             # longer counted. Omitting it would let this branch create a
             # second row for a booking that is already represented.
-            _seen = {str(x).lstrip("0")
+            _seen = {mdolx_identity(x)
                      for r in requests
                      for x in [r.get("mdolx_ref"),
                                *(r.get("mdolx_refs_all") or []),
@@ -2248,9 +2414,7 @@ def claim_corrected_mdolx_refs(requests: list[dict]) -> tuple[int, list[dict]]:
     released: list[dict] = []
 
     for corr in doc.get("corrections", []):
-        if corr.get("exclude"):
-            continue
-        ref = str((corr.get("set") or {}).get("mdolx_ref") or "").strip()
+        ref = _named_ref(corr)
         if not ref:
             continue
         owner = by_id.get(corr.get("request_id"))
@@ -2569,8 +2733,7 @@ def main() -> int:
              "client check)" if _tl_dropped else ""))
 
     requests, standalones = link_bookings_to_requests(requests, bookings)
-    matched = sum(1 for r in requests if r.get("status") == "WIN")
-    print(f"Linked {matched}/{len(bookings)} bookings to requests; {len(standalones)} standalone wins")
+    print(link_receipt(requests, bookings, standalones))
 
     promos = apply_send_signals(requests, lonny_reply)
     print(f"Send-reply promotions: {promos}")

@@ -47,6 +47,12 @@ _BLOB_HOST = bool(os.environ.get("AZURE_STORAGE_CONNECTION_STRING"))
 # up auditing a different file from the one production reads.
 from ingest import CORRECTIONS_PATH as _CORRECTIONS_PATH
 
+# QC-069 keys shape (a) on the identity under which two spellings of a booking
+# ref are one shipment ("0261026" is 261026). Imported, not re-spelled: the
+# applier's `create` dedup reads the same definition, so the check cannot
+# call two spellings distinct that the applier calls the same.
+from ingest import mdolx_identity as _mdolx_identity
+
 
 class _QC032Done(Exception):
     """Control-flow sentinel: the blob branch of QC-032 already reported."""
@@ -2359,7 +2365,13 @@ def qc069_duplicate_shipment_rows(rows):
           link_bookings_to_requests emits a standalone `stand_<mdolx>` WIN when
           it cannot link a booking to its request (e.g. the RFQ says "HCMC" and
           OL's confirmation says "Cat Lai"), so the shipment is counted once as
-          a WIN and once as the still-open request it belongs to.
+          a WIN and once as the still-open request it belongs to. Keyed on
+          ingest.mdolx_identity (2026-09-05): an operator correction spelled
+          "0261026" is written verbatim onto the row it names while the
+          booking is keyed "261026" and scored onto another — the writers
+          compare spellings, so neither sees the pair, and a key of
+          .strip().upper() did not either. Measured silent before this; the
+          finding names both rows under the collapsed ref.
       (b) OPEN ROW SHADOWED BY A WIN — a PENDING row and a WIN row on the same
           canonical lane with the same container spec, the win landing at or
           after the request. TEU is double counted and the PENDING copy later
@@ -2377,10 +2389,10 @@ def qc069_duplicate_shipment_rows(rows):
     for r in rows or []:
         refs = set()
         if r.get("mdolx_ref"):
-            refs.add(str(r["mdolx_ref"]).strip().upper())
+            refs.add(_mdolx_identity(r["mdolx_ref"]))
         for m in (r.get("mdolx_refs_all") or []):
             if m:
-                refs.add(str(m).strip().upper())
+                refs.add(_mdolx_identity(m))
         for ref in refs:
             by_ref.setdefault(ref, []).append(r.get("request_id", "?"))
     for ref, ids in sorted(by_ref.items()):
