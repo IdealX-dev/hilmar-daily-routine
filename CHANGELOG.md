@@ -3,7 +3,120 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-04 (latest) — the fire had no transcript, so four defects hid behind one blind channel
+### 2026-09-05 (latest) — QC-069 held at the WRITER: the matcher reads the corrections before it scores
+
+Sentry HILMAR-DAILY-TRACKER-N — `duplicate_mdolx`, 250 events since
+2026-08-14T03:50Z, the same eleven refs on every fire (261026/28/29/31/33/46
+on two `req_` rows; 261027/30/32/47/68 on a `req_` row plus a `stand_` row).
+The 2026-09-03 heal, `claim_corrected_mdolx_refs`, is correct and idempotent
+and was left in place. It was not the root-cause fix, because it runs AFTER
+both writers of `mdolx_ref` have already disagreed.
+
+**THE MECHANISM, RE-DERIVED BY EXECUTING IT (repro in the session
+scratchpad, read-only against the repo).** Two writers, no invariant at write
+time:
+
+1. `link_bookings_to_requests` links each booking to whichever row
+   `_pick_best_request` scores best and never read
+   `operator_corrections.json`. For the eight near-identical CMA CGM 1x40'RF
+   Oakland→Yokohama bookings of Aug 3-5 every candidate ties, the tiebreak
+   ("latest ask first") is a PERMUTATION of the operator's mapping, and once
+   the lane runs out of scoreable asks (the first ask sits outside the 14-day
+   window from the Aug-13 staging) the rest are emitted as `stand_<ref>` WIN
+   rows with their own `teu_won`. Measured on the live shape: 10
+   `duplicate_mdolx` findings and `stand_261033` / `stand_261046` /
+   `stand_261047` beside their operator-named rows.
+2. `apply_operator_corrections` then `row.update(changes)` the operator's ref
+   onto the row the correction names and clears nothing off the matcher's
+   row.
+
+The trigger is the eleven `ol-booking-recap-2026-08-12` corrections, each
+noting "the confirmation never reached the tracked mailbox" — true on Aug 12,
+false from Aug 13 20:04-20:21Z when the confirmations were staged (#251), so
+every fire since ran both writers over the same refs. First Sentry event
+2026-08-14T03:50Z, consistent.
+
+**And the heal could not un-write the link's stamps.** Rehearsed on the 4c
+pair (MDOLX261031): after the claim released `req_f942b9672ff756ab`, that row
+still carried `has_send`, `quoted`, `carrier_won="CMA CGM"`,
+`booking_timestamp=2026-08-27`, `olusa_time_et`, product/temperature from the
+booking body, `reason_detail="Linked to MDOLX261031 booking"` and a
+PENDING→WIN history entry — every one written by the link the claim retracted
+— and rendered as quoted-and-lost on a lane it was never quoted on.
+CLAUDE.md's "nothing un-stamps a bad value", applied to the heal itself. The
+fix is to never write the bad value.
+
+**Shipped:**
+
+1. **`link_bookings_to_requests` consults the operator FIRST.**
+   `_corrected_ref_owners()` builds `{mdolx_ref: request_id}` from the SAME
+   file with the SAME predicate the applier and the claim use (non-exclude
+   entry, `set.mdolx_ref` present; first correction wins, the order the
+   claim resolves that conflict in). A booking whose ref is named, and whose
+   named row is in `requests`, is linked to that row before any score —
+   `best_via="operator_correction"` — and neither the header-chain branch nor
+   the lane fallback runs for it. A named ref whose row is absent falls
+   through to ordinary matching: a narrow consult must never drop a booking
+   (QC-082 already reports the dangling correction). The operator's verdict
+   also outranks the `req_ts <= bk_ts` and 14-day guards, because the applier
+   would stamp that row regardless and the scorer would have placed the
+   booking elsewhere — the duplicate, re-created by a guard.
+
+2. **Named refs are linked before unnamed ones.** A row the operator has
+   reserved must not be consumed by the scorer for an UNNAMED booking that
+   ties on the same lane; linking the named ones first puts a ref on those
+   rows and `_pick_best_request`'s "already matched" skip keeps them out of
+   every later pool. Stable sort, stage order preserved within each half.
+
+3. **An invoice is never the booking.** `MDOLX261031_ EXPORT INVOICE
+   AVAILABLE // HILMAR …` passed `is_operational_subject` (verified by running
+   it), `_booking_rank` admits any non-confirmation subject at tier 0, and
+   with the confirmation absent from the stage the 08-27 invoice became "the
+   booking" — late enough for the 08-26 ask to pass the time guard. `EXPORT
+   INVOICE` / `INVOICE AVAILABLE` join `_OPERATIONAL_SUBJECT_HINTS` in BOTH
+   trees (mirror-by-hand surface). Two literal phrases, per the list's
+   convention: `ORIGIN EXPORT DEMURRAGE INVOICE` still names its lane and
+   container spec and stays the ranked tier-0 fallback
+   `tests/test_booking_email_choice.py` pins.
+
+4. **The receipt names the outcome.** `ingest.main` prints how many bookings
+   were placed on the row an operator correction names, before scoring.
+
+5. `claim_corrected_mdolx_refs` and the qc_selfheal Phase-3 backstop are
+   UNCHANGED and now a steady-state no-op on a fresh build (pinned:
+   `(acted, released) == (0, [])` after both writers). They still guard
+   carried-forward prior state. QC-069's predicate is untouched — it goes red
+   on recurrence and that is not noise. QC-INDEX row updated.
+
+**Tests — `tests/test_qc069_writer_holds_invariant.py`, 18, every fixture the
+live shape** (the ten Yokohama corrections verbatim, asks built through
+`build_requests`, confirmations dated to the Aug-13 staging). Mutation-proven,
+each protection removed in turn and the suite watched go red, then restored:
+
+    consult removed (`_operator_owner` → None)      6 failed, 12 passed
+    named-first ordering removed (stage order)      1 failed, 17 passed
+    invoice hints removed from both trees           3 failed, 15 passed
+    chain branch un-gated (`if bk_chain:`)          1 failed, 17 passed
+
+The fourth mutation SURVIVED the first draft of this suite — no fixture gave
+a named booking a header chain, so un-gating the chain branch (which
+overwrites `best` one line after the consult) left every test green. That is
+a hollow guard, and it got its test
+(`test_a_header_chain_pointing_at_the_rival_does_not_overrule_the_operator`)
+before this shipped, not after. The negative direction is pinned both ways: a
+named ref whose row is absent still links by score and still becomes a
+standalone.
+
+**Verification of the fix in production cannot come from Sentry silence** —
+QC-069 was also silent on 09-03 and 09-04 because both qc_selfheal passes were
+SIGKILLed at 180s before reaching the check (#254). Read the next fire's
+ingest log for `placed on the row an operator correction names` and
+qc_selfheal's `QC-069: no duplicate shipment rows`, and the claim line
+`MDOLX claim: N duplicate ref holding(s) resolved` should be ABSENT.
+
+Suite at this commit: 3808 passed, 1 skipped. ruff clean.
+
+### 2026-09-04 — the fire had no transcript, so four defects hid behind one blind channel
 
 Michael: **"just bloody fix this all"** — the four items carried as open at the
 end of the prior session. Measuring them turned up a fifth that explains why

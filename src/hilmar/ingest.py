@@ -236,6 +236,9 @@ _OPERATIONAL_SUBJECT_HINTS = (
     "CMA UPDATES",             # Michael internal
     "NRA AMENDMENT", "CONFIRMATION OF NRA",
     "INVOICE QUERY", "INVOICE DISPUTE",
+    # An invoice names a booking that already exists; it is never the booking
+    # (2026-09-05, QC-069 — mirrored from scripts/ingest.py).
+    "EXPORT INVOICE", "INVOICE AVAILABLE",
     "TRANSPORT ORDER",         # ops follow-up tag, not a rate ask
 )
 
