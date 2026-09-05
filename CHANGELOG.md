@@ -3,7 +3,26 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-05 (latest) — every capture_qc_* caller groups per name, and the PII family is enumerated
+### 2026-09-05 (latest) — QC-084's index row says what the code does (Copilot review of #256)
+
+Copilot's review of #256 landed seconds before the merge with two findings,
+both about text claiming more than the code does — the H-167 shape (a
+sentence naming a mechanism that does not exist):
+
+- `reports/QC-INDEX.md` (the summary line and the QC-084 row) and the
+  QC-084 comment in `scripts/qc_selfheal.py` said the check is "WARN until
+  one clean fire, then ERROR". Nothing persists a clean-fire count and no
+  code path changes the severity, so that promotion could never happen on
+  its own. All three now say what is true: WARN, and raising it to ERROR is
+  a code change to make after the first clean production fire.
+- `src/hilmar/parser_accuracy._has_source`'s docstring still described
+  `core.has_own_source` as "a non-empty `source_imids`" after the review
+  follow-up widened the predicate to `source_imids` OR `source_ids`. The
+  docstring now matches the predicate.
+
+No behaviour changed; no test changed. Full suite `--no-cov` green.
+
+### 2026-09-05 — every capture_qc_* caller groups per name, and the PII family is enumerated
 
 Review of the entry below (six findings, two medium, each proven by a
 mutation the shipped guard stayed green under). Fixed at the layer each

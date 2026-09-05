@@ -135,7 +135,8 @@ def _is_standalone(r: dict) -> bool:
 
 def _has_source(r: dict) -> bool:
     """True when the row carries a message of its own to parse
-    (`core.has_own_source`: a non-empty `source_imids`).
+    (`core.has_own_source`: a non-empty `source_imids` OR `source_ids` —
+    the drift heal can strip a shared imid and leave the Graph id).
 
     2026-09-05 (HILMAR-DAILY-TRACKER-8). The 2026-08-13 fix that added `ol_`
     to NO_RFQ_CHAIN_PREFIXES reached only the predicates that call
