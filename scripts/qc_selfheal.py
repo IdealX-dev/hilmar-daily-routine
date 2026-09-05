@@ -1354,6 +1354,27 @@ def phase_3_entries(log: Log, data: dict):
     # enforces the same verdicts and the two can never drift. Runs before the
     # per-row decide loop so corrected rows are manual_locked and not re-decided.
     _op_corrected = apply_operator_corrections(data["requests"])
+    # QC-084 HEAL — A ROW WITH NOTHING TO PARSE CARRIES NOTHING PARSED.
+    # Runs right after the corrections so the `create`d ol_ rows exist and
+    # their `set` keys are known, and BEFORE every measurement (QC-039 grades
+    # the final state; QC-084 in phase 6 reports what survives this). Both
+    # qc_selfheal passes run it: the pre-patch pass un-stamps what earlier
+    # fires borrowed, patch_carriers no longer re-borrows, the post-patch pass
+    # finds nothing — idempotent by construction. Cleared to None, the same
+    # shape QC-064 and QC-078 leave behind, so every reader sees "absent".
+    # BY IDENTITY, NOT BY request_id (2026-09-05 review, finding 4): duplicate
+    # ids are collapsed in phase 4, AFTER this phase, so an id→row map here
+    # keeps the LAST twin and the clear could land on a row the detector never
+    # inspected — the one that legitimately has a source. The detector hands
+    # back the row object it judged; the clear goes on that object.
+    for _row84, _fields84 in qc084_fabricated_source_rows(data["requests"]):
+        for _f84 in _fields84:
+            _row84[_f84] = None
+        log.fix(
+            f"QC-084: {_row84.get('request_id')}: cleared {', '.join(_fields84)} "
+            f"— a booking with no message of its own cannot have parsed them; "
+            f"an earlier fire pasted another shipment's grid on through the "
+            f"same-lane join")
     # Same backstop reasoning as the applier it follows: one source of truth,
     # so the intake claim and the QC claim cannot drift. Idempotent — a demoted
     # ref no longer counts as a claim, so the second qc_selfheal pass of the
@@ -2959,6 +2980,68 @@ def _fire_alert_github_configured() -> bool:
         return bool(_import_fire_alert().github_configured())
     except Exception:
         return False
+
+
+def qc084_fabricated_source_rows(rows, corrections_path=None) -> list:
+    """QC-084: a source-less booking carrying a cell nothing of its own supplied.
+
+    2026-09-05 (HILMAR-DAILY-TRACKER-8, 119 daily WARNs). The 49 `ol_` wins
+    ingest.apply_operator_corrections CREATES from OL's transaction report have
+    `source_imids: []` — no email exists at all — yet in production they
+    carried erd / doc_cutoff / port_cutoff / vessel / ETD / ETA / ol_rate.
+    patch_carriers PASS 2 fell through to its LANE join, and a January
+    Oakland→Yokohama booking passed core.quote_evidence_ok against a
+    September Oakland→Yokohama quote (sent > sailing date), so that other
+    shipment's grid was pasted on. Preserved-from-prior every fire, the
+    borrowed cells persisted (CLAUDE.md: nothing un-stamps a bad value) and
+    held QC-039's doc/port-cutoff figure at 89.9%/89.3% — under the floor
+    every day, on numbers that were partly fiction. Today the writer refuses
+    (patch_carriers._find_related_rate_response, the PDF cross-ref); this is
+    the un-stamp for what earlier fires wrote, and the detector for the next
+    writer that reaches such a row.
+
+    Returns [(row, [field, ...]), ...] — per row, THE ROW OBJECT judged and
+    the core.SOURCE_ONLY_FIELDS it holds that its own operator correction did
+    not `set`. A human may legitimately write a rate onto a recovered
+    booking; a parser cannot. The heal in phase_3_entries clears exactly
+    these, on exactly these objects (request_id is not unique until phase 4
+    dedupes, so a lookup by id could clear a twin the detector never saw);
+    the phase-6 check reports any survivor through the id view,
+    qc084_fabricated_source_fields.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    path = _Path(corrections_path) if corrections_path else _CORRECTIONS_PATH
+    corrected: dict = {}
+    try:
+        doc = _json.loads(_Path(path).read_text(encoding="utf-8"))
+        for corr in doc.get("corrections", []):
+            corrected.setdefault(corr.get("request_id"), set()).update(
+                (corr.get("set") or {}).keys())
+    except Exception:
+        pass  # no readable corrections → nothing is exempt, which is the safe side
+
+    def _present(v) -> bool:
+        return v is not None and v != "" and v != [] and v != {}
+
+    out = []
+    for r in rows or []:
+        if not core.has_no_rfq_chain(r) or core.has_own_source(r):
+            continue
+        exempt = corrected.get(r.get("request_id"), set())
+        bad = [f for f in core.SOURCE_ONLY_FIELDS
+               if f not in exempt and _present(r.get(f))]
+        if bad:
+            out.append((r, bad))
+    return out
+
+
+def qc084_fabricated_source_fields(rows, corrections_path=None) -> list:
+    """The QC-084 verdict keyed by request_id — `[(request_id, [field, ...])]`
+    — for receipts and the phase-6 check. Same detector, same rows, same
+    order as qc084_fabricated_source_rows; only the key differs."""
+    return [(r.get("request_id"), fields)
+            for r, fields in qc084_fabricated_source_rows(rows, corrections_path)]
 
 
 def qc082_stale_operator_corrections(rows, corrections_path=None) -> list:
@@ -5537,6 +5620,33 @@ def phase_6_rules(log: Log, data: dict):
     except Exception as _e:
         log.warn(f"QC-082: check failed with exception: {_e}")
 
+    # QC-084: A SOURCE-LESS BOOKING CARRIES NO PARSED CELL.
+    #
+    # 2026-09-05. The phase-3 heal above clears them every pass, so anything
+    # this finds was written AFTER that scrub or by a writer the heal does not
+    # run before — a new heal, a backfill script, a restored snapshot. Same
+    # shape as QC-078: guard at the writer, un-stamp at phase 3, detect here.
+    # WARN for its first fire; promote to ERROR once one production fire has
+    # reported it clean (reports/QC-INDEX.md carries the promotion note).
+    try:
+        _rows84 = data.get("requests", [])
+        _fab84 = qc084_fabricated_source_fields(_rows84)
+        _sourceless84 = sum(1 for r in _rows84
+                            if core.has_no_rfq_chain(r) and not core.has_own_source(r))
+        if _fab84:
+            _detail84 = "; ".join(f"{rid}: {', '.join(fs)}" for rid, fs in _fab84[:6])
+            log.warn(
+                f"QC-084: {len(_fab84)} source-less booking(s) carry quote-grid / "
+                f"PDF field(s) no message of theirs could have supplied — a "
+                f"writer pasted another shipment's values on after the phase-3 "
+                f"scrub (or bypassed it): {_detail84}"
+                + (f" + {len(_fab84) - 6} more" if len(_fab84) > 6 else ""))
+        else:
+            log.ok(f"QC-084: {_sourceless84} source-less booking(s) carry no "
+                   f"quote-grid or PDF cell they could not have parsed")
+    except Exception as _e:
+        log.warn(f"QC-084: check failed with exception: {_e}")
+
     # QC-076: CAN THE ALARM ACTUALLY REACH ANYONE?
     #
     # On 2026-07-27 the fire was blocked, raised a FIRE-ALERT, and that alert
@@ -6311,6 +6421,12 @@ def phase_6_rules(log: Log, data: dict):
     # field falls below.
     # Critical fields: origin, destination, lane, container_count,
     # teu_requested, carrier_quoted, carrier_won, ol_rate.
+    # APPLICABILITY IS "COULD A PARSER HAVE POPULATED IT": rate/ETD/ETA/
+    # free-time only on chain-quoted rows, and erd/doc_cutoff/port_cutoff
+    # only on WIN rows that carry a source of their own (core.has_own_source
+    # — a booking recovered from OL's export has `source_imids: []` and no
+    # PDF, 2026-09-05). The QC-084 heal in phase 3 has already cleared any
+    # cell such a row borrowed, so the figure here is measured on real parses.
     # 2026-05-19: threshold lowered from 0.98 to 0.95 per Michael "PARSER
     # MUST REACH 95 PERCENT AT A MINIMUM AND INCLUDE ATTACHMENTS". See
     # src/hilmar/parser_accuracy.py for the gate definition + per-field
@@ -6320,7 +6436,12 @@ def phase_6_rules(log: Log, data: dict):
         _src_dir = Path(__file__).resolve().parent.parent / "src"
         if str(_src_dir) not in _sys.path:
             _sys.path.insert(0, str(_src_dir))
-        from hilmar.parser_accuracy import ACCURACY_THRESHOLD, CRITICAL_FIELDS, compute_accuracy
+        from hilmar.parser_accuracy import (
+            ACCURACY_THRESHOLD,
+            CRITICAL_FIELDS,
+            _threshold_for,
+            compute_accuracy,
+        )
         _acc = compute_accuracy(data.get("requests", []))
         _pct = f"{_acc['overall_rate']:.1%}"
         _wpct = f"{_acc['weighted_rate']:.1%}"
@@ -6353,15 +6474,22 @@ def phase_6_rules(log: Log, data: dict):
                     )
             except Exception:
                 pass
+        # THE RECEIPT NAMES THE FLOOR THAT FIRED. The decision in
+        # compute_accuracy is per field (`_threshold_for`: PER_FIELD_THRESHOLDS
+        # or the 95% default), and until 2026-09-05 both lines below printed
+        # the global 95% for fields whose applied floor is 90% — 119 Sentry
+        # events reading "doc_cutoff=89.9% below 95%" about a floor that did
+        # not fire. Each field now carries its own floor.
         if _acc["critical_failing"]:
             log.error(
                 f"QC-039: parser accuracy {_pct} (weighted {_wpct}) with "
                 f"{len(_acc['critical_failing'])} CRITICAL field(s) below "
-                f"{ACCURACY_THRESHOLD:.0%}: " +
+                f"floor: " +
                 ", ".join(
                     f"{f}={_acc['field_stats'][f]['populated']}/"
                     f"{_acc['field_stats'][f]['applicable']} "
-                    f"({_acc['field_stats'][f]['rate']:.1%})"
+                    f"({_acc['field_stats'][f]['rate']:.1%}, floor "
+                    f"{_threshold_for(f):.0%})"
                     for f in _acc["critical_failing"]
                 )
             )
@@ -6369,9 +6497,10 @@ def phase_6_rules(log: Log, data: dict):
             log.warn(
                 f"QC-039: parser accuracy {_pct} overall (weighted {_wpct}); "
                 f"{len(_acc['failing_fields'])} non-critical field(s) below "
-                f"{ACCURACY_THRESHOLD:.0%}: " +
+                f"floor: " +
                 ", ".join(
-                    f"{f}={_acc['field_stats'][f]['rate']:.1%}"
+                    f"{f}={_acc['field_stats'][f]['rate']:.1%} "
+                    f"(floor {_threshold_for(f):.0%})"
                     for f in _acc["failing_fields"]
                 )
             )

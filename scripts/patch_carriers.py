@@ -193,7 +193,25 @@ def _find_related_rate_response(row: dict, by_thread: dict[tuple, dict]) -> str 
     "the rate-response in this conversation" is routinely LAST cycle's sheet,
     sent before this ask ever existed — pasting it on is the same phantom
     quote as mining the ask body, arriving through the side door.
+
+    A SIBLING IS A SIBLING OF THE ROW'S OWN SOURCE, so a row with no source
+    of its own gets nothing here (2026-09-05, HILMAR-DAILY-TRACKER-8). The
+    49 `ol_` bookings recovered from OL's export carry `source_imids: []`, a
+    lane, and a `request_timestamp` equal to a Jan–Apr SAILING date — so any
+    later OL quote on the same lane passed quote_evidence_ok, and the lane
+    key ("Oakland->Yokohama": first body wins) pasted a September grid —
+    erd, doc/port cutoff, vessel, ETD/ETA, ol_rate — onto a January booking.
+    Preserved-from-prior every fire, the borrowed cells then held QC-039's
+    doc/port-cutoff figure at 89.9%/89.3%: just under the floor, and partly
+    fiction. Lane is not a fingerprint (the 2026-08-19 lesson, one join
+    over); the identity joins are refused on such a row too, because the
+    QC-084 heal that clears a source-less row's grid every pass cannot tell
+    a legitimately joined cell from a borrowed one, and a row the system
+    recorded as "no email exists at all" that finds an email is the create
+    branch's duplicate-skip to resolve, not this fallback's.
     """
+    if not C.has_own_source(row):
+        return None
     req_ts = row.get("request_timestamp")
 
     def _ok(rec: dict | None) -> str | None:
@@ -507,6 +525,63 @@ def _discover_lane_from_subjects(subjects: list[str]) -> tuple[str | None, str |
     return None, None
 
 
+#: The PASS 2 write list. Module-level since 2026-09-05 so the QC-084 pin in
+#: tests/test_qc084_sourceless_booking_borrows_nothing.py can hold it against
+#: core.SOURCE_ONLY_FIELDS: every key here is either a field only a parsed
+#: message/PDF can supply (SOURCE_ONLY_FIELDS) or one another heal derives
+#: from the row itself (ROW_DERIVED_KEYS). A new key must land in one list.
+BACKFILL_KEYS = (
+    "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
+    "container_size", "pol", "pod", "dthc",
+    "origin_cutoff", "doc_cutoff", "port_cutoff",
+    # 2026-05-19 parser-gap fix (Michael "no field should be empty ever"):
+    # extend patch_carriers PASS 2 to backfill the newly-extracted fields
+    # too. Without this, the new fields would be set on ingest but
+    # NOT enriched from sibling bodies — patch_carriers is the safety
+    # net that fills from any body in the conversation's source_imids.
+    "erd", "rate_expiry", "origin_free_time", "dest_free_time",
+    "product", "temperature", "requested_dates", "etd_requested",
+    "lonny_notes",
+    # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM"):
+    # extract container_count + teu_requested + containers string from
+    # the booking PDF so standalone WIN rows whose subject didn't carry
+    # an MDOLX container marker can still populate volume fields.
+    # Only the PDF reliably encodes quantity × size on a 3-container
+    # booking like the NUMIDIA samples (subject only says "1X40'HC"
+    # for 3 containers — wrong count).
+    "container_count", "teu_requested", "containers", "booking_ref",
+    # 2026-08-21: the option list travels with the fields it explains, so
+    # a row enriched from a sibling body carries that body's alternatives
+    # rather than an empty choice next to a backfilled rate.
+    "rate_options",
+)
+
+#: BACKFILL_KEYS that other writers legitimately DERIVE on any row from the
+#: row's own lane / containers string — qc_selfheal's QC-027 POL/POD heal and
+#: the phase-3 TEU recompute — so their presence on a source-less row is not
+#: evidence of a parsed source and they are never un-stamped by QC-084.
+ROW_DERIVED_KEYS = ("pol", "pod", "container_count", "teu_requested", "containers")
+
+
+def _booking_pdf_refs(row: dict) -> list:
+    """The refs the booking-PDF cross-reference joins a row to a staged PDF
+    on — mdolx_refs_seen included (see ingest._demote_ref). ONE list, so the
+    PDF-REFUSED receipt below measures exactly the join it reports on."""
+    return [c for c in ([row.get("mdolx_ref")] + (row.get("mdolx_refs_all") or [])
+                        + (row.get("mdolx_refs_seen") or [])) if c]
+
+
+#: Tag of the PASS 2 receipt that names a source-less row whose MDOLX matched
+#: a staged booking PDF and was refused by the core.has_own_source guard.
+#: The guard rests on a premise nothing measured (2026-09-05 review, finding
+#: 6): a row with no message of its own — an `ol_` row built from OL's
+#: export — has no attachment in stage_pdfs either, so refusing the identity
+#: join costs nothing. If that premise is ever false, the refusal discards a
+#: real identity-joined fact, and without this line it would do so silently.
+#: One occurrence in a fire's run log is the premise failing, by request_id.
+PDF_REFUSED_MARK = "PDF-REFUSED"
+
+
 def main():
     cfg = C.load_config()
     data_path = Path(cfg["paths"]["data"])
@@ -612,31 +687,9 @@ def main():
     #          the 70% etd_offered / 69% vessel_voyage missing-rate.
     patched_fields = 0
     field_hits: dict[str, int] = {}
-    BACKFILL_KEYS = (
-        "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
-        "container_size", "pol", "pod", "dthc",
-        "origin_cutoff", "doc_cutoff", "port_cutoff",
-        # 2026-05-19 parser-gap fix (Michael "no field should be empty ever"):
-        # extend patch_carriers PASS 2 to backfill the newly-extracted fields
-        # too. Without this, the new fields would be set on ingest but
-        # NOT enriched from sibling bodies — patch_carriers is the safety
-        # net that fills from any body in the conversation's source_imids.
-        "erd", "rate_expiry", "origin_free_time", "dest_free_time",
-        "product", "temperature", "requested_dates", "etd_requested",
-        "lonny_notes",
-        # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM"):
-        # extract container_count + teu_requested + containers string from
-        # the booking PDF so standalone WIN rows whose subject didn't carry
-        # an MDOLX container marker can still populate volume fields.
-        # Only the PDF reliably encodes quantity × size on a 3-container
-        # booking like the NUMIDIA samples (subject only says "1X40'HC"
-        # for 3 containers — wrong count).
-        "container_count", "teu_requested", "containers", "booking_ref",
-        # 2026-08-21: the option list travels with the fields it explains, so
-        # a row enriched from a sibling body carries that body's alternatives
-        # rather than an empty choice next to a backfilled rate.
-        "rate_options",
-    )
+    # BACKFILL_KEYS is module-level (2026-09-05) so the QC-084 heal/check and
+    # its test can read the writer's own list instead of restating it.
+    refused_pdf_sourceless: list[str] = []
 
     for r in requests:
         imids = r.get("source_imids") or []
@@ -691,8 +744,21 @@ def main():
         # PDF for the PDF-only enrichment.
         _PDF_ONLY_TARGETS = ("erd", "doc_cutoff", "port_cutoff", "dest_free_time", "product")
         _need_pdf_only = any(not r.get(k) for k in _PDF_ONLY_TARGETS) and r.get("status") == "WIN"
-        if _PDF_OK and (not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
-                        or _need_pdf_only):
+        # Same rule as _find_related_rate_response: a row with no message of
+        # its own has no attachment of its own either. The MDOLX cross-ref
+        # below would otherwise fill an `ol_` row from a PDF it never received
+        # and the QC-084 heal would clear it again every pass.
+        #
+        # MEASURE THE PREMISE. When a source-less row's MDOLX nevertheless
+        # matches a staged PDF, the refusal is counted and named in the
+        # PDF-REFUSED receipt after this loop (see PDF_REFUSED_MARK).
+        if _PDF_OK and not C.has_own_source(r):
+            _pdf_hit = next((str(c) for c in _booking_pdf_refs(r) if c in pdfs_by_mdolx), None)
+            if _pdf_hit is not None:
+                refused_pdf_sourceless.append(f"{r.get('request_id')}<-MDOLX{_pdf_hit}")
+        if _PDF_OK and C.has_own_source(r) and (
+                not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
+                or _need_pdf_only):
             pdf_path = None
             # Try direct imid match
             for imid in imids:
@@ -705,10 +771,9 @@ def main():
             if pdf_path is None:
                 # mdolx_refs_seen included: this is THE booking-PDF join, and
                 # the PDF supplies `pod`, from which PASS 2b recovers
-                # destination/lane. See ingest._demote_ref.
-                for cand in ([r.get("mdolx_ref")] + (r.get("mdolx_refs_all") or [])
-                             + (r.get("mdolx_refs_seen") or [])):
-                    if cand and cand in pdfs_by_mdolx:
+                # destination/lane. See ingest._demote_ref / _booking_pdf_refs.
+                for cand in _booking_pdf_refs(r):
+                    if cand in pdfs_by_mdolx:
                         pdf_path = pdfs_by_mdolx[cand]
                         break
             if pdf_path:
@@ -793,6 +858,18 @@ def main():
                 print(f"  LANE-DIAG {r.get('request_id')}: unresolved — "
                       f"pod={(r.get('pod') or parsed.get('pod')) or 'none'}; "
                       f"pdf_fields_present={'yes' if _pdf_saw else 'no'}")
+
+    # The PDF-REFUSED receipt prints here, BEFORE the "Nothing to patch" early
+    # return below: a refusal is not a patch, and the run in which the guard's
+    # premise fails is exactly the run that patches nothing on that row.
+    if refused_pdf_sourceless:
+        print(f"  {PDF_REFUSED_MARK}: {len(refused_pdf_sourceless)} source-less row(s) "
+              f"matched a staged booking PDF by MDOLX and were NOT filled from it "
+              f"(core.has_own_source) — the guard's premise, that a row with no "
+              f"message of its own has no PDF of its own, did not hold for: "
+              + ", ".join(refused_pdf_sourceless[:10])
+              + (f" +{len(refused_pdf_sourceless) - 10} more"
+                 if len(refused_pdf_sourceless) > 10 else ""))
 
     # ─────────────────────────────────────────────────────────────────
     # PASS 4 — Stage-scan for WINs still missing carrier_won

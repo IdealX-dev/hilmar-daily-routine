@@ -133,6 +133,27 @@ def _is_standalone(r: dict) -> bool:
     return _core.has_no_rfq_chain(r)
 
 
+def _has_source(r: dict) -> bool:
+    """True when the row carries a message of its own to parse
+    (`core.has_own_source`: a non-empty `source_imids`).
+
+    2026-09-05 (HILMAR-DAILY-TRACKER-8). The 2026-08-13 fix that added `ol_`
+    to NO_RFQ_CHAIN_PREFIXES reached only the predicates that call
+    `_is_standalone` (ol_rate / etd / eta / product / lonny_notes /
+    dest_free_time); erd / doc_cutoff / port_cutoff stayed on the bare WIN
+    test and kept grading the 49 export-recovered bookings on PDF cells no
+    PDF ever carried. That miss was MASKED: patch_carriers' lane join pasted
+    other shipments' cutoffs onto ~34 of them, so the honest ~67% read as
+    89.9% — just under the 90% floor, firing daily on partly fictional data.
+    The direct test is whether there is anything to parse, so this asks
+    that, not the id prefix: a `stand_` booking keeps its confirmation email
+    (and PDF) and stays graded; an `ol_` row has `source_imids: []` by
+    construction and is not applicable.
+    """
+    from . import core as _core  # local: avoids an import cycle
+    return _core.has_own_source(r)
+
+
 def _is_chain_quoted(r: dict) -> bool:
     """True for quoted rows that came from a complete Lonny→OL chain
     (so the rate-response email IS present and the parser had a chance
@@ -191,10 +212,11 @@ FIELD_REQUIREMENTS: dict[str, Callable[[dict], bool]] = {
     "lonny_notes": lambda r: not _is_standalone(r),
     # Booking-side fields now extractable via the PDF parser (extended
     # 2026-05-19 to surface ERD + free-time + doc/port cutoff + product
-    # + container_count from booking PDFs).
-    "erd":              lambda r: _is_win(r),
-    "doc_cutoff":       lambda r: _is_win(r),
-    "port_cutoff":      lambda r: _is_win(r),
+    # + container_count from booking PDFs). Graded only where a booking
+    # email/PDF exists to parse — see _has_source (2026-09-05).
+    "erd":              lambda r: _is_win(r) and _has_source(r),
+    "doc_cutoff":       lambda r: _is_win(r) and _has_source(r),
+    "port_cutoff":      lambda r: _is_win(r) and _has_source(r),
     "dest_free_time":   lambda r: _is_chain_quoted(r),
     # Sparse-source fields tracked but NOT gated (kept out of
     # FIELD_REQUIREMENTS so they don't fail QC-039 on rows whose source

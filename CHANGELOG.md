@@ -3,7 +3,233 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-05 (latest) — QC-069 writer fix, review follow-up: the guards pin properties, and one counter-case is reported instead of hidden
+### 2026-09-05 (latest) — review of the QC-039 fix: the guard proved the predicate, not the call sites
+
+Six findings on the entry below (two medium, mutation-proven; four low).
+Every one fixed at the layer it lives in; nothing deferred.
+
+**FINDING 1 (medium) — the call sites were unpinned.** The suite proved
+`core.has_own_source` is about evidence, not the id prefix, and never proved
+that `patch_carriers` READS it that way. Swapping the predicate for
+`has_no_rfq_chain` at both writer sites (`_find_related_rate_response`, the
+booking-PDF cross-ref) left all 3,810 tests green while silently disabling
+same-lane sibling enrichment and the PDF join for every `stand_` WIN — the
+row class both exist for. The negative-direction test used `req_chain_win`
+only, so it could not see the difference. Now: the negative-direction test
+is parametrised over `req_` AND `stand_`; a unit pin drives
+`_find_related_rate_response` with a `stand_` row that has its source (must
+serve) and the same row with both evidence lists empty (must refuse); and a
+`PC.main()` pin drives the PDF join for both classes. Under the reviewer's
+exact mutation the `stand_` cases go red for losing the join they deserve
+and the `req_` PDF case goes red too — a source-less `req_` row GAINED a
+join it must refuse. Both directions, one mutation.
+
+**FINDING 2 (medium) — the predicate read one of two evidence lists.**
+`has_own_source` read `source_imids` only. Measured from `ingest.py`: every
+row birth writes `source_imids` and `source_ids` as a PAIR (build_requests
+593-594, the standalone booking 1264-1265, the rate-response attach
+1568-1569; the `create` branch 2037-2038 writes both EMPTY). Two writers are
+asymmetric and touch only `source_imids`: the send-signal match ADDS an
+imid (1746), and `drift_check.phase1_imid_uniqueness --auto-heal` — which
+`run_pipeline` runs one step BEFORE `qc_selfheal` — STRIPS a shared imid
+from every row but the first and leaves the Graph id where it was. ingest
+builds `requests + standalones`, so a `stand_` booking whose confirmation
+imid also sat on a chain row reaches phase 3 with `source_imids: []`,
+`source_ids: [<id>]`. Reading the imid list alone called that row
+source-less: the QC-084 heal would have cleared the grid its own
+confirmation supplied, patch_carriers would have refused to re-enrich it,
+and the new QC-039 applicability rule would have stopped grading it — so
+nothing would have reported the loss. Not firing today (the 49 source-less
+rows are exactly the `ol_` ones), one pipeline step from firing, and the
+heal is destructive. Fixed at the owner, both trees, parity-pinned:
+`has_own_source` = `source_imids` OR `source_ids` non-empty. The
+alternative — make drift_check strip both lists — was rejected: phase 1's
+contract is "an imid belongs to one record", not "this row has no source",
+and stripping the id would make a row source-less by a dedupe's decision,
+the destructive direction. Pinned with the reviewer's repro on the real
+`drift_check` (chain + `stand_` sharing one booking imid →
+`phase1_imid_uniqueness(auto_heal=True)` → the `stand_` row keeps its
+cutoffs through the real phase 3, logs no QC-084 FIX, and QC-039 still
+grades it) and the negative direction (a row with NEITHER list is still
+source-less; the `create` branch's rows are unchanged).
+
+**FINDING 3 (low) — the ERROR branch of the QC-039 receipt was unpinned.**
+The `critical_failing` line — the one whose presence returns
+`QC039_GATE_BLOCK_RC` and blocks the client ship — had no rendered
+assertion; reverting `floor` from that branch alone stayed green. Now a
+chain WIN with `ol_rate=None` is rendered through the real phase 6, the
+line is asserted verbatim (`1 CRITICAL field(s) below floor: ol_rate=0/1
+(0.0%, floor 95%)`), and THAT rendered line — not a hand-written one — is
+fed to `_qc039_block_errors` / `_gate_exit_code` and proven to return the
+block code post-patch and 0 pre-patch. The gate test's three hand-written
+"below 95%" fixtures (a shape the code no longer emits) now follow the
+emitted shape via one `_MEASURED_MISS` constant, with the note that the
+wording is not load-bearing for the gate.
+
+**FINDING 4 (low) — the heal resolved rows by request_id.** `_by_id84 =
+{request_id: row}` keeps the LAST row on a duplicate id, and duplicate ids
+are collapsed in phase 4, AFTER phase 3 — so the clear could land on a twin
+the detector never inspected, potentially the one that legitimately has a
+source. The detector is now `qc084_fabricated_source_rows` and hands back
+the ROW OBJECT it judged; the phase-3 heal clears on that object.
+`qc084_fabricated_source_fields` is the same verdict keyed by request_id,
+kept for the phase-6 check and receipts. Pinned with a duplicate pair
+(`ol_252078` source-less with the borrowed grid, ordered FIRST, beside a
+same-id twin that carries a source and its own cutoffs): the borrowed grid
+is cleared, the twin is untouched, one FIX line. The id-map version wipes
+the twin and leaves the borrowed grid standing.
+
+**FINDING 5 (low)** — the spelling assert on patch_carriers' summary line
+(`"0 rate patches" in out or "Nothing to patch" in out`) is removed; the
+property it stood in for is `_borrowed(after) == []`, asserted four lines
+above.
+
+**FINDING 6 (low) — the PDF guard's premise was unmeasured.** Refusing the
+booking-PDF identity join on a source-less row assumes such a row has no
+staged PDF (an `ol_` row came from OL's export; nothing landed in
+`stage_pdfs` for it). Sound, and unproven — if ever false, a real
+identity-joined fact would be discarded silently. The cheaper honest option
+is a receipt, chosen over a test that "proves" the create branch's
+duplicate-skip covers it (that would pin an inference about production,
+not measure it): `patch_carriers` now counts every source-less row whose
+MDOLX matches a staged PDF and prints ONE line tagged `PDF_REFUSED_MARK`
+naming each `request_id<-MDOLX`, before the "Nothing to patch" early return
+(a refusal is not a patch, and the run in which the premise fails is the
+run that patches nothing on that row). The cross-ref's candidate list is
+hoisted to `_booking_pdf_refs` so the receipt measures exactly the join it
+reports on. One occurrence in a fire's run log is the premise failing, by
+row. Pinned in both directions: the `ol_` row and a source-less `stand_`
+row are named; a row that joined prints no receipt.
+
+**Verified.** `tests/test_qc084_sourceless_booking_borrows_nothing.py`
+20 → 29 tests. Seven mutations, each applied in place, its named test(s)
+run, the file restored and the tree checked byte-identical by sha256:
+(1a) sibling guard → id prefix: 2 red (`stand_` cases), `req_` control
+green; (1b) PDF guard → id prefix: red in BOTH parametrisations, for
+opposite reasons; (2) predicate reads `source_imids` only, both trees:
+2 red, the `ol_` refusal control green; (2') predicate fixed in ONE tree:
+the parity test red; (3) ERROR branch loses `floor`: 1 red, the WARN
+receipt control green; (4) heal via the id map: 1 red, the single-row heal
+control green; (6) receipt removed: 2 red. Full suite: **3,819 passed,
+1 skipped** (was 3,810). ruff clean, compileall clean.
+
+**Not changed, on purpose.** The QC-084 phase-6 check still reports by
+request_id (a receipt, not a write). `reports/QC-INDEX.md` is untouched —
+its QC-039/QC-084 rows say the `ol_` rows carry `source_imids: []`, which
+remains true; the predicate's second list is documented at the owner and
+here. `drift_check` is untouched for the reason given under finding 2.
+
+### 2026-09-05 — QC-039 fired daily on cutoff cells that were partly fiction
+
+HILMAR-DAILY-TRACKER-8: *"QC-039: parser accuracy 98.0% overall (weighted
+98.8%); 2 non-critical field(s) below 95%: doc_cutoff=89.9%,
+port_cutoff=89.3%"* — 119 occurrences, 2026-05-21 → 2026-09-02, one WARN per
+fire, latest event ae2586aa2e184ea0b843986928ab76dc. On the 2026-09-02 fire
+that is 134/149 and 133/149 wins: fifteen and sixteen misses against a 90%
+floor. Two defects in two layers and a receipt defect produced that line.
+
+**LAYER 1 — patch_carriers FABRICATED the cells.** The 49 `ol_` wins that
+`ingest.apply_operator_corrections` CREATES from OL's transaction report
+carry `source_imids: []` (no email exists at all — `core.has_no_rfq_chain`'s
+own docstring), a lane, and a `request_timestamp` equal to a Jan–Apr
+SAILING date. PASS 2's sibling lookup fell through conv → mdolx → LANE
+(`"Oakland->Yokohama"`, first body wins), and its only gate —
+`core.quote_evidence_ok`: OL sender, sent > request_timestamp — admits ANY
+later OL quote on the lane. Reproduced on the real code path with no repo
+edit: ol_252078 (sailed 2026-01-08) built through the real create branch
+from its real correction, ONE unrelated OL grid (the committed
+`ol_quote_algeciras.eml`, lane words swapped) staged as an August
+`mbd_rate_response`, `patch_carriers.main()`:
+
+    13 field backfills (container_size, dest_free_time, doc_cutoff, erd,
+    eta_offered, etd_offered, origin_cutoff, origin_free_time, pod, pol,
+    port_cutoff, transshipment, vessel_voyage) + ol_rate=4938.0
+    onto a booking that sailed in January; compute_accuracy: pass=True
+
+"1 rate patches (0 dated from the source email)" is the same signature as
+production's "40 rate patches (5 dated from the source email)". Rows are
+preserved-from-prior every fire (QC-010: 58), so the borrowed cells
+persisted — the standing corollary, *nothing un-stamps a bad value*. The
+2026-08-19 fix closed exactly this class for `response_timestamp`; the lane
+join one function over kept it.
+
+**LAYER 2 — QC-039 graded rows a parser could never populate.**
+`parser_accuracy.FIELD_REQUIREMENTS` had erd / doc_cutoff / port_cutoff on
+the bare WIN test. The 2026-08-13 fix that added `ol_` to
+`NO_RFQ_CHAIN_PREFIXES` ("QC-039 graded them on a rate they cannot have")
+reached only the predicates that call `_is_standalone`; the three PDF-side
+fields were left behind. A rule fixed on one surface.
+
+Layer 1 masked Layer 2: honest grading puts doc_cutoff near 67% (49 of 149
+wins have nothing to parse); borrowing lifted ≥34 of them to "populated" and
+landed the figure at 89.9% — just under the floor, so the alarm fired daily
+on numbers that were partly fiction. Blast radius beyond the alarm:
+`gen_carrier_scorecard_pdf._aggregate_lanes` (no window, no chain check)
+filed those rates under the wrong carrier's lane stats in the daily
+scorecard; the client cutoff callout was shielded only by its 14-day window.
+
+**RECEIPT.** The WARN printed `{ACCURACY_THRESHOLD:.0%}` ("below 95%") for
+fields whose applied floor is `PER_FIELD_THRESHOLDS[...] = 0.90` — a
+threshold that did not fire — and `sentry_setup.capture_qc_warning`
+re-prefixed the check name, hence "QC-039: QC-039:".
+
+**Shipped — at the layers where the defects live; no threshold moved,
+nothing muted:**
+
+1. **`core.has_own_source(row)`** — the one predicate (both trees, parity
+   pinned): does this row carry a message of its own to parse. The writer,
+   the un-stamp, the detector and the grader all read it.
+2. **`patch_carriers._find_related_rate_response` returns nothing for a
+   source-less row.** A sibling is a sibling OF the row's own source. The
+   proposal kept the mdolx/conv identity joins; they are refused too, and
+   deliberately: the heal below cannot tell a joined cell from a borrowed
+   one and would clear it every pass, and a row the system recorded as "no
+   email exists at all" that finds an email is the create branch's
+   duplicate-skip to resolve, not this fallback's. The booking-PDF
+   cross-reference by MDOLX gets the same guard for the same reason.
+   `BACKFILL_KEYS` is module-level now (text unchanged) beside
+   `ROW_DERIVED_KEYS`, so a test can hold the writer's list against
+   `core.SOURCE_ONLY_FIELDS`.
+3. **The un-stamp, QC-084 heal** (`qc084_fabricated_source_fields` +
+   phase 3, right after the corrections backstop): on every
+   `has_no_rfq_chain` row with no source of its own, clear every
+   `core.SOURCE_ONLY_FIELDS` cell its own correction did not `set` (a human
+   may write a rate onto a recovered booking; a parser cannot), logged by
+   request_id, idempotent across both passes. Never touches pol/pod/
+   containers/container_count/teu_requested (other heals derive them) or
+   carrier_*/mdolx_ref (OL's export names them).
+4. **QC-084, the detector** (phase 6, after the scrub): a survivor means a
+   writer that runs later or bypasses the heal. WARN on its first fire;
+   promote to ERROR once one production fire reports it clean.
+5. **QC-039 grades erd/doc_cutoff/port_cutoff only on WIN rows with a
+   source** (`_has_source`); a `stand_` booking keeps its confirmation and
+   stays graded. Banner and QC-INDEX row mirror the rule.
+6. **The receipt names each failing field's OWN floor** — `doc_cutoff=89.9%
+   (floor 90%)` — in both the WARN and the ERROR branch, and
+   `sentry_setup.qc_event_message` prefixes the check tag exactly once.
+
+**Verified.** `tests/test_qc084_sourceless_booking_borrows_nothing.py` —
+20 tests, every fixture production-shaped (the real create correction
+through the real applier; the committed OL grid). Eight mutation proofs,
+each run by removing the protection and watching its test go red: the
+sibling guard (2 tests), the PDF guard, the QC-039 predicate, the phase-3
+heal, the QC-084 check, the per-field floor in the receipt, the single
+Sentry prefix, and the writer/heal field-list partition (a new
+`BACKFILL_KEYS` entry that is classified on neither side fails). Two
+fixtures in `test_phantom_quotes.py` got the `source_imids` a conv-joined
+row carries in production — without it the refusal test passed for the
+wrong reason and left the evidence gate unpinned. Full suite: 3,809 passed,
+1 skipped; ruff clean.
+
+**What the honest number will be.** After 1+5 the doc/port-cutoff figure is
+measured on parseable wins only. If it still sits under 0.90 the residue is
+the handful of chain wins whose grid lacks the column and no PDF was
+received — a parser/data gap to measure on the next fire, not a threshold
+to move. [Likely] the 8 `ol_` rows whose lane key the subject regex could
+never join (hcmc (cai mep) ×5, port klang, pasir gudang,
+los angeles->hamburg) were the certain misses; the rest were borrowed.
+
+### 2026-09-05 — QC-069 writer fix, review follow-up: the guards pin properties, and one counter-case is reported instead of hidden
 
 Adversarial review of the writer-side fix below returned "fix first" with
 seven findings, each mutation-proven against the shipped tree. Every one is
