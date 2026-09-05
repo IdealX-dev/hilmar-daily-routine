@@ -22,27 +22,52 @@ real-time channel that complements the once-a-day audit email.
 | `outlook_send.py` | Uncaught exception during send | `error` |
 | `sync_to_quote_tracker.py` | Auth or sync failure (network errors caught + audit-logged separately) | `error` |
 
-Every event has these tags:
+Every event carries these process-scope TAGS, set by `sentry_setup.init()`
+(pinned by `tests/test_sentry_qc_fingerprint.py`, which runs the real init):
 
 - `component`: which script (run_pipeline, qc_selfheal, outlook_send, …)
 - `pipeline_run_id`: 12-char hex; groups all events from one pipeline fire
-- `environment`: `production` (Cloud PC) / `manual` (local) / `codespaces`
+- `python_version`: `major.minor`
+
+and these event ATTRIBUTES (searchable the same way, but not tags — there is
+no `git_sha` tag; the sha rides in `release`):
+
+- `environment`: `production` (GitHub Actions) / `manual` (local) / `codespaces`
 - `release`: `hilmar-daily-tracker@<git-short-sha>`
 
-QC-specific events also have:
+Every `capture_qc_error` / `capture_qc_warning` event also has:
 
-- `qc_check`: the QC-NNN identifier. One Sentry issue per check, not per row —
-  delivered by `capture_qc_error` passing `fingerprint=[check_name]` on every
-  event (since 2026-09-05; before that the line above was a claim only, and
-  `attach_stacktrace` grouped by the shared `Log.error` stack — eight checks in
-  one issue, one check across three). The tag is per-event, never on the
-  process scope, so a later step failure cannot inherit a check's id.
+- `qc_check`: the event's NAME — a `QC-NNN` id from `qc_selfheal.Log`, or a
+  dotted name from another caller (`pipeline.step_failure`,
+  `patch_carriers.ambiguous_match`). **One Sentry issue per name**, delivered
+  by `fingerprint=[name, *group_by]` on every event (`sentry_setup.
+  event_fingerprint`), so a check groups across rows, fires and releases and
+  no other name can join it. `run_pipeline` adds the step and the failure
+  kind (`timeout` / `exit N`) as `group_by`, so `QC self-heal (post-patch)`
+  timing out and exiting 39 are two issues, not one titled by whichever came
+  first (HILMAR-DAILY-TRACKER-6 held both). The ONLY name left on Sentry's
+  default grouping is `QC-unknown`, the sentinel a prefix-less log message
+  yields — a fingerprint there would fold 91 unrelated messages into one
+  issue. Before 2026-09-05 the sentence "one issue per check" was a claim
+  only: `attach_stacktrace` grouped by the shared `Log.error` stack — eight
+  checks in one issue, one check across three. The tag rides the EVENT
+  (`tags=` on `capture_message`, merged with the process-scope tags above),
+  never the process scope, so a later step failure cannot inherit a check's
+  id — pinned by capturing a later unrelated event and reading its tags.
 
 ## PII Scrubbing — what NEVER leaves the machine
 
 The `before_send` hook in `scripts/sentry_setup.py` scrubs the following
-patterns from every event payload (message, exception text, stack-frame
-locals, breadcrumbs, tags, contexts):
+patterns from every event payload. The interfaces it walks are enumerated,
+not listed by hand: every key in `_PII_BEARING_KEYS` (the fail-closed drop
+list) is scrubbed on the normal path — free text wholesale (`message`,
+`logentry` — the stdlib logging integration's message / formatted / params,
+missed until 2026-09-05 — `extra`, `request`, `user`, plus `tags` and
+`contexts`), and the stack interfaces at their data fields (`exception`
+value + frame locals, `threads` frame locals, breadcrumb message + data),
+never at code (function names, context lines). Frame locals are also OFF at
+init (`include_local_variables=False`, STANDARDS §6). `tests/test_auditfix_
+sentry_scrubber_failclosed.py` parametrises over the drop list.
 
 | Pattern | Replacement |
 |---|---|
@@ -89,7 +114,7 @@ py -3 scripts/sentry_setup.py
 | `QC-039: parser accuracy ...` | One of the critical fields dropped below 98% | Run `py -3 scripts/parser_accuracy.py` to see per-field breakdown |
 | `QC-040: cross-folder drift ...` | Someone changed an enum in scripts/core.py but not src/hilmar/core.py (or vice versa) | Align the enums; both folders MUST match per standing rule |
 | `QC-041: CLASSIFIER DRIFT` | tracking-data-v2.json has rows in mixed LEGACY/STRICT form | Parser bug — at least one ingest pass wrote the wrong form. Re-check `core.decide_status` outputs. |
-| `pipeline.step_failure` | A specific pipeline step exited non-zero | Look at `component` tag for which script; check the daily email or stdout from the Cloud PC scheduled-task log |
+| `pipeline.step_failure: <step> TIMEOUT @ Ns` / `… exited N` | A specific pipeline step was killed at its budget, or exited non-zero. One issue per (step, kind) — a timeout and an exit code on the same step are separate issues | The title names the step; check the run transcript (`reports/run-log.txt` artifact on the GitHub fire, stdout on the Cloud PC). rc 39 on the post-patch QC step is the QC-039 gate, 124 is a kill at the step budget |
 | MSAL / Graph auth errors | Token cache expired or Conditional Access changed | Re-run `outlook_send.py auth` interactively to refresh device-code token |
 | `requests.exceptions.ConnectionError` from `sync_to_quote_tracker` | ol-quote-tracker-prod Azure App Service hiccup | Graceful-degradation (audit-log + return 0); pipeline continues. If persistent, check Azure portal |
 
