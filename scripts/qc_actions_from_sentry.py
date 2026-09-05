@@ -62,7 +62,10 @@ log = logging.getLogger(__name__)
 # Action table — keyed by qc_check tag from the Sentry event.
 #
 # qc_selfheal sets `qc_check` tag on every capture_qc_error/_warning
-# event (see sentry_setup.before_send). Issues without a qc_check tag
+# event (sentry_setup._capture_qc — per-event tag + per-check fingerprint,
+# so an issue holds ONE check and the first tag read below is the only
+# one; before 2026-09-05 a shared issue held up to eight and this routed
+# them all by whichever tag came first). Issues without a qc_check tag
 # fall through to the message-pattern matcher below.
 # ─────────────────────────────────────────────────────────────────────
 

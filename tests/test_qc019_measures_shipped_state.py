@@ -3,7 +3,8 @@
 QC-019 fired 4 times in the last 90 days — 2026-09-04, 2026-08-28,
 2026-07-20, 2026-07-18 — measured on the qc_check:QC-019 tag. (I first
 wrote 75, which is issue HILMAR-DAILY-TRACKER-3's TOTAL: capture_qc_error
-does not fingerprint per check, so eight checks share that issue. An
+did not fingerprint per check [historic — fixed 2026-09-05,
+test_sentry_qc_fingerprint.py], so eight checks shared that issue. An
 issue-level count is not this check's count.) The most recent:
 
     QC-019: 1 status-change(s) on 2026-09-03 have no carrier — parser missed

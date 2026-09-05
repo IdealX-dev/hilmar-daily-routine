@@ -134,19 +134,32 @@ def rotate_backup(data_path: Path, backups_dir: Path, keep: int = 14) -> Path:
 # Log helpers
 # ─────────────────────────────────────────────────────────────────────
 
-# Sentry observability — lazy import so QC works even without sentry-sdk.
-try:
-    import sentry_setup as _sentry
-except ImportError:
-    _sentry = None
+# Sentry observability. sentry_setup is stdlib-only and lazy-imports the SDK
+# inside each function, so QC runs without sentry-sdk installed; the import
+# was guarded with `except ImportError: _sentry = None` until 2026-09-05,
+# which protected nothing (no test or host ever took that branch) and would
+# have left `_extract_check_name` below without its sentinel. The
+# `_sentry is not None` checks at the call sites are kept — harmless, and
+# they read as the intent.
+import sentry_setup as _sentry
+
+# THE shape of a QC check id as this module's log messages spell it: QC-NNN
+# plus an optional sub-variant letter (QC-014a / QC-020b / QC-027b). This is
+# the one owner — sentry_setup carried a copy until 2026-09-05 with nothing
+# pinning the pair; tests/test_sentry_qc_fingerprint.py now round-trips every
+# id spelled in this file through _extract_check_name and event_fingerprint.
+QC_CHECK_ID_RX = re.compile(r"\s*(QC-\d+[a-z]?)")
 
 
 def _extract_check_name(msg: str) -> str:
-    """Pull the QC-NNN prefix from a log message so Sentry events
-    group by check (one issue per check, not one per row)."""
-    import re as _re
-    m = _re.match(r"\s*(QC-\d+[a-z]?)", msg)
-    return m.group(1) if m else "QC-unknown"
+    """Pull the QC-NNN prefix from a log message so Sentry events group by
+    check (one issue per check, not one per row); sentry_setup's
+    `QC_UNKNOWN_CHECK` when the message carries none. The sentinel is READ
+    from its owner at call time, never re-spelled here: it is the one name
+    `event_fingerprint` leaves on Sentry's default grouping, and a local
+    copy that drifted would put 91 prefix-less messages into one issue."""
+    m = QC_CHECK_ID_RX.match(msg)
+    return m.group(1) if m else _sentry.QC_UNKNOWN_CHECK
 
 
 def _qc_phase_is_pre_patch() -> bool:
@@ -6004,8 +6017,10 @@ def phase_6_rules(log: Log, data: dict):
     # the pipe-table. That is refuted: the carrier is in the row's own
     # evidence and qc_selfheal finds it unaided. COUNT CORRECTED: I first
     # wrote "75 occurrences", read off issue HILMAR-DAILY-TRACKER-3's
-    # total. That issue is SHARED — capture_qc_error does not fingerprint
-    # per check, so eight checks group into it. Measured on the
+    # total. That issue WAS shared — capture_qc_error did not fingerprint
+    # per check until 2026-09-05 (sentry_setup.event_fingerprint; one issue
+    # per check from the first fire after it), so eight checks grouped
+    # into it. Measured on the
     # qc_check:QC-019 tag: FOUR events in 90 days (2026-09-04, 2026-08-28,
     # 2026-07-20, 2026-07-18). An ERROR about a value the run already had
     # about a value the same run already had.

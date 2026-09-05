@@ -483,9 +483,16 @@ def run_step(name, cmd, dry_run=False, extra_env=None):
             print(f"❌ FAIL — {name} {label}")
             if _sentry is not None:
                 with contextlib.suppress(Exception):
+                    # One Sentry issue per (step, failure kind). A step's
+                    # TIMEOUT (killed, rc=124) and its deliberate exit code
+                    # (the QC-039 gate's 39) are different defects, and
+                    # HILMAR-DAILY-TRACKER-6 held both under one title.
+                    # The kind is a stable token, not `label`: the timeout
+                    # budget in `label` would re-key the issue when raised.
                     _sentry.capture_qc_error(
                         "pipeline.step_failure",
                         f"{name} {label}",
+                        group_by=(name, "timeout" if timed_out else f"exit {rc}"),
                     )
             return rc
         return 0
