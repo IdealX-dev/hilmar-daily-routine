@@ -193,7 +193,25 @@ def _find_related_rate_response(row: dict, by_thread: dict[tuple, dict]) -> str 
     "the rate-response in this conversation" is routinely LAST cycle's sheet,
     sent before this ask ever existed — pasting it on is the same phantom
     quote as mining the ask body, arriving through the side door.
+
+    A SIBLING IS A SIBLING OF THE ROW'S OWN SOURCE, so a row with no source
+    of its own gets nothing here (2026-09-05, HILMAR-DAILY-TRACKER-8). The
+    49 `ol_` bookings recovered from OL's export carry `source_imids: []`, a
+    lane, and a `request_timestamp` equal to a Jan–Apr SAILING date — so any
+    later OL quote on the same lane passed quote_evidence_ok, and the lane
+    key ("Oakland->Yokohama": first body wins) pasted a September grid —
+    erd, doc/port cutoff, vessel, ETD/ETA, ol_rate — onto a January booking.
+    Preserved-from-prior every fire, the borrowed cells then held QC-039's
+    doc/port-cutoff figure at 89.9%/89.3%: just under the floor, and partly
+    fiction. Lane is not a fingerprint (the 2026-08-19 lesson, one join
+    over); the identity joins are refused on such a row too, because the
+    QC-084 heal that clears a source-less row's grid every pass cannot tell
+    a legitimately joined cell from a borrowed one, and a row the system
+    recorded as "no email exists at all" that finds an email is the create
+    branch's duplicate-skip to resolve, not this fallback's.
     """
+    if not C.has_own_source(row):
+        return None
     req_ts = row.get("request_timestamp")
 
     def _ok(rec: dict | None) -> str | None:
@@ -507,6 +525,44 @@ def _discover_lane_from_subjects(subjects: list[str]) -> tuple[str | None, str |
     return None, None
 
 
+#: The PASS 2 write list. Module-level since 2026-09-05 so the QC-084 pin in
+#: tests/test_qc084_sourceless_booking_borrows_nothing.py can hold it against
+#: core.SOURCE_ONLY_FIELDS: every key here is either a field only a parsed
+#: message/PDF can supply (SOURCE_ONLY_FIELDS) or one another heal derives
+#: from the row itself (ROW_DERIVED_KEYS). A new key must land in one list.
+BACKFILL_KEYS = (
+    "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
+    "container_size", "pol", "pod", "dthc",
+    "origin_cutoff", "doc_cutoff", "port_cutoff",
+    # 2026-05-19 parser-gap fix (Michael "no field should be empty ever"):
+    # extend patch_carriers PASS 2 to backfill the newly-extracted fields
+    # too. Without this, the new fields would be set on ingest but
+    # NOT enriched from sibling bodies — patch_carriers is the safety
+    # net that fills from any body in the conversation's source_imids.
+    "erd", "rate_expiry", "origin_free_time", "dest_free_time",
+    "product", "temperature", "requested_dates", "etd_requested",
+    "lonny_notes",
+    # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM"):
+    # extract container_count + teu_requested + containers string from
+    # the booking PDF so standalone WIN rows whose subject didn't carry
+    # an MDOLX container marker can still populate volume fields.
+    # Only the PDF reliably encodes quantity × size on a 3-container
+    # booking like the NUMIDIA samples (subject only says "1X40'HC"
+    # for 3 containers — wrong count).
+    "container_count", "teu_requested", "containers", "booking_ref",
+    # 2026-08-21: the option list travels with the fields it explains, so
+    # a row enriched from a sibling body carries that body's alternatives
+    # rather than an empty choice next to a backfilled rate.
+    "rate_options",
+)
+
+#: BACKFILL_KEYS that other writers legitimately DERIVE on any row from the
+#: row's own lane / containers string — qc_selfheal's QC-027 POL/POD heal and
+#: the phase-3 TEU recompute — so their presence on a source-less row is not
+#: evidence of a parsed source and they are never un-stamped by QC-084.
+ROW_DERIVED_KEYS = ("pol", "pod", "container_count", "teu_requested", "containers")
+
+
 def main():
     cfg = C.load_config()
     data_path = Path(cfg["paths"]["data"])
@@ -612,31 +668,8 @@ def main():
     #          the 70% etd_offered / 69% vessel_voyage missing-rate.
     patched_fields = 0
     field_hits: dict[str, int] = {}
-    BACKFILL_KEYS = (
-        "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
-        "container_size", "pol", "pod", "dthc",
-        "origin_cutoff", "doc_cutoff", "port_cutoff",
-        # 2026-05-19 parser-gap fix (Michael "no field should be empty ever"):
-        # extend patch_carriers PASS 2 to backfill the newly-extracted fields
-        # too. Without this, the new fields would be set on ingest but
-        # NOT enriched from sibling bodies — patch_carriers is the safety
-        # net that fills from any body in the conversation's source_imids.
-        "erd", "rate_expiry", "origin_free_time", "dest_free_time",
-        "product", "temperature", "requested_dates", "etd_requested",
-        "lonny_notes",
-        # 2026-05-19 (Michael "PARSER MUST REACH 95 PERCENT AT A MINIMUM"):
-        # extract container_count + teu_requested + containers string from
-        # the booking PDF so standalone WIN rows whose subject didn't carry
-        # an MDOLX container marker can still populate volume fields.
-        # Only the PDF reliably encodes quantity × size on a 3-container
-        # booking like the NUMIDIA samples (subject only says "1X40'HC"
-        # for 3 containers — wrong count).
-        "container_count", "teu_requested", "containers", "booking_ref",
-        # 2026-08-21: the option list travels with the fields it explains, so
-        # a row enriched from a sibling body carries that body's alternatives
-        # rather than an empty choice next to a backfilled rate.
-        "rate_options",
-    )
+    # BACKFILL_KEYS is module-level (2026-09-05) so the QC-084 heal/check and
+    # its test can read the writer's own list instead of restating it.
 
     for r in requests:
         imids = r.get("source_imids") or []
@@ -691,8 +724,13 @@ def main():
         # PDF for the PDF-only enrichment.
         _PDF_ONLY_TARGETS = ("erd", "doc_cutoff", "port_cutoff", "dest_free_time", "product")
         _need_pdf_only = any(not r.get(k) for k in _PDF_ONLY_TARGETS) and r.get("status") == "WIN"
-        if _PDF_OK and (not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
-                        or _need_pdf_only):
+        # Same rule as _find_related_rate_response: a row with no message of
+        # its own has no attachment of its own either. The MDOLX cross-ref
+        # below would otherwise fill an `ol_` row from a PDF it never received
+        # and the QC-084 heal would clear it again every pass.
+        if _PDF_OK and C.has_own_source(r) and (
+                not all(parsed.get(k) for k in ("etd_offered", "vessel_voyage", "ol_rate"))
+                or _need_pdf_only):
             pdf_path = None
             # Try direct imid match
             for imid in imids:

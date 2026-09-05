@@ -3,7 +3,117 @@
 Per the working standard (CLAUDE.md): every session logs its decisions here,
 by name, so the next session starts current. Newest first.
 
-### 2026-09-05 (latest) — QC-069 writer fix, review follow-up: the guards pin properties, and one counter-case is reported instead of hidden
+### 2026-09-05 (latest) — QC-039 fired daily on cutoff cells that were partly fiction
+
+HILMAR-DAILY-TRACKER-8: *"QC-039: parser accuracy 98.0% overall (weighted
+98.8%); 2 non-critical field(s) below 95%: doc_cutoff=89.9%,
+port_cutoff=89.3%"* — 119 occurrences, 2026-05-21 → 2026-09-02, one WARN per
+fire, latest event ae2586aa2e184ea0b843986928ab76dc. On the 2026-09-02 fire
+that is 134/149 and 133/149 wins: fifteen and sixteen misses against a 90%
+floor. Two defects in two layers and a receipt defect produced that line.
+
+**LAYER 1 — patch_carriers FABRICATED the cells.** The 49 `ol_` wins that
+`ingest.apply_operator_corrections` CREATES from OL's transaction report
+carry `source_imids: []` (no email exists at all — `core.has_no_rfq_chain`'s
+own docstring), a lane, and a `request_timestamp` equal to a Jan–Apr
+SAILING date. PASS 2's sibling lookup fell through conv → mdolx → LANE
+(`"Oakland->Yokohama"`, first body wins), and its only gate —
+`core.quote_evidence_ok`: OL sender, sent > request_timestamp — admits ANY
+later OL quote on the lane. Reproduced on the real code path with no repo
+edit: ol_252078 (sailed 2026-01-08) built through the real create branch
+from its real correction, ONE unrelated OL grid (the committed
+`ol_quote_algeciras.eml`, lane words swapped) staged as an August
+`mbd_rate_response`, `patch_carriers.main()`:
+
+    13 field backfills (container_size, dest_free_time, doc_cutoff, erd,
+    eta_offered, etd_offered, origin_cutoff, origin_free_time, pod, pol,
+    port_cutoff, transshipment, vessel_voyage) + ol_rate=4938.0
+    onto a booking that sailed in January; compute_accuracy: pass=True
+
+"1 rate patches (0 dated from the source email)" is the same signature as
+production's "40 rate patches (5 dated from the source email)". Rows are
+preserved-from-prior every fire (QC-010: 58), so the borrowed cells
+persisted — the standing corollary, *nothing un-stamps a bad value*. The
+2026-08-19 fix closed exactly this class for `response_timestamp`; the lane
+join one function over kept it.
+
+**LAYER 2 — QC-039 graded rows a parser could never populate.**
+`parser_accuracy.FIELD_REQUIREMENTS` had erd / doc_cutoff / port_cutoff on
+the bare WIN test. The 2026-08-13 fix that added `ol_` to
+`NO_RFQ_CHAIN_PREFIXES` ("QC-039 graded them on a rate they cannot have")
+reached only the predicates that call `_is_standalone`; the three PDF-side
+fields were left behind. A rule fixed on one surface.
+
+Layer 1 masked Layer 2: honest grading puts doc_cutoff near 67% (49 of 149
+wins have nothing to parse); borrowing lifted ≥34 of them to "populated" and
+landed the figure at 89.9% — just under the floor, so the alarm fired daily
+on numbers that were partly fiction. Blast radius beyond the alarm:
+`gen_carrier_scorecard_pdf._aggregate_lanes` (no window, no chain check)
+filed those rates under the wrong carrier's lane stats in the daily
+scorecard; the client cutoff callout was shielded only by its 14-day window.
+
+**RECEIPT.** The WARN printed `{ACCURACY_THRESHOLD:.0%}` ("below 95%") for
+fields whose applied floor is `PER_FIELD_THRESHOLDS[...] = 0.90` — a
+threshold that did not fire — and `sentry_setup.capture_qc_warning`
+re-prefixed the check name, hence "QC-039: QC-039:".
+
+**Shipped — at the layers where the defects live; no threshold moved,
+nothing muted:**
+
+1. **`core.has_own_source(row)`** — the one predicate (both trees, parity
+   pinned): does this row carry a message of its own to parse. The writer,
+   the un-stamp, the detector and the grader all read it.
+2. **`patch_carriers._find_related_rate_response` returns nothing for a
+   source-less row.** A sibling is a sibling OF the row's own source. The
+   proposal kept the mdolx/conv identity joins; they are refused too, and
+   deliberately: the heal below cannot tell a joined cell from a borrowed
+   one and would clear it every pass, and a row the system recorded as "no
+   email exists at all" that finds an email is the create branch's
+   duplicate-skip to resolve, not this fallback's. The booking-PDF
+   cross-reference by MDOLX gets the same guard for the same reason.
+   `BACKFILL_KEYS` is module-level now (text unchanged) beside
+   `ROW_DERIVED_KEYS`, so a test can hold the writer's list against
+   `core.SOURCE_ONLY_FIELDS`.
+3. **The un-stamp, QC-084 heal** (`qc084_fabricated_source_fields` +
+   phase 3, right after the corrections backstop): on every
+   `has_no_rfq_chain` row with no source of its own, clear every
+   `core.SOURCE_ONLY_FIELDS` cell its own correction did not `set` (a human
+   may write a rate onto a recovered booking; a parser cannot), logged by
+   request_id, idempotent across both passes. Never touches pol/pod/
+   containers/container_count/teu_requested (other heals derive them) or
+   carrier_*/mdolx_ref (OL's export names them).
+4. **QC-084, the detector** (phase 6, after the scrub): a survivor means a
+   writer that runs later or bypasses the heal. WARN on its first fire;
+   promote to ERROR once one production fire reports it clean.
+5. **QC-039 grades erd/doc_cutoff/port_cutoff only on WIN rows with a
+   source** (`_has_source`); a `stand_` booking keeps its confirmation and
+   stays graded. Banner and QC-INDEX row mirror the rule.
+6. **The receipt names each failing field's OWN floor** — `doc_cutoff=89.9%
+   (floor 90%)` — in both the WARN and the ERROR branch, and
+   `sentry_setup.qc_event_message` prefixes the check tag exactly once.
+
+**Verified.** `tests/test_qc084_sourceless_booking_borrows_nothing.py` —
+20 tests, every fixture production-shaped (the real create correction
+through the real applier; the committed OL grid). Eight mutation proofs,
+each run by removing the protection and watching its test go red: the
+sibling guard (2 tests), the PDF guard, the QC-039 predicate, the phase-3
+heal, the QC-084 check, the per-field floor in the receipt, the single
+Sentry prefix, and the writer/heal field-list partition (a new
+`BACKFILL_KEYS` entry that is classified on neither side fails). Two
+fixtures in `test_phantom_quotes.py` got the `source_imids` a conv-joined
+row carries in production — without it the refusal test passed for the
+wrong reason and left the evidence gate unpinned. Full suite: 3,809 passed,
+1 skipped; ruff clean.
+
+**What the honest number will be.** After 1+5 the doc/port-cutoff figure is
+measured on parseable wins only. If it still sits under 0.90 the residue is
+the handful of chain wins whose grid lacks the column and no PDF was
+received — a parser/data gap to measure on the next fire, not a threshold
+to move. [Likely] the 8 `ol_` rows whose lane key the subject regex could
+never join (hcmc (cai mep) ×5, port klang, pasir gudang,
+los angeles->hamburg) were the certain misses; the rest were borrowed.
+
+### 2026-09-05 — QC-069 writer fix, review follow-up: the guards pin properties, and one counter-case is reported instead of hidden
 
 Adversarial review of the writer-side fix below returned "fix first" with
 seven findings, each mutation-proven against the shipped tree. Every one is

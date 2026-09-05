@@ -583,6 +583,52 @@ def has_no_rfq_chain(row_or_id) -> bool:
     return str(rid).startswith(NO_RFQ_CHAIN_PREFIXES)
 
 
+def has_own_source(row) -> bool:
+    """True when the row carries at least one message of its OWN to parse.
+
+    `source_imids` is the row's own evidence list — the ask, OL's reply, or
+    the booking confirmation that built it. A row created from OL's export
+    (`ol_`, ingest.apply_operator_corrections' `create` branch) carries
+    `source_imids: []` by construction: no email exists at all.
+
+    2026-09-05 (HILMAR-DAILY-TRACKER-8). Every enrichment site that fell back
+    to "a sibling body on the same lane" assumed the row HAD a body of its
+    own that merely lacked the table — that is what a sibling is a sibling
+    OF. A row with nothing to parse has no sibling, so on such a row a
+    same-lane join pastes ANOTHER shipment's grid onto it, and QC-039 then
+    graded those pasted cells as parsed. This is the one predicate the
+    writer (patch_carriers), the un-stamp heal, QC-084 and the QC-039
+    applicability rule all read, so they cannot disagree about which rows
+    can carry a parsed value.
+    """
+    return bool((row or {}).get("source_imids"))
+
+
+#: Fields a row can carry ONLY because an OL message or a booking PDF was
+#: parsed — the quote grid (rate, options, vessel, ETD/ETA, cutoffs, free
+#: time) and the PDF-only booking cells. A row with no source of its own
+#: (`not has_own_source`) can hold none of them honestly; any it does hold
+#: was pasted from another shipment by an earlier fire, and since nothing
+#: un-stamps a bad value (CLAUDE.md), the qc_selfheal QC-084 heal clears
+#: them every pass and the QC-084 check reports any survivor.
+#:
+#: NOT in this tuple, on purpose: `pol`/`pod` (the QC-027 heal derives them
+#: from the lane on every row), `containers`/`container_count`/
+#: `teu_requested` (the phase-3 TEU recompute, and every `create`
+#: correction sets them), `carrier_quoted`/`carrier_won`/`mdolx_ref` (OL's
+#: export names them). tests/test_qc084_sourceless_booking_borrows_nothing
+#: pins this tuple against patch_carriers.BACKFILL_KEYS so a new backfill
+#: key must be classified on one side or the other.
+SOURCE_ONLY_FIELDS = (
+    "ol_rate", "rate_options",
+    "etd_offered", "eta_offered", "vessel_voyage", "transshipment",
+    "container_size", "dthc", "origin_cutoff", "doc_cutoff", "port_cutoff",
+    "erd", "rate_expiry", "origin_free_time", "dest_free_time",
+    "product", "temperature", "requested_dates", "etd_requested",
+    "lonny_notes", "booking_ref",
+)
+
+
 def normalize_carrier(name: str | None) -> str | None:
     """Canonicalize a carrier string. Returns None on empty input; otherwise best-effort canonical.
 

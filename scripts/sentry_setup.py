@@ -302,6 +302,19 @@ def init(component: str = "unknown", *, sample_rate: float = 1.0) -> bool:
     return True
 
 
+def qc_event_message(check_name: str, summary: str) -> str:
+    """The one Sentry message for a QC finding, prefixed by its check EXACTLY
+    ONCE. qc_selfheal's Log hands over the full log line, which already opens
+    with the check tag, so re-prefixing produced "QC-039: QC-039: parser
+    accuracy ..." on every event (HILMAR-DAILY-TRACKER-8, 119 occurrences).
+    A summary that does not carry the tag still gets it — the tag is what
+    groups the issue."""
+    text = str(summary or "").strip()
+    if text.startswith(f"{check_name}:"):
+        return text
+    return f"{check_name}: {text}"
+
+
 def capture_qc_error(check_name: str, summary: str, **extras) -> None:
     """Capture a QC ERROR-severity finding as a Sentry event.
 
@@ -315,7 +328,7 @@ def capture_qc_error(check_name: str, summary: str, **extras) -> None:
             return
         sentry_sdk.set_tag("qc_check", check_name)
         sentry_sdk.capture_message(
-            f"{check_name}: {summary}",
+            qc_event_message(check_name, summary),
             level="error",
             scope=None,
         )
@@ -333,7 +346,7 @@ def capture_qc_warning(check_name: str, summary: str, **extras) -> None:
             return
         sentry_sdk.set_tag("qc_check", check_name)
         sentry_sdk.capture_message(
-            f"{check_name}: {summary}",
+            qc_event_message(check_name, summary),
             level="warning",
             scope=None,
         )

@@ -222,7 +222,13 @@ def test_sibling_lookup_refuses_last_cycles_rate_sheet():
     import patch_carriers as PC
     stale = {"body": LONNY_RATE_SHEET, "sender": "Reno.Gurusinghe@ol-usa.com",
              "sent": "2026-07-15T10:00:00Z"}
-    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS}
+    # A conv-joined row was built from Lonny's ask, so it carries that ask as
+    # its own source (2026-09-05: a row with NO source of its own is refused
+    # before the evidence gate — see test_qc084_sourceless_booking_borrows_
+    # nothing — and a fixture without one would pass this test for the wrong
+    # reason, leaving the evidence gate unpinned).
+    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS,
+           "source_imids": ["ask@hilmar"]}
     assert PC._find_related_rate_response(row, {("conv", "conv1"): stale}) is None, (
         "a rate response sent 19 days BEFORE the ask was accepted as this "
         "cycle's quote")
@@ -232,7 +238,8 @@ def test_sibling_lookup_accepts_a_post_ask_ol_response():
     import patch_carriers as PC
     fresh = {"body": LONNY_RATE_SHEET, "sender": "Reno.Gurusinghe@ol-usa.com",
              "sent": REPLY_TS}
-    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS}
+    row = {"conversation_id": "conv1", "request_timestamp": ASK_TS,
+           "source_imids": ["ask@hilmar"]}   # production shape, see above
     assert PC._find_related_rate_response(
         row, {("conv", "conv1"): fresh}) == LONNY_RATE_SHEET
 
