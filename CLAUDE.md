@@ -83,10 +83,15 @@ SCAC. Finding one is a finding — report it.
 `seaports` 11,928 (key `locode`) · `airports` 7,883 (key `iata_code`, plus
 `icao_code`) · `icds` 12,949 (key `icd_code`) · `rail_yards` 9,177 (key
 `yard_id`). All carry name, city, country_code, lat, lon. `is_major = 1` is
-the quotable-terminal gate on seaports (136 gateways), rail_yards (112 ramps
-steamship lines actually call — BNSF/UP/NS/CSX/CONCOR) and icds (117 operated
-depots); the other ~22,000 rail/ICD rows are UN/LOCODE fill — resolvable as
-places, never presented as the nearest quotable terminal.
+the quotable-terminal gate on ALL FOUR tables: seaports (136 gateways),
+rail_yards (112 ramps steamship lines actually call — BNSF/UP/NS/CSX/CONCOR),
+icds (117 operated depots) and airports (741 that handle scheduled
+international freight); the other ~22,000 rail/ICD rows are UN/LOCODE fill —
+resolvable as places, never presented as the nearest quotable terminal.
+**Airports bind hardest**: a general-aviation field is not a smaller airport,
+it is a different KIND of place, so a nearest-airport answer uses gated rows
+only when any is in range (B1046 — a Dania Beach delivery was quoting North
+Perry and Fort Lauderdale Executive).
 
 **`rate_blaster/util/carrier_registry.py`** — 28 ocean lines (SCAC) + 25
 airlines (IATA/ICAO); `canonical_for_code()` resolves any of them.
@@ -106,9 +111,15 @@ Five rules. Each is a defect that already shipped:
    more than one LOCODE; 'Lagos' returns two Nigerian ports AND `PTLOS` in
    Portugal. A reverse join eventually ships to the wrong continent.
 3. **Resolution is unrestricted; MATCHING in prose is gated** on
-   `is_major = 1` — the same gate on seaports (136), rail_yards (112) and
-   icds (117). "Nearest rail/ICD" must rank `is_major` first: a UN/LOCODE
-   fill row is a domestic siding no steamship line calls.
+   `is_major = 1` — the same gate on all four: seaports (136),
+   rail_yards (112), icds (117) and airports (741). **The gate is on all
+   four; the nearest-X POLICY is not.** "Nearest port / ramp / depot"
+   ranks `is_major` first — a RANKING, never a filter, so fill pads the
+   remaining slots and no lane goes dark (a UN/LOCODE fill row is a
+   domestic siding no steamship line calls, but it is still a place).
+   **Nearest-AIRPORT FILTERS**: gated rows only when any is in range,
+   full list only when none is — a business-jet strip is not a smaller
+   airport to pad a list with, it is a different KIND of place.
 4. **Never match a bare 2-letter carrier code in free text.** `PO` is a
    purchase order, `CM` is centimetres, `FX` is foreign exchange, `5X` is
    `5x40HC`, `VS` is what a comparison prints BETWEEN two carriers.

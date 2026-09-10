@@ -50,6 +50,18 @@ Another repo can consume RIGHT NOW: geo_master.db, carrier_registry,
 EXIT=0
 ```
 
+**Correction 2026-09-10 — the probe above under-reported the gate.** The three
+`is_major` lines are what `reference_data_status` printed on 2026-08-31, and
+they were wrong by omission: the tool enumerated three of the four gated
+tables. `airports.is_major` (741 rows) was gated in the data and in
+`find_nearest_airports` the whole time (rate-blaster B1046) and simply not
+reported. Fixed in rate-blaster #528 (B1198 / H-374): the population is now
+derived from the schema, and a corrected run prints four gate lines. Re-run the
+probe for current output rather than reading either snapshot. The rule text in
+this repo's `CLAUDE.md` was synced to the corrected block the same day: the gate
+is on all four tables; nearest-airport FILTERS to gated rows, while ports,
+ramps and depots RANK `is_major` first and pad with fill.
+
 **EXIT=0 — nothing is held back any more.** The 2026-08-28 snapshot this page
 used to carry reported `carrier_registry` as LOCAL ONLY and `EXIT=1`, because
 it and the probe were both sitting on `claude/rate-blaster-geo-fetch-0cckio`.
