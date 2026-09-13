@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "source": "IdealX-dev/idealx-claude-standards/cost-aware",
+  "sha256": {
+    "INSTRUCTIONS.txt": "4c47ba78e2c1b6803477aa5ce358369076d3b3dd05fa9d70a86f6896e164d48b",
+    "README.md": "7c8288fb7c6d18cb969908a20ff02becf395f28f4ecb617c7857c598e8f682b6",
+    "llmlingua_cli.py": "9d273d486cbd3c74f755616776a59b14c8322be5a0495960214b7ccb87919adc",
+    "optional_api.py": "68d0bb4746243f063762fe34c8d9a9afc4ad828adf08d617fd48b74412b66d11",
+    "pre-commit.yaml": "77f8f9af5713aa4650ad4c2564e8dc831ec12f1eb1ff74c8aad6dbfc60984a47",
+    "preflight.py": "a856117cc7c6aaa10e5eadf30431ecde3656c7890f85c750a870087d1b4cbe8f",
+    "requirements.txt": "ea2beeb67e2935af371e83dc64bcb401e0e79ffa6fa3254778a3f8280c2dd655",
+    "setup.sh": "840c10c14c1809d727a8b2f556c1f9fb6d79a45f2bdfd2dee721b91a38060112"
+  }
+}
