@@ -37,11 +37,15 @@ case "$(uname -m)" in
   aarch64|arm64) asset=rtk-aarch64-unknown-linux-gnu.tar.gz; checksum=c8ea4b6560841e73157c134fd4a3293914c6ede42e786ee985cf491fde691ba7 ;;
   *) echo 'Unsupported RTK architecture; no fallback binary installed' >&2; exit 1 ;;
 esac
-if [ "$("$bin_dir/rtk" --version 2>/dev/null || true)" != 'rtk 0.49.0' ]; then
-  archive="$tools_dir/$asset"
+archive="$tools_dir/$asset"
+if ! printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status 2>/dev/null; then
   curl --fail --location --silent --show-error --max-time 120 \
-    "https://github.com/rtk-ai/rtk/releases/download/v0.49.0/$asset" -o "$archive"
-  printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
+    "https://github.com/rtk-ai/rtk/releases/download/v0.49.0/$asset" -o "$archive.download"
+  printf '%s  %s\n' "$checksum" "$archive.download" | sha256sum --check --status
+  mv -- "$archive.download" "$archive"
+fi
+binary_checksum=$(tar -xOzf "$archive" rtk | sha256sum | cut -d ' ' -f 1)
+if ! printf '%s  %s\n' "$binary_checksum" "$bin_dir/rtk" | sha256sum --check --status 2>/dev/null; then
   tar -xOzf "$archive" rtk > "$bin_dir/rtk.new"
   chmod 755 "$bin_dir/rtk.new"
   mv -- "$bin_dir/rtk.new" "$bin_dir/rtk"

@@ -36,7 +36,9 @@ Keep full evidence for reviews and failures. Do not compress twice.
 LiteLLM is available for API-backed development through `api_completion()` in
 `optional_api.py`: explicit model, exact-request memory caching, bounded retries,
 no model substitution or background service. Use an already authorized provider
-and its normal environment credentials; a ChatGPT subscription is not an API
+and run the helper in a process without an existing LiteLLM cache; it rejects
+other caches to prevent unintended persistence or sharing. Use the provider's
+normal environment credentials; a ChatGPT subscription is not an API
 key. No application endpoint is changed by installation.
 
 LLMLingua is available through `compress_notes()` in the same module. It runs

@@ -1,7 +1,7 @@
 """Optional explicit API/prose helpers; importing never changes app providers."""
 from __future__ import annotations
 
-_cache_ready = False
+_owned_cache = None
 
 
 def api_completion(*, model: str, messages: list[dict], **kwargs):
@@ -10,12 +10,13 @@ def api_completion(*, model: str, messages: list[dict], **kwargs):
         raise ValueError("An explicit, authorized provider/model is required")
     import litellm
     from litellm.caching.caching import Cache
-    global _cache_ready
-    if not _cache_ready:
-        # In-memory only; no shared service or persisted prompt database.
-        if litellm.cache is None:
-            litellm.cache = Cache(type="local", ttl=300)
-        _cache_ready = True
+    global _owned_cache
+    # Never inherit a cache another application configured: it may persist data.
+    if litellm.cache is not None and litellm.cache is not _owned_cache:
+        raise ValueError("Existing LiteLLM cache preserved; use the application's authorized cache directly")
+    if _owned_cache is None:
+        _owned_cache = Cache(type="local", ttl=300)
+    litellm.cache = _owned_cache
     litellm.telemetry = False
     kwargs.setdefault("num_retries", 0)
     kwargs.setdefault("caching", True)

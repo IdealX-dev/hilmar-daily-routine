@@ -46,6 +46,12 @@ def changed_files(base: str | None = None, root: Path | None = None) -> list[str
         result = subprocess.run(args + extra + ["--"], cwd=root, check=True,
                                 capture_output=True)
         found.update(p for p in result.stdout.decode("utf-8").split("\0") if p)
+    if base is None:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z", "--", "*.py", "*.pyi"],
+            cwd=root, check=True, capture_output=True,
+        )
+        found.update(p for p in result.stdout.decode("utf-8").split("\0") if p)
     return sorted(p for p in found if p.endswith((".py", ".pyi")))
 
 
