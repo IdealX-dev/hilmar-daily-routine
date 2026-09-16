@@ -2,6 +2,8 @@ name: Cost tools preflight
 on:
   push:
     paths: ['**.py', '**.pyi', '.codex/cost-tools/**', '.github/workflows/cost-preflight.yml', 'AGENTS.md', 'scripts/session_setup.sh']
+  pull_request:
+    paths: ['**.py', '**.pyi', '.codex/cost-tools/**', '.github/workflows/cost-preflight.yml', 'AGENTS.md', 'scripts/session_setup.sh']
   workflow_dispatch:
   schedule:
     - cron: '30 10 * * 1'

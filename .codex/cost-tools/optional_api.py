@@ -5,7 +5,7 @@ _owned_cache = None
 _REQUEST_OPTIONS = frozenset({"temperature", "top_p", "max_tokens", "max_completion_tokens",
                              "stop", "seed", "response_format", "tools", "tool_choice",
                              "parallel_tool_calls", "presence_penalty", "frequency_penalty",
-                             "timeout", "api_base", "api_key", "api_version", "custom_llm_provider"})
+                             "timeout"})
 
 
 def api_completion(*, model: str, messages: list[dict], **kwargs):

@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -29,8 +30,9 @@ def installed_drift(kit: Path = KIT, bin_dir: Path | None = None) -> list[str]:
         if actual != expected:
             failures.append(f"{name}: {actual}; expected {expected}")
         if name in {"ruff", "prek", "litellm"}:
-            executable = bin_dir / name
-            if not executable.is_file() or not os.access(executable, os.X_OK):
+            resolved = shutil.which(name, path=os.fspath(bin_dir))
+            executable = Path(resolved) if resolved else None
+            if executable is None or not executable.is_file() or not os.access(executable, os.X_OK):
                 failures.append(f"{name}: missing executable")
     return failures
 

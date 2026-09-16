@@ -148,9 +148,22 @@ class PortableChecks(unittest.TestCase):
             with patch.object(preflight.importlib.metadata, "version", return_value="1.0"):
                 self.assertEqual(preflight.installed_drift(kit, bin_dir=kit), ["ruff: missing executable"])
 
+    def test_windows_console_script_lookup_accepts_exe(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            kit = Path(temporary)
+            (kit / "requirements.txt").write_text("ruff==1.0\n")
+            executable = kit / "ruff.exe"
+            executable.write_text("binary")
+            executable.chmod(0o755)
+            with patch.object(preflight.importlib.metadata, "version", return_value="1.0"), \
+                 patch.object(preflight.shutil, "which", return_value=str(executable)):
+                self.assertEqual(preflight.installed_drift(kit, bin_dir=kit), [])
+
     def test_request_options_cannot_disable_safety(self):
         for options in ({"caching": False}, {"num_retries": 2}, {"fallbacks": ["other/model"]},
-                        {"context_window_fallback_dict": {}}, {"ttl": 900}, {"stream": True}):
+                        {"context_window_fallback_dict": {}}, {"ttl": 900}, {"stream": True},
+                        {"api_base": "https://example.invalid"}, {"api_key": "secret"},
+                        {"api_version": "2024-01-01"}, {"custom_llm_provider": "openai"}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 optional_api.api_completion(model="provider/model", messages=[], **options)
 
@@ -231,6 +244,8 @@ tool_bin=$(dirname -- "$0")
 case "$*" in
   *--installed*)
     for tool in ruff prek litellm; do [ -x "$tool_bin/$tool" ] || exit 1; done ;;
+  *freeze\ --all*)
+    printf 'fixture==1.0\n' ;;
   *--force-reinstall*)
     echo repair >> "$TEST_CALLS"
     for tool in ruff prek litellm; do
@@ -276,6 +291,7 @@ exec bash "$TEST_SETUP"
                                     encoding="utf-8", timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((tools / "bin/rtk").read_bytes(), binary)
+            self.assertEqual((tools / "installed-closure.txt").read_text(), "fixture==1.0\n")
             self.assertTrue((venv / "ruff").is_file())
             return calls.read_text() if calls.exists() else ""
 

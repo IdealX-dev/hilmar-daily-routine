@@ -32,9 +32,9 @@ if [ ! -f "$tools_dir/requirements.sha256" ] ||
       'ruff==0.16.7' 'prek==0.5.3' 'litellm[proxy]==1.100.1'
   fi
   "$tools_dir/python/bin/python" -m pip check
-  "$tools_dir/python/bin/python" -m pip freeze --all > "$tools_dir/installed-closure.txt"
   printf '%s\n' "$stamp" > "$tools_dir/requirements.sha256"
 fi
+"$tools_dir/python/bin/python" -m pip freeze --all > "$tools_dir/installed-closure.txt"
 for tool in ruff prek litellm; do
   ln -sfn "$tools_dir/python/bin/$tool" "$bin_dir/$tool"
 done
